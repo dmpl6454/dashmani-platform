@@ -2,9 +2,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { Tags } from "lucide-react";
+import { IndianRupee, Tags } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { usePayoutAttentionCount } from "@/lib/hooks/use-creator-payouts";
 import { CARD, BTN_GHOST, ErrorBar, PageHead, StatusPill, fmtDate, rupees } from "./_ds";
 
 type Row = {
@@ -38,20 +39,34 @@ export default function CampaignBookingsPage() {
   const { data, error } = useSWR("/admin/campaigns", (u: string) => apiFetch<{ data: Row[] }>(u).then((r) => r.data), { refreshInterval: 60_000 });
   const active = FILTERS.find((f) => f.key === filter)!;
   const rows = (data ?? []).filter((r) => active.match(r.status));
+  // Creator payouts that need a person (a badge only: nothing is drawn if it can't be read).
+  const payoutsWaiting = usePayoutAttentionCount();
   const needsReview = (data ?? []).filter((r) => r.status === "paid_pending_review").length;
   const toPost = (data ?? []).filter((r) => r.status === "approved" || r.status === "publishing").length;
+
+  const headerLinks = (
+    <>
+      <Link href="/campaigns/payouts" className={BTN_GHOST}>
+        <IndianRupee className="h-4 w-4" /> Creator payouts
+        {!!payoutsWaiting && (
+          <span className="inline-block min-w-[18px] px-1.5 rounded-full text-[11px] leading-[18px] text-center text-white bg-[#E5484D] tabular-nums" aria-label={`${payoutsWaiting} need attention`}>{payoutsWaiting}</span>
+        )}
+      </Link>
+      <Link href="/campaigns/rate-cards" className={BTN_GHOST}>
+        <Tags className="h-4 w-4" /> Rate card
+      </Link>
+    </>
+  );
 
   return (
     <div className="pb-8">
       <PageHead
         title="Campaign Bookings"
         sub={!data ? "Loading…" : `${needsReview} to review · ${toPost} to post`}
-        right={
-          <Link href="/campaigns/rate-cards" className={BTN_GHOST}>
-            <Tags className="h-4 w-4" /> Rate card
-          </Link>
-        }
+        right={<div className="hidden md:flex gap-2">{headerLinks}</div>}
       />
+      {/* Two links don't fit beside the title on a phone (the title block shrinks instead of wrapping): they go under it there. */}
+      <div className="md:hidden flex flex-wrap gap-2 -mt-3 mb-4">{headerLinks}</div>
 
       <div className="flex gap-1.5 flex-wrap mb-4" role="tablist">
         {FILTERS.map((f) => {

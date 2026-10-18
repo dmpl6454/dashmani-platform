@@ -4,17 +4,23 @@ import { CREATOR_TARGET_TYPE, type CampaignProvider } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { alertStaffOncePerHour } from "./payout-alert";
 import { computePayout, payoutAmountsAreValid } from "./payout-math";
+import { reverseForRefund, scheduleRelease, type RefundReadiness } from "./payout.service";
 
-// The creator-payout LEDGER: how a creator's share of a booking is planned, frozen and (until Phase 4 can
-// move real money) voided. Everything here is DATABASE ONLY: no Razorpay call is made from this file.
+// The creator-payout LEDGER: how a creator's share of a booking is planned and frozen, and the small rules the
+// offer, refund and approval code share about a payout's state.
 //
 //   checkout   freezes each creator item's terms into campaign_bookings.pricing_snapshot  (rate-card.service
 //              + payment.service call buildCreatorSnapshotFields)
 //   capture    writes ONE `planned` creator_payouts row per creator item, inside the capture transaction
 //              (planCreatorPayouts). A page that changed hands since checkout gets a `void` row instead.
 //   approve    checks the page owner again (reconcileCreatorOwnership)
-//   refund     a creator item is refunded only after its payout is void (ensurePayoutRefundable)
+//   refund     a creator item is refunded only after its payout is void or reversed (ensurePayoutRefundable here;
+//              the whole sequence lives in creator-refund.service)
+//   verified   onCreatorLinkVerified schedules the release; the reconciliation worker does the releasing
 //
+// ⚠️ NOTHING IN A TRANSACTION CALLS RAZORPAY. The functions that take a `tx` here only read and write our own rows. The
+// ones that talk to Razorpay (ensurePayoutRefundable) take no transaction and must be called outside one.
+
 // ⚠️ A payout row freezes what the creator is owed AT CHECKOUT. Nothing here ever recomputes it from a rate
 // card, a share or a TDS rate read later: the brand paid for exactly those figures.
 
@@ -278,12 +284,17 @@ export async function planCreatorPayouts(
 
 /**
  * At approve: every creator item still `pending` is checked against its page's CURRENT owner. A page that
- * changed hands since the capture has its `planned` payout voided and its item moved to `refund_due`, and staff
- * are told. An item with no payout row at all (it cannot happen, but money is the place not to assume) is treated
+ * changed hands since the capture has its item moved to `refund_due` (and any offer withdrawn), and staff are
+ * told. An item with no payout row at all (it cannot happen, but money is the place not to assume) is treated
  * the same way. Returns the items it moved; approve then carries on with the rest.
  *
- * A mismatch whose payout is already past `planned` throws 409 PAYOUT_NOT_REVERSIBLE_YET (see
- * ensurePayoutRefundable) and the approval does not go ahead.
+ * ⚠️ THIS CLAIMS ONLY, AND IT CLAIMS IN ONE TRANSACTION THAT NEVER TALKS TO RAZORPAY. The item's payout may by now
+ * be `held` (the creator's share already set aside in their linked account), and taking that back is a Razorpay
+ * call. So the transaction only moves the item to `refund_due`; the payout worker (cron/creator-payouts.cron.ts, job
+ * 10, creator-refund.service progressCreatorItemRefund) then makes each payout refundable OUTSIDE any transaction (void
+ * it, or reverse it, and only then refund the brand). It is deliberately left to the worker a few minutes later, not
+ * done inline: the "approved" email is built from the items' statuses and must still find these refund_due.
+ * Approval is therefore never refused because a transfer has to be reversed.
  */
 export async function reconcileCreatorOwnership(bookingId: string): Promise<CreatorItemProblem[]> {
   // Only a booking that is waiting for approval: approving anything else is refused by the caller, and must not
@@ -315,7 +326,6 @@ export async function reconcileCreatorOwnership(bookingId: string): Promise<Crea
         data: { status: "refund_due", lastError: PROBLEM_TEXT[p.reason].slice(0, 500) },
       });
       if (claim.count !== 1) continue;
-      await ensurePayoutRefundable(p.itemId, { tx, actor: { type: "system" }, reason: p.reason });
       await withdrawOpenOffers(tx, [p.itemId], p.reason === "page_changed" ? "page_taken_over" : "withdrawn", null);
     }
     await tx.campaignBookingEvent.create({
@@ -326,61 +336,99 @@ export async function reconcileCreatorOwnership(bookingId: string): Promise<Crea
   return problems;
 }
 
-// ── Refunds: a creator item's money comes back only once its payout is void ─────────────────────
+// ── Refunds: a creator item's money comes back only once its payout is void or reversed ────────
+
+/** What a refund guard needs to know about the item's payout. */
+export interface PayoutRefundFacts {
+  status: string;
+  reversedAt: Date | null;
+  razorpayTransferId: string | null;
+  attempts: number;
+}
 
 /**
- * Makes sure a creator item's payout can no longer pay anyone, so the brand can be refunded for the item.
+ * Whether claiming a creator item for a refund may go ahead, judged from the payout's status ALONE (no Razorpay
+ * call, so it is safe inside the claiming transaction). null = go ahead: the payout can be made refundable AFTER
+ * the claim commits (planned/failed → void, held → reversed) or it must simply be waited for (transfer_requested:
+ * the item waits as refund_due until the transfer settles into `held`, because no refund may start while a transfer
+ * can still be created [R4]). Anything else is refused BEFORE a single row is changed:
  *
- *   no payout row  → nothing to do
- *   `void`         → nothing to do (a retry after a partly failed refund lands here)
- *   `planned`      → voided now (status void + void_reason + a creator_payout_events row)
- *   anything later → 409 PAYOUT_NOT_REVERSIBLE_YET: the creator's share has been sent towards their Razorpay
- *                    account, and giving it back to the brand safely needs the reversal.
+ *   release_requested                         → 409 PAYOUT_BUSY: a release is in flight, and either outcome changes the answer
+ *   released, settlement_failed, settled, paid_manual
+ *                                             → 409 PAYOUT_PAID_OUT: the money has left (or is leaving) for the creator's bank.
+ *                                               A person reverses it from the payout queue first, then refunds.
+ *   needs_attention, manual_required (unproven) → 409 PAYOUT_NEEDS_ATTENTION: the facts and our row disagree; a person decides.
+ */
+export function payoutRefundGuard(p: PayoutRefundFacts | null | undefined): AppError | null {
+  if (!p) return null;
+  switch (p.status) {
+    case "planned":
+    case "failed":
+    case "void":
+    case "reversed":
+    case "held":
+    case "reversal_requested":
+    case "transfer_requested":
+      return null;
+    case "manual_required":
+      // Voidable only when no money is out or it came back (the engine's own proof in reverseForRefund).
+      return p.reversedAt !== null || (p.razorpayTransferId === null && p.attempts === 0)
+        ? null
+        : new AppError(409, "PAYOUT_NEEDS_ATTENTION", "This creator's payout is waiting to be paid by hand and may already have money out, so it can't be refunded from here. Check it in the payout queue first. Nothing has been changed.");
+    case "release_requested":
+      return new AppError(409, "PAYOUT_BUSY", "This creator's payout is being released right now. Wait a few minutes and try again. Nothing has been changed.");
+    case "released":
+    case "settlement_failed":
+    case "settled":
+    case "paid_manual":
+      return new AppError(
+        409,
+        "PAYOUT_PAID_OUT",
+        "This creator's payout has already been released or paid out, so this post can't be refunded from here. If it really must be refunded, take the payout back first from the payout queue (Reverse), then refund the post. Nothing has been changed.",
+      );
+    default:
+      return new AppError(409, "PAYOUT_NEEDS_ATTENTION", "This creator's payout needs a person to look at it before this post can be refunded. Nothing has been changed.");
+  }
+}
+
+/**
+ * Makes sure a creator item's payout can no longer pay anyone, so the brand can be refunded for the item (reverse
+ * BEFORE refund). Talks to Razorpay, so it must be called OUTSIDE any transaction and with the item already claimed
+ * (creator-refund.service does that).
  *
- * ⚠️ TODO(Phase 4): replace the body with the real "reverse the held transfer, THEN refund" sequence (claim the
- * item, reverse `transfer.amount − amount_reversed`, confirm, only then let the refund run). Until then, only a
- * `planned` payout (nothing has left our balance) can be refunded, and every other status is refused rather than
- * refunded around, because a refund made while the creator's share sits in their linked account would pay the
- * brand with money that is still the creator's. Callers must treat a throw as "do not refund".
- *
- * Runs inside `opts.tx` when given, else in its own transaction (the void and its audit row never split).
+ *   no payout row       → nothing to do
+ *   `void` / `reversed` → nothing to do (a retry after a partly failed refund lands here)
+ *   `planned`, `failed` → voided now (nothing was ever transferred)
+ *   `held`              → the transfer is reversed (explicit amount, read fresh; never reverse_all)
+ *   `transfer_requested`→ 409 PAYOUT_BUSY: the item waits as refund_due, and the worker refunds it once the transfer is held and reversed
+ *   reversal in flight  → 409 PAYOUT_BUSY: asked again later
+ *   released / settled  → 409 PAYOUT_PAID_OUT: already paid out; a person reverses it from the payout queue first
+ *   anything else       → 409 PAYOUT_NEEDS_ATTENTION / PAYOUT_NOT_REVERSIBLE_YET
+ * Callers must treat a throw as "do not refund". The non-throwing form is reverseForRefund (payout.service).
  */
 export async function ensurePayoutRefundable(
   itemId: string,
-  opts: { tx?: Tx; actor?: PayoutActor; reason?: string } = {},
-): Promise<{ payoutId: string | null; voided: boolean }> {
+  opts: { actor?: PayoutActor; reason?: string; now?: Date } = {},
+): Promise<{ payoutId: string | null; voided: boolean; reversed: boolean; state: RefundReadiness["state"] }> {
   const reason = (opts.reason ?? "item_refunded").slice(0, 40);
-  const actor = opts.actor ?? { type: "system" };
-  const notYet = () =>
-    new AppError(
-      409,
-      "PAYOUT_NOT_REVERSIBLE_YET",
-      "This creator's share has already been sent towards their payout account, so this post can't be refunded yet: the transfer has to be reversed first, and that step is not available yet. Nothing has been changed.",
-    );
-  const run = async (tx: Tx) => {
-    const payout = await tx.creatorPayout.findUnique({ where: { bookingItemId: itemId }, select: { id: true, bookingId: true, status: true, amountPaise: true } });
-    if (!payout) return { payoutId: null, voided: false };
-    if (payout.status === "void") return { payoutId: payout.id, voided: false };
-    if (payout.status !== "planned") throw notYet();
-    const res = await tx.creatorPayout.updateMany({ where: { id: payout.id, status: "planned" }, data: { status: "void", voidReason: reason } });
-    // Lost a race with something that moved it on (Phase 4's transfer): same answer as a later status.
-    if (res.count !== 1) throw notYet();
-    await tx.creatorPayoutEvent.create({
-      data: {
-        payoutId: payout.id,
-        bookingId: payout.bookingId,
-        kind: "void",
-        fromStatus: "planned",
-        toStatus: "void",
-        amountPaise: payout.amountPaise,
-        actorType: actor.type,
-        actorId: actor.id ?? null,
-        note: `Voided before any money moved (${reason}).`,
-      },
-    });
-    return { payoutId: payout.id, voided: true };
-  };
-  return opts.tx ? run(opts.tx) : prisma.$transaction(run);
+  const r = await reverseForRefund(itemId, { actor: opts.actor ?? { type: "system" }, reason, now: opts.now });
+  if (r.refundable) return { payoutId: r.payoutId, voided: r.state === "voided", reversed: r.state === "reversed", state: r.state };
+  if (r.state === "in_flight") {
+    throw new AppError(409, "PAYOUT_BUSY", "This creator's share is still being set aside, so it can't be taken back yet. The post is refunded automatically as soon as that has finished. Nothing is lost.");
+  }
+  if (r.state === "reversal_pending") {
+    throw new AppError(409, "PAYOUT_BUSY", "The creator's share is being taken back from their payout account and Razorpay hasn't confirmed it yet. The post is refunded automatically as soon as it has. Nothing is lost.");
+  }
+  if (r.reason === "payout_release_requested") {
+    throw new AppError(409, "PAYOUT_BUSY", "This creator's payout is being released right now. Wait a few minutes and try again. Nothing has been changed.");
+  }
+  if (/^payout_(released|settled|settlement_failed|paid_manual)$/.test(r.reason ?? "")) {
+    throw new AppError(409, "PAYOUT_PAID_OUT", "This creator's payout has already been released or paid out, so this post can't be refunded from here. Take the payout back first from the payout queue (Reverse), then refund the post.");
+  }
+  if (/needs_attention|manual_required|payout_moved/.test(r.reason ?? "")) {
+    throw new AppError(409, "PAYOUT_NEEDS_ATTENTION", "This creator's payout needs a person to look at it before this post can be refunded. Nothing has been changed.");
+  }
+  throw new AppError(409, "PAYOUT_NOT_REVERSIBLE_YET", "Razorpay did not take the creator's share back, so this post can't be refunded yet. Nothing has been changed; the payout queue shows why.");
 }
 
 /** An offer closed by withdrawOpenOffers, as it stood just before: enough to tell its creator (sendOfferWithdrawnEmails) and nothing more. */
@@ -419,9 +467,14 @@ export async function withdrawOpenOffers(tx: Tx, itemIds: string[], closedReason
 
 /**
  * Everything that must happen, in the SAME transaction as claiming a creator item for a refund (refundItem,
- * reject): refuse when the creator has already submitted their link (staff verify it instead), make the payout
- * refundable (ensurePayoutRefundable: void it, or refuse), and withdraw the creator's open offer. A throw rolls
- * the claim back with it.
+ * reject): refuse when the creator has already submitted their link (staff verify it instead), refuse when the
+ * payout is somewhere a refund must not touch (payoutRefundGuard: already released or paid out, or needing a person),
+ * and withdraw the creator's open offer. A throw rolls the claim back with it.
+ *
+ * ⚠️ The payout itself is NOT touched here: voiding it or reversing its transfer happens after this transaction has
+ * committed (creator-refund.service progressCreatorItemRefund), because a reversal is a Razorpay call and no network
+ * call may sit inside a transaction. The offer is withdrawn FIRST on purpose: it closes the creator's way to accept or
+ * post for this item, so nothing can start behind the reversal's back.
  */
 export async function prepareCreatorItemRefund(
   tx: Tx,
@@ -432,7 +485,9 @@ export async function prepareCreatorItemRefund(
   if (submitted > 0) {
     throw new AppError(409, "CREATOR_LINK_SUBMITTED", "The creator has already submitted the link for this post. Check the link and mark it posted instead of refunding it.");
   }
-  await ensurePayoutRefundable(itemId, { tx, actor: opts.actor, reason: opts.reason });
+  const payout = await tx.creatorPayout.findUnique({ where: { bookingItemId: itemId }, select: { status: true, reversedAt: true, razorpayTransferId: true, attempts: true } });
+  const refused = payoutRefundGuard(payout);
+  if (refused) throw refused;
   await withdrawOpenOffers(tx, [itemId], opts.closedReason, opts.actor?.type === "staff" ? opts.actor.id ?? null : null, opts.withdrawn);
 }
 
@@ -440,31 +495,33 @@ export async function prepareCreatorItemRefund(
 
 /**
  * Whether a creator's payout is in a state in which a post may be accepted for it (the creator submits their link,
- * staff verify it). A void, failed, reversed or unknown-result payout means there is no money behind the post, so the
- * link is refused: the item is refunded instead.
- *
- * TODO(Phase 4): tighten this to `held` ONLY (the share is confirmed set aside in the creator's linked account before
- * their post is accepted). Today only `planned` exists, so `transfer_requested` and `held` are listed for the moment
- * the transfer leg starts writing them; until then this is exactly "a planned payout".
+ * staff verify it): ONLY `held`, meaning Razorpay has confirmed the creator's share is processed and on hold in their
+ * linked account. A planned or still-requested transfer, and a void, failed, reversed or unknown-result payout, mean
+ * there is no confirmed money behind the post, so nothing is accepted and no link is verified.
  */
 export function payoutAllowsLink(status: string): boolean {
-  return status === "planned" || status === "transfer_requested" || status === "held";
+  return status === "held";
 }
 
 /**
- * Called after staff verified a creator's link and the item went live (review.verifyCreatorLink). It does NOTHING in
- * Phase 3: no money moves when a link is verified, and the payout stays exactly as it was.
+ * Called after staff verified a creator's link and the item went live (review.verifyCreatorLink): it SCHEDULES the
+ * release and does nothing else. release_after = verified_at + CREATOR_PAYOUT_HOLD_DAYS, and at least one day when the
+ * ownership of the post was checked by hand (scheduleRelease). The reconciliation worker then releases the payout when
+ * release_after has passed AND the whole release gate holds on fresh facts (payout-policy evaluateRelease): it is never
+ * released inline from a staff click.
  *
  * ⚠️ By the time this runs the creator's offer is `completed` (verifyCreatorItem moves it there together with stamping
- * link_verified_at): a release gate must read link_verified_at, never `status = 'accepted'`.
- *
- * TODO(Phase 4): this is where the release starts. Claim the payout (`updateMany WHERE status = 'held' AND paused_at IS
- * NULL`), wait out `release_after` (at least one day when ownership was checked by hand), re-fetch the transfer and only
- * then `PATCH on_hold:false`. It must never throw into the caller: a failure here is the reconciliation worker's to retry,
- * never a reason to undo a verification that already committed.
+ * link_verified_at): the gate reads link_verified_at, never `status = 'accepted'`. It must never throw into the caller: a
+ * failure here is the worker's to repair, never a reason to undo a verification that already committed.
  */
-export async function onCreatorLinkVerified(_itemId: string): Promise<void> {
-  return;
+export async function onCreatorLinkVerified(itemId: string, actor: PayoutActor = { type: "system" }): Promise<void> {
+  try {
+    const offer = await prisma.creatorOffer.findUnique({ where: { bookingItemId: itemId }, select: { ownershipCheck: true, linkVerifiedAt: true } });
+    if (!offer?.linkVerifiedAt) return;
+    await scheduleRelease(itemId, { ownershipCheck: offer.ownershipCheck, verifiedAt: offer.linkVerifiedAt, actor });
+  } catch (err) {
+    console.error(`[payout-ledger] could not schedule a release: ${(err as Error)?.message ?? "error"}`.slice(0, 200));
+  }
 }
 
 // ── Pages with work still open ──────────────────────────────────────────────────────────────────

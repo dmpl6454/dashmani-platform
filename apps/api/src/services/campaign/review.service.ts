@@ -6,8 +6,10 @@ import { refundBookingInFull, refundPaymentRow, capturedPaymentFor, maybeMarkRef
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
-import { onCreatorLinkVerified, prepareCreatorItemRefund, reconcileCreatorOwnership, type WithdrawnOffer } from "../creator/payout-ledger";
+import { onCreatorLinkVerified, payoutRefundGuard, prepareCreatorItemRefund, reconcileCreatorOwnership, withdrawOpenOffers, type WithdrawnOffer } from "../creator/payout-ledger";
 import { alertOfferProblems, createOffersForBooking, listOffersForBooking, sendOfferEmails, sendOfferWithdrawnEmails, verifyCreatorItem, withdrawOffer as withdrawCreatorOffer, type CreatedOffers } from "../creator/creator-offer.service";
+import { progressCreatorItemRefund, type CreatorRefundOutcome } from "../creator/creator-refund.service";
+import { reverseForRefund, type RefundReadiness } from "../creator/payout.service";
 
 // Staff side: the review queue, booking detail, approve / reject / request changes, and the
 // per-item actions (mark posted with its link, mark failed, refund one item).
@@ -115,6 +117,10 @@ export async function getBookingForStaff(id: string) {
 export async function approve(id: string, staffId: string) {
   // A creator's page that changed hands since the capture can't be posted: its payout is voided and the item goes
   // refund_due BEFORE the plan below is made, so it is never planned. (Only for a booking awaiting approval.)
+  // ⚠️ The items it moves to refund_due are NOT refunded here. Their payouts are unwound and the client refunded by the payout worker
+  // (reverse BEFORE refund, job 10 of cron/creator-payouts.cron.ts), a few minutes later: the "approved" email below is built from the
+  // items' statuses and must still find them refund_due ("won't go ahead … being returned"), which a refund finished inline would turn
+  // into "refunded" items it describes as waiting for their creator.
   await reconcileCreatorOwnership(id);
   // Phase 2: items the API can publish are queued for the launch day; everything else (and
   // everything while CAMPAIGN_PUBLISH_ENABLED is off) is posted by our team, as in Phase 1.
@@ -207,6 +213,20 @@ const REJECTABLE = ["paid_pending_review", "changes_requested", "approved"] as c
  * `refund_due`, so a crash or a refusal from Razorpay leaves the money recorded as owed and the
  * refund sweep finishes it. If any item can't be claimed (it is being published right now) nothing
  * changes and staff are asked to try again in a minute.
+ *
+ * ⚠️ A booking with a CREATOR's page rejects in a RE-RUNNABLE SEQUENCE (reverse BEFORE refund), because the creator's
+ * share may already sit in their linked account and taking it back is a Razorpay call, which can never be inside a
+ * transaction:
+ *   1. refuse, changing nothing, if a post is live, a creator has submitted their link, or a payout has already been
+ *      released or paid out (rejectCreatorPrelude);
+ *   2. one transaction withdraws every creator's offer (that closes the accept race) and claims the creator posts as
+ *      refund_due;
+ *   3. outside any transaction each creator payout is voided (planned, failed) or its transfer reversed (held);
+ *   4. only when EVERY creator payout is void or reversed does the booking move to rejected (the transaction above, which
+ *      re-checks that under its own lock) and each item get refunded.
+ * A step that cannot finish (a transfer still being made, a reversal Razorpay has not confirmed) leaves a VISIBLE partial
+ * state (offers withdrawn, posts refund due, the campaign not yet rejected) and the same button resumes from there; nothing
+ * is refunded twice and nothing is refunded before its payout is out of the way.
  */
 export async function reject(id: string, staffId: string, note: string) {
   const online = (await prisma.campaignPayment.count({ where: { bookingId: id, razorpayPaymentId: { not: null } } })) > 0;
@@ -227,9 +247,94 @@ export async function reject(id: string, staffId: string, note: string) {
     return { ...(await getBookingForStaff(id)), refundError, refundNotice: null as string | null };
   }
 
+  const pending = await rejectCreatorPrelude(id, staffId);
+  if (pending) {
+    return { ...(await getBookingForStaff(id)), refundError: null as string | null, refundNotice: pending.notice, rejectPending: true as const };
+  }
+  return rejectOnline(id, staffId, note);
+}
+
+/** Item statuses of a creator's post that a rejection claims as refund_due (`refunded` ones are done already). */
+const CREATOR_REJECT_CLAIMABLE = ["pending", "manual_pending", "awaiting_creator", "refund_due"];
+
+type Db = Pick<typeof prisma, "campaignBookingItem" | "creatorOffer" | "creatorPayout">;
+
+/**
+ * The refusals of a rejection that has creator posts, read from our own rows (no Razorpay call): a live post, a link a creator
+ * submitted and nobody has decided on, a payout that is already released or paid out (or needs a person). Run once before anything is
+ * written and again under the booking lock inside the claim.
+ */
+async function assertCreatorsRejectable(db: Db, bookingId: string): Promise<void> {
+  const items = await db.campaignBookingItem.findMany({ where: { bookingId }, select: { id: true, status: true, targetType: true } });
+  if (items.some((i) => (LIVE_ITEM_STATUSES as readonly string[]).includes(i.status))) {
+    throw new AppError(409, "POSTS_LIVE", "Some posts are already live, so this campaign can't be rejected and refunded in one step. Refund the accounts that weren't posted from their own rows instead.");
+  }
+  const open = items.filter((i) => i.targetType === CREATOR_TARGET_TYPE && i.status !== "refunded").map((i) => i.id);
+  if (open.length === 0) return;
+  const submitted = await db.creatorOffer.count({ where: { bookingItemId: { in: open }, status: { in: ["offered", "accepted"] }, linkSubmittedAt: { not: null } } });
+  if (submitted > 0) {
+    throw new AppError(409, "CREATOR_LINK_SUBMITTED", "A creator has already submitted the link for one of the posts. Check the link and mark it posted, or withdraw that offer (discarding the link) first. Nothing has been changed.");
+  }
+  const payouts = await db.creatorPayout.findMany({ where: { bookingItemId: { in: open } }, select: { status: true, reversedAt: true, razorpayTransferId: true, attempts: true } });
+  for (const p of payouts) {
+    const refused = payoutRefundGuard(p);
+    if (refused) throw refused;
+  }
+}
+
+/**
+ * Steps 1 to 3 of a rejection that has creator posts (see reject). Returns null when the rejection can go on (every creator
+ * payout is void or reversed, or there are no creator posts), else the notice to show staff for the partial state it left.
+ */
+async function rejectCreatorPrelude(id: string, staffId: string): Promise<{ notice: string } | null> {
+  const rows = await prisma.campaignBookingItem.findMany({ where: { bookingId: id, targetType: CREATOR_TARGET_TYPE }, select: { id: true, status: true, accountName: true } });
+  if (rows.length === 0) return null;
+  const b = await prisma.campaignBooking.findUnique({ where: { id }, select: { status: true } });
+  if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
+  if (!(REJECTABLE as readonly string[]).includes(b.status)) {
+    throw new AppError(409, "INVALID_STATE", `This campaign can't move from "${b.status}" to "rejected" right now. Refresh and try again.`);
+  }
+  await assertCreatorsRejectable(prisma, id);
+
+  const withdrawn: WithdrawnOffer[] = [];
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM campaign_bookings WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.campaignBooking.findUnique({ where: { id }, select: { status: true } });
+    if (!cur || !(REJECTABLE as readonly string[]).includes(cur.status)) throw new AppError(409, "INVALID_STATE", "This campaign changed. Refresh and try again.");
+    await assertCreatorsRejectable(tx, id);
+    const claimable = await tx.campaignBookingItem.findMany({ where: { bookingId: id, targetType: CREATOR_TARGET_TYPE, status: { in: CREATOR_REJECT_CLAIMABLE } }, select: { id: true, status: true } });
+    for (const i of claimable) {
+      const claim = await tx.campaignBookingItem.updateMany({ where: { id: i.id, status: i.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] }, data: { status: "refund_due" } });
+      if (claim.count !== 1) throw new AppError(409, "BUSY", "A creator's post changed while the campaign was being rejected — try again in a minute.");
+    }
+    await withdrawOpenOffers(tx, claimable.map((i) => i.id), "booking_rejected", staffId, withdrawn);
+    if (claimable.length > 0) await logBookingEvent(id, staff(staffId), `Rejecting: ${claimable.length} creator post(s) claimed, their offers withdrawn. The creators' payouts are taken back before anything is refunded.`.slice(0, 500), tx);
+  });
+  // The creators who had seen their offer are told it is gone (after the commit, never blocking what follows).
+  void sendOfferWithdrawnEmails(withdrawn).catch(() => undefined);
+
+  // 3. UNWIND each creator payout, outside any transaction. A refunded item's payout is out of the way already.
+  const waiting: RefundReadiness[] = [];
+  for (const row of rows) {
+    if (row.status === "refunded") continue;
+    const r = await reverseForRefund(row.id, { actor: staff(staffId), reason: "booking_rejected" });
+    if (!r.refundable) waiting.push(r);
+  }
+  if (waiting.length === 0) return null;
+  const blocked = waiting.filter((r) => r.state === "blocked").length;
+  return {
+    notice:
+      (blocked > 0
+        ? `${blocked} creator payout(s) can't be taken back by themselves: open the payout queue and look at them. `
+        : `${waiting.length} creator payout(s) are not taken back yet (a transfer is still being made, or Razorpay hasn't confirmed the reversal). `) +
+      "The creators' offers are withdrawn and their posts are marked refund due, but the campaign is NOT rejected yet, so nothing is half-refunded. Press Reject again in a few minutes to finish: nothing is refunded twice.",
+  };
+}
+
+/** Steps 4 onwards: the booking becomes rejected, every not-posted item is claimed and refunded per item. */
+async function rejectOnline(id: string, staffId: string, note: string) {
   const owed: string[] = [];
   const claimed: Array<{ id: string; pricePaise: number }> = [];
-  const withdrawn: WithdrawnOffer[] = [];
   await prisma.$transaction(async (tx) => {
     await transitionBooking(id, REJECTABLE, "rejected", staff(staffId), {
       tx,
@@ -242,16 +347,20 @@ export async function reject(id: string, staffId: string, note: string) {
     }
     for (const i of items) {
       if (!NOT_POSTED_ITEM_STATUSES.includes(i.status)) continue;
+      // A creator's post was claimed, its offer withdrawn and its payout unwound BEFORE this transaction (rejectCreatorPrelude).
+      // It goes through only if that payout is really out of the way, checked here under the same transaction as the move to
+      // rejected, so nothing can slip a transfer in between. A throw undoes the whole rejection.
+      if (i.targetType === CREATOR_TARGET_TYPE) {
+        const payout = await tx.creatorPayout.findUnique({ where: { bookingItemId: i.id }, select: { status: true } });
+        if (payout && payout.status !== "void" && payout.status !== "reversed") {
+          throw new AppError(409, "PAYOUT_BUSY", "A creator's payout is not taken back yet, so this campaign can't be rejected and refunded yet. Try again in a few minutes. Nothing has been changed.");
+        }
+      }
       const claim = await tx.campaignBookingItem.updateMany({
         where: { id: i.id, status: i.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
         data: { status: "refunded", lastError: null },
       });
       if (claim.count !== 1) throw new AppError(409, "BUSY", "An account is being published right now — try again in a minute.");
-      // A creator's post: void its payout (or refuse), and withdraw the creator's offer, in THIS transaction. A throw
-      // (the share is already on its way to the creator, or they have posted) undoes the whole rejection.
-      if (i.targetType === CREATOR_TARGET_TYPE) {
-        await prepareCreatorItemRefund(tx, i.id, { actor: staff(staffId), reason: "booking_rejected", closedReason: "booking_rejected", withdrawn });
-      }
       claimed.push({ id: i.id, pricePaise: i.pricePaise });
     }
     const pays = await tx.campaignPayment.findMany({
@@ -262,8 +371,6 @@ export async function reject(id: string, staffId: string, note: string) {
     await tx.campaignPayment.updateMany({ where: { id: { in: owed } }, data: { status: "refund_due" } });
   });
 
-  // The creators who had seen their offer are told it is gone (after the commit, never blocking the refunds below).
-  void sendOfferWithdrawnEmails(withdrawn).catch(() => undefined);
   const errors: string[] = [];
   let confirming = false;
   for (const item of claimed) {
@@ -318,8 +425,9 @@ async function markCreatorPosted(
   await verifyCreatorItem(bookingId, item.id, { staffId, url: o.url ?? null, expectedLinkKey: o.expectedLinkKey ?? null, ownershipCheckedByHand: o.ownershipCheckedByHand === true });
   void sendItemLiveEmail(item.id).catch((e) => console.error("[campaign] live email failed", e));
   await afterItemChange(bookingId, staffId);
-  // Nothing is paid in this phase (the seam does nothing); it must never undo a verification that already committed.
-  await onCreatorLinkVerified(item.id).catch((e) => console.error("[campaign] creator link follow-up failed", e));
+  // Schedules the release of the creator's payout (verified_at + the hold days, a day at least after a hand check). Nothing is
+  // released here: the reconciliation worker does it once the whole release gate holds. It must never undo a verification that already committed.
+  await onCreatorLinkVerified(item.id, staff(staffId)).catch((e) => console.error("[campaign] creator link follow-up failed", e));
   return getBookingForStaff(bookingId);
 }
 
@@ -335,19 +443,31 @@ export async function verifyCreatorLink(bookingId: string, itemId: string, staff
   return markCreatorPosted(bookingId, item, staffId, { ownershipCheckedByHand: o.ownershipCheckedByHand === true, expectedLinkKey: o.linkCanonicalKey });
 }
 
+/** What staff are told after a withdraw, from what became of the creator's payout and the client's refund. */
+function withdrawNoticeFor(r: CreatorRefundOutcome | null): string {
+  const head = "The offer is withdrawn and the post is marked refund due.";
+  if (!r || r.state === "skipped") return `${head} The creator's payout is taken back and the client refunded automatically: nothing more to do.`;
+  if (r.state === "refunded") return `${head} The creator's payout was taken back and the client's refund has been issued.`;
+  if (r.state === "refund_pending") return `${head} The creator's payout was taken back and the client's refund was requested: Razorpay is confirming it.`;
+  if (r.state === "blocked") return `${head} The creator's payout can't be taken back by itself: open the payout queue and look at it. The client is refunded once it has been.`;
+  if (r.state === "error") return `${head} The creator's payout was taken back, but Razorpay did not accept the client's refund yet. It is retried automatically; press Refund on the post to try again now.`;
+  return `${head} The creator's payout is still being taken back (Razorpay has not confirmed it). The client is refunded automatically as soon as it is: nothing more to do.`;
+}
+
 /**
- * Withdraw a creator's open offer: the post goes to refund_due, its planned payout is voided, and staff Refund it from the
- * row. NOTHING IS REFUNDED HERE. Refused (409) once the creator has submitted a link, unless staff say to discard it, and
- * always once the link has been verified.
+ * Withdraw a creator's open offer: the post goes to refund_due, its payout is voided or reversed, and the client is then
+ * refunded for it (automatically; whatever cannot finish yet is finished by the reconciliation worker). Refused (409) once the
+ * creator has submitted a link, unless staff say to discard it, and always once the link has been verified.
  */
 export async function withdrawOffer(bookingId: string, itemId: string, staffId: string, o: { discardSubmittedLink?: boolean } = {}) {
   await itemOf(bookingId, itemId);
   const offer = await prisma.creatorOffer.findFirst({ where: { bookingItemId: itemId, bookingId }, select: { id: true } });
   if (!offer) throw new AppError(404, "NOT_FOUND", "There is no creator offer for this post.");
-  await withdrawCreatorOffer(offer.id, { staffId, closedReason: "withdrawn", discardSubmittedLink: o.discardSubmittedLink === true, alert: false });
+  let settled: CreatorRefundOutcome | null = null;
+  await withdrawCreatorOffer(offer.id, { staffId, closedReason: "withdrawn", discardSubmittedLink: o.discardSubmittedLink === true, alert: false, onSettled: (r) => (settled = r) });
   return {
     ...(await getBookingForStaff(bookingId)),
-    withdrawNotice: "The offer is withdrawn and the post is marked refund due. Nothing has been refunded yet: press Refund on the post to return the client's money.",
+    withdrawNotice: withdrawNoticeFor(settled),
   };
 }
 
@@ -415,6 +535,56 @@ export async function markFailed(bookingId: string, itemId: string, staffId: str
   return getBookingForStaff(bookingId);
 }
 
+/** What staff are told after refunding a creator's post, from what became of the creator's payout and the client's refund. */
+function creatorRefundNotice(r: CreatorRefundOutcome): string | null {
+  switch (r.state) {
+    case "refunded":
+    case "skipped":
+      return null;
+    case "refund_pending":
+      return refundConfirmingNotice();
+    case "blocked":
+      return "This post is marked refund due, but the creator's payout can't be taken back by itself (it needs a person: open the payout queue). The client is refunded as soon as it has been.";
+    case "error":
+      return "The creator's payout was taken back, but Razorpay did not accept the client's refund yet. It is retried automatically, and you can press Refund again to try now.";
+    default:
+      return r.reason === "in_flight"
+        ? "This post is marked refund due. The creator's payout is still being set aside at Razorpay, so it can't be taken back yet. The client is refunded automatically as soon as it can be: nothing more to do."
+        : r.reason === "transfers_pending"
+          ? "This post is marked refund due. Another creator's payout on this campaign is still being set aside, and a refund can't start until it is. The client is refunded automatically a few minutes after: nothing more to do."
+          : r.reason === "no_refundable_balance"
+            ? "This post is marked refund due, but the payment has no refundable balance for it yet (a creator's share on it is still reserved). The client is refunded automatically as soon as it is free."
+            : "This post is marked refund due. The creator's payout is being taken back and Razorpay hasn't confirmed it yet. The client is refunded automatically as soon as it has: nothing more to do.";
+  }
+}
+
+/**
+ * Refund a creator's post: CLAIM it (the item → refund_due, the creator's offer withdrawn, refused with nothing changed if the
+ * creator has submitted a link or the payout is already released or paid out: one transaction under the booking lock), then
+ * UNWIND its payout (void it, or reverse the held transfer: outside any transaction) and only then refund the client, under the
+ * item's own ledger key. If the payout cannot be out of the way yet the post simply stays refund_due and the reconciliation worker
+ * refunds it as soon as it can: pressing Refund again is always safe and never refunds twice.
+ */
+async function refundCreatorItem(bookingId: string, item: { id: string; status: string; lastError: string | null; accountName: string }, staffId: string) {
+  const withdrawn: WithdrawnOffer[] = [];
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM campaign_bookings WHERE id = ${bookingId} FOR UPDATE`;
+    const claim = await tx.campaignBookingItem.updateMany({
+      where: { id: item.id, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+      // The hand-post reason no longer applies to an item that will not be posted; a refund_due item keeps what it already says.
+      data: { status: "refund_due", lastError: item.status === "refund_due" ? item.lastError : null },
+    });
+    if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
+    await prepareCreatorItemRefund(tx, item.id, { actor: staff(staffId), reason: "item_refunded", closedReason: "withdrawn", withdrawn });
+  });
+  // The creator, if they had seen the offer, is told not to post (once the claim is committed, whatever Razorpay answers next).
+  void sendOfferWithdrawnEmails(withdrawn).catch(() => undefined);
+  const r = await progressCreatorItemRefund(item.id, { actor: staff(staffId), reason: "item_refunded" });
+  if (r.state === "error") throw r.error;
+  await afterItemChange(bookingId, staffId);
+  return { ...(await getBookingForStaff(bookingId)), refundNotice: creatorRefundNotice(r) };
+}
+
 /** Refund one item that wasn't (and won't be) posted. */
 export async function refundItem(bookingId: string, itemId: string, staffId: string) {
   const item = await itemOf(bookingId, itemId);
@@ -422,7 +592,9 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
   if (!["manual_pending", "failed", "queued", "pending", "awaiting_creator", "refund_due"].includes(item.status)) {
     throw new AppError(409, "INVALID_STATE", "Only an item that wasn't posted can be refunded.");
   }
-  const isCreator = item.targetType === CREATOR_TARGET_TYPE;
+  // A creator's post is a sequence of its own (claim, unwind the payout, refund), because the creator's share may already be
+  // out of our balance. It must not look for a payment that can cover it first: until its payout is out of the way that share is reserved.
+  if (item.targetType === CREATOR_TARGET_TYPE) return refundCreatorItem(bookingId, item, staffId);
   const pay = await capturedPaymentFor(bookingId, item.pricePaise);
   if (!pay) {
     // A booking submitted without online payment has no payment row at all: the item is
@@ -433,25 +605,12 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     if (online > 0) throw new AppError(409, "NOTHING_TO_REFUND", "There is no captured payment that can cover this refund.");
   }
   // Claim the item first so two clicks cannot refund it twice.
-  const claimItem = (db: Pick<typeof prisma, "campaignBookingItem">) =>
-    db.campaignBookingItem.updateMany({
-      where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
-      // The hand-post reason no longer applies to an item that will not be posted.
-      data: { status: "refunded", lastError: null },
-    });
-  // A creator's post is claimed together with the end of its payout and its offer: ONE transaction, so a payout that
-  // can't be voided (the share is already on its way to the creator) refuses the refund and leaves everything as it was.
-  const withdrawn: WithdrawnOffer[] = [];
-  const claim = isCreator
-    ? await prisma.$transaction(async (tx) => {
-        const c = await claimItem(tx);
-        if (c.count === 1) await prepareCreatorItemRefund(tx, itemId, { actor: staff(staffId), reason: "item_refunded", closedReason: "withdrawn", withdrawn });
-        return c;
-      })
-    : await claimItem(prisma);
+  const claim = await prisma.campaignBookingItem.updateMany({
+    where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+    // The hand-post reason no longer applies to an item that will not be posted.
+    data: { status: "refunded", lastError: null },
+  });
   if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
-  // The creator, if they had seen the offer, is told not to post (once the claim is committed, whatever Razorpay answers next).
-  void sendOfferWithdrawnEmails(withdrawn).catch(() => undefined);
   if (!pay) {
     await logBookingEvent(bookingId, staff(staffId), `${item.accountName} removed from the booking (${item.pricePaise} paise) — no online payment on this booking; settle by hand if the client has already paid.`);
     await afterItemChange(bookingId, staffId);
@@ -473,9 +632,7 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     const stillClaimed = await prisma.campaignRefund
       .count({ where: { bookingItemId: itemId, origin: "ours", status: { in: ["requested", "pending"] } } })
       .catch(() => 0);
-    // A creator's item cannot go back to waiting for a creator (its offer is withdrawn and its payout void): the
-    // refund is simply still owed, so it is refund_due and staff press Refund again.
-    if (stillClaimed === 0) await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: isCreator ? "refund_due" : item.status } });
+    if (stillClaimed === 0) await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: item.status } });
     throw err;
   }
   // An unanswered request is NOT a failure: the item stays refunded (claimed) and the ledger row

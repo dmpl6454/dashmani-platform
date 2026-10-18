@@ -12,7 +12,8 @@ import { creatorMetaAppSecret } from "./creator-meta-config";
 import { LIVE_CONNECTION_STATUSES } from "./creator-view";
 import { button, creatorLink, esc, sendCreatorEmail } from "./creator-email";
 import { alertStaffOncePerHour } from "./payout-alert";
-import { ensurePayoutRefundable, payoutAllowsLink, withdrawOpenOffers, type PayoutActor, type WithdrawnOffer } from "./payout-ledger";
+import { payoutAllowsLink, payoutRefundGuard, withdrawOpenOffers, type PayoutActor, type WithdrawnOffer } from "./payout-ledger";
+import { progressCreatorItemRefunds, progressCreatorItemRefundsInBackground, type CreatorRefundOutcome, type RefundActor } from "./creator-refund.service";
 import { GRACE_KEEP, GRACE_KEY, LINK_CHECK_MAX_PAGES, alertMarker } from "./creator-offers-config";
 import { isIdentityKey, ownershipMatchKey, parseCreatorLink } from "./offer-link";
 
@@ -23,7 +24,7 @@ export { ownershipMatchKey } from "./offer-link";
 //
 //   approve    createOffersForBooking: one offer per creator item, the creator is emailed the exact ₹ they receive
 //   offered →  accepted  (creator, before the offer expires)   the item goes manual_pending: the creator posts by HAND
-//           →  declined  (creator)                              item refund_due, planned payout void, staff alerted
+//           →  declined  (creator)                              item refund_due, payout voided or reversed, client refunded, staff alerted
 //           →  expired   (the worker)                           same
 //           →  withdrawn (staff, or the missed-window worker)   same
 //   accepted   the creator pastes the post's link (submitOfferLink): it is checked against the creator's OWN recent
@@ -35,8 +36,11 @@ export { ownershipMatchKey } from "./offer-link";
 //   • Every transition is ONE set of conditional updateMany calls under the booking's row lock, so two racing actors
 //     (an accept and a withdraw, two tabs) cannot both win: the loser gets a 409 and nothing of theirs is written. The
 //     writes always go item → payout → offer, the same order refundItem uses, so the two never deadlock.
-//   • NOTHING REFUNDS ANYTHING HERE. A declined / expired / withdrawn offer moves its item to `refund_due`, voids the
-//     payout that was only planned, and tells staff; staff then press Refund (refundItem). The money path is theirs.
+//   • CLOSING AN OFFER IS TWO STEPS, AND ONLY THE FIRST IS A TRANSACTION. A declined / expired / withdrawn offer is CLAIMED in one
+//     short transaction (the item → `refund_due`, the offer closed): that is what stops the creator accepting or posting. Only
+//     AFTER it commits is the creator's payout unwound (a planned one voided, a held transfer reversed) and the brand refunded
+//     (creator-refund.service, reverse BEFORE refund). That part talks to Razorpay, so it is never inside the transaction; an
+//     item that cannot finish it yet stays `refund_due` and the reconciliation worker finishes it.
 //   • A creator-facing response is built from an explicit allow-list (toOfferRow / toOfferDetail): never the brand's
 //     price, the booking total, another item, the client's company or contact, share_bps or the gross (share × the
 //     brand's price would give the price away), or another creator. Another creator's offer is a 404, never a 403.
@@ -188,12 +192,12 @@ export interface CreatedOffers {
  *
  * It REFUSES, with nothing written (the caller's transaction rolls back, so the approval itself does not happen):
  *   409 MARKETPLACE_OFF  the creator marketplace is switched off (staff refund those items from their own rows first)
- *   409 NOT_READY        the booking has no `paid_at`, or a creator item has no payout row in a usable state
+ *   409 NOT_READY        the booking has no `paid_at`, or a creator item's payout is not `held` yet (the transfer is still being made, or failed)
  *   409 WINDOW_ENDED     the posting window has already closed, so there is nothing left for a creator to do
  * and warns (in `warnings`) when less than 24 hours of the window remain.
  *
  * An item whose page now belongs to someone else, or whose creator is no longer approved / has no active payout account,
- * gets NO offer: it goes refund_due, its planned payout is voided, and staff are alerted (alertOfferProblems, after the
+ * gets NO offer: it goes refund_due, and staff are alerted (alertOfferProblems, after the
  * commit). Everything else becomes one `offered` creator_offers row (payout_paise = the amount frozen at checkout) with
  * the item on `awaiting_creator`.
  */
@@ -286,8 +290,8 @@ export async function createOffersForBooking(tx: Tx, bookingId: string, actor: A
   for (const pr of out.problems) {
     const claim = await tx.campaignBookingItem.updateMany({ where: { id: pr.itemId, status: "pending" }, data: { status: "refund_due", lastError: PROBLEM_TEXT[pr.reason].slice(0, 500) } });
     if (claim.count !== 1) continue;
-    // A throw here (the payout is already past `planned`) undoes the whole approval, like reconcileCreatorOwnership.
-    await ensurePayoutRefundable(pr.itemId, { tx, actor: { type: actor.type === "staff" ? "staff" : "system", id: actor.id ?? null }, reason: pr.reason });
+    // Claim only. The payout (maybe `held` by now, which takes a Razorpay reversal) is made refundable by the caller
+    // AFTER this transaction commits (review.approve), never in here.
     await withdrawOpenOffers(tx, [pr.itemId], pr.reason === "page_changed" ? "page_taken_over" : "withdrawn", null);
   }
   if (out.problems.length > 0) {
@@ -453,8 +457,8 @@ export function closedOfferText(reason: string | null, neverEmailed = false): st
 type ClosedReason = "declined" | "expired" | "withdrawn" | "missed_window" | "creator_unavailable";
 type CloseKind = "declined" | "expired" | "withdrawn";
 
-/** The line on the item row (staff-only) when a closed offer sends its item to refund_due. */
-const refundDueText = (reason: ClosedReason, neverEmailed: boolean) => `${closedOfferText(reason, neverEmailed)} Refund this post.`;
+/** The line on the item row (staff-only) when a closed offer sends its item to refund_due. The refund follows by itself once the creator's payout is taken back. */
+const refundDueText = (reason: ClosedReason, neverEmailed: boolean) => `${closedOfferText(reason, neverEmailed)} The creator's payout is taken back and the client is refunded automatically.`;
 
 interface CloseArgs {
   offerId: string;
@@ -473,6 +477,8 @@ interface CloseArgs {
    * alert against the shared hourly ceiling drops the 13th of 15 offers that expire together.
    */
   alert: boolean;
+  /** Told what became of the creator's payout and the client's refund, when the close itself waited for it (a staff withdraw). */
+  onSettled?: (r: CreatorRefundOutcome | null) => void;
 }
 
 /** Why an offer can't be closed this way right now: the 409 the caller gets (checked under the lock, so it is the truth). */
@@ -495,14 +501,20 @@ function whyNotClosable(o: CreatorOffer, a: CloseArgs): AppError | null {
 }
 
 /**
- * Close an open offer: its item → refund_due, its planned payout → void, the offer → declined | expired | withdrawn,
- * ALL in one transaction under the booking lock, or none of it. A payout that is already past `planned` refuses the
- * whole thing (409 PAYOUT_NOT_REVERSIBLE_YET, see ensurePayoutRefundable): nothing changes and the offer stays open.
+ * Close an open offer, in TWO steps (reverse BEFORE refund, see creator-refund.service):
  *
- * ⚠️ TODO(Phase 4): ensurePayoutRefundable is called INSIDE this transaction because in Phase 3 it is a database-only void.
- * The real reversal of a transferred payout is a Razorpay call, and no network call may sit inside a transaction: Phase 4
- * has to split this into "claim the offer and the item (one short transaction, offer → a closing state)", then "reverse the
- * held transfer", then "finish (void + refund_due)", with the booking lock released across the call.
+ *   1. CLAIM, one short transaction under the booking lock: the item → refund_due and the offer → declined | expired |
+ *      withdrawn, or none of it. That is what stops the creator accepting or posting. The payout is only READ here:
+ *      one that is already released or paid out (or that needs a person) refuses the whole close with a 409 and nothing
+ *      changes (payoutRefundGuard: no Razorpay call, so it can sit inside the transaction).
+ *   2. UNWIND and REFUND, after the commit and outside any transaction: the payout is voided (planned) or its transfer
+ *      reversed (held), and only then is the client refunded for the post. Who waits for it depends on who is asking:
+ *        staff    → the withdraw waits, so the person sees what happened (`onSettled`);
+ *        creator  → a decline never waits on Razorpay: it runs in the background;
+ *        the worker (expiry, missed window) → nothing here: job 10 of the reconciliation worker (bounded, oldest first)
+ *                  does it, so a Razorpay outage can never turn a batch of 50 expiries into a 50-minute tick.
+ *      An item that cannot finish yet (a transfer still being made, a reversal Razorpay has not confirmed) stays
+ *      refund_due and the worker finishes it. Nothing is ever refunded before the payout is out of the way.
  */
 async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
   const found = await prisma.creatorOffer.findUnique({ where: { id: a.offerId } });
@@ -517,11 +529,14 @@ async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
     if (bad) throw bad;
     const neverEmailed = a.kind === "expired" && a.closedReason === "expired" && !o.notifiedAt;
 
-    // Item, then payout, then offer: the same order refundItem takes its rows in.
+    // Item, then payout (read only), then offer: the same order refundItem takes its rows in.
     const itemFrom = a.kind === "withdrawn" ? ["awaiting_creator", "manual_pending"] : ["awaiting_creator"];
     const item = await tx.campaignBookingItem.updateMany({ where: { id: o.bookingItemId, status: { in: itemFrom } }, data: { status: "refund_due", lastError: refundDueText(a.closedReason, neverEmailed) } });
     if (item.count !== 1) throw new AppError(409, "INVALID_STATE", "This post is no longer waiting on the creator. Refresh and try again.");
-    await ensurePayoutRefundable(o.bookingItemId, { tx, actor: a.actor, reason: a.closedReason });
+    const payout = await tx.creatorPayout.findUnique({ where: { bookingItemId: o.bookingItemId }, select: { status: true, reversedAt: true, razorpayTransferId: true, attempts: true } });
+    const refused = payoutRefundGuard(payout);
+    // A creator is never shown the reasons of a money state; they only learn that it cannot be done from their side.
+    if (refused) throw a.actor.type === "creator" ? new AppError(409, "OFFER_UNAVAILABLE", "This offer can't be changed right now. Contact us if you think that is a mistake.") : refused;
 
     const where: Prisma.CreatorOfferWhereInput =
       a.kind === "declined"
@@ -539,7 +554,7 @@ async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
     if (res.count !== 1) throw new AppError(409, "OFFER_CLOSED", "This offer changed while it was being closed. Refresh and try again.");
 
     const what = a.kind === "declined" ? "declined the offer" : a.kind === "expired" ? (neverEmailed ? "never got the offer email: the offer expired unseen" : a.closedReason === "creator_unavailable" ? "could not respond (their account is suspended or closed): the offer expired" : "did not respond: the offer expired") : a.closedReason === "missed_window" ? "did not post in the window: the offer was withdrawn" : "offer withdrawn";
-    await logBookingEvent(o.bookingId, { type: staffId ? "staff" : "system", id: staffId }, `Creator post on ${o.pageName}: ${what}. The post needs a refund (nothing has been refunded).`.slice(0, 500), tx);
+    await logBookingEvent(o.bookingId, { type: staffId ? "staff" : "system", id: staffId }, `Creator post on ${o.pageName}: ${what}. The post is refund due: the creator's payout is taken back first, then the client is refunded.`.slice(0, 500), tx);
     return { closed: await tx.creatorOffer.findUniqueOrThrow({ where: { id: o.id } }), before: { status: o.status, notifiedAt: o.notifiedAt, neverEmailed } };
   });
 
@@ -552,7 +567,7 @@ async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
         { label: "Page", value: closed.pageName },
         { label: "What happened", value: closedOfferText(a.closedReason, before.neverEmailed) },
         ...(a.note ? [{ label: "The creator wrote", value: clip(a.note, 300) }] : []),
-        { label: "What to do", value: "Open the campaign and press Refund on that post. Nothing is refunded automatically." },
+        { label: "What to do", value: "Nothing, unless this repeats: the creator's payout is taken back first and the client is then refunded automatically. If the post still shows “refund due” after an hour, open the campaign and press Refund on it." },
       ],
       `/campaigns/${closed.bookingId}`,
       // The marker proves the email WENT OUT; without it the worker's digest (cron alertPending) sends it again.
@@ -562,6 +577,15 @@ async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
   // The creator is told only when a person decided: the offer is withdrawn (staff, a refund, a rejected campaign), not when it lapsed, ran out of window or their own account is the reason.
   if (a.kind === "withdrawn" && a.closedReason === "withdrawn" && (before.status === "accepted" || before.notifiedAt)) {
     void sendOfferWithdrawnEmails([{ id: closed.id, creatorId: closed.creatorId, pageName: closed.pageName, platform: closed.platform, format: closed.format, status: before.status, notifiedAt: before.notifiedAt }]).catch(() => undefined);
+  }
+
+  // 2. UNWIND the payout and REFUND, outside the transaction (see above for who waits).
+  const settle = { actor: { type: a.actor.type === "staff" ? "staff" : a.actor.type === "creator" ? "creator" : "system", id: a.actor.id ?? null } satisfies RefundActor, reason: a.closedReason };
+  if (a.actor.type === "staff") {
+    const r = await progressCreatorItemRefunds([closed.bookingItemId], settle);
+    a.onSettled?.(r.get(closed.bookingItemId) ?? null);
+  } else if (a.actor.type === "creator") {
+    progressCreatorItemRefundsInBackground([closed.bookingItemId], settle);
   }
   return closed;
 }
@@ -585,7 +609,7 @@ export async function acceptOffer(creatorId: string, offerId: string, now: Date 
   return prisma.creatorOffer.findUniqueOrThrow({ where: { id: found.id } });
 }
 
-/** The creator declines (an offer that is still `offered`). The item goes refund_due; staff are told; nothing is refunded. */
+/** The creator declines (an offer that is still `offered`). The item goes refund_due; the payout is taken back and the client refunded (in the background); staff are told. */
 export async function declineOffer(creatorId: string, offerId: string, reason?: string | null, now: Date = new Date()): Promise<CreatorOffer> {
   await ownOffer(creatorId, offerId);
   return closeOffer({ offerId, kind: "declined", closedReason: "declined", actor: { type: "creator", id: creatorId }, creatorId, note: reason?.trim() || null, now, alert: true });
@@ -608,7 +632,7 @@ export async function expireOffer(offerId: string, now: Date = new Date(), opts:
  */
 export async function withdrawOffer(
   offerId: string,
-  o: { staffId?: string | null; closedReason?: "withdrawn" | "missed_window" | "creator_unavailable"; discardSubmittedLink?: boolean; alert?: boolean; now?: Date } = {},
+  o: { staffId?: string | null; closedReason?: "withdrawn" | "missed_window" | "creator_unavailable"; discardSubmittedLink?: boolean; alert?: boolean; now?: Date; onSettled?: (r: CreatorRefundOutcome | null) => void } = {},
 ): Promise<CreatorOffer> {
   return closeOffer({
     offerId,
@@ -618,6 +642,7 @@ export async function withdrawOffer(
     now: o.now ?? new Date(),
     discardSubmittedLink: o.discardSubmittedLink === true,
     alert: o.alert ?? !o.staffId,
+    onSettled: o.onSettled,
   });
 }
 
@@ -966,7 +991,7 @@ export async function verifyCreatorItem(
       );
     }
     const payout = await tx.creatorPayout.findUnique({ where: { bookingItemId: itemId }, select: { status: true } });
-    if (!payout || !payoutAllowsLink(payout.status)) throw new AppError(409, "OFFER_UNAVAILABLE", "This creator's payout is void or has failed, so the post can't be verified. Refund it instead.");
+    if (!payout || !payoutAllowsLink(payout.status)) throw new AppError(409, "OFFER_UNAVAILABLE", "This creator's payout is not set aside (held) any more, so the post can't be verified. Check the payout queue, or refund the post instead.");
     // ⚠️ SERIALISE EVERY VERIFY OF ONE POST. The booking lock above is per booking, and under READ COMMITTED a verify of ANOTHER
     // booking that has not committed yet is invisible to the count below: two staff members (or two tabs) verifying the same
     // post for two bookings at the same moment would both see 0 and both succeed. A transaction-scoped advisory lock on the

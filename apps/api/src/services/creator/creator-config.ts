@@ -70,7 +70,13 @@ export const creatorConfig = {
   offersCronEnabled: () => process.env.CREATOR_OFFERS_CRON_ENABLED !== "0",
   /** Most NEW Razorpay linked accounts we create per IST day, across every creator (a flood brake, not a quota). */
   payoutAccountDailyCap: () => envNum("CREATOR_PAYOUT_ACCOUNT_DAILY_CAP", 50, 1),
-  /** The reconciliation worker (account activation poll today; transfers, releases and expiry in later phases). */
+  /**
+   * The payout workers: the linked-account activation poll (cron/creator-payout.cron.ts) AND the money leg's reconciliation
+   * worker (cron/creator-payouts.cron.ts: transfers, holds, releases, settlements, reversals, the refunds of refund_due creator
+   * posts, the digest), and the transfer kick right after a capture. Kill switch: CREATOR_PAYOUT_CRON_ENABLED=0, which pauses
+   * ALL of them (restart to apply); nothing is lost, every payout simply waits in its state. The runtime pause of RELEASES alone,
+   * with no restart, is system_settings creatorPayouts.release = 'off' (payout.service releaseSwitchOn).
+   */
   payoutCronEnabled: () => process.env.CREATOR_PAYOUT_CRON_ENABLED !== "0",
   /**
    * Whether our creator id is sent to Razorpay as the linked account's `reference_id`. Razorpay refuses

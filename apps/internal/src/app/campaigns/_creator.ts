@@ -6,13 +6,6 @@ import { CREATOR_MIN_PAYOUT_PAISE, CREATOR_SHARE_MAX_BPS, CREATOR_TARGET_TYPE } 
 
 export { CREATOR_MIN_PAYOUT_PAISE, CREATOR_SHARE_MAX_BPS, CREATOR_TARGET_TYPE };
 
-/**
- * Whether "Verify link & release" also releases the creator's money today. It does not: verifying makes the creator's
- * link the live post and nothing else (the Route money leg is a later phase). The confirm dialog says so while this is
- * false, so a button called "release" never promises more than it does. The phase that wires the release flips it.
- */
-export const RELEASE_ON_VERIFY = false;
-
 // ── What a creator is paid ──────────────────────────────────────────────────────────────────────
 
 const BPS = 10_000;

@@ -55,8 +55,14 @@ import { creatorConfig } from "../src/services/creator/creator-config";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
 import { encryptToken } from "../src/utils/token-crypto";
 import { generateClientToken, generateCreatorToken, generateHrToken, generateToken } from "./helpers";
+import { FakeRazorpay } from "./fake-razorpay-route";
+import { holdPayoutsOf, routeTransfersToFake } from "./payout-fixtures";
+import { runRefundDueJob } from "../src/services/creator/creator-refund.service";
 
 const WEBHOOK_SECRET = "whsec_test_creator_core";
+
+// Transfers, reversals and disputes go to the stateful fake of Razorpay's Route API; orders and refunds stay with the small stub below.
+const route = new FakeRazorpay();
 
 // ── Razorpay: an order, a refund, a refund list ─────────────────────────────────
 
@@ -71,7 +77,8 @@ function stubRazorpay() {
   rz.calls.length = 0;
   rz.refunds.clear();
   rz.n = 0;
-  razorpayHttp.fetch = (async (url: any, init: any) => {
+  route.reset();
+  const own = (async (url: any, init: any) => {
     const u = String(url);
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(init.body) : null;
@@ -98,6 +105,7 @@ function stubRazorpay() {
     }
     return new Response("{}", { status: 404 });
   }) as typeof fetch;
+  razorpayHttp.fetch = routeTransfersToFake(route, own as never);
 }
 
 function webhook(event: string, entity: Record<string, unknown>, eventId = crypto.randomUUID()) {
@@ -235,6 +243,8 @@ describe("creator bookings, the core", () => {
     vi.stubEnv("CREATORS_ENABLED", "1");
     vi.stubEnv("CREATORS_MARKETPLACE_ENABLED", "1");
     vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
+    // The money leg (the transfer kick after a capture) is not under test here: payouts stay exactly where these tests put them.
+    vi.stubEnv("CREATOR_PAYOUT_CRON_ENABLED", "0");
     vi.stubEnv("CAMPAIGN_PUBLISH_ENABLED", "");
     invalidateCatalogueCache();
     resetPayoutAlertsForTests();
@@ -384,7 +394,7 @@ describe("creator bookings, the core", () => {
   const adminPost = (path: string, body?: unknown) => request(app).post(path).set("Authorization", `Bearer ${admin}`).send(body ?? {});
 
   /** Pick, check out, and let the capture webhook land. */
-  async function bookAndPay(cardIds: string[], o: { paymentId?: string; campaignType?: string } = {}) {
+  async function bookAndPay(cardIds: string[], o: { paymentId?: string; campaignType?: string; held?: boolean } = {}) {
     const booking = await seedBooking({ campaignType: o.campaignType });
     const picked = await pick(booking.id, cardIds);
     expect(picked.status).toBe(200);
@@ -393,6 +403,8 @@ describe("creator bookings, the core", () => {
     const paymentId = o.paymentId ?? `pay_${booking.id.slice(0, 8)}`;
     const cap = await webhook("payment.captured", { id: paymentId, order_id: co.body.data.orderId, amount: co.body.data.amount, currency: "INR" });
     expect(cap.status).toBe(200);
+    // `held`: the transfer leg has run (a post is only offered once its payout is held). By default the capture is left as it lands: `planned`.
+    if (o.held) await holdPayoutsOf(route, booking.id);
     const items = await prisma.campaignBookingItem.findMany({ where: { bookingId: booking.id }, orderBy: { createdAt: "asc" } });
     return { booking, items, paymentId, order: co.body.data, itemOf: (targetId: string) => items.find((i) => i.targetId === targetId)! };
   }
@@ -590,7 +602,7 @@ describe("creator bookings, the core", () => {
       const net = await seedNetwork();
       const booking = await seedBooking();
       expect((await pick(booking.id, [page.card.id])).status).toBe(200);
-      const paid = await bookAndPay([page.card.id]);
+      const paid = await bookAndPay([page.card.id], { held: true });
 
       vi.stubEnv("CREATORS_ENABLED", "0");
       // The catalogue is the network's alone.
@@ -1249,10 +1261,10 @@ describe("creator bookings, the core", () => {
     it("an unchanged page is approved as usual: no refund_due, no void, no alert", async () => {
       const page = await seedPage();
       const net = await seedNetwork();
-      const paid = await bookAndPay([page.card.id, net.card.id]);
+      const paid = await bookAndPay([page.card.id, net.card.id], { held: true });
       const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`);
       expect(res.status).toBe(200);
-      expect((await prisma.creatorPayout.findFirstOrThrow()).status).toBe("planned");
+      expect((await prisma.creatorPayout.findFirstOrThrow()).status).toBe("held");
       const items = await prisma.campaignBookingItem.findMany({ where: { bookingId: paid.booking.id } });
       // The creator's own page is never auto-published: it waits for the creator / staff, it is never queued.
       expect(items.every((i) => ["manual_pending", "awaiting_creator"].includes(i.status))).toBe(true);
@@ -1260,7 +1272,7 @@ describe("creator bookings, the core", () => {
       expect(alertSubjects()).not.toContain(PROBLEM_SUBJECT);
     });
 
-    it("a page that changed hands after the capture: its planned payout is voided, the item is refund_due, the rest goes ahead", async () => {
+    it("a page that changed hands after the capture (payout still planned): approval moves the item to refund_due and the rest goes ahead; the worker then voids the payout and refunds the item, once", async () => {
       const page = await seedPage();
       const other = await seedPage();
       const net = await seedNetwork();
@@ -1273,21 +1285,27 @@ describe("creator bookings, the core", () => {
       const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`);
       expect(res.status).toBe(200);
       expect(await prisma.creatorOffer.findUniqueOrThrow({ where: { id: stale.id } })).toMatchObject({ status: "withdrawn", closedReason: "page_taken_over" });
-      const row = await prisma.creatorPayout.findFirstOrThrow({ where: { bookingId: paid.booking.id } });
-      expect(row).toMatchObject({ status: "void", voidReason: "page_changed" });
-      expect((await prisma.creatorPayoutEvent.findMany({ where: { payoutId: row.id }, orderBy: { createdAt: "asc" } })).map((e) => e.toStatus)).toEqual(["planned", "void"]);
       const items = await prisma.campaignBookingItem.findMany({ where: { bookingId: paid.booking.id } });
-      expect(items.find((i) => i.targetId === page.asset.id)!.status).toBe("refund_due");
+      const creatorItem = items.find((i) => i.targetId === page.asset.id)!;
+      expect(creatorItem.status).toBe("refund_due");
       expect(items.find((i) => i.targetId === net.asset.id)!.status).toBe("manual_pending");
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("approved");
       await flushPayoutAlertsForTests();
       expect(alertSubjects()).toContain(PROBLEM_SUBJECT);
-      // Staff then refund it: the payout is already void, the brand gets that item's price back, the booking can settle.
-      const refund = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/items/${items.find((i) => i.targetId === page.asset.id)!.id}/refund`);
-      expect(refund.status).toBe(200);
+      // Approval claims only: nothing was refunded, and the payout is untouched. The worker does the rest, OUTSIDE any transaction.
+      expect(refundPosts()).toHaveLength(0);
+      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("planned");
+      await runRefundDueJob({ now: new Date(Date.now() + 10 * 60_000) });
+      const row = await prisma.creatorPayout.findFirstOrThrow({ where: { bookingId: paid.booking.id } });
+      expect(row).toMatchObject({ status: "void", voidReason: "refund_due" });
+      expect((await prisma.creatorPayoutEvent.findMany({ where: { payoutId: row.id }, orderBy: { createdAt: "asc" } })).map((e) => e.toStatus)).toEqual(["planned", "void"]);
+      // The brand gets that item's price back, the item is refunded, and doing it again refunds nothing more.
       expect(refundPosts()).toHaveLength(1);
       expect(refundPosts()[0].body.amount).toBe(250_000);
-      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: items.find((i) => i.targetId === page.asset.id)!.id } })).status).toBe("refunded");
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: creatorItem.id } })).status).toBe("refunded");
+      await runRefundDueJob({ now: new Date(Date.now() + 20 * 60_000) });
+      expect(refundPosts()).toHaveLength(1);
+      expect((await adminPost(`/v1/admin/campaigns/${paid.booking.id}/items/${creatorItem.id}/refund`)).status).toBe(409);
     });
 
     it("never touches a booking that is not awaiting approval", async () => {
@@ -1301,27 +1319,51 @@ describe("creator bookings, the core", () => {
       expect((await prisma.creatorPayout.findFirstOrThrow()).status).toBe("planned");
     });
 
-    it("an item with no payout row at all is refund_due, not approved blind", async () => {
+    it("an item with no payout row at all is refund_due, not approved blind; the worker then refunds it (nothing to unwind)", async () => {
       const page = await seedPage();
       const paid = await bookAndPay([page.card.id]);
       await prisma.creatorPayout.deleteMany({});
       const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`);
       expect(res.status).toBe(200);
       expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("refund_due");
+      await runRefundDueJob({ now: new Date(Date.now() + 10 * 60_000) });
+      expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("refunded");
+      expect(refundPosts()).toHaveLength(1);
     });
 
-    it("a changed-hands page whose payout is already past `planned` refuses the approval (Phase 4 will reverse it)", async () => {
+    it("a changed-hands page whose payout is already HELD is no longer a reason to refuse the approval: the share is reversed first, then the brand is refunded", async () => {
+      const page = await seedPage();
+      const other = await seedPage();
+      const paid = await bookAndPay([page.card.id], { held: true });
+      expect((await prisma.creatorPayout.findFirstOrThrow()).status).toBe("held");
+      await prisma.creatorAsset.update({ where: { id: page.asset.id }, data: { creatorId: other.creator.id } });
+      const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`);
+      expect(res.status).toBe(200);
+      expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("refund_due");
+      expect(refundPosts()).toHaveLength(0);
+      route.calls.length = 0;
+      await runRefundDueJob({ now: new Date(Date.now() + 10 * 60_000) });
+      const payout = await prisma.creatorPayout.findFirstOrThrow();
+      expect(payout).toMatchObject({ status: "reversed", amountReversedPaise: payout.amountPaise });
+      // The reversal came first, then the refund.
+      const order = [...route.calls.map((c) => `${c.method} ${c.path.replace(/\/[^/]*(?=\/reversals)/, "")}`), ...refundPosts().map(() => "refund")];
+      expect(order.some((x) => x.endsWith("/reversals"))).toBe(true);
+      expect(refundPosts()).toHaveLength(1);
+      expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("refunded");
+    });
+
+    it("⚠️ a changed-hands page whose payout is already RELEASED is never refunded around: the approval goes ahead, the item stays refund_due, and the money is left alone", async () => {
       const page = await seedPage();
       const other = await seedPage();
       const paid = await bookAndPay([page.card.id]);
-      await prisma.creatorPayout.updateMany({ data: { status: "held", razorpayTransferId: "trf_1" } });
+      await prisma.creatorPayout.updateMany({ data: { status: "released", razorpayTransferId: "trf_1", releasedAt: new Date() } });
       await prisma.creatorAsset.update({ where: { id: page.asset.id }, data: { creatorId: other.creator.id } });
-      const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`);
-      expect(res.status).toBe(409);
-      expect(res.body.error.code).toBe("PAYOUT_NOT_REVERSIBLE_YET");
-      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("paid_pending_review");
-      expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("pending");
-      expect((await prisma.creatorPayout.findFirstOrThrow()).status).toBe("held");
+      expect((await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`)).status).toBe(200);
+      await runRefundDueJob({ now: new Date(Date.now() + 10 * 60_000) });
+      expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("refund_due");
+      expect((await prisma.creatorPayout.findFirstOrThrow()).status).toBe("released");
+      expect(refundPosts()).toHaveLength(0);
+      expect(route.writes()).toHaveLength(0);
     });
   });
 
@@ -1587,7 +1629,7 @@ describe("creator bookings, the core", () => {
 
       // A creator-only booking.
       vi.mocked(sendEmail).mockClear();
-      const only = await bookAndPay([page.card.id]);
+      const only = await bookAndPay([page.card.id], { held: true });
       expect((await adminPost(`/v1/admin/campaigns/${only.booking.id}/approve`)).status).toBe(200);
       expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: only.booking.id } })).status).toBe("awaiting_creator");
       const onlyMail = await mailed("Approved");
@@ -1601,7 +1643,7 @@ describe("creator bookings, the core", () => {
 
       // A mixed booking: "scheduled" is said of OUR accounts only.
       vi.mocked(sendEmail).mockClear();
-      const mixed = await bookAndPay([net.card.id, page.card.id]);
+      const mixed = await bookAndPay([net.card.id, page.card.id], { held: true });
       expect((await adminPost(`/v1/admin/campaigns/${mixed.booking.id}/approve`)).status).toBe(200);
       const mixedMail = await mailed("Approved");
       expect(mixedMail.html).toContain("Posts on our own accounts are scheduled, and you'll get an email with each link as it goes live.");
@@ -1844,19 +1886,35 @@ describe("creator bookings, the core", () => {
 
   // ── The refund seam ───────────────────────────────────────────────────────────
 
-  describe("ensurePayoutRefundable: only a planned payout can be refunded around", () => {
-    async function plannedItem(status = "planned") {
+  describe("ensurePayoutRefundable: a creator item's payout is taken out of the way BEFORE its price is refunded", () => {
+    /** A creator item whose payout is `planned` (the capture's own state), or really `held` (the transfer made at the fake). */
+    async function payoutItem(state: "planned" | "held" | string = "planned") {
       const page = await seedPage();
-      const paid = await bookAndPay([page.card.id]);
+      const paid = await bookAndPay([page.card.id], { held: state === "held" });
       const item = paid.itemOf(page.asset.id);
-      if (status !== "planned") await prisma.creatorPayout.updateMany({ where: { bookingItemId: item.id }, data: { status } });
+      if (state !== "planned" && state !== "held") await prisma.creatorPayout.updateMany({ where: { bookingItemId: item.id }, data: { status: state } });
       return { page, paid, item };
     }
+    const reversals = () => route.calls.filter((c) => c.method === "POST" && /\/reversals$/.test(c.path));
+    /** An approved booking whose creator item waits for the creator, with the offer that goes with it. */
+    async function approvedWithOffer(state: "planned" | "held", o: { offerStatus?: string; linkSubmitted?: boolean } = {}) {
+      const { page, paid, item } = await payoutItem(state);
+      await prisma.campaignBooking.update({ where: { id: paid.booking.id }, data: { status: "approved" } });
+      await prisma.campaignBookingItem.update({ where: { id: item.id }, data: { status: (o.offerStatus ?? "offered") === "offered" ? "awaiting_creator" : "manual_pending" } });
+      const offer = await prisma.creatorOffer.create({
+        data: {
+          bookingId: paid.booking.id, bookingItemId: item.id, creatorId: page.creator.id, creatorAssetId: page.asset.id, pageName: page.asset.name, platform: "instagram", format: "post",
+          status: o.offerStatus ?? "offered", payoutPaise: 100_000, expiresAt: later(DAY),
+          ...(o.linkSubmitted ? { linkUrl: "https://www.instagram.com/p/abc/", linkSubmittedAt: new Date() } : {}),
+        },
+      });
+      return { page, paid, item, offer };
+    }
 
-    it("voids a planned payout: status void, a reason, and one audit row; a second call is a no-op", async () => {
-      const { item } = await plannedItem();
+    it("voids a planned payout: status void, a reason, one audit row, no Razorpay call; a second call is a no-op", async () => {
+      const { item } = await payoutItem();
       const first = await ensurePayoutRefundable(item.id, { actor: { type: "staff", id: staffId }, reason: "item_refunded" });
-      expect(first).toMatchObject({ voided: true });
+      expect(first).toMatchObject({ voided: true, reversed: false, state: "voided" });
       const row = await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } });
       expect(row).toMatchObject({ status: "void", voidReason: "item_refunded", id: first.payoutId });
       const events = await prisma.creatorPayoutEvent.findMany({ where: { payoutId: row.id }, orderBy: { createdAt: "asc" } });
@@ -1864,44 +1922,78 @@ describe("creator bookings, the core", () => {
         ["planned", null, "planned", "system", null],
         ["void", "planned", "void", "staff", staffId],
       ]);
+      expect(route.writes()).toHaveLength(0);
       const again = await ensurePayoutRefundable(item.id);
-      expect(again).toEqual({ payoutId: row.id, voided: false });
+      expect(again).toMatchObject({ payoutId: row.id, voided: false, reversed: false, state: "void" });
       expect(await prisma.creatorPayoutEvent.count({ where: { payoutId: row.id } })).toBe(2);
     });
 
     it("returns for an item with no payout at all", async () => {
-      expect(await ensurePayoutRefundable("no-such-item")).toEqual({ payoutId: null, voided: false });
+      expect(await ensurePayoutRefundable("no-such-item")).toEqual({ payoutId: null, voided: false, reversed: false, state: "no_payout" });
     });
 
-    it.each(["transfer_requested", "held", "release_requested", "released", "settled", "settlement_failed", "reversal_requested", "reversed", "failed", "needs_attention", "manual_required", "paid_manual"])(
-      "⚠️ throws 409 PAYOUT_NOT_REVERSIBLE_YET for %s and changes nothing",
-      async (status) => {
-        const { item } = await plannedItem(status);
-        await expect(ensurePayoutRefundable(item.id)).rejects.toMatchObject({ statusCode: 409, code: "PAYOUT_NOT_REVERSIBLE_YET" });
-        expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).status).toBe(status);
-        expect(await prisma.creatorPayoutEvent.count({ where: { kind: "void" } })).toBe(0);
-      },
-    );
+    it("⚠️ a HELD payout is reversed at Razorpay (explicit amount, one reversal) and only then reads refundable; a second call reverses nothing more", async () => {
+      const { item } = await payoutItem("held");
+      const before = await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } });
+      expect(before.status).toBe("held");
+      const first = await ensurePayoutRefundable(item.id, { actor: { type: "staff", id: staffId }, reason: "item_refunded" });
+      expect(first).toMatchObject({ voided: false, reversed: true, state: "reversed", payoutId: before.id });
+      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).status).toBe("reversed");
+      expect(reversals()).toHaveLength(1);
+      expect(reversals()[0].body).toMatchObject({ amount: before.amountPaise });
+      expect(reversals()[0].body).not.toHaveProperty("reverse_all");
+      expect(await ensurePayoutRefundable(item.id)).toMatchObject({ reversed: true, state: "reversed" });
+      expect(reversals()).toHaveLength(1);
+    });
 
-    it("runs inside the caller's transaction: a rollback un-voids it", async () => {
-      const { item } = await plannedItem();
-      await expect(
-        prisma.$transaction(async (tx) => {
-          await ensurePayoutRefundable(item.id, { tx });
-          throw new Error("roll back");
-        }),
-      ).rejects.toThrow("roll back");
-      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).status).toBe("planned");
+    it("a failed payout (Razorpay refused the transfer, so no money moved) is voided", async () => {
+      const { item } = await payoutItem("failed");
+      expect(await ensurePayoutRefundable(item.id)).toMatchObject({ voided: true, state: "voided" });
+      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).status).toBe("void");
+    });
+
+    it("an already reversed or void payout is refundable with no call and no new audit row", async () => {
+      for (const status of ["reversed", "void"]) {
+        const { item } = await payoutItem(status);
+        const events = await prisma.creatorPayoutEvent.count();
+        expect(await ensurePayoutRefundable(item.id)).toMatchObject({ state: status === "void" ? "void" : "reversed" });
+        expect(await prisma.creatorPayoutEvent.count()).toBe(events);
+      }
+      expect(route.writes()).toHaveLength(0);
+    });
+
+    it.each([
+      ["transfer_requested", "PAYOUT_BUSY"],
+      ["release_requested", "PAYOUT_BUSY"],
+      ["released", "PAYOUT_PAID_OUT"],
+      ["settled", "PAYOUT_PAID_OUT"],
+      ["settlement_failed", "PAYOUT_PAID_OUT"],
+      ["paid_manual", "PAYOUT_PAID_OUT"],
+      ["needs_attention", "PAYOUT_NEEDS_ATTENTION"],
+    ])("⚠️ %s: throws 409 %s and changes nothing (no refund may start)", async (status, code) => {
+      const { item } = await payoutItem(status);
+      const events = await prisma.creatorPayoutEvent.count();
+      await expect(ensurePayoutRefundable(item.id)).rejects.toMatchObject({ statusCode: 409, code });
+      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).status).toBe(status);
       expect(await prisma.creatorPayoutEvent.count({ where: { kind: "void" } })).toBe(0);
+      expect(refundPosts()).toHaveLength(0);
+      expect(route.writes()).toHaveLength(0);
+      expect(await prisma.creatorPayoutEvent.count()).toBe(events);
     });
 
-    it("refundItem on a creator item voids the payout, withdraws the offer, claims the item, and refunds that item's price once", async () => {
-      const { page, paid, item } = await plannedItem();
-      await prisma.campaignBooking.update({ where: { id: paid.booking.id }, data: { status: "approved" } });
-      await prisma.campaignBookingItem.update({ where: { id: item.id }, data: { status: "awaiting_creator" } });
-      const offer = await prisma.creatorOffer.create({
-        data: { bookingId: paid.booking.id, bookingItemId: item.id, creatorId: page.creator.id, creatorAssetId: page.asset.id, pageName: page.asset.name, platform: "instagram", format: "post", status: "offered", payoutPaise: 100_000, expiresAt: later(DAY) },
-      });
+    it("manual_required that may have moved money is a person's decision, not a refund's; one that provably never sent a transfer is voided", async () => {
+      const unproven = await payoutItem("manual_required");
+      await prisma.creatorPayout.updateMany({ where: { bookingItemId: unproven.item.id }, data: { attempts: 2, razorpayTransferId: "trf_maybe" } });
+      await expect(ensurePayoutRefundable(unproven.item.id)).rejects.toMatchObject({ statusCode: 409, code: "PAYOUT_NEEDS_ATTENTION" });
+      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: unproven.item.id } })).status).toBe("manual_required");
+
+      const proven = await payoutItem("manual_required");
+      await prisma.creatorPayout.updateMany({ where: { bookingItemId: proven.item.id }, data: { attempts: 0, razorpayTransferId: null } });
+      expect(await ensurePayoutRefundable(proven.item.id)).toMatchObject({ voided: true });
+    });
+
+    it("refundItem on a creator item (planned payout) voids the payout, withdraws the offer, claims the item, and refunds that item's price once", async () => {
+      const { paid, item, offer } = await approvedWithOffer("planned");
       const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/items/${item.id}/refund`);
       expect(res.status).toBe(200);
       expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("refunded");
@@ -1914,30 +2006,42 @@ describe("creator bookings, the core", () => {
       expect(refundPosts()).toHaveLength(1);
     });
 
-    it("⚠️ refundItem is REFUSED while the share is past `planned`: nothing refunded, nothing voided, item and offer as they were", async () => {
-      const { page, paid, item } = await plannedItem("held");
-      await prisma.campaignBooking.update({ where: { id: paid.booking.id }, data: { status: "approved" } });
-      await prisma.campaignBookingItem.update({ where: { id: item.id }, data: { status: "manual_pending" } });
-      const offer = await prisma.creatorOffer.create({
-        data: { bookingId: paid.booking.id, bookingItemId: item.id, creatorId: page.creator.id, creatorAssetId: page.asset.id, pageName: page.asset.name, platform: "instagram", format: "post", status: "accepted", payoutPaise: 100_000, expiresAt: later(DAY) },
-      });
+    it("⚠️ refundItem on a HELD payout reverses the transfer FIRST, then refunds: the reversal comes before the refund, once each", async () => {
+      const { paid, item, offer } = await approvedWithOffer("held", { offerStatus: "accepted" });
+      const mark = route.calls.length;
+      const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/items/${item.id}/refund`);
+      expect(res.status).toBe(200);
+      expect(await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).toMatchObject({ status: "reversed" });
+      expect((await prisma.creatorOffer.findUniqueOrThrow({ where: { id: offer.id } })).status).toBe("withdrawn");
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("refunded");
+      expect(refundPosts()).toHaveLength(1);
+      expect(reversals()).toHaveLength(1);
+      // The two logs are separate (the transfer leg is the fake's, the refund the file's own stub), so the order is read from the ledger:
+      // the payout was reversed before the refund row was written.
+      const payout = await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } });
+      const refund = await prisma.campaignRefund.findFirstOrThrow({ where: { bookingId: paid.booking.id } });
+      expect(payout.reversedAt).not.toBeNull();
+      expect(payout.reversedAt!.getTime()).toBeLessThanOrEqual(refund.createdAt.getTime());
+      const transfer = [...route.transfers.values()][0];
+      expect(transfer.amountReversed).toBe(transfer.amount);
+      expect(route.calls.length).toBeGreaterThan(mark);
+    });
+
+    it("⚠️ refundItem is REFUSED once the share is paid out: nothing refunded, nothing voided, item and offer as they were", async () => {
+      const { paid, item, offer } = await approvedWithOffer("held", { offerStatus: "accepted" });
+      await prisma.creatorPayout.updateMany({ where: { bookingItemId: item.id }, data: { status: "released" } });
       const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/items/${item.id}/refund`);
       expect(res.status).toBe(409);
-      expect(res.body.error.code).toBe("PAYOUT_NOT_REVERSIBLE_YET");
+      expect(res.body.error.code).toBe("PAYOUT_PAID_OUT");
       expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("manual_pending");
-      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).status).toBe("held");
+      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: item.id } })).status).toBe("released");
       expect((await prisma.creatorOffer.findUniqueOrThrow({ where: { id: offer.id } })).status).toBe("accepted");
       expect(refundPosts()).toHaveLength(0);
       expect(await prisma.campaignRefund.count()).toBe(0);
     });
 
     it("refundItem is refused once the creator has submitted their link: staff verify it instead", async () => {
-      const { page, paid, item } = await plannedItem();
-      await prisma.campaignBooking.update({ where: { id: paid.booking.id }, data: { status: "approved" } });
-      await prisma.campaignBookingItem.update({ where: { id: item.id }, data: { status: "manual_pending" } });
-      await prisma.creatorOffer.create({
-        data: { bookingId: paid.booking.id, bookingItemId: item.id, creatorId: page.creator.id, creatorAssetId: page.asset.id, pageName: page.asset.name, platform: "instagram", format: "post", status: "accepted", payoutPaise: 100_000, expiresAt: later(DAY), linkUrl: "https://www.instagram.com/p/abc/", linkSubmittedAt: new Date() },
-      });
+      const { paid, item } = await approvedWithOffer("planned", { offerStatus: "accepted", linkSubmitted: true });
       const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/items/${item.id}/refund`);
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("CREATOR_LINK_SUBMITTED");
@@ -1962,31 +2066,32 @@ describe("creator bookings, the core", () => {
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("partially_published");
     });
 
-    it("reject refunds every creator item PER ITEM, voids their payouts and withdraws their offers, all or nothing", async () => {
+    it("reject refunds every creator item PER ITEM (void or reverse first), withdraws their offers, and the whole rejection is refused while one share is paid out", async () => {
       const a = await seedPage({ price: 250_000 });
       const b = await seedPage({ price: 120_000 });
-      const paid = await bookAndPay([a.card.id, b.card.id]);
+      const paid = await bookAndPay([a.card.id, b.card.id], { held: true });
       await prisma.campaignBooking.update({ where: { id: paid.booking.id }, data: { status: "approved" } });
       await prisma.campaignBookingItem.updateMany({ where: { bookingId: paid.booking.id }, data: { status: "awaiting_creator" } });
       await prisma.creatorOffer.createMany({
         data: [a, b].map((p, i) => ({ bookingId: paid.booking.id, bookingItemId: paid.itemOf(p.asset.id).id, creatorId: p.creator.id, creatorAssetId: p.asset.id, pageName: p.asset.name, platform: "instagram", format: "post", status: i === 0 ? "offered" : "accepted", payoutPaise: 1, expiresAt: later(DAY) })),
       });
 
-      // One share is already on its way to its creator: the WHOLE rejection is refused, nothing half-done.
-      await prisma.creatorPayout.updateMany({ where: { bookingItemId: paid.itemOf(b.asset.id).id }, data: { status: "held" } });
+      // One share has already been paid out to its creator: the WHOLE rejection is refused, nothing half-done.
+      await prisma.creatorPayout.updateMany({ where: { bookingItemId: paid.itemOf(b.asset.id).id }, data: { status: "released" } });
       const refused = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/reject`, { note: "Not suitable" });
       expect(refused.status).toBe(409);
-      expect(refused.body.error.code).toBe("PAYOUT_NOT_REVERSIBLE_YET");
+      expect(refused.body.error.code).toBe("PAYOUT_PAID_OUT");
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("approved");
       expect((await prisma.campaignBookingItem.findMany({ where: { bookingId: paid.booking.id } })).every((i) => i.status === "awaiting_creator")).toBe(true);
-      expect((await prisma.creatorPayout.findMany({ orderBy: { amountPaise: "desc" } })).map((p) => p.status).sort()).toEqual(["held", "planned"]);
+      expect((await prisma.creatorPayout.findMany()).map((p) => p.status).sort()).toEqual(["held", "released"]);
       expect((await prisma.creatorOffer.findMany()).every((o) => ["offered", "accepted"].includes(o.status))).toBe(true);
       expect(refundPosts()).toHaveLength(0);
+      expect(reversals()).toHaveLength(0);
 
-      await prisma.creatorPayout.updateMany({ where: { status: "held" }, data: { status: "planned" } });
+      await prisma.creatorPayout.updateMany({ where: { status: "released" }, data: { status: "held" } });
       const ok = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/reject`, { note: "Not suitable" });
       expect(ok.status).toBe(200);
-      expect((await prisma.creatorPayout.findMany()).every((p) => p.status === "void" && p.voidReason === "booking_rejected")).toBe(true);
+      expect((await prisma.creatorPayout.findMany()).every((p) => p.status === "reversed")).toBe(true);
       expect((await prisma.creatorOffer.findMany()).every((o) => o.status === "withdrawn" && o.closedReason === "booking_rejected")).toBe(true);
       expect(refundPosts().map((r) => [r.key, r.body.amount]).sort()).toEqual(
         [[`rf-item-${paid.itemOf(a.asset.id).id}`, 250_000], [`rf-item-${paid.itemOf(b.asset.id).id}`, 120_000]].sort(),
@@ -2018,7 +2123,7 @@ describe("creator bookings, the core", () => {
     });
 
     it("markFailed is refused on a creator item (it would refund nothing and leave the offer and payout standing)", async () => {
-      const { paid, item } = await plannedItem();
+      const { paid, item } = await payoutItem();
       await prisma.campaignBooking.update({ where: { id: paid.booking.id }, data: { status: "approved" } });
       await prisma.campaignBookingItem.update({ where: { id: item.id }, data: { status: "manual_pending" } });
       const res = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/items/${item.id}/failed`, { note: "The creator went quiet" });

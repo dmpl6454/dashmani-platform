@@ -1,7 +1,7 @@
 /**
  * The offers worker (payout plan Phase 3): the clock-driven half of a booking offer. Each job is exercised with an explicit
  * `now`, so no test waits for a clock and none depends on the hour it runs at:
- *   (a) EXPIRE        an `offered` offer past its expiry is closed: item refund_due, planned payout void
+ *   (a) EXPIRE        an `offered` offer past its expiry is closed: item refund_due (the share stays held: job 10 of the payout worker takes it back and refunds)
  *   (b) MISSED WINDOW an `accepted` offer with no link at (the window's last IST day + 24 h) is withdrawn
  *   (c) RESEND        an offer whose email never went out is mailed again, with backoff, a bound and a staff alert
  *   (d) REMINDER      one launch-day email to a creator whose accepted offer has no link yet, 09:00-20:00 IST only
@@ -9,7 +9,7 @@
  *   (f) AFTER AN OUTAGE  open offers are extended by the silence and posting deadlines in it move, before anything closes
  * and its switches: dark with the marketplace off, CREATOR_OFFERS_CRON_ENABLED=0, and the overlap guard.
  *
- * Offers are seeded straight into the database (a booking in `approved`, an item, a `planned` payout, an offer); the transitions
+ * Offers are seeded straight into the database (a booking in `approved`, an item, a `held` payout, an offer); the transitions
  * themselves are the real service code. Razorpay is a stub that RECORDS every call: nothing here may ever call it.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -144,7 +144,7 @@ describe("creator offers worker", () => {
         payoutAccountId: crypto.randomUUID(),
         razorpayAccountId: `acc_${n}`,
         razorpayPaymentId: `pay_${n}`,
-        status: o.payoutStatus ?? "planned",
+        status: o.payoutStatus ?? "held", // an offer only exists once its share is held
         itemPricePaise: 250_000,
         shareBps: 4000,
         grossPaise: 100_000,
@@ -190,7 +190,7 @@ describe("creator offers worker", () => {
   // ── (a) expire ────────────────────────────────────────────────────────────────
 
   describe("expiry", () => {
-    it("closes every offer that is `offered` and past its expiry: item refund_due, planned payout void, staff told; leaves the others alone; calls Razorpay never", async () => {
+    it("closes every offer that is `offered` and past its expiry: item refund_due, share left held for the payout worker, staff told; leaves the others alone; calls Razorpay never", async () => {
       const now = new Date();
       const due1 = await seedOffer({ expiresAt: new Date(now.getTime() - 60_000) });
       const due2 = await seedOffer({ expiresAt: new Date(now.getTime() - 3 * HOUR) });
@@ -203,7 +203,7 @@ describe("creator offers worker", () => {
         expect(await offerOf(s.offer.id)).toMatchObject({ status: "expired", closedReason: "expired" });
         expect((await offerOf(s.offer.id)).expiredAt).not.toBeNull();
         expect(await itemOf(s)).toBe("refund_due");
-        expect(await payoutOf(s)).toBe("void");
+        expect(await payoutOf(s)).toBe("held"); // taking it back is a Razorpay call: the payout worker's job, never this worker's
         expect(await eventsOf(s.booking.id)).toContainEqual(expect.stringContaining("the offer expired"));
       }
       expect((await offerOf(notYet.offer.id)).status).toBe("offered");
@@ -218,15 +218,15 @@ describe("creator offers worker", () => {
       expect(await expireDueOffers(now)).toEqual({ expired: 0, failed: 0 });
     });
 
-    it("⚠️ one offer that cannot be closed (its payout is already past `planned`) stays open and is counted as a failure, and the next offer is still handled", async () => {
+    it("⚠️ one offer that cannot be closed (its payout was already released) stays open and is counted as a failure, and the next offer is still handled", async () => {
       const now = new Date();
-      const stuck = await seedOffer({ expiresAt: new Date(now.getTime() - 3 * HOUR), payoutStatus: "held" });
+      const stuck = await seedOffer({ expiresAt: new Date(now.getTime() - 3 * HOUR), payoutStatus: "released" });
       const fine = await seedOffer({ expiresAt: new Date(now.getTime() - HOUR) });
       const r = await expireDueOffers(now);
       expect(r).toEqual({ expired: 1, failed: 1 });
       expect(await offerOf(stuck.offer.id)).toMatchObject({ status: "offered", closedReason: null });
       expect(await itemOf(stuck)).toBe("awaiting_creator");
-      expect(await payoutOf(stuck)).toBe("held");
+      expect(await payoutOf(stuck)).toBe("released");
       expect((await offerOf(fine.offer.id)).status).toBe("expired");
       await nothingRefunded();
     });
@@ -265,7 +265,7 @@ describe("creator offers worker", () => {
       }
       expect(await offerOf(s.offer.id)).toMatchObject({ status: "accepted", closedReason: null });
       expect(await itemOf(s)).toBe("manual_pending");
-      expect(await payoutOf(s)).toBe("planned");
+      expect(await payoutOf(s)).toBe("held");
     });
 
     it("the negative control: a failure that is NOT a lost race still counts and is logged (an item that is not where its offer says)", async () => {
@@ -287,7 +287,7 @@ describe("creator offers worker", () => {
     // The window's last IST day 2026-11-08 ends at 2026-11-09 00:00 IST; the creator has 24 h more to send the link.
     const NOW = ist("2026-11-10", "12:00");
 
-    it("an accepted offer with no link at the window's end + 24 h: staff are alerted ONCE, then it is withdrawn (item refund_due, planned payout void); nothing is refunded", async () => {
+    it("an accepted offer with no link at the window's end + 24 h: staff are alerted ONCE, then it is withdrawn (item refund_due, share left held for the payout worker); nothing is refunded", async () => {
       const missed = await seedOffer({ status: "accepted", from: "2026-11-01", to: "2026-11-08" });
       const inGrace = await seedOffer({ status: "accepted", from: "2026-11-03", to: "2026-11-09" }); // closes 2026-11-10 00:00 IST + 24 h = 11-11 00:00
       const r = await closeMissedWindows(NOW);
@@ -295,7 +295,7 @@ describe("creator offers worker", () => {
       expect(await offerOf(missed.offer.id)).toMatchObject({ status: "withdrawn", closedReason: "missed_window", withdrawnById: null });
       expect((await offerOf(missed.offer.id)).postMissingAt).not.toBeNull();
       expect(await itemOf(missed)).toBe("refund_due");
-      expect(await payoutOf(missed)).toBe("void");
+      expect(await payoutOf(missed)).toBe("held");
       expect(await eventsOf(missed.booking.id)).toContainEqual(expect.stringContaining("did not post in the window"));
       await alertPending(NOW);
       await flushPayoutAlertsForTests();
@@ -328,7 +328,7 @@ describe("creator offers worker", () => {
       expect(r).toEqual({ missed: 0, failed: 0 });
       expect(await offerOf(s.offer.id)).toMatchObject({ status: "accepted", postMissingAt: null });
       expect(await itemOf(s)).toBe("manual_pending");
-      expect(await payoutOf(s)).toBe("planned");
+      expect(await payoutOf(s)).toBe("held");
       expect((await alertPending(NOW)).unverified).toBe(1);
       await flushPayoutAlertsForTests();
       expect(alertSubjects().filter((x) => x === UNVERIFIED_ALERT)).toHaveLength(1);
@@ -339,15 +339,15 @@ describe("creator offers worker", () => {
       expect((await eventsOf(s.booking.id)).filter((n) => n === alertMarker("unverified", s.offer.id))).toHaveLength(1);
     });
 
-    it("a verified post, a still-offered offer and an offer past `planned` are never auto-withdrawn", async () => {
+    it("a verified post, a still-offered offer and an offer whose share was already released are never auto-withdrawn", async () => {
       const verified = await seedOffer({ status: "accepted", link: "auto_ok", verified: true, itemStatus: "posted_manual" });
       const offered = await seedOffer({ status: "offered" });
       await prisma.creatorOffer.update({ where: { id: offered.offer.id }, data: { windowTo: day("2026-11-01"), windowFrom: day("2026-10-25") } });
       expect(await closeMissedWindows(NOW)).toEqual({ missed: 0, failed: 0 });
       expect((await offerOf(verified.offer.id)).status).toBe("accepted");
       expect((await offerOf(offered.offer.id)).status).toBe("offered");
-      // A payout that is past `planned` cannot be reversed yet: the offer stays, the failure is counted, and staff are told so.
-      const held = await seedOffer({ status: "accepted", payoutStatus: "held" });
+      // A payout that has already been released cannot be taken back by this worker: the offer stays, the failure is counted, and staff are told so.
+      const held = await seedOffer({ status: "accepted", payoutStatus: "released" });
       const r = await closeMissedWindows(NOW);
       expect(r).toMatchObject({ missed: 0, failed: 1 });
       expect((await alertPending(NOW)).missed).toBe(1);
@@ -363,7 +363,7 @@ describe("creator offers worker", () => {
       expect(stuckAlert[1].map((d: any) => d.value).join(" ")).toMatch(/could not be withdrawn automatically/);
       expect((await offerOf(held.offer.id)).postMissingAt).not.toBeNull();
       expect(await offerOf(held.offer.id)).toMatchObject({ status: "accepted" });
-      expect(await payoutOf(held)).toBe("held");
+      expect(await payoutOf(held)).toBe("released");
       await nothingRefunded();
     });
   });
@@ -379,8 +379,8 @@ describe("creator offers worker", () => {
       expect(await itemOf(real)).toBe("refund_due");
     }, 60_000);
 
-    it("⚠️ 50 offers whose withdraw keeps failing (a payout past `planned`) fall BEHIND fresh ones after their first try, so they cannot starve a fresh one for ever", async () => {
-      for (let i = 0; i < 50; i++) await seedOffer({ status: "accepted", from: "2026-10-01", to: "2026-10-08", payoutStatus: "held" });
+    it("⚠️ 50 offers whose withdraw keeps failing (a payout already released) fall BEHIND fresh ones after their first try, so they cannot starve a fresh one for ever", async () => {
+      for (let i = 0; i < 50; i++) await seedOffer({ status: "accepted", from: "2026-10-01", to: "2026-10-08", payoutStatus: "released" });
       const fresh = await seedOffer({ status: "accepted", from: "2026-11-01", to: "2026-11-08" });
       const errors = vi.spyOn(console, "error").mockImplementation(() => undefined); // 99 expected failures: keep the log readable
       try {
@@ -411,7 +411,7 @@ describe("creator offers worker", () => {
       for (const s of [submitted, verified]) {
         expect(await offerOf(s.offer.id)).toMatchObject({ status: "accepted", postMissingAt: null });
         expect(await itemOf(s)).toBe("manual_pending");
-        expect(await payoutOf(s)).toBe("planned");
+        expect(await payoutOf(s)).toBe("held");
       }
     });
 

@@ -28,6 +28,8 @@ import {
   fetchRouteProduct,
   createTransferFromPayment,
   listPaymentTransfers,
+  listAllPaymentTransfers,
+  listDisputes,
   fetchTransfer,
   setTransferHold,
   reverseTransfer,
@@ -894,6 +896,124 @@ describe("reverseTransfer", () => {
     const list = await listTransferReversals("trf_1");
     expect(calls[0]).toMatchObject({ method: "GET", url: "https://api.razorpay.com/v1/transfers/trf_1/reversals" });
     expect(list).toEqual([{ id: "rvrsl_1", transfer_id: "trf_1", amount: 50000, created_at: 1684822489, notes: {} }]);
+  });
+});
+
+// ── Exact lists: the transfers of a payment, disputes ───────────────────────────
+
+describe("exact lists (listAllPaymentTransfers, listDisputes)", () => {
+  const tr = (id: string, over: Record<string, unknown> = {}) => transferEntity({ id, ...over });
+  const dispute = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    entity: "dispute",
+    payment_id: "pay_1",
+    amount: 5000,
+    currency: "INR",
+    amount_deducted: 0,
+    reason_code: "chargeback",
+    reason_description: "Customer says it was not authorised, PAN ABCPE1234F",
+    respond_by: 1590604200,
+    status: "open",
+    phase: "chargeback",
+    created_at: 1590059211,
+    evidence: { amount: 5000, summary: "private words", billing_proof: ["doc_1"] },
+    ...over,
+  });
+  const collection = (items: unknown[]) => json({ entity: "collection", count: items.length, items });
+  const query = (c: Call) => new URL(c.url).searchParams;
+
+  it("asks for count and skip, but keeps reading until a page comes back EMPTY: that last page is the proof nothing was left", async () => {
+    stub(() => collection(query(calls[calls.length - 1]).get("skip") === "0" ? [tr("trf_1"), tr("trf_2")] : []));
+    const list = await listAllPaymentTransfers("pay_1");
+    expect(list.map((t) => t.id)).toEqual(["trf_1", "trf_2"]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].url).toBe("https://api.razorpay.com/v1/payments/pay_1/transfers?count=100&skip=0");
+    expect(query(calls[1]).get("skip")).toBe("2");
+  });
+
+  it("does NOT take a short page for a complete list: an endpoint that ignores `count` and returns its default page is read to the end", async () => {
+    // 25 transfers, a server that returns at most 10 and honours skip but not count.
+    const all = Array.from({ length: 25 }, (_, i) => tr(`trf_${i}`));
+    stub(() => {
+      const skip = Number(query(calls[calls.length - 1]).get("skip"));
+      return collection(all.slice(skip, skip + 10));
+    });
+    const list = await listAllPaymentTransfers("pay_1");
+    expect(list).toHaveLength(25);
+    expect(new Set(list.map((t) => t.id)).size).toBe(25);
+  });
+
+  it("a server that ignores `skip` (the same page every time) is UNKNOWN_RESULT, never a loop and never a partial answer", async () => {
+    stub(() => collection([tr("trf_1"), tr("trf_2")]));
+    const err = await failure(() => listAllPaymentTransfers("pay_1"));
+    expect(err.code).toBe("UNKNOWN_RESULT");
+    expect(isDefinitelyRejected(err)).toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("an entry that cannot be read, or more entries than we are willing to hold, make the whole list UNKNOWN_RESULT", async () => {
+    stub(() => collection([tr("trf_1"), { id: "trf_2", status: "processed" }]));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).code).toBe("UNKNOWN_RESULT");
+    calls.length = 0;
+    let n = 0;
+    stub(() => collection(Array.from({ length: 100 }, () => tr(`trf_${n++}`))));
+    const err = await failure(() => listAllPaymentTransfers("pay_1"));
+    expect(err.code).toBe("UNKNOWN_RESULT");
+    expect(calls.length).toBeLessThanOrEqual(6);
+  });
+
+  it("a refused or unreadable list is an error: an unread list is never an empty one", async () => {
+    stub(() => json({ error: { code: "BAD_REQUEST_ERROR", description: "no" } }, 400));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).status).toBe(400);
+    stub(() => new Response("<html>", { status: 200 }));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).code).toBe("UNKNOWN_RESULT");
+    stub(() => json({ nope: true }));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).code).toBe("UNKNOWN_RESULT");
+  });
+
+  it("refuses a payment id that is not an id, before any request", async () => {
+    stub(() => collection([]));
+    expect((await failure(() => listAllPaymentTransfers("../x"))).code).toBe("INVALID_REQUEST");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("an empty collection is an empty list, in one extra request", async () => {
+    stub(() => collection([]));
+    expect(await listAllPaymentTransfers("pay_1")).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("lists disputes in a time range, keeping only what money logic needs: no evidence, no reason text, no PAN", async () => {
+    stub(() => collection(query(calls[calls.length - 1]).get("skip") === "0" ? [dispute("disp_1"), dispute("disp_2", { status: "WON", payment_id: "pay_2" })] : []));
+    const list = await listDisputes({ fromEpoch: 1590000000, toEpoch: 1600000000 });
+    expect(calls[0].url).toBe("https://api.razorpay.com/v1/disputes?from=1590000000&to=1600000000&count=100&skip=0");
+    expect(list).toEqual([
+      { id: "disp_1", payment_id: "pay_1", status: "open", phase: "chargeback", amount: 5000, created_at: 1590059211 },
+      { id: "disp_2", payment_id: "pay_2", status: "won", phase: "chargeback", amount: 5000, created_at: 1590059211 },
+    ]);
+    expect(JSON.stringify(list)).not.toMatch(/ABCPE1234F|private words|doc_1|evidence/);
+  });
+
+  it("a dispute with no status is kept with a null status (the caller reads that as NOT won); one with no id or payment is unreadable", async () => {
+    stub(() => collection(query(calls[calls.length - 1]).get("skip") === "0" ? [dispute("disp_1", { status: undefined })] : []));
+    expect((await listDisputes({ fromEpoch: 1, toEpoch: 2 }))[0].status).toBeNull();
+    stub(() => collection([dispute("disp_1", { payment_id: undefined })]));
+    expect((await failure(() => listDisputes({ fromEpoch: 1, toEpoch: 2 }))).code).toBe("UNKNOWN_RESULT");
+  });
+
+  it("refuses a nonsense range before any request", async () => {
+    stub(() => collection([]));
+    for (const range of [{ fromEpoch: 10, toEpoch: 5 }, { fromEpoch: -1, toEpoch: 5 }, { fromEpoch: 1.5, toEpoch: 5 }, { fromEpoch: NaN, toEpoch: 5 }]) {
+      expect((await failure(() => listDisputes(range))).code, JSON.stringify(range)).toBe("INVALID_REQUEST");
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a refused disputes request (for example a range the API rejects) is an error, so the release gate fails CLOSED", async () => {
+    stub(() => json({ error: { code: "BAD_REQUEST_ERROR", description: "from is invalid" } }, 400));
+    const err = await failure(() => listDisputes({ fromEpoch: 1, toEpoch: 2 }));
+    expect(err).toBeInstanceOf(RazorpayError);
+    expect(err.status).toBe(400);
   });
 });
 

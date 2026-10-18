@@ -11,6 +11,9 @@ import {
 } from "../_ds";
 import { CREATOR_TARGET_TYPE, LinkChangedError, creatorItemStatus, frozenCreatorItems, isLinkChangedMessage, isOpenOffer, safeHref, type StaffOffer } from "../_creator";
 import { OfferPanel } from "./_offer";
+import { PayoutPanel, type PayoutPanelProps } from "./_payout";
+import { usePayoutDialog } from "../_payout-ui";
+import { useBookingPayouts } from "@/lib/hooks/use-creator-payouts";
 
 type Item = {
   id: string; targetType: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number;
@@ -58,6 +61,13 @@ export default function CampaignBookingDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
+  // The creator payouts of this campaign (only asked for when it has a creator's post). The API lists the open ones.
+  const pay = useBookingPayouts(b?.items.some((i) => i.targetType === CREATOR_TARGET_TYPE) ? id : null);
+  // One payout dialog for the page: the list under it refreshes by itself and must not take the dialog away.
+  const payoutDialog = usePayoutDialog({
+    onChanged: () => Promise.all([pay.mutate(), mutate()]),
+    onNotice: (n) => { setErr(""); setInfo(n.text); },
+  });
 
   const act = async (key: string, path: string, body?: unknown, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
@@ -99,7 +109,8 @@ export default function CampaignBookingDetail() {
       throw e;
     }
     await mutate();
-    setInfo("Verified. The creator's link is now the live post, and the client is emailed that it is live.");
+    setInfo("Verified. The creator's link is now the live post, and the client is emailed that it is live. The creator's payout is scheduled for release: its status is under the offer.");
+    void pay.mutate();
   };
 
   if (error && !b) return <div className="pt-8"><ErrorBar message={error.message || "Couldn't load this booking."} /></div>;
@@ -164,7 +175,7 @@ export default function CampaignBookingDetail() {
             {waitingOnCreator > 0 && <li>{waitingOnCreator === 1 ? "1 post is" : `${waitingOnCreator} posts are`} waiting for the creator to accept.</li>}
             {creatorsPosting > 0 && <li>{creatorsPosting === 1 ? "1 creator has" : `${creatorsPosting} creators have`} accepted and {creatorsPosting === 1 ? "is" : "are"} posting.</li>}
             {linksToVerify > 0 && <li><strong>{linksToVerify === 1 ? "1 link needs" : `${linksToVerify} links need`} you to verify {linksToVerify === 1 ? "it" : "them"}</strong>: open the link, then press Verify link &amp; release on that account.</li>}
-            {beingReturned > 0 && <li>{beingReturned === 1 ? "1 post is" : `${beingReturned} posts are`} being returned: press <strong>Refund this account</strong> on {beingReturned === 1 ? "it" : "each"} to give the client the money back.</li>}
+            {beingReturned > 0 && <li>{beingReturned === 1 ? "1 post is" : `${beingReturned} posts are`} being returned: the creator&apos;s payout is taken back first and the client is then refunded automatically within minutes. If {beingReturned === 1 ? "it" : "one"} still shows here after a while, press <strong>Refund this account</strong> on {beingReturned === 1 ? "it" : "that post"}.</li>}
           </ul>
         </div>
       )}
@@ -254,6 +265,16 @@ export default function CampaignBookingDetail() {
                 act={act}
                 offer={offerOf(i.id)}
                 onVerify={(hand, key, shown) => verifyCreatorLink(i.id, hand, key, shown)}
+                payout={{
+                  row: pay.data?.rows.find((r) => r.bookingItemId === i.id),
+                  loading: !pay.data && !pay.error,
+                  failed: !pay.data && !!pay.error,
+                  stale: !!pay.data && !!pay.error,
+                  onRetry: () => void pay.mutate(),
+                  releaseOn: pay.data?.switches?.release,
+                  onOpen: payoutDialog.open,
+                  postVerified: !!offerOf(i.id)?.linkVerifiedAt,
+                }}
               />
             ))}
           </section>
@@ -267,7 +288,7 @@ export default function CampaignBookingDetail() {
                 {autoOn
                   ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
                   : "Auto-publishing is switched off: approving sends every account to \"To post\" — someone posts each one by hand and pastes the link."}
-                {creatorItems.length > 0 && " Posts on creator pages are not posted by us: approving makes each creator an offer showing their exact payout, and emails it. They accept and post it by hand, and you verify the link they send. If a creator declines, lets the offer lapse or doesn't post in time, that post goes to \"refund due\" and you refund it. If approving is refused (creator bookings are switched off, or the posting window has ended), press Refund this account on each creator post below, then approve the rest. Once a creator has an open offer, the order is Withdraw offer, then Refund."}
+                {creatorItems.length > 0 && " Posts on creator pages are not posted by us: approving makes each creator an offer showing their exact payout, and emails it. They accept and post it by hand, and you verify the link they send. If a creator declines, lets the offer lapse or doesn't post in time, that post goes to \"refund due\": the creator's payout is taken back and the client is refunded automatically within minutes (Refund this account on the post does it now). If approving is refused (creator bookings are switched off, or the posting window has ended), press Refund this account on each creator post below, then approve the rest. Once a creator has an open offer, use Withdraw offer: it takes the creator's payout back and refunds the client."}
                 {" "}
                 {offline
                   ? `No online payment was taken — collect ${rupees(b.totalPaise)} from the client by hand. Rejecting charges nothing.`
@@ -346,6 +367,7 @@ export default function CampaignBookingDetail() {
           </section>
         </div>
       </div>
+      {payoutDialog.dialog}
     </div>
   );
 }
@@ -359,7 +381,7 @@ function offerSummaryText(x: { offered: number; refundDue: number; warnings: str
   const parts = [x.offered > 0
     ? `Approved. ${x.offered === 1 ? "1 offer was" : `${x.offered} offers were`} made to creators. Each creator is emailed separately: the offer below shows when, and says so if the email hasn't gone out.`
     : "Approved. No creator offer could be made."];
-  if (x.refundDue > 0) parts.push(`${x.refundDue === 1 ? "1 creator post can't" : `${x.refundDue} creator posts can't`} go ahead and ${x.refundDue === 1 ? "is" : "are"} marked "being returned": press Refund on ${x.refundDue === 1 ? "it" : "each"}.`);
+  if (x.refundDue > 0) parts.push(`${x.refundDue === 1 ? "1 creator post can't" : `${x.refundDue} creator posts can't`} go ahead and ${x.refundDue === 1 ? "is" : "are"} marked "being returned": ${x.refundDue === 1 ? "it is" : "each is"} refunded to the client automatically within minutes, once the creator's payout is out of the way (press Refund on ${x.refundDue === 1 ? "it" : "a post"} to do it now).`);
   return [...parts, ...x.warnings].join(" ");
 }
 
@@ -372,12 +394,14 @@ function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish, offline, busy, act, offer, onVerify }: {
+function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish, offline, busy, act, offer, onVerify, payout }: {
   item: Item; booking: Booking; files: ItemFiles | undefined; bookingId: string; postable: boolean; autoPublish: boolean; offline: boolean; busy: string | null;
   act: (key: string, path: string, body?: unknown, confirmText?: string) => Promise<boolean | undefined>;
   /** This post's creator offer (creator pages only). */
   offer: StaffOffer | undefined;
   onVerify: (ownershipCheckedByHand: boolean, linkCanonicalKey: string, shown: { check: string | null; detail: string | null }) => Promise<void>;
+  /** The creator's payout for this post (creator pages only), as the page read it. */
+  payout: Omit<PayoutPanelProps, "accountName" | "bookingId">;
 }) {
   const [url, setUrl] = useState(i.permalink ?? "");
   const [editing, setEditing] = useState(false);
@@ -447,6 +471,7 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
           onVerify={onVerify}
         />
       )}
+      {isCreator && <PayoutPanel accountName={i.accountName} bookingId={bookingId} {...payout} />}
       {!isCreator && postable && !live && files && files.files.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
           <span className="text-ds-t3">{files.custom ? "This account's files:" : "Files:"}</span>
@@ -499,7 +524,7 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
                 `refund-${i.id}`,
                 `/admin/campaigns/${bookingId}/items/${i.id}/refund`,
                 undefined,
-                `Refund ${rupees(i.pricePaise)} for ${i.accountName} to ${b.client.companyName}? The post won't happen and the creator's payout is cancelled.${i.status === "pending" ? " The creator hasn't been offered it yet, so nobody needs telling." : ""}`,
+                `Refund ${rupees(i.pricePaise)} for ${i.accountName} to ${b.client.companyName}? The post won't happen and the creator's payout is cancelled or taken back first.${i.status === "pending" ? " The creator hasn't been offered it yet, so nobody needs telling." : ""}`,
               )
             }
           >

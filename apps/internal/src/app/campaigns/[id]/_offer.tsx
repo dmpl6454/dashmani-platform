@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, ErrorBar, Pill, fmtDate, fmtWhen, rupees } from "../_ds";
 import {
-  LinkChangedError, OFFER_STATUS, RELEASE_ON_VERIFY, closedReasonText, dayOf, isOpenOffer, offerEmailState, offerExpiredNow, ownershipView, safeHref,
+  LinkChangedError, OFFER_STATUS, closedReasonText, dayOf, isOpenOffer, offerEmailState, offerExpiredNow, ownershipView, safeHref,
   type OwnershipView, type StaffOffer,
 } from "../_creator";
 
@@ -174,7 +174,7 @@ export function OfferPanel(p: OfferPanelProps) {
       )}
       {verified && (
         <p className="mt-2 text-ds-t3">
-          {RELEASE_ON_VERIFY ? "The creator's payout has been released." : "The creator's link is the live post. Their payout isn't released by verifying yet: that is a later step."}
+          The creator&apos;s link is the live post. Verifying scheduled their payout for release: where it stands, and what you can do about it, is in the payout panel below.
           {" "}This is final: the offer can no longer be withdrawn.
         </p>
       )}
@@ -204,7 +204,7 @@ export function OfferPanel(p: OfferPanelProps) {
               className={`${BTN_RED} w-full sm:w-auto`}
               disabled={anyBusy}
               onClick={() => {
-                if (!window.confirm(`Discard ${who}'s link and withdraw the offer for ${p.accountName}? Only do this if the link is not their post. The post goes to "refund due" and their payout is cancelled. ${who} is emailed not to post it (the email names the page only: no brand, no price). Nothing is refunded to the client until you press Refund on the post.`)) return;
+                if (!window.confirm(`Discard ${who}'s link and withdraw the offer for ${p.accountName}? Only do this if the link is not their post. The post goes to "refund due", their payout is taken back (a held transfer is reversed at Razorpay) and the client is then refunded for it automatically. ${who} is emailed not to post it (the email names the page only: no brand, no price). You are told right after how far it got.`)) return;
                 void p.onWithdraw(true);
               }}
             >
@@ -216,7 +216,7 @@ export function OfferPanel(p: OfferPanelProps) {
               className={`${BTN_RED} w-full sm:w-auto`}
               disabled={anyBusy}
               onClick={() => {
-                if (!window.confirm(`Withdraw the offer to ${who} for ${p.accountName}? The post goes to "refund due" and their payout is cancelled.${seen ? ` ${who} has seen this offer, so they are emailed not to post it (the email names the page only: no brand, no price).` : ""} Nothing is refunded to the client until you press Refund on the post.`)) return;
+                if (!window.confirm(`Withdraw the offer to ${who} for ${p.accountName}? The post goes to "refund due", their payout is taken back (a held transfer is reversed at Razorpay) and the client is then refunded for it automatically.${seen ? ` ${who} has seen this offer, so they are emailed not to post it (the email names the page only: no brand, no price).` : ""} You are told right after how far it got.`)) return;
                 void p.onWithdraw(false);
               }}
             >
@@ -365,7 +365,10 @@ function VerifyDialog({ accountName, platform, creatorName, clientName, linkUrl,
 
         <ul className="mt-3 grid gap-1 text-[12.5px] text-ds-t2 list-disc pl-5">
           <li>The creator&apos;s link becomes the live post{clientName ? <>, and {clientName} is emailed that it is live</> : ""}.</li>
-          <li>{RELEASE_ON_VERIFY ? "The creator's payout is released." : "No money moves yet: releasing the creator's payout isn't part of this step."}</li>
+          <li>
+            The creator&apos;s payout is scheduled for release, not paid at once: it goes out when its hold has run out
+            {needsTick ? " (at least a day, because ownership wasn't confirmed automatically)" : ""}, and only if every check still passes at that moment (no dispute open, no bank change pending, releases switched on). Until then you can pause it or take it back from the payout panel on this post.
+          </li>
           <li>It can&apos;t be undone from here.</li>
         </ul>
 

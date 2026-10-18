@@ -13,6 +13,9 @@ import { handleRouteEvent, isRouteEvent } from "./route-webhooks";
 import { pausePayoutsOfPayment } from "../creator/payout-pause";
 import { alertCreatorItemProblems, buildCreatorSnapshotFields, planCreatorPayouts, type CreatorItemProblem } from "../creator/payout-ledger";
 import { computePayout } from "../creator/payout-math";
+import { creatorConfig } from "../creator/creator-config";
+import { decideRefundAllowed } from "../creator/payout-policy";
+import { executePlannedPayout, reservedPaiseForPayment } from "../creator/payout.service";
 
 // Checkout, the Razorpay webhook, and refunds.
 //
@@ -30,6 +33,9 @@ import { computePayout } from "../creator/payout-math";
 //  • A refund key is ONE amount. What a `refund_due` payment still owes is refunded under
 //    `rf-stale-<id>`, and when it is owed AGAIN (another refund failed after the first was issued)
 //    under `rf-stale-<id>-g2`, `-g3` … (see staleRefundNext); `-r<N>` marks the retries of one of them.
+//  • A creator's share leaves our balance for their linked account within minutes of the capture (kickPayoutsForPayment,
+//    after the commit, never inside the claim). Until that share is reversed it is RESERVED: not refundable (see reservedOn),
+//    and no refund may start while a payout of the payment can still turn into a transfer (see claimRefund) [R4].
 //  • LOCK ORDER: a transaction that touches both locks the campaign_payments row FIRST and the
 //    campaign_refunds rows after (reconcileRefunds, releaseRefundClaim and recordRefund all do).
 //    Any new code that takes them in the other order can deadlock with a reconcile.
@@ -285,7 +291,11 @@ export async function handleWebhook(rawBody: Buffer, signature: string | undefin
 // ── Capture ─────────────────────────────────────────────────────────────────────
 
 type Tx = Prisma.TransactionClient;
-type CaptureOutcome = { kind: "unknown" } | { kind: "duplicate" } | { kind: "paid"; bookingId: string; creatorProblems: CreatorItemProblem[] } | { kind: "refund_due"; paymentId: string };
+type CaptureOutcome =
+  | { kind: "unknown" }
+  | { kind: "duplicate" }
+  | { kind: "paid"; bookingId: string; razorpayPaymentId: string; creatorPlanned: number; creatorProblems: CreatorItemProblem[] }
+  | { kind: "refund_due"; paymentId: string };
 
 const PAYABLE_BOOKING_STATUSES = ["awaiting_payment", "draft", "cancelled", "expired"] as const;
 
@@ -338,7 +348,7 @@ async function onCaptured(p: any, event: string): Promise<WebhookResult> {
       // payment id that won the claim above, from the terms frozen at checkout. A page that changed hands since
       // checkout gets a void row and its item goes refund_due. A failure rolls these back with everything else.
       const creator = await planCreatorPayouts(tx, pay.bookingId, razorpayPaymentId);
-      return { kind: "paid", bookingId: pay.bookingId, creatorProblems: creator.problems };
+      return { kind: "paid", bookingId: pay.bookingId, razorpayPaymentId, creatorPlanned: creator.planned, creatorProblems: creator.problems };
     }
 
     // Paid an outdated order, or paid twice: the money is ours to return. It is recorded as
@@ -360,6 +370,8 @@ async function onCaptured(p: any, event: string): Promise<WebhookResult> {
   if (outcome.kind === "duplicate") return { handled: true, duplicate: true };
   if (outcome.kind === "paid") {
     alertCreatorItemProblems(outcome.bookingId, outcome.creatorProblems);
+    // The creators' shares are set aside in the background: the webhook has 5 seconds to answer [R28], and the worker is the backstop.
+    if (outcome.creatorPlanned > 0) kickPayoutsForPayment(outcome.razorpayPaymentId);
     void sendStatusEmail(outcome.bookingId, "paid").catch((e) => console.error("[campaign] paid email failed", e));
     void notifyStaffPaid(outcome.bookingId).catch((e) => console.error("[campaign] staff email failed", e));
     return { handled: true };
@@ -446,12 +458,49 @@ export function refundableOn(pay: { amountPaise: number; refundedPaise: number }
 }
 
 /**
- * Phase 4 fills this in: the item price of every creator item on this payment whose payout is not
- * yet `reversed` or `void`. Such money has left our balance for the creator's linked account and
- * comes back only after the transfer is reversed, so it must not be refunded to the brand first.
+ * The item price of every creator item on this payment whose payout is not yet `reversed` or `void`
+ * (payout.service reservedPaiseForPayment). Such money has left our balance for the creator's linked
+ * account, or is about to, and comes back only after the transfer is reversed, so it must not be
+ * refunded to the brand first. A payment with no creator payouts (every network booking) reserves 0.
  */
-async function reservedOn(_db: Tx | typeof prisma, _paymentId: string): Promise<number> {
-  return 0;
+async function reservedOn(db: Tx | typeof prisma, paymentId: string): Promise<number> {
+  const pay = await db.campaignPayment.findUnique({ where: { id: paymentId }, select: { razorpayPaymentId: true } });
+  if (!pay?.razorpayPaymentId) return 0;
+  return reservedPaiseForPayment(pay.razorpayPaymentId, db);
+}
+
+// ── Setting the creators' shares aside, right after a capture ───────────────────────────────────
+
+const kicks = new Set<Promise<unknown>>();
+
+/**
+ * After the capture transaction has COMMITTED (never inside it), turn each of the payment's `planned` payouts into a held transfer
+ * in the creator's linked account (payout.service executePlannedPayout), one after the other, in the background. Fire and forget on
+ * purpose: Razorpay gives a webhook 5 seconds [R28], a transfer can take longer, and a failure here is never a reason to fail the
+ * webhook (the capture is final). Every step is a conditional claim, so a payout is transferred ONCE however many callers get here
+ * (this kick, the worker, a redelivered webhook): a duplicate capture event never reaches this line at all, because only the claim's
+ * winner returns "paid". The reconciliation worker (cron/creator-payouts.cron.ts) is the backstop, and nothing is created while the
+ * Route switch is off or the payout worker is stopped (CREATOR_PAYOUT_CRON_ENABLED=0).
+ */
+export function kickPayoutsForPayment(razorpayPaymentId: string): void {
+  if (!creatorConfig.payoutCronEnabled()) return;
+  const work = (async () => {
+    const rows = await prisma.creatorPayout.findMany({ where: { razorpayPaymentId, status: "planned" }, orderBy: { createdAt: "asc" }, select: { id: true } });
+    for (const r of rows) {
+      try {
+        await executePlannedPayout(r.id);
+      } catch (err) {
+        console.error(`[creator-payout] the transfer for payout ${r.id} could not be started: ${errorText(err)} (the worker retries)`);
+      }
+    }
+  })().catch((err) => console.error(`[creator-payout] kick failed: ${errorText(err)}`));
+  kicks.add(work);
+  void work.finally(() => kicks.delete(work));
+}
+
+/** Tests only: resolves once every kick started so far has finished. */
+export async function settlePayoutKicksForTests(): Promise<void> {
+  while (kicks.size > 0) await Promise.all([...kicks]);
 }
 
 export interface RefundIntent {
@@ -527,6 +576,14 @@ async function claimRefund(intent: RefundIntent, retried = false): Promise<Claim
       // Only after the existing-intent check: an intent that already finished stays answerable once the payment is fully refunded.
       if (!(REFUNDABLE_STATUSES as readonly string[]).includes(pay.status)) throw new AppError(409, "NOT_CAPTURED", "There is no captured payment to refund.");
 
+      // ⚠️ NO REFUND WHILE A TRANSFER CAN STILL BE CREATED. Razorpay refuses a transfer on a payment once a refund has started
+      // [R4], so a refund made while a creator's payout is still `planned` or `transfer_requested` would strand that creator's
+      // share (their payout would have to be paid by hand). Such a refund WAITS (the callers keep the money owed and the worker asks
+      // again): nothing has been written.
+      const payouts = await tx.creatorPayout.findMany({ where: { razorpayPaymentId: pay.razorpayPaymentId }, select: { id: true, status: true } });
+      if (payouts.length > 0 && !decideRefundAllowed(payouts, true).allowed) {
+        throw new AppError(409, "REFUND_WAITING", "A creator's payout on this payment is still being set aside, and a refund can't start until it is. It is refunded automatically a few minutes later.");
+      }
       if (refundableOn(pay, await reservedOn(tx, pay.id)) < intent.amountPaise) {
         throw new AppError(409, "REFUND_CONFLICT", "This refund is larger than what's left, or another refund is in progress.");
       }
@@ -1183,6 +1240,11 @@ export async function sweepRefundDue(opts: { limit?: number; now?: Date } = {}):
         dueErrorTicks.delete(p.id);
       }
     } catch (err) {
+      // A creator's payout on the payment is still being set aside: not a failure, and nothing was written. Back of the queue.
+      if (err instanceof AppError && err.code === "REFUND_WAITING") {
+        await touchDue(p.id);
+        continue;
+      }
       stats.errors++;
       await touchDue(p.id);
       const code = err instanceof AppError ? err.code : "";
@@ -1419,6 +1481,8 @@ async function resendFailedItemRefunds(now: Date, limit: number, stats: RefundSw
       await refundPaymentRow(v.pay.id, v.last.amountPaise, `item:${itemId.slice(0, 30)}`, system, { key: `rf-item-${itemId}`, reason: "item_refunded", itemId });
       stats.issued++;
     } catch (err) {
+      // Waiting for a creator's payout to be set aside is not a failure either: the next tick asks again.
+      if (err instanceof AppError && err.code === "REFUND_WAITING") continue;
       stats.errors++;
       // A refusal is a failed attempt (it left a row); anything else (no headroom, a database error) left nothing behind.
       const refused = err instanceof AppError && err.code === "REFUND_FAILED";

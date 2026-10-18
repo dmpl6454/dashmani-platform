@@ -45,10 +45,14 @@ import {
   withdrawOffer,
 } from "../src/services/creator/creator-offer.service";
 import { pageHasOpenWork, payoutAllowsLink } from "../src/services/creator/payout-ledger";
+import { payoutHoldDays } from "../src/services/creator/payout.service";
 import { isIdentityKey, parseCreatorLink } from "../src/services/creator/offer-link";
 import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { encryptToken } from "../src/utils/token-crypto";
 import { generateClientToken, generateCreatorToken, generateHrToken, generateToken } from "./helpers";
+import { FakeRazorpay } from "./fake-razorpay-route";
+import { holdPayoutsOf, routeTransfersToFake } from "./payout-fixtures";
+import { runRefundDueJob, settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
 
 const WEBHOOK_SECRET = "whsec_test_creator_offers";
 const DAY = 86_400_000;
@@ -70,13 +74,16 @@ const rz = {
   refundMode: "ok" as "ok" | "reject400" | "http500",
 };
 const refundPosts = () => rz.calls.filter((c) => c.method === "POST" && c.url.endsWith("/refund"));
+/** The stateful fake of Razorpay's money leg (transfers, reversals): this file's own stub below keeps answering orders and refunds. */
+const route = new FakeRazorpay();
 
 function stubRazorpay() {
   rz.calls.length = 0;
   rz.refunds.clear();
   rz.n = 0;
   rz.refundMode = "ok";
-  razorpayHttp.fetch = (async (url: any, init: any) => {
+  route.reset();
+  const own = (async (url: any, init: any) => {
     const u = String(url);
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(init.body) : null;
@@ -105,6 +112,7 @@ function stubRazorpay() {
     }
     return new Response("{}", { status: 404 });
   }) as typeof fetch;
+  razorpayHttp.fetch = routeTransfersToFake(route, own as never);
 }
 
 function webhook(event: string, entity: Record<string, unknown>, eventId = crypto.randomUUID()) {
@@ -281,9 +289,9 @@ describe("creator-offer helpers", () => {
     for (const [platform, url] of [["instagram", "https://m.instagram.com/reel/AbC/"], ["facebook", "https://mbasic.facebook.com/reel/12/"], ["facebook", "https://fb.watch/abc/"]]) expect(reason(platform, url), url).toBe("ok");
   });
 
-  it("payoutAllowsLink: planned, transfer_requested and held only", () => {
-    for (const s of ["planned", "transfer_requested", "held"]) expect(payoutAllowsLink(s)).toBe(true);
-    for (const s of ["void", "failed", "reversed", "reversal_requested", "needs_attention", "released", "settled", "manual_required"]) expect(payoutAllowsLink(s)).toBe(false);
+  it("payoutAllowsLink: HELD only (the money is set aside; a planned or in-flight transfer has not been confirmed)", () => {
+    expect(payoutAllowsLink("held")).toBe(true);
+    for (const s of ["planned", "transfer_requested", "void", "failed", "reversed", "reversal_requested", "needs_attention", "released", "settled", "manual_required"]) expect(payoutAllowsLink(s)).toBe(false);
   });
 });
 
@@ -303,6 +311,8 @@ describe("creator offers", () => {
     vi.stubEnv("CREATORS_ENABLED", "1");
     vi.stubEnv("CREATORS_MARKETPLACE_ENABLED", "1");
     vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
+    // The money leg (the transfer kick after a capture) is not under test here: payouts stay exactly where these tests put them.
+    vi.stubEnv("CREATOR_PAYOUT_CRON_ENABLED", "0");
     vi.stubEnv("CREATOR_OFFER_TTL_HOURS", "");
     vi.stubEnv("CAMPAIGN_PUBLISH_ENABLED", "");
     invalidateCatalogueCache();
@@ -423,13 +433,16 @@ describe("creator offers", () => {
   const aAuth = () => ({ Authorization: `Bearer ${admin}` });
 
   /** Pick, check out and let the capture webhook land: the booking is paid, its creator items have a `planned` payout. */
-  async function bookAndPay(cardIds: string[]) {
+  async function bookAndPay(cardIds: string[], o: { held?: boolean } = {}) {
+    const held = o.held ?? true;
     const booking = await seedBooking();
     expect((await request(app).put(`/v1/client/campaigns/${booking.id}/items`).set(cAuth()).send({ rateCardIds: cardIds })).status).toBe(200);
     const co = await request(app).post(`/v1/client/campaigns/${booking.id}/checkout`).set(cAuth());
     expect(co.status).toBe(200);
     const cap = await webhook("payment.captured", { id: `pay_${booking.id.slice(0, 8)}`, order_id: co.body.data.orderId, amount: co.body.data.amount, currency: "INR" });
     expect(cap.status).toBe(200);
+    // `held` (the default): the transfer leg has run, which a post needs before it is offered. `{ held: false }` leaves the capture as it lands: `planned`.
+    if (held) await holdPayoutsOf(route, booking.id);
     const items = await prisma.campaignBookingItem.findMany({ where: { bookingId: booking.id }, orderBy: { createdAt: "asc" } });
     return { booking, items, itemOf: (targetId: string) => items.find((i) => i.targetId === targetId)! };
   }
@@ -482,7 +495,7 @@ describe("creator offers", () => {
       expect(await itemStatus(item.id)).toBe("awaiting_creator");
       expect(await itemStatus(paid.itemOf(net!.asset.id).id)).toBe("manual_pending"); // a network item: exactly as before
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("approved");
-      expect((await payoutOf(item.id)).status).toBe("planned");
+      expect((await payoutOf(item.id)).status).toBe("held");
       expect(approveBody.offerSummary).toEqual({ offered: 1, refundDue: 0, warnings: [] });
       expect(approveBody.creatorOffers).toHaveLength(1); // staff see the offer on the booking
       expect(approveBody.creatorOffers[0]).toMatchObject({ id: offer.id, itemId: item.id, status: "offered", payoutPaise: 100_000 });
@@ -601,14 +614,24 @@ describe("creator offers", () => {
       const made = await prisma.$transaction((tx) => createOffersForBooking(tx, paid.booking.id, { type: "staff", id: staffId }));
       expect(made.offers).toHaveLength(0);
       expect(made.problems.map((p) => p.reason).sort()).toEqual(["creator_unavailable", "creator_unavailable", "page_changed"]);
+      // Inside the transaction the items are only CLAIMED (refund_due): a payout is never touched there, because taking a held transfer back is a Razorpay call.
       for (const p of [a, b, c]) {
         const item = paid.itemOf(p.asset.id);
         expect(await itemStatus(item.id)).toBe("refund_due");
-        expect(await payoutOf(item.id)).toMatchObject({ status: "void" });
+        expect(await payoutOf(item.id)).toMatchObject({ status: "held" });
       }
       expect(await prisma.creatorOffer.count()).toBe(0);
       expect(vi.mocked(sendEmail).mock.calls.filter((c) => /booking offer/i.test((c[0] as { subject: string }).subject))).toHaveLength(0);
       await noMoneyMoved();
+      // The worker then takes each share back FIRST and refunds the brand after: nothing is ever refunded around a held payout.
+      const job = await runRefundDueJob({ now: later(10 * 60_000) });
+      expect(job).toMatchObject({ checked: 3, refunded: 3, blocked: 0, errors: 0 });
+      for (const p of [a, b, c]) {
+        const item = paid.itemOf(p.asset.id);
+        expect(await itemStatus(item.id)).toBe("refunded");
+        expect(await payoutOf(item.id)).toMatchObject({ status: "reversed" });
+      }
+      expect(refundPosts()).toHaveLength(3);
     });
 
     it("a second pass cannot make a second offer for an item", async () => {
@@ -689,7 +712,7 @@ describe("creator offers", () => {
       expect(await offerOf(offer.id)).toMatchObject({ status: "accepted" });
       expect((await offerOf(offer.id)).acceptedAt).not.toBeNull();
       expect(await itemStatus(item.id)).toBe("manual_pending");
-      expect((await payoutOf(item.id)).status).toBe("planned");
+      expect((await payoutOf(item.id)).status).toBe("held");
       await noMoneyMoved();
       // Accepting twice is refused and changes nothing.
       const again = await accept(page, offer.id);
@@ -718,7 +741,7 @@ describe("creator offers", () => {
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("OFFER_UNAVAILABLE");
       expect(await itemStatus(item.id)).toBe("awaiting_creator");
-      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "planned" } });
+      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "held" } });
       await prisma.creator.update({ where: { id: page.creator.id }, data: { status: "suspended" } });
       expect((await accept(page, offer.id)).status).toBe(403);
       expect((await offerOf(offer.id)).status).toBe("offered");
@@ -726,7 +749,7 @@ describe("creator offers", () => {
   });
 
   describe("decline", () => {
-    it("the creator declines with a reason: the offer is declined, the item is refund_due, the planned payout is void, staff are told, and NOTHING is refunded", async () => {
+    it("the creator declines with a reason: the offer is declined, the item is refund_due at once, then the held share is taken back and the client refunded (in the background), staff are told", async () => {
       const { page, item, offer } = await offered();
       const res = await cPost(page.token, `/creator/offers/${offer.id}/decline`, { reason: "Not <b>my</b> audience" });
       expect(res.status).toBe(200);
@@ -734,22 +757,19 @@ describe("creator offers", () => {
       const row = await offerOf(offer.id);
       expect(row).toMatchObject({ status: "declined", closedReason: "declined", creatorNote: "Not my audience" }); // markup stripped
       expect(row.declinedAt).not.toBeNull();
-      expect(await itemStatus(item.id)).toBe("refund_due");
-      expect(await payoutOf(item.id)).toMatchObject({ status: "void", voidReason: "declined" });
+      // The answer to the creator never waits for Razorpay: the refund runs after it, and the test waits for it.
+      await settleCreatorRefundsForTests();
+      expect(await payoutOf(item.id)).toMatchObject({ status: "reversed" });
       const events = await prisma.creatorPayoutEvent.findMany({ where: { payoutId: (await payoutOf(item.id)).id }, orderBy: { createdAt: "asc" } });
-      expect(events.map((e) => [e.toStatus, e.actorType])).toEqual([["planned", "system"], ["void", "creator"]]);
+      expect(events.map((e) => e.toStatus)).toContain("reversed");
+      expect(events[events.length - 1]).toMatchObject({ toStatus: "reversed", actorType: "creator" });
       await flushPayoutAlertsForTests();
       expect(alertSubjects()).toContain(REFUND_ALERT);
       const body = String(vi.mocked(notifyAdminByEmail).mock.calls.find((c) => c[0] === REFUND_ALERT)![1].map((d: any) => d.value).join(" "));
       expect(body).toContain("declined");
-      expect(body).toContain("Nothing is refunded automatically");
-      await noMoneyMoved();
-      // The booking cannot settle with the item still owed back; staff then refund it, which is the ONLY thing that moves money.
-      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: item.bookingId } })).status).toBe("approved");
-      const refund = await staffPost(item.bookingId, item.id, "refund");
-      expect(refund.status).toBe(200);
+      expect(body).toContain("refunded automatically");
       expect(refundPosts()).toHaveLength(1);
-      expect(refundPosts()[0].body.amount).toBe(250_000);
+      expect(refundPosts()[0]).toMatchObject({ body: { amount: 250_000 } });
       expect(await itemStatus(item.id)).toBe("refunded");
     });
 
@@ -761,21 +781,33 @@ describe("creator offers", () => {
       expect((await cPost(page.token, `/creator/offers/${offer.id}/posted`, { url: "https://www.instagram.com/p/ABC/" })).status).toBe(409);
     });
 
-    it("⚠️ a payout already past `planned` refuses the decline with nothing changed (the reversal of a transferred payout is a later phase)", async () => {
+    it("⚠️ a payout that has already been released refuses the decline with nothing changed (the creator is told only that it can't be changed)", async () => {
       const { page, item, offer } = await offered();
-      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "held", razorpayTransferId: "trf_1" } });
+      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "released" } });
       const res = await cPost(page.token, `/creator/offers/${offer.id}/decline`, {});
       expect(res.status).toBe(409);
-      expect(res.body.error.code).toBe("PAYOUT_NOT_REVERSIBLE_YET");
+      expect(res.body.error.code).toBe("OFFER_UNAVAILABLE");
+      expect(JSON.stringify(res.body)).not.toMatch(/payout|released|reverse/i);
       expect((await offerOf(offer.id)).status).toBe("offered");
       expect(await itemStatus(item.id)).toBe("awaiting_creator");
-      expect((await payoutOf(item.id)).status).toBe("held");
+      expect((await payoutOf(item.id)).status).toBe("released");
+      await noMoneyMoved();
+    });
+
+    it("a share whose transfer is still being made does not block the decline: the item waits as refund_due, nothing is refunded, and the worker finishes it once the share is held", async () => {
+      const { page, item, offer } = await offered();
+      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "transfer_requested" } });
+      const res = await cPost(page.token, `/creator/offers/${offer.id}/decline`, {});
+      expect(res.status).toBe(200);
+      await settleCreatorRefundsForTests();
+      expect(await itemStatus(item.id)).toBe("refund_due");
+      expect((await payoutOf(item.id)).status).toBe("transfer_requested");
       await noMoneyMoved();
     });
   });
 
   describe("expire", () => {
-    it("an unanswered offer past its expiry is expired: item refund_due, planned payout void, staff told, nothing refunded", async () => {
+    it("an unanswered offer past its expiry is expired: item refund_due, staff told, nothing refunded until the worker has taken the held share back", async () => {
       const { item, offer } = await offered();
       await expect(expireOffer(offer.id)).rejects.toMatchObject({ code: "NOT_EXPIRED" }); // not due yet
       expect((await offerOf(offer.id)).status).toBe("offered");
@@ -784,10 +816,16 @@ describe("creator offers", () => {
       expect(closed).toMatchObject({ status: "expired", closedReason: "expired" });
       expect(closed.expiredAt).not.toBeNull();
       expect(await itemStatus(item.id)).toBe("refund_due");
-      expect(await payoutOf(item.id)).toMatchObject({ status: "void", voidReason: "expired" });
+      // The expiry worker never talks to Razorpay for a refund (a batch of expiries must not become a long tick): job 10 does it.
+      expect((await payoutOf(item.id)).status).toBe("held");
       await flushPayoutAlertsForTests();
       expect(alertSubjects()).toContain(REFUND_ALERT);
       await noMoneyMoved();
+      const job = await runRefundDueJob({ now: later(10 * 60_000) });
+      expect(job).toMatchObject({ checked: 1, refunded: 1 });
+      expect(await payoutOf(item.id)).toMatchObject({ status: "reversed" });
+      expect(await itemStatus(item.id)).toBe("refunded");
+      expect(refundPosts()).toHaveLength(1);
       // Only an `offered` offer expires: a second call, and an accepted offer, are refused.
       await expect(expireOffer(offer.id)).rejects.toMatchObject({ code: "OFFER_CLOSED" });
     });
@@ -802,21 +840,32 @@ describe("creator offers", () => {
   });
 
   describe("withdraw (staff)", () => {
-    it("withdraws an offered offer: item refund_due, payout void, creator can no longer accept, nothing refunded until staff press Refund", async () => {
+    it("withdraws an offered offer: the held share is taken back FIRST, the client is refunded automatically, and the creator can no longer accept", async () => {
       const { page, paid, item, offer } = await offered();
       const res = await staffPost(paid.booking.id, item.id, "withdraw-offer");
       expect(res.status).toBe(200);
-      expect(res.body.data.withdrawNotice).toMatch(/Nothing has been refunded yet/);
+      expect(res.body.data.withdrawNotice).toMatch(/payout was taken back and the client's refund has been issued/);
       expect(await offerOf(offer.id)).toMatchObject({ status: "withdrawn", closedReason: "withdrawn", withdrawnById: staffId });
-      expect(await itemStatus(item.id)).toBe("refund_due");
-      expect(await payoutOf(item.id)).toMatchObject({ status: "void", voidReason: "withdrawn" });
+      expect(await itemStatus(item.id)).toBe("refunded");
+      expect(await payoutOf(item.id)).toMatchObject({ status: "reversed" });
       expect((await accept(page, offer.id)).status).toBe(409);
-      await noMoneyMoved();
+      expect(refundPosts()).toHaveLength(1);
+      expect(refundPosts()[0]).toMatchObject({ body: { amount: 250_000 } });
+      expect([...rz.refunds.values()].flat().map((r) => r.key)).toEqual([`rf-item-${item.id}`]);
       // A staff member who withdrew does not get the "needs a refund" alert: they are looking at it.
       await flushPayoutAlertsForTests();
       expect(alertSubjects()).not.toContain(REFUND_ALERT);
-      expect((await staffPost(paid.booking.id, item.id, "refund")).status).toBe(200);
-      expect(refundPosts()).toHaveLength(1);
+    });
+
+    it("a withdraw whose share is still being transferred leaves the post refund_due, says so, and refunds nothing", async () => {
+      const { paid, item, offer } = await offered();
+      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "transfer_requested" } });
+      const res = await staffPost(paid.booking.id, item.id, "withdraw-offer");
+      expect(res.status).toBe(200);
+      expect(res.body.data.withdrawNotice).toMatch(/still being taken back|refunded automatically as soon as/);
+      expect((await offerOf(offer.id)).status).toBe("withdrawn");
+      expect(await itemStatus(item.id)).toBe("refund_due");
+      await noMoneyMoved();
     });
 
     it("the default alerting: a withdraw by a member of staff does not tell staff, one by the system does", async () => {
@@ -836,8 +885,8 @@ describe("creator offers", () => {
       await accept(page, offer.id);
       expect((await staffPost(paid.booking.id, item.id, "withdraw-offer")).status).toBe(200);
       expect((await offerOf(offer.id)).status).toBe("withdrawn");
-      expect(await itemStatus(item.id)).toBe("refund_due");
-      expect((await payoutOf(item.id)).status).toBe("void");
+      expect(await itemStatus(item.id)).toBe("refunded");
+      expect((await payoutOf(item.id)).status).toBe("reversed");
     });
 
     it("⚠️ refuses once the creator has submitted a link (409 LINK_SUBMITTED), unless staff say to discard it; never once verified", async () => {
@@ -852,7 +901,7 @@ describe("creator offers", () => {
       // Staff looked at the link and it is not the creator's post: the explicit way out.
       expect((await staffPost(paid.booking.id, item.id, "withdraw-offer", { discardSubmittedLink: true })).status).toBe(200);
       expect((await offerOf(offer.id)).status).toBe("withdrawn");
-      expect(await itemStatus(item.id)).toBe("refund_due");
+      expect(await itemStatus(item.id)).toBe("refunded");
 
       // A verified post is live: nothing can withdraw it.
       const b = await offered();
@@ -863,17 +912,18 @@ describe("creator offers", () => {
       expect(res.body.error.code).toBe("ALREADY_VERIFIED");
     });
 
-    it("answers 404 for an item with no offer, and refuses a payout past `planned` with nothing changed", async () => {
+    it("answers 404 for an item with no offer, and refuses a payout that was already released with nothing changed", async () => {
       const net = await seedNetwork();
       const p = await bookAndPay([net.card.id]);
       expect((await staffPost(p.booking.id, p.items[0].id, "withdraw-offer")).status).toBe(404);
       const { paid, item, offer } = await offered();
-      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "held" } });
+      await prisma.creatorPayout.update({ where: { bookingItemId: item.id }, data: { status: "released" } });
       const res = await staffPost(paid.booking.id, item.id, "withdraw-offer");
       expect(res.status).toBe(409);
-      expect(res.body.error.code).toBe("PAYOUT_NOT_REVERSIBLE_YET");
+      expect(res.body.error.code).toBe("PAYOUT_PAID_OUT");
       expect((await offerOf(offer.id)).status).toBe("offered");
       expect(await itemStatus(item.id)).toBe("awaiting_creator");
+      await noMoneyMoved();
     });
   });
 
@@ -955,7 +1005,8 @@ describe("creator offers", () => {
         expect(res.status).toBe(502);
         expect(res.body.error.code).toBe("REFUND_FAILED");
         expect(await itemStatus(x.item.id)).toBe("refund_due");
-        expect(await payoutOf(x.item.id)).toMatchObject({ status: "void", voidReason: "item_refunded" });
+        // The share was taken back BEFORE the refund was tried, and stays taken back while the refund is retried.
+        expect(await payoutOf(x.item.id)).toMatchObject({ status: "reversed" });
         expect(await offerOf(x.offer.id)).toMatchObject({ status: "withdrawn", closedReason: "withdrawn" });
         expect(await ledger()).toEqual([[`rf-item-${x.item.id}`, "failed"]]);
         expect(await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: x.paid.booking.id } })).toMatchObject({ status: "captured", refundedPaise: 0 });
@@ -966,7 +1017,8 @@ describe("creator offers", () => {
         expect(await ledger()).toEqual([[`rf-item-${x.item.id}`, "failed"], [`rf-item-${x.item.id}-r2`, "processed"]]);
         expect([...rz.refunds.values()].flat().map((r) => r.amount)).toEqual([250_000]); // one refund, once
         expect(await itemStatus(x.item.id)).toBe("refunded");
-        expect(await payoutOf(x.item.id)).toMatchObject({ status: "void" });
+        expect(await payoutOf(x.item.id)).toMatchObject({ status: "reversed" });
+        expect(route.calls.filter((c) => c.method === "POST" && /\/reversals$/.test(c.path))).toHaveLength(1); // taken back once, not again on the retry
       },
     );
 
@@ -978,7 +1030,7 @@ describe("creator offers", () => {
       expect(res.body.data.refundNotice).toBeTruthy();
       expect(await itemStatus(x.item.id)).toBe("refunded");
       expect(await offerOf(x.offer.id)).toMatchObject({ status: "withdrawn" });
-      expect(await payoutOf(x.item.id)).toMatchObject({ status: "void" });
+      expect(await payoutOf(x.item.id)).toMatchObject({ status: "reversed" });
     });
   });
 
@@ -1010,13 +1062,16 @@ describe("creator offers", () => {
   describe("the races", () => {
     /** The only end states an offer, its item and its payout may be in, whatever order the answers arrived in. */
     async function coherent(offerId: string, itemId: string) {
+      await settleCreatorRefundsForTests(); // a decline settles its refund in the background
       const o = (await offerOf(offerId)).status;
       const i = await itemStatus(itemId);
       const p = (await payoutOf(itemId)).status;
       const ok =
-        (o === "offered" && i === "awaiting_creator" && p === "planned") ||
-        (o === "accepted" && i === "manual_pending" && p === "planned") ||
-        (["declined", "expired", "withdrawn"].includes(o) && i === "refund_due" && p === "void");
+        (o === "offered" && i === "awaiting_creator" && p === "held") ||
+        (o === "accepted" && i === "manual_pending" && p === "held") ||
+        // Closed: still owed (the share not yet taken back: an expiry leaves that to the worker) or refunded after the share was taken back, never the other way round.
+        (["declined", "expired", "withdrawn"].includes(o) && i === "refund_due" && ["held", "reversed"].includes(p)) ||
+        (["declined", "expired", "withdrawn"].includes(o) && i === "refunded" && p === "reversed");
       expect(ok, `${o} / ${i} / ${p}`).toBe(true);
       return o;
     }
@@ -1067,8 +1122,11 @@ describe("creator offers", () => {
       expect([a.status, b.status].filter((s) => s === 200)).toHaveLength(1);
       expect([a.status, b.status].filter((s) => s === 409)).toHaveLength(1);
       expect(["declined", "withdrawn"]).toContain(await coherent(offer.id, item.id));
-      expect((await payoutOf(item.id)).status).toBe("void");
-      expect(await prisma.creatorPayoutEvent.count({ where: { kind: "void" } })).toBe(1); // voided once
+      // Whichever won, the share was taken back ONCE and the client refunded ONCE (the loser's settle, if any, found it done).
+      expect((await payoutOf(item.id)).status).toBe("reversed");
+      expect(route.calls.filter((c) => c.method === "POST" && /\/reversals$/.test(c.path))).toHaveLength(1);
+      expect(refundPosts()).toHaveLength(1);
+      expect(await itemStatus(item.id)).toBe("refunded");
     });
 
     it("the staff Refund and a creator accept on the same item never leave a creator with an accepted offer on a refunded item", async () => {
@@ -1759,8 +1817,14 @@ describe("creator offers", () => {
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("completed");
       const events = (await prisma.campaignBookingEvent.findMany({ where: { bookingId: paid.booking.id } })).map((e) => e.note ?? "");
       expect(events.some((n) => n.includes("Verified the creator's link") && n.includes(url))).toBe(true);
-      // The seam does nothing in this phase: the payout is exactly as it was and no money call was made.
-      expect(await payoutOf(item.id)).toMatchObject({ status: "planned", razorpayTransferId: null, releasedAt: null });
+      // Verifying only SCHEDULES the release (verified_at + the hold; at least a day when ownership was checked by hand): the share stays
+      // held now, and the worker releases it once the hold has run and its gate passes. Nothing is paid and nothing is refunded.
+      const po = await payoutOf(item.id);
+      expect(po).toMatchObject({ status: "held", releasedAt: null });
+      expect(po.razorpayTransferId).not.toBeNull();
+      expect(po.releaseAfter).not.toBeNull();
+      expect(Math.abs(po.releaseAfter!.getTime() - (row.linkVerifiedAt!.getTime() + payoutHoldDays() * DAY))).toBeLessThan(10_000);
+      expect(route.calls.filter((c) => c.method === "PATCH")).toHaveLength(0); // no hold was lifted
       expect(rz.calls.filter((c) => !c.url.endsWith("/orders"))).toHaveLength(0);
       await noMoneyMoved();
       // Verifying again changes nothing.
@@ -1885,7 +1949,7 @@ describe("creator offers", () => {
     const nothingVerified = async (x: Awaited<ReturnType<typeof withStoredLink>>) => {
       expect(await itemStatus(x.item.id)).toBe("manual_pending");
       expect(await offerOf(x.offer.id)).toMatchObject({ status: "accepted", linkVerifiedAt: null, linkVerifiedById: null });
-      expect((await payoutOf(x.item.id)).status).toBe("planned");
+      expect((await payoutOf(x.item.id)).status).toBe("held"); // never released by a refused verification
     };
 
     it.each([
@@ -2151,7 +2215,7 @@ describe("creator offers", () => {
       const resend = await cPost(a.page.token, `/creator/offers/${a.offer.id}/posted`, { url: "https://www.instagram.com/p/Another03/" });
       expect([resend.status, resend.body.error.code]).toEqual([409, "ALREADY_VERIFIED"]);
       // Once its payout has settled (the money leg, a later phase) nothing holds the page or the account.
-      expect(await pageHasOpenWork(a.page.asset.id)).toBe(true); // the payout is still planned: the page stays busy for THAT reason
+      expect(await pageHasOpenWork(a.page.asset.id)).toBe(true); // the payout is still held: the page stays busy for THAT reason
       await prisma.creatorPayout.update({ where: { bookingItemId: a.item.id }, data: { status: "settled" } });
       expect(await pageHasOpenWork(a.page.asset.id)).toBe(false);
       expect((await request(app).delete("/v1/creator/me").set("Authorization", `Bearer ${a.page.token}`)).status).toBe(200);
@@ -2167,18 +2231,20 @@ describe("creator offers", () => {
       res = await staffPost(paid.booking.id, item.id, "failed", { note: "creator went quiet" });
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("CREATOR_ITEM");
-      expect(await itemStatus(item.id)).toBe("refund_due");
-      expect((await payoutOf(item.id)).status).toBe("void");
+      // A staff withdraw takes the share back and refunds the client in the same request, so the post is already refunded.
+      expect(await itemStatus(item.id)).toBe("refunded");
+      expect((await payoutOf(item.id)).status).toBe("reversed");
     });
 
-    it("withdraw then refund is the whole way out, and only the refund moves money", async () => {
+    it("withdraw is the whole way out: the share is taken back first and the client refunded once; the Refund button afterwards is refused and moves nothing more", async () => {
       const { paid, item } = await offered();
-      await staffPost(paid.booking.id, item.id, "withdraw-offer");
-      await noMoneyMoved();
-      expect((await staffPost(paid.booking.id, item.id, "refund")).status).toBe(200);
+      expect((await staffPost(paid.booking.id, item.id, "withdraw-offer")).status).toBe(200);
       expect(refundPosts()).toHaveLength(1);
       expect(refundPosts()[0].body.amount).toBe(250_000);
       expect(await itemStatus(item.id)).toBe("refunded");
+      expect((await payoutOf(item.id)).status).toBe("reversed");
+      expect((await staffPost(paid.booking.id, item.id, "refund")).status).toBe(409);
+      expect(refundPosts()).toHaveLength(1);
     });
   });
 });

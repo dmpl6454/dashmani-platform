@@ -14,6 +14,7 @@ import { startPostingWatchCron } from "./cron/posting-watch.cron";
 import { startCampaignCrons } from "./cron/campaign.cron";
 import { startCreatorCrons } from "./cron/creator.cron";
 import { startCreatorPayoutCron } from "./cron/creator-payout.cron";
+import { startCreatorPayoutsCron } from "./cron/creator-payouts.cron";
 import { startCreatorOffersCron } from "./cron/creator-offers.cron";
 import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
@@ -254,8 +255,17 @@ app.listen(PORT, () => {
   // strands an account that is already being reconciled.
   startCreatorPayoutCron();
 
+  // Creator payouts, the MONEY LEG: every 5 min, first run +3 min, ≤20 Razorpay calls a tick. Makes the held transfers, releases the
+  // ones that are due (behind the release gate), polls settlements, finishes reversals, refunds the creator posts that are owed
+  // (reverse BEFORE refund), and sends the daily digest of anything stuck. It is the backstop of what is also tried inline (the
+  // kick after a capture, a staff click). Kill switch CREATOR_PAYOUT_CRON_ENABLED=0 (also stops the kick); CREATOR_ROUTE_ENABLED off
+  // stops only NEW transfers; system_settings creatorPayouts.release='off' pauses all releases without a restart. A no-op without the
+  // Razorpay keys.
+  startCreatorPayoutsCron();
+
   // Creator booking offers: every 5 min, first run +6 min. Expires offers nobody answered, withdraws accepted offers whose
-  // creator never posted (window end + 24 h), and sends the launch-day reminder. Nothing is refunded here: staff do that.
+  // creator never posted (window end + 24 h), and sends the launch-day reminder. It only closes the offers: the creator's payout is taken
+  // back and the client refunded by the payout worker above (reverse BEFORE refund).
   // Does nothing unless the marketplace is on (CREATORS_MARKETPLACE_ENABLED + CREATOR_ROUTE_ENABLED + the Razorpay keys);
   // kill switch CREATOR_OFFERS_CRON_ENABLED=0.
   startCreatorOffersCron();

@@ -867,6 +867,94 @@ export async function listTransferReversals(transferId: string) {
   );
 }
 
+// ── Exact collections (transfers of a payment, disputes) ─────────────────────────
+
+const LIST_PAGE = 100;
+const LIST_MAX_PAGES = 5;
+
+/**
+ * Reads a whole Razorpay collection. ⚠️ Used where "the list shows nothing" is a MONEY decision (a
+ * transfer that did not show up in the payment's transfer list is sent again; a dispute that does not
+ * show up lets a release through), so a short list must never be mistaken for a complete one.
+ *
+ *  • It asks for `count` and `skip`, but never TRUSTS them: an endpoint whose paging we have not
+ *    verified (the payment's transfer list is documented with neither parameter) may ignore both and
+ *    return its default page, and a default page looks exactly like a short complete list. So it keeps
+ *    paging until a page comes back EMPTY, and the final empty page is the proof that nothing was left.
+ *  • An entry seen twice means the server ignored `skip` (the same page again): the list cannot be
+ *    read exactly, so it throws UNKNOWN_RESULT instead of looping or returning a partial answer.
+ *  • An entry we cannot parse, or more than LIST_PAGE × LIST_MAX_PAGES entries, also throws
+ *    UNKNOWN_RESULT. Callers treat that as "unchecked" and fail closed.
+ * Costs one extra request over the number of pages, on purpose.
+ */
+async function listExact<T extends { id: string }>(path: string, base: QueryPairs, parse: (v: unknown) => T | null, what: string): Promise<T[]> {
+  const out: T[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page <= LIST_MAX_PAGES; page++) {
+    const items = await request(
+      "GET",
+      path,
+      { query: [...base, ["count", LIST_PAGE], ["skip", out.length]] },
+      (json) => {
+        if (!isObj(json) || !Array.isArray(json.items)) return null;
+        const parsed = json.items.map(parse);
+        return parsed.every((p): p is T => p !== null) ? parsed : null;
+      },
+      what,
+    );
+    if (items.length === 0) return out;
+    if (page === LIST_MAX_PAGES) break; // data after the last allowed page: more than we are willing to hold
+    for (const it of items) {
+      if (seen.has(it.id)) throw new RazorpayError(`Razorpay's ${what} paging could not be relied on`, 200, "UNKNOWN_RESULT");
+      seen.add(it.id);
+      out.push(it);
+    }
+  }
+  throw new RazorpayError(`Razorpay returned more than ${LIST_PAGE * LIST_MAX_PAGES} entries in one ${what}`, 200, "UNKNOWN_RESULT");
+}
+
+/**
+ * GET /v1/payments/:id/transfers [R3], EVERY transfer of the payment (see listExact). This, not
+ * listPaymentTransfers, is what the "did our create call land?" decision reads.
+ */
+export async function listAllPaymentTransfers(paymentId: string): Promise<RazorpayTransfer[]> {
+  return listExact(`/payments/${pathId(paymentId, "payment")}/transfers`, [], parseRazorpayTransfer, "transfer list");
+}
+
+/** A chargeback or other dispute on a payment [R31]. Only what money logic needs; the evidence and reason text are dropped. */
+export interface RazorpayDispute {
+  id: string;
+  payment_id: string;
+  /** open | under_review | won | lost | closed (lower-cased); null when Razorpay sent none, which callers read as NOT won. */
+  status: string | null;
+  phase: string | null;
+  amount: number | null;
+  created_at: number | null;
+}
+
+function parseDispute(v: unknown): RazorpayDispute | null {
+  if (!isObj(v)) return null;
+  const id = str(v.id);
+  const paymentId = str(v.payment_id);
+  if (!id || !paymentId) return null;
+  return { id, payment_id: paymentId, status: str(v.status)?.toLowerCase() ?? null, phase: str(v.phase), amount: int(v.amount), created_at: int(v.created_at) };
+}
+
+/**
+ * GET /v1/disputes [api/disputes/fetch-all]: the merchant's disputes created in [fromEpoch, toEpoch].
+ * Verified against the docs copy (2026-10-18): the endpoint lists `count` / `skip` / `from` / `to`
+ * and has NO payment filter, so the caller filters by `payment_id` itself. ⚠️ UNVERIFIED against a
+ * live account: that `from` alone narrows the list as the CLI help implies, and whether `to` is
+ * inclusive. A refusal or an unreadable answer is an error (the release gate then fails CLOSED);
+ * nothing here guesses.
+ */
+export async function listDisputes(range: { fromEpoch: number; toEpoch: number }): Promise<RazorpayDispute[]> {
+  if (!Number.isSafeInteger(range.fromEpoch) || !Number.isSafeInteger(range.toEpoch) || range.fromEpoch < 0 || range.toEpoch < range.fromEpoch) {
+    throw new RazorpayError("A disputes range needs two unix times, the first not after the second", 400, "INVALID_REQUEST");
+  }
+  return listExact("/disputes", [["from", range.fromEpoch], ["to", range.toEpoch]], parseDispute, "dispute list");
+}
+
 // ── Signatures ──────────────────────────────────────────────────────────────────
 
 function safeEqualHex(a: string, b: string): boolean {

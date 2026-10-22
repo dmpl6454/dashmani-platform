@@ -25,6 +25,9 @@ import * as routeWebhooks from "../src/services/campaign/route-webhooks";
 import { isRouteEvent, handleRouteEvent } from "../src/services/campaign/route-webhooks";
 import { alertStaffOncePerHour, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { pausePayoutsOfPayment, pausePayoutsOfPaymentRows } from "../src/services/creator/payout-pause";
+import { flushRouteWebhookBackgroundForTests } from "../src/services/campaign/route-webhooks";
+import { runPayoutJob, selectDuePayouts } from "../src/services/creator/payout.service";
+import { FakeRazorpay, is } from "./fake-razorpay-route";
 
 const notify = vi.mocked(notifyAdminByEmail);
 
@@ -202,8 +205,8 @@ describe("isRouteEvent / exports", () => {
     expect(isRouteEvent(42 as unknown as string)).toBe(false);
   });
 
-  it("exports exactly isRouteEvent and handleRouteEvent", () => {
-    expect(Object.keys(routeWebhooks).sort()).toEqual(["handleRouteEvent", "isRouteEvent"]);
+  it("exports isRouteEvent and handleRouteEvent, plus the one hook a test uses to wait for the background hold confirmation", () => {
+    expect(Object.keys(routeWebhooks).sort()).toEqual(["flushRouteWebhookBackgroundForTests", "handleRouteEvent", "isRouteEvent"]);
   });
 
   it("a non-route event is not handled", async () => {
@@ -1584,5 +1587,125 @@ describe("pausePayoutsOfPayment: the one pause rule behind the dispute handler a
       expect(src, name).not.toMatch(/pausedReason\s*:/);
       expect(src, name).not.toMatch(/pausedAt\s*:\s*(?!null)/);
     }
+  });
+});
+
+
+// ── Phase 4 review fixes ────────────────────────────────────────────────────────
+
+describe("a repeated create request: the twin audit is not skipped by an event that arrives first", () => {
+  const audit = async (attempts: number) =>
+    mkPayout({ attempts, transferRequestedAt: new Date(Date.now() - 60_000), nextAttemptAt: new Date(Date.now() + 10 * 60_000) });
+
+  it("transfer.processed (held) on a payout whose create call was sent TWICE changes nothing: it stays transfer_requested for the audit, and writes no audit row", async () => {
+    const row = await audit(2);
+    const r = await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", row), "evt_twin_1");
+    expect(r).toEqual({ handled: true, note: "audit_pending" });
+    expect(await reload(row.id)).toMatchObject({ status: "transfer_requested", heldAt: null, transferStatus: null, errorCode: null });
+    expect(await eventsOf(row.id)).toHaveLength(0);
+  });
+
+  it("neither does a failed or a not-held answer: each would skip the audit (a failed one leaves a live twin untracked, a parked one resolves to held unaudited)", async () => {
+    const failed = await audit(2);
+    expect(await handleRouteEvent("transfer.failed", transferEvt("transfer.failed", failed), "evt_twin_2")).toEqual({ handled: true, note: "audit_pending" });
+    expect((await reload(failed.id)).status).toBe("transfer_requested");
+    await prisma.creatorPayout.deleteMany({});
+    const notHeld = await audit(3);
+    expect(await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", notHeld, { on_hold: false }), "evt_twin_3")).toEqual({ handled: true, note: "audit_pending" });
+    expect((await reload(notHeld.id)).status).toBe("transfer_requested");
+    await prisma.creatorPayout.update({ where: { id: notHeld.id }, data: { razorpayTransferId: "trf_OTHERONE0001" } });
+    const dated = await audit(2);
+    expect(await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", dated, { on_hold_until: nowSec() + 86400 }), "evt_twin_4")).toEqual({ handled: true, note: "audit_pending" });
+    expect((await reload(dated.id)).status).toBe("transfer_requested");
+  });
+
+  it("a payout sent ONCE is moved by the event as before, and a mismatch still parks a repeated one (that is not an audit question)", async () => {
+    const once = await audit(1);
+    expect(await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", once), "evt_twin_5")).toEqual({ handled: true, note: "held" });
+    expect((await reload(once.id)).status).toBe("held");
+    await prisma.creatorPayout.deleteMany({});
+    const twice = await audit(2);
+    const r = await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", twice, { amount: 49_999 }), "evt_twin_6");
+    expect(r.note).toBe("transfer_mismatch");
+    expect((await reload(twice.id)).status).toBe("needs_attention");
+  });
+
+  it("the move is still applied once the audit has run: a repeated-create payout that is already held takes later events normally", async () => {
+    const row = await mkPayout({ attempts: 2, status: "held" });
+    expect((await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", row), "evt_twin_7")).handled).toBe(true);
+    expect((await reload(row.id)).status).toBe("held");
+  });
+});
+
+describe("a transfer that came out NOT held: the event puts the hold back at once, in the background", () => {
+  const fake = new FakeRazorpay();
+  beforeEach(() => {
+    fake.reset();
+    fake.install();
+    vi.stubEnv("RAZORPAY_KEY_ID", "rzp_test_key");
+    vi.stubEnv("RAZORPAY_KEY_SECRET", "rzp_test_secret");
+  });
+  afterEach(async () => {
+    await flushRouteWebhookBackgroundForTests();
+    fake.restore();
+    vi.unstubAllEnvs();
+  });
+
+  async function parkedWorld(entity: { onHold: boolean; onHoldUntil?: number | null }) {
+    fake.seedPayment({ id: PAY, amount: 100_000 });
+    const row = await mkPayout({ attempts: 1, transferRequestedAt: new Date(Date.now() - 60_000) });
+    fake.seedTransfer({ id: TRF, source: PAY, recipient: ACC, amount: 50_000, onHold: entity.onHold, onHoldUntil: entity.onHoldUntil ?? null, notes: { payout_id: row.id } });
+    return row;
+  }
+
+  it("processed_not_held: the payout is parked AND one on_hold:true request goes out after the answer; the worker's next read then returns it to held", async () => {
+    const row = await parkedWorld({ onHold: false });
+    const r = await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", row, { on_hold: false }), "evt_hold_1");
+    expect(r).toEqual({ handled: true, note: "processed_not_held" });
+    expect((await reload(row.id)).status).toBe("needs_attention");
+    await flushRouteWebhookBackgroundForTests();
+    expect(fake.calls.filter((c) => is.setHold(c, true))).toHaveLength(1);
+    expect(fake.calls.filter((c) => is.setHold(c, false))).toHaveLength(0);
+    expect(fake.transfers.get(TRF)!.onHold).toBe(true);
+    expect((await eventsOf(row.id)).map((e) => e.note)).toContain("The hold was put back on the transfer.");
+    // Still parked until a read confirms it; the worker does that.
+    expect((await reload(row.id)).status).toBe("needs_attention");
+    expect((await selectDuePayouts(new Date(Date.now() + 10 * 60_000))).filter((d) => d.id === row.id)).toEqual([{ id: row.id, job: "confirm_hold" }]);
+    const again = await runPayoutJob("confirm_hold", row.id, { now: new Date(Date.now() + 10 * 60_000) });
+    expect(again).toMatchObject({ status: "held", outcome: "held" });
+  });
+
+  it("an automatic release date is put back the same way", async () => {
+    const row = await parkedWorld({ onHold: true, onHoldUntil: nowSec() + 86_400 });
+    await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", row, { on_hold: true, on_hold_until: nowSec() + 86_400 }), "evt_hold_2");
+    await flushRouteWebhookBackgroundForTests();
+    expect(fake.calls.filter((c) => is.setHold(c, true))).toHaveLength(1);
+    expect(fake.transfers.get(TRF)!.onHoldUntil).toBeNull();
+  });
+
+  it("a refused PATCH is recorded for the audit and does not disturb the webhook's answer; the parked row is left for the worker, which asks again", async () => {
+    const row = await parkedWorld({ onHold: false });
+    fake.intercept({ match: (c) => is.setHold(c, true), mode: "reject", status: 400, times: 1 });
+    const r = await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", row, { on_hold: false }), "evt_hold_3");
+    expect(r.handled).toBe(true);
+    await flushRouteWebhookBackgroundForTests();
+    expect((await eventsOf(row.id)).some((e) => /could not be put back/.test(e.note ?? ""))).toBe(true);
+    expect(fake.transfers.get(TRF)!.onHold).toBe(false);
+    const later = new Date(Date.now() + 10 * 60_000);
+    expect((await selectDuePayouts(later)).filter((d) => d.id === row.id)).toHaveLength(1);
+    await runPayoutJob("confirm_hold", row.id, { now: later });
+    expect(fake.calls.filter((c) => is.setHold(c, true))).toHaveLength(2);
+    expect(fake.transfers.get(TRF)!.onHold).toBe(true);
+  });
+
+  it("without Razorpay keys the event parks the payout and nothing else happens (no call, no throw)", async () => {
+    vi.unstubAllEnvs();
+    vi.stubEnv("RAZORPAY_KEY_ID", "");
+    vi.stubEnv("RAZORPAY_KEY_SECRET", "");
+    const row = await parkedWorld({ onHold: false });
+    await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", row, { on_hold: false }), "evt_hold_4");
+    await flushRouteWebhookBackgroundForTests();
+    expect(fake.calls).toHaveLength(0);
+    expect((await reload(row.id)).status).toBe("needs_attention");
   });
 });

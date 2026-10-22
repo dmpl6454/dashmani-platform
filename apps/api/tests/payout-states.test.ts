@@ -32,7 +32,7 @@ const EXPECTED: Record<PayoutStatus, PayoutStatus[]> = {
   reversed: ["manual_required"],
   failed: ["transfer_requested", "manual_required", "void", "needs_attention"],
   needs_attention: ["transfer_requested", "held", "released", "settled", "settlement_failed", "failed", "reversal_requested", "reversed", "manual_required", "void"],
-  manual_required: ["paid_manual", "void"],
+  manual_required: ["paid_manual", "void", "needs_attention"],
   settled: [],
   paid_manual: [],
   void: [],
@@ -128,6 +128,18 @@ describe("transition matrix", () => {
         expect(["forward", "rollback", "park", "resolve", "retry"]).toContain(tr.kind);
       }
     }
+  });
+
+  it("a payout the engine believed to carry no transfer (failed, manual_required) can be PARKED when a live one turns up, and nothing else leaves them that way", () => {
+    // A create call that landed late: the payout must be tracked again, and money may not be refunded or paid by hand around it.
+    for (const from of ["failed", "manual_required"] as const) {
+      const park = TRANSITIONS[from].find((x) => x.to === "needs_attention");
+      expect(park?.kind, from).toBe("park");
+    }
+    // Where a park exists to PROTECT money, it is not a way out to anything that would release it.
+    expect(canMove("manual_required", "held")).toBe(false);
+    expect(canMove("manual_required", "released")).toBe(false);
+    expect(canMove("failed", "held")).toBe(false);
   });
 
   it("rollbacks exist only where a definite rejection puts a claim back", () => {

@@ -38,13 +38,14 @@
  * Overlap guard claimed before the first await. Nothing here logs a Razorpay body or a bank detail; a failure on one payout never
  * stops the next.
  */
-import { prisma } from "@dashmani/db";
+import { prisma, Prisma } from "@dashmani/db";
+import { LIVE_ITEM_STATUSES } from "@dashmani/shared";
 import { creatorConfig } from "../services/creator/creator-config";
 import { razorpayConfig } from "../services/campaign/config";
 import { refundSweepEnabled } from "../services/campaign/payment.service";
-import { PAYOUT_JOBS, runPayoutJob, selectDuePayouts, transfersEnabled, type PayoutJob } from "../services/creator/payout.service";
-import { REFUND_DUE_STUCK_ATTEMPTS, runRefundDueJob, type RefundDueSummary } from "../services/creator/creator-refund.service";
-import { alertStaffOncePerHour } from "../services/creator/payout-alert";
+import { PAYOUT_JOBS, executePlannedPayout, requireManualPayment, runPayoutJob, scheduleRelease, selectDuePayouts, transfersEnabled, type PayoutJob } from "../services/creator/payout.service";
+import { REFUND_DUE_STUCK_ATTEMPTS, repairRefundedWithoutLedger, runRefundDueJob, type RefundDueSummary } from "../services/creator/creator-refund.service";
+import { alertStaffDurably, alertStaffOncePerHour } from "../services/creator/payout-alert";
 import { scrubPayoutSecrets } from "../utils/payout-scrub";
 
 export const TICK_CALL_BUDGET = 20;
@@ -113,21 +114,24 @@ export interface PayoutsTickSummary {
   suspendedHolding: number;
   /** Payouts past their threshold, as found by this tick's digest check (0 on a tick that did not run it). */
   stuck: number;
+  /** Verified posts whose release this tick scheduled (the repair of a lost follow-up). */
+  scheduled: number;
+  /** Planned payouts given up on this tick (now manual_required). */
+  gaveUp: number;
+  /** Posts that read refunded with no refund behind them and were re-opened this tick. */
+  reopened: number;
 }
 
 const emptyJobs = (): Record<PayoutJob, number> => Object.fromEntries(PAYOUT_JOBS.map((j) => [j, 0])) as Record<PayoutJob, number>;
-const idle = (): PayoutsTickSummary => ({ ran: false, selected: 0, jobs: emptyJobs(), ok: 0, failed: 0, deferred: 0, calls: 0, refunds: null, suspendedHolding: 0, stuck: 0 });
+const idle = (): PayoutsTickSummary => ({ ran: false, selected: 0, jobs: emptyJobs(), ok: 0, failed: 0, deferred: 0, calls: 0, refunds: null, suspendedHolding: 0, stuck: 0, scheduled: 0, gaveUp: 0, reopened: 0 });
 
 let running = false;
 let lastDigestCheckAt = 0;
-/** When a digest email last actually went out (set only once the mailer said so). */
-let lastDigestSentAt = 0;
 
-/** Tests only. */
+/** Tests only. (The once-a-day markers are in the database: see clearPayoutAlertMarkersForTests.) */
 export function resetCreatorPayoutsCronForTests(): void {
   running = false;
   lastDigestCheckAt = 0;
-  lastDigestSentAt = 0;
 }
 
 function logFailure(what: string, id: string, e: unknown): void {
@@ -146,6 +150,13 @@ export async function runCreatorPayoutsTick(opts: { now?: Date; budget?: number 
     const budget = opts.budget ?? TICK_CALL_BUDGET;
     const payoutBudget = Math.max(0, budget - REFUND_RESERVE);
     const newTransfers = transfersEnabled();
+
+    // ── Repair: verified posts whose release was never scheduled (DB only; first, so one that is due is released in this very tick) ──
+    try {
+      out.scheduled = await repairUnscheduledReleases();
+    } catch (e) {
+      logFailure("release-schedule repair", "payouts", e);
+    }
 
     // ── Jobs 1 to 9: the engine's steps ──
     // With the Route switch off, planned payouts are left planned (nothing NEW is created) and must not use up the places
@@ -184,14 +195,35 @@ export async function runCreatorPayoutsTick(opts: { now?: Date; budget?: number 
       }
     }
 
+    // ── A payout that can never be created must not hold every refund of its payment for ever ──
+    if (newTransfers) {
+      try {
+        const g = await giveUpOnNeverCreatedPayouts(now, { budget: Math.max(0, payoutBudget - out.calls), actorNow: opts.now });
+        out.gaveUp = g.gaveUp;
+        out.calls += g.calls;
+      } catch (e) {
+        logFailure("planned give-up", "payouts", e);
+      }
+    }
+
     // ── Job 10: refund the creator posts that are owed (reverse BEFORE refund) ──
     if (refundSweepEnabled()) {
+      let refundCalls = 0;
       try {
         const r = await runRefundDueJob({ now: opts.now, budget: Math.max(0, budget - out.calls) });
         out.refunds = r;
+        refundCalls = r.calls;
       } catch (e) {
         out.failed++;
         logFailure("refund-due", "creator-items", e);
+      }
+      // After job 10, with what is left of the budget: a post marked refunded with no refund behind it is re-opened for the next pass.
+      try {
+        const rep = await repairRefundedWithoutLedger({ now, limit: 1, budget: Math.max(0, budget - out.calls - refundCalls) });
+        out.reopened = rep.reopened;
+        out.calls += rep.calls;
+      } catch (e) {
+        logFailure("refunded-without-ledger repair", "creator-items", e);
       }
     }
 
@@ -225,7 +257,8 @@ const istDay = (d: Date) => new Date(d.getTime() + 5.5 * HOUR_MS).toISOString().
 /**
  * Razorpay suspended a creator's linked account while payouts of theirs hold money. Nothing is released to a suspended account (the
  * release gate refuses it), but the money is stuck there: staff must reverse it first, then pay the creator by hand. One alert per
- * account per IST day, naming the count and the total, never a bank detail. Returns how many accounts were found.
+ * account per IST DAY, and really per day: the marker is in system_settings (alertStaffDurably), so neither the hourly in-memory quiet
+ * period nor a restart (every deploy) sends it again. Names the count and the total, never a bank detail. Returns how many accounts were found.
  */
 export async function alertSuspendedHolding(now: Date): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ account_id: string; creator_id: string; n: number; paise: bigint }>>`
@@ -237,8 +270,8 @@ export async function alertSuspendedHolding(now: Date): Promise<number> {
      ORDER BY a.id
      LIMIT 25`;
   for (const r of rows) {
-    alertStaffOncePerHour(
-      `payout-suspended-holding:${r.account_id}:${istDay(now)}`,
+    await alertStaffDurably(
+      `payout-suspended-holding:${r.account_id}`,
       "A creator's payout account is suspended while it holds money",
       [
         { label: "Creator", value: r.creator_id },
@@ -247,13 +280,103 @@ export async function alertSuspendedHolding(now: Date): Promise<number> {
         {
           label: "What to do",
           value:
-            "Nothing is released to a suspended account. Look at the account in the Razorpay dashboard. If it is not reinstated, take each payout back first (Reverse in the payout queue), then pay the creator by bank transfer and record the reference.",
+            "Nothing is released to a suspended account. Look at the account in the Razorpay dashboard. If it is not reinstated, take each payout back first (Reverse in the payout queue). Each one then shows under \"Taken back, unpaid\": press \"Pay by bank transfer instead\" on it, pay the creator by bank transfer, and record the reference.",
         },
       ],
       "/campaigns/payouts",
+      { token: istDay(now), now: now.getTime() },
     );
   }
   return rows.length;
+}
+
+// ── Repair: a verified post whose release was never scheduled ───────────────────────────────────
+
+/** Payout statuses a release can still be scheduled on (the engine's own list: scheduleRelease). */
+const SCHEDULABLE = ["planned", "transfer_requested", "held", "needs_attention"];
+
+/**
+ * A post staff verified has its payout's release scheduled by a follow-up that runs AFTER the verification committed and that never
+ * throws into it (a restart, a database error or a settle failure in between can lose it). Nothing else ever sets release_after, so
+ * without this a verified post's payout would stay `held` for ever with no alert. This finds every payout with no release_after whose offer
+ * is completed with a verified link and a passed ownership check, and schedules it by the same scheduleRelease the follow-up uses:
+ * release_after = the REAL verification time + the hold (so the hold is not restarted), only a payout with no release_after is touched, so
+ * running it twice, or racing the follow-up, changes nothing. It talks to nobody: the release gate still checks everything fresh when the
+ * release is due. Returns how many it scheduled.
+ */
+export async function repairUnscheduledReleases(limit = 50): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ item_id: string; ownership_check: string | null; verified_at: Date }>>`
+    SELECT p.booking_item_id AS item_id, o.ownership_check AS ownership_check, o.link_verified_at AS verified_at
+      FROM creator_payouts p
+      JOIN creator_offers o ON o.booking_item_id = p.booking_item_id
+     WHERE p.status = ANY(${SCHEDULABLE}) AND p.release_after IS NULL
+       AND o.status = 'completed' AND o.link_verified_at IS NOT NULL AND o.ownership_check IN ('auto_ok', 'manual_ok')
+     ORDER BY o.link_verified_at ASC
+     LIMIT ${limit}`;
+  let scheduled = 0;
+  for (const r of rows) {
+    const res = await scheduleRelease(r.item_id, { ownershipCheck: r.ownership_check, verifiedAt: r.verified_at, actor: { type: "system" } });
+    if (res.scheduled) scheduled++;
+  }
+  return scheduled;
+}
+
+// ── A payout that can never be created ──────────────────────────────────────────────────────────
+
+/**
+ * A payout still `planned` blocks EVERY refund on its payment [R4] (a refund started now would strand its share). That is right while its
+ * transfer is about to be made, and wrong for ever when it never will be: the creator's account was suspended or needs clarification, say,
+ * and another creator on the same campaign declined, so the brand's refund waits behind a payout nobody can create. So after
+ * CREATOR_PLANNED_GIVE_UP_HOURS (24 by default) in `planned`, with Route ON, the worker makes ONE last honest attempt (executePlannedPayout:
+ * it also gives a payout the budget kept starving its turn) and, if the engine still says "waiting", marks the payout manual_required and tells
+ * staff. Nothing is paid or refunded by this: manual_required only says "pay this creator by bank transfer and record the reference" (which
+ * markManualPaid refuses unless no transfer can ever have been made), and it stops blocking the payment's other refunds (decideRefundAllowed).
+ * Paused payouts are left alone (a person holds them); the Route switch off leaves everything planned (that pause is the owner's).
+ */
+export async function giveUpOnNeverCreatedPayouts(now: Date, o: { budget: number; limit?: number; actorNow?: Date }): Promise<{ checked: number; gaveUp: number; calls: number }> {
+  const out = { checked: 0, gaveUp: 0, calls: 0 };
+  const cutoff = new Date(now.getTime() - creatorConfig.plannedGiveUpHours() * HOUR_MS);
+  const rows = await prisma.creatorPayout.findMany({
+    where: { status: "planned", pausedAt: null, createdAt: { lt: cutoff } },
+    orderBy: { createdAt: "asc" },
+    take: Math.max(1, o.limit ?? 3),
+    select: { id: true, bookingId: true, amountPaise: true },
+  });
+  for (const row of rows) {
+    if (out.calls + JOB_COST.execute > o.budget) break;
+    out.checked++;
+    const step = o.actorNow ? { now: o.actorNow } : {};
+    const tried = await executePlannedPayout(row.id, step);
+    out.calls += tried.calls;
+    // It moved (made, or manual because a refund exists), or the answer was not a plain "not now": not ours to give up on.
+    if (tried.status !== "planned" || tried.outcome !== "waiting") continue;
+    const moved = await requireManualPayment(row.id, { ...step, actor: { type: "system" }, reason: "transfer_never_created" });
+    if (!moved.ok || moved.outcome !== "manual_required") continue;
+    out.gaveUp++;
+    alertStaffOncePerHour(
+      `payout-gave-up:${row.id}`,
+      "A creator's payout could not be set aside and must be paid by hand",
+      [
+        { label: "Payout", value: row.id },
+        { label: "Booking", value: row.bookingId },
+        { label: "Amount", value: `₹${(row.amountPaise / 100).toFixed(2)}` },
+        { label: "Why", value: `Its transfer could not be made for ${creatorConfig.plannedGiveUpHours()} hours (${scrubPayoutSecrets(tried.reason ?? "waiting").slice(0, 60)}). While it waited it blocked every refund on the brand's payment.` },
+        {
+          label: "What to do",
+          value:
+            "Look at why the creator's payout account is not ready. If the creator is still owed this money, pay them by bank transfer and record the reference in the payout queue (Manual). The brand's other refunds are no longer held up by it.",
+        },
+      ],
+      "/campaigns/payouts",
+      {
+        // Stamped only once the mail really went out, so the digest still names a payout whose email did not.
+        onSent: async () => {
+          await prisma.creatorPayout.updateMany({ where: { id: row.id, status: "manual_required" }, data: { alertedStatus: "manual_required", alertedAt: new Date() } });
+        },
+      },
+    );
+  }
+  return out;
 }
 
 // ── Job 14b: the daily digest of anything past its threshold ────────────────────────────────────
@@ -283,6 +406,10 @@ export async function findStuckPayouts(now: Date): Promise<StuckCategory[]> {
   const t24h = ago(DAY_MS);
   const t4d = ago(4 * DAY_MS);
   const plannedCounts = transfersEnabled();
+  // ⚠️ "Parked since" is the time of the payout's LAST REAL MOVE into its current status (its newest status_change event), never updated_at:
+  // every backoff the engine writes (a payout parked as a duplicate transfer is re-polled every few minutes) bumps updated_at, which would keep a
+  // payout that has been stuck for days looking fresh and out of the digest for ever. Falls back to updated_at for a row with no such event.
+  const since = Prisma.sql`COALESCE((SELECT max(e.created_at) FROM creator_payout_events e WHERE e.payout_id = p.id AND e.to_status = p.status AND e.from_status IS DISTINCT FROM e.to_status), p.updated_at)`;
   const rows = await prisma.$queryRaw<Array<{ key: string; n: number; sample: string[] | null }>>`
     SELECT key, count(*)::int AS n, (array_agg(id ORDER BY ts))[1:5] AS sample FROM (
       SELECT 'planned' AS key, id, created_at AS ts FROM creator_payouts
@@ -293,23 +420,35 @@ export async function findStuckPayouts(now: Date): Promise<StuckCategory[]> {
         WHERE status = 'release_requested' AND COALESCE(release_requested_at, updated_at) < ${t30m}::timestamptz AT TIME ZONE 'UTC'
       UNION ALL SELECT 'reversal_requested', id, COALESCE(reversal_requested_at, updated_at) FROM creator_payouts
         WHERE status = 'reversal_requested' AND COALESCE(reversal_requested_at, updated_at) < ${t30m}::timestamptz AT TIME ZONE 'UTC'
-      UNION ALL SELECT 'needs_attention', id, updated_at FROM creator_payouts
-        WHERE status = 'needs_attention' AND updated_at < ${t1h}::timestamptz AT TIME ZONE 'UTC'
-      UNION ALL SELECT 'manual_required', id, updated_at FROM creator_payouts
-        WHERE status = 'manual_required' AND updated_at < ${t24h}::timestamptz AT TIME ZONE 'UTC'
-      UNION ALL SELECT 'failed', id, updated_at FROM creator_payouts
-        WHERE status IN ('failed', 'settlement_failed') AND updated_at < ${t6h}::timestamptz AT TIME ZONE 'UTC'
-      UNION ALL SELECT 'unalerted', id, updated_at FROM creator_payouts
-        WHERE status IN ('failed', 'settlement_failed', 'needs_attention', 'manual_required')
-          AND alerted_status IS DISTINCT FROM status AND updated_at < ${t1h}::timestamptz AT TIME ZONE 'UTC'
+      UNION ALL SELECT 'needs_attention', p.id, ${since} FROM creator_payouts p
+        WHERE p.status = 'needs_attention' AND ${since} < ${t1h}::timestamptz AT TIME ZONE 'UTC'
+      UNION ALL SELECT 'manual_required', p.id, ${since} FROM creator_payouts p
+        WHERE p.status = 'manual_required' AND ${since} < ${t24h}::timestamptz AT TIME ZONE 'UTC'
+      UNION ALL SELECT 'failed', p.id, ${since} FROM creator_payouts p
+        WHERE p.status IN ('failed', 'settlement_failed') AND ${since} < ${t6h}::timestamptz AT TIME ZONE 'UTC'
+      UNION ALL SELECT 'unalerted', p.id, ${since} FROM creator_payouts p
+        WHERE p.status IN ('failed', 'settlement_failed', 'needs_attention', 'manual_required')
+          AND p.alerted_status IS DISTINCT FROM p.status AND ${since} < ${t1h}::timestamptz AT TIME ZONE 'UTC'
       UNION ALL SELECT 'slow_settlement', id, released_at FROM creator_payouts
         WHERE status = 'released' AND released_at < ${t4d}::timestamptz AT TIME ZONE 'UTC'
       UNION ALL SELECT 'paused', id, paused_at FROM creator_payouts
         WHERE paused_at IS NOT NULL AND status NOT IN ('settled', 'paid_manual', 'void', 'reversed') AND paused_at < ${t24h}::timestamptz AT TIME ZONE 'UTC'
       UNION ALL SELECT 'held_not_released', id, release_after FROM creator_payouts
         WHERE status = 'held' AND paused_at IS NULL AND release_after IS NOT NULL AND release_after < ${t24h}::timestamptz AT TIME ZONE 'UTC'
+      UNION ALL SELECT 'verified_not_scheduled', p.id, o.link_verified_at FROM creator_payouts p
+        JOIN creator_offers o ON o.booking_item_id = p.booking_item_id
+        WHERE p.status = ANY(${SCHEDULABLE}) AND p.release_after IS NULL AND o.status = 'completed' AND o.link_verified_at IS NOT NULL
+          AND o.link_verified_at < ${t30m}::timestamptz AT TIME ZONE 'UTC'
+      UNION ALL SELECT 'reversed_owed', p.id, COALESCE(p.reversed_at, p.updated_at) FROM creator_payouts p
+        JOIN campaign_booking_items i ON i.id = p.booking_item_id
+        WHERE p.status = 'reversed' AND i.status = ANY(${[...LIVE_ITEM_STATUSES]}) AND COALESCE(p.reversed_at, p.updated_at) < ${t24h}::timestamptz AT TIME ZONE 'UTC'
       UNION ALL SELECT 'refund_due', id, updated_at FROM campaign_booking_items
         WHERE target_type = 'creator_asset' AND status = 'refund_due' AND attempts >= ${REFUND_DUE_STUCK_ATTEMPTS}
+      UNION ALL SELECT 'refunded_no_ledger', i.id, i.updated_at FROM campaign_booking_items i
+        WHERE i.target_type = 'creator_asset' AND i.status = 'refunded' AND i.updated_at < ${t6h}::timestamptz AT TIME ZONE 'UTC'
+          AND NOT EXISTS (SELECT 1 FROM campaign_refunds r WHERE r.booking_item_id = i.id AND r.status <> 'failed')
+          AND NOT EXISTS (SELECT 1 FROM creator_payouts q WHERE q.booking_item_id = i.id AND q.status NOT IN ('void', 'reversed'))
+          AND EXISTS (SELECT 1 FROM campaign_payments y WHERE y.booking_id = i.booking_id AND y.razorpay_payment_id IS NOT NULL AND y.status IN ('captured', 'refund_pending', 'refund_failed'))
     ) q GROUP BY key ORDER BY key`;
   const label: Record<string, string> = {
     planned: "Planned for over 30 minutes (the transfer was never made)",
@@ -323,15 +462,19 @@ export async function findStuckPayouts(now: Date): Promise<StuckCategory[]> {
     slow_settlement: "Released over 4 days ago and still not settled",
     paused: "Paused for over a day",
     held_not_released: "Due for release over a day ago and still held (the release gate keeps refusing it)",
-    refund_due: "A creator post has waited about an hour to be refunded",
+    verified_not_scheduled: "The post was verified over 30 minutes ago and its release was never scheduled (the repair could not schedule it)",
+    reversed_owed: "Taken back over a day ago, the post is live and the creator has not been paid (pay by bank transfer, or refund the post)",
+    refund_due: "A creator post has waited about an hour to be refunded (or its automatic refund stopped: see the post's own note)",
+    refunded_no_ledger: "A creator post reads refunded but no refund of it is on the ledger, and the payment still holds the money",
   };
   return rows.map((r) => ({ key: r.key, label: label[r.key] ?? r.key, count: r.n, sample: (r.sample ?? []).slice(0, 5) }));
 }
 
 /**
- * At most once an hour, look for payouts past their threshold, and email ONE digest per day while there are any (counted from the last
- * digest that really went out: `onSent`, so a failed send is tried again the next hour). Returns how many payouts were found
- * (0 on a tick that did not run the check). Only ids, counts and our own wording go into the mail.
+ * At most once an hour, look for payouts past their threshold, and email ONE digest per day while there are any. The day is counted from the
+ * last digest that REALLY went out (alertStaffDurably: the marker is written only once the mailer said so, so a failed send is tried again the
+ * next hour) and it is kept in system_settings, so a restart (every deploy) does not send "the daily digest" again within minutes. Returns how
+ * many payouts were found (0 on a tick that did not run the check). Only ids, counts and our own wording go into the mail.
  */
 export async function digestStuckPayouts(now: Date): Promise<number> {
   if (now.getTime() - lastDigestCheckAt < DIGEST_CHECK_EVERY_MS) return 0;
@@ -339,8 +482,7 @@ export async function digestStuckPayouts(now: Date): Promise<number> {
   const found = await findStuckPayouts(now);
   const total = found.reduce((n, c) => n + c.count, 0);
   if (total === 0) return 0;
-  if (now.getTime() - lastDigestSentAt < DAY_MS) return total;
-  alertStaffOncePerHour(
+  await alertStaffDurably(
     "payout-digest",
     `${total} creator payout${total === 1 ? "" : "s"} past the point they should have moved`,
     [
@@ -348,12 +490,7 @@ export async function digestStuckPayouts(now: Date): Promise<number> {
       { label: "What to do", value: "Open the payout queue and work through each. Every row says why it is where it is, and every action there is safe to repeat." },
     ],
     "/campaigns/payouts",
-    {
-      now: now.getTime(),
-      onSent: () => {
-        lastDigestSentAt = now.getTime();
-      },
-    },
+    { now: now.getTime(), quietMs: DAY_MS },
   );
   return total;
 }
@@ -368,8 +505,8 @@ export function startCreatorPayoutsCron(): void {
   const tick = () => {
     runCreatorPayoutsTick()
       .then((s) => {
-        if (s.ok || s.failed || s.refunds?.checked || s.suspendedHolding || s.stuck) {
-          console.log("[creator-payouts]", JSON.stringify({ selected: s.selected, calls: s.calls, jobs: s.jobs, ok: s.ok, failed: s.failed, deferred: s.deferred, refunds: s.refunds, suspendedHolding: s.suspendedHolding, stuck: s.stuck }));
+        if (s.ok || s.failed || s.refunds?.checked || s.suspendedHolding || s.stuck || s.scheduled || s.gaveUp || s.reopened) {
+          console.log("[creator-payouts]", JSON.stringify({ selected: s.selected, calls: s.calls, jobs: s.jobs, ok: s.ok, failed: s.failed, deferred: s.deferred, refunds: s.refunds, suspendedHolding: s.suspendedHolding, stuck: s.stuck, scheduled: s.scheduled, gaveUp: s.gaveUp, reopened: s.reopened }));
         }
       })
       .catch((e) => console.error("[creator-payouts] tick failed:", scrubPayoutSecrets(String((e as Error)?.message ?? e)).slice(0, 200)));

@@ -328,12 +328,14 @@ function VerifyDialog({ accountName, platform, creatorName, clientName, linkUrl,
   };
 
   return (
+    // 100dvh, not 100vh: on iOS Safari 100vh is the LARGE viewport, so a tall dialog's buttons sat under the toolbar (same fix as the payout dialog).
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
+      style={{ paddingTop: "max(1rem, env(safe-area-inset-top))", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}
       onKeyDown={onKeyDown}
     >
-      <div ref={box} role="dialog" aria-modal="true" aria-labelledby="verify-title" tabIndex={-1} className={`${CARD} w-full max-w-[520px] max-h-[calc(100vh-32px)] overflow-y-auto p-5`}>
+      <div ref={box} role="dialog" aria-modal="true" aria-labelledby="verify-title" tabIndex={-1} className={`${CARD} w-full max-w-[520px] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5`}>
         <h2 id="verify-title" className="text-[16px] font-semibold text-ds-text">Verify this link &amp; release</h2>
         {notice && <div role="alert" className="mt-2 rounded-[8px] px-3 py-2 text-[12.5px] text-ds-gold" style={{ background: TONE.warn.bg, border: `1px solid ${TONE.warn.border}` }}>{notice}</div>}
         <p className="mt-1.5 text-[13px] text-ds-t2">

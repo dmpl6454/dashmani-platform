@@ -3,6 +3,7 @@
 // client or creator portals, and nothing here decides money: the API's computePayout and its checks are the authority.
 
 import { CREATOR_MIN_PAYOUT_PAISE, CREATOR_SHARE_MAX_BPS, CREATOR_TARGET_TYPE } from "@dashmani/shared/src/validators/campaign";
+import type { PayoutSummary } from "@dashmani/shared/src/payouts/staff-ui";
 
 export { CREATOR_MIN_PAYOUT_PAISE, CREATOR_SHARE_MAX_BPS, CREATOR_TARGET_TYPE };
 
@@ -105,6 +106,11 @@ export interface StaffOffer {
   ownershipCheckedAt: string | null;
   linkVerifiedAt: string | null;
   postMissingAt: string | null;
+  /**
+   * The compact summary of this post's payout, whatever state it is in (Paid with its bank reference, Taken back, Paid by hand…). null = no
+   * payout was created for the post; undefined = an older API. The campaign page prefers its full payout read and falls back to this.
+   */
+  payout?: PayoutSummary | null;
 }
 
 /** A link a creator typed is shown as a link only when it is plainly http(s): never a javascript: or data: URL in a staff browser. */

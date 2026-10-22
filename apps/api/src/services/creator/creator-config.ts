@@ -79,6 +79,16 @@ export const creatorConfig = {
    */
   payoutCronEnabled: () => process.env.CREATOR_PAYOUT_CRON_ENABLED !== "0",
   /**
+   * How many hours a payout may stay `planned` while Route is ON and every attempt to create its transfer says "not yet" (the
+   * creator's account was suspended or needs clarification, the payment cannot carry a transfer) before the worker stops asking
+   * and marks it `manual_required` (a person pays the creator by bank transfer and records the reference). It exists because a
+   * planned payout blocks EVERY refund on its payment [R4]: without a limit one creator's stuck account would hold the refund of
+   * another creator's declined post, and the brand's money, for ever. Nothing moves automatically: manual_required only says
+   * "pay by hand". Never applied while the Route switch is off (that pause is the owner's, and planned payouts wait by design).
+   * Default 24, minimum 1.
+   */
+  plannedGiveUpHours: () => envNum("CREATOR_PLANNED_GIVE_UP_HOURS", 24, 1),
+  /**
    * Whether our creator id is sent to Razorpay as the linked account's `reference_id`. Razorpay refuses
    * the whole create call unless its `route_code_support` feature is enabled on our account (plan
    * prerequisite 3), so it stays off until Razorpay confirms. Its allowed length is also UNVERIFIED

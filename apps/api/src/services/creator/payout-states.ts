@@ -135,6 +135,7 @@ export const TRANSITIONS: Readonly<Record<PayoutStatus, readonly Transition[]>> 
   manual_required: [
     t("paid_manual", "forward", "P4 Manual fallback; the CALLER enforces its three conditions (no transfer ever created, a fresh fetch shows failed with no other active transfer, or the payout is reversed)"),
     t("void", "forward", "P4 Reject: nothing is due once the booking is rejected before money moved"),
+    t("needs_attention", "park", "A live transfer carrying this payout's id turned up after all (a create call that landed late): it must be reversed, so a person looks"),
   ],
   settled: [],
   paid_manual: [],

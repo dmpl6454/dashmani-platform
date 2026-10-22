@@ -8,7 +8,8 @@ import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
 import { onCreatorLinkVerified, payoutRefundGuard, prepareCreatorItemRefund, reconcileCreatorOwnership, withdrawOpenOffers, type WithdrawnOffer } from "../creator/payout-ledger";
 import { alertOfferProblems, createOffersForBooking, listOffersForBooking, sendOfferEmails, sendOfferWithdrawnEmails, verifyCreatorItem, withdrawOffer as withdrawCreatorOffer, type CreatedOffers } from "../creator/creator-offer.service";
-import { progressCreatorItemRefund, type CreatorRefundOutcome } from "../creator/creator-refund.service";
+import { markCreatorItemRefundedByHand, progressCreatorItemRefund, type CreatorRefundOutcome } from "../creator/creator-refund.service";
+import { payoutSummariesForBooking } from "../creator/payout-staff.service";
 import { reverseForRefund, type RefundReadiness } from "../creator/payout.service";
 
 // Staff side: the review queue, booking detail, approve / reject / request changes, and the
@@ -66,6 +67,16 @@ export async function listQueue(filter: { status?: string } = {}) {
     });
 }
 
+/**
+ * Each creator offer carries a compact summary of its post's payout, whatever state it is in: finished ones too (settled with its UTR, paid by
+ * hand with its reference, taken back), which no queue view of OPEN work shows. `payout` is null when the post has none (an item that was never
+ * offered). An allow-listed shape (payout-staff.service PayoutSummary): no Razorpay id, no bank detail.
+ */
+async function withPayouts<T extends { itemId: string }>(bookingId: string, offers: T[]) {
+  const payouts = await payoutSummariesForBooking(bookingId).catch(() => new Map());
+  return offers.map((o) => ({ ...o, payout: payouts.get(o.itemId) ?? null }));
+}
+
 export async function getBookingForStaff(id: string) {
   const b = await prisma.campaignBooking.findUnique({
     where: { id },
@@ -80,7 +91,7 @@ export async function getBookingForStaff(id: string) {
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
   // A booking with a creator's post carries its offers (status, link, what the ownership check said) so staff can act on
   // them. Only then: a network-only booking costs no extra query and its response has no extra key.
-  const creatorOffers = b.items.some((i) => i.targetType === CREATOR_TARGET_TYPE) ? await listOffersForBooking(id) : null;
+  const creatorOffers = b.items.some((i) => i.targetType === CREATOR_TARGET_TYPE) ? await withPayouts(id, await listOffersForBooking(id)) : null;
   return {
     ...b,
     ...(creatorOffers ? { creatorOffers } : {}),
@@ -423,11 +434,15 @@ async function markCreatorPosted(
     throw new AppError(409, "INVALID_STATE", "Approve the campaign before recording posts.");
   }
   await verifyCreatorItem(bookingId, item.id, { staffId, url: o.url ?? null, expectedLinkKey: o.expectedLinkKey ?? null, ownershipCheckedByHand: o.ownershipCheckedByHand === true });
-  void sendItemLiveEmail(item.id).catch((e) => console.error("[campaign] live email failed", e));
-  await afterItemChange(bookingId, staffId);
   // Schedules the release of the creator's payout (verified_at + the hold days, a day at least after a hand check). Nothing is
   // released here: the reconciliation worker does it once the whole release gate holds. It must never undo a verification that already committed.
+  // ⚠️ FIRST, before anything that can throw: afterItemChange (settleBooking) rethrows a database error, and when it came first a deadlock or a pool
+  // timeout there aborted this function with the post verified and its release never scheduled (a retry of Verify is 409 ALREADY_VERIFIED, so nothing
+  // could re-run it). If this step is lost anyway (a restart, its own database error) the worker finds the verified post and schedules it:
+  // cron/creator-payouts.cron.ts repairUnscheduledReleases.
   await onCreatorLinkVerified(item.id, staff(staffId)).catch((e) => console.error("[campaign] creator link follow-up failed", e));
+  void sendItemLiveEmail(item.id).catch((e) => console.error("[campaign] live email failed", e));
+  await afterItemChange(bookingId, staffId);
   return getBookingForStaff(bookingId);
 }
 
@@ -639,6 +654,17 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
   // stays pending, so a second click can neither refund it again nor undo the claim.
   await afterItemChange(bookingId, staffId);
   return { ...(await getBookingForStaff(bookingId)), refundNotice: result.state === "confirming" ? refundConfirmingNotice() : null };
+}
+
+/**
+ * "Mark refunded": the client was repaid outside the portal (a refund made from the Razorpay dashboard) and this post's refund is still owed
+ * here. It records THAT refund against the post, never sends another (see creator-refund.service markCreatorItemRefundedByHand: the payment's
+ * refund list is read first, the creator's payout must already be taken back, and only an unattributed refund of at least the post's price counts).
+ */
+export async function markItemRefundedByHand(bookingId: string, itemId: string, staffId: string, o: { refundId?: string | null } = {}) {
+  await itemOf(bookingId, itemId);
+  await markCreatorItemRefundedByHand(bookingId, itemId, staffId, { refundId: o.refundId ?? null });
+  return { ...(await getBookingForStaff(bookingId)), refundNotice: null as string | null };
 }
 
 /** Staff: publish a queued item now (skipping the launch-day wait), or move a hand-posted item

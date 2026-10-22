@@ -21,6 +21,7 @@ import {
   canRetryFailedTransfer,
   decideManualFallback,
   decideRefundAllowed,
+  decideRefundVerdict,
   decideResume,
   decideReversal,
   decideReversalOutcome,
@@ -28,10 +29,14 @@ import {
   decideTransferRetry,
   evaluateLocalRelease,
   evaluateRelease,
+  heldAnomalyBackoffMs,
   isFullyReversed,
   mapTransferFactsToState,
+  plannedWaitBackoffMs,
   releaseAfter,
+  releaseRefusalBackoffMs,
   remainingToReverse,
+  requestKeyOf,
   reservedPaiseOf,
   type CarrierTransfer,
   type CreateFacts,
@@ -56,9 +61,13 @@ function good(): ReleaseFacts {
     offer: { status: "completed", linkVerifiedAt: ago(2 * MIN), ownershipCheck: "auto_ok" },
     disputeStatuses: [],
     bankChangeBlocks: false,
+    creatorStatus: "approved",
+    byStaff: false,
+    accountActivation: "activated",
     transfer: { id: "trf_A1", status: "processed", onHold: true, onHoldUntil: null, amount: 50_000, amountReversed: 0, recipient: "acc_A1", source: "pay_A1" },
     duplicateTransfers: "none",
     razorpayDisputes: "clear",
+    razorpayRefunds: "clear",
     account: "activated",
   };
 }
@@ -73,6 +82,7 @@ const BREAKS: Record<ReleaseRefusal, (f: ReleaseFacts) => ReleaseFacts> = {
   payout_not_held: (f) => withPayout(f, { status: "release_requested" }),
   payout_paused: (f) => withPayout(f, { pausedAt: ago(MIN) }),
   no_transfer: (f) => withPayout(f, { transferId: null }),
+  creator_not_active: (f) => ({ ...f, creatorStatus: "suspended" }),
   booking_not_releasable: (f) => ({ ...f, booking: { status: "rejected" } }),
   item_not_live: (f) => ({ ...f, item: { status: "manual_pending" } }),
   offer_missing: (f) => ({ ...f, offer: null }),
@@ -93,6 +103,8 @@ const BREAKS: Record<ReleaseRefusal, (f: ReleaseFacts) => ReleaseFacts> = {
   duplicate_unchecked: (f) => ({ ...f, duplicateTransfers: "unchecked" }),
   dispute_at_razorpay: (f) => ({ ...f, razorpayDisputes: "blocking" }),
   dispute_unchecked: (f) => ({ ...f, razorpayDisputes: "unchecked" }),
+  refund_at_razorpay: (f) => ({ ...f, razorpayRefunds: "unaccounted" }),
+  refund_unchecked: (f) => ({ ...f, razorpayRefunds: "unchecked" }),
   account_not_activated: (f) => ({ ...f, account: "not_activated" }),
   account_unchecked: (f) => ({ ...f, account: "unchecked" }),
 };
@@ -157,7 +169,7 @@ describe("evaluateRelease: the release gate", () => {
   });
 
   it("a local refusal comes before anything asked of Razorpay, and evaluateLocalRelease ignores the Razorpay facts", () => {
-    const unread: ReleaseFacts = { ...good(), transfer: null, duplicateTransfers: "unchecked", razorpayDisputes: "unchecked", account: "unchecked" };
+    const unread: ReleaseFacts = { ...good(), transfer: null, duplicateTransfers: "unchecked", razorpayDisputes: "unchecked", razorpayRefunds: "unchecked", account: "unchecked" };
     expect(evaluateLocalRelease(unread)).toEqual({ ok: true });
     expect(evaluateLocalRelease({ ...unread, releaseEnabled: false })).toEqual({ ok: false, reason: "release_paused" });
     expect(evaluateRelease(unread)).toEqual({ ok: false, reason: "transfer_unreadable" });
@@ -199,6 +211,9 @@ describe("evaluateRelease: the release gate", () => {
         ]),
         disputeStatuses: mostly<string[]>([], [["open"], ["won"], ["lost"], ["won", "closed"]]),
         bankChangeBlocks: mostly(false, [true]),
+        creatorStatus: mostly<string | null>("approved", [null, "suspended", "rejected", "closed", "in_review", "draft", "weird"], 0.9),
+        byStaff: mostly(false, [true], 0.7),
+        accountActivation: mostly<string | null>("activated", [null, "suspended", "needs_clarification", "under_review"], 0.9),
         transfer: mostly<ReleaseFacts["transfer"]>({ id: "trf_A1", status: "processed", onHold: true, onHoldUntil: null, amount: 50_000, amountReversed: 0, recipient: "acc_A1", source: "pay_A1" }, [
           null,
           { id: "trf_A1", status: "pending", onHold: true, onHoldUntil: null, amount: 50_000, amountReversed: 0, recipient: "acc_A1", source: "pay_A1" },
@@ -211,6 +226,7 @@ describe("evaluateRelease: the release gate", () => {
         ]),
         duplicateTransfers: mostly<ReleaseFacts["duplicateTransfers"]>("none", ["found", "unchecked"], 0.9),
         razorpayDisputes: mostly<ReleaseFacts["razorpayDisputes"]>("clear", ["blocking", "unchecked"]),
+        razorpayRefunds: mostly<ReleaseFacts["razorpayRefunds"]>("clear", ["unaccounted", "covers_item", "unchecked"], 0.9),
         account: mostly<ReleaseFacts["account"]>("activated", ["not_activated", "unchecked"]),
       };
 
@@ -221,6 +237,8 @@ describe("evaluateRelease: the release gate", () => {
         f.payout.status === "held" &&
         f.payout.pausedAt === null &&
         f.payout.transferId !== null &&
+        (f.creatorStatus === "approved" || (f.creatorStatus === "closed" && f.byStaff === true)) &&
+        f.accountActivation === "activated" &&
         f.booking !== null && ["approved", "publishing", "completed", "partially_published"].includes(f.booking.status) &&
         f.item !== null && ["posted_manual", "published"].includes(f.item.status) &&
         f.offer !== null && f.offer.status === "completed" && f.offer.linkVerifiedAt !== null && (f.offer.ownershipCheck === "auto_ok" || f.offer.ownershipCheck === "manual_ok") &&
@@ -231,6 +249,7 @@ describe("evaluateRelease: the release gate", () => {
         t.status === "processed" && t.onHold === true && t.onHoldUntil === null && t.amountReversed === 0 &&
         f.duplicateTransfers === "none" &&
         f.razorpayDisputes === "clear" &&
+        f.razorpayRefunds === "clear" &&
         f.account === "activated";
 
       const d = evaluateRelease(f);
@@ -262,7 +281,9 @@ describe("releaseAfter", () => {
 });
 
 describe("decideTransferRetry: an unknown create result", () => {
-  const carrier = (over: Partial<CarrierTransfer> = {}): CarrierTransfer => ({ id: "trf_1", status: "processed", amount: 50_000, amountReversed: 0, recipient: "acc_A1", createdAt: 1_700_000_000, ...over });
+  /** Every carrier here was made by the current request unless a test says otherwise. */
+  const REQUEST = "1.1700000000";
+  const carrier = (over: Partial<CarrierTransfer> = {}): CarrierTransfer => ({ id: "trf_1", status: "processed", amount: 50_000, amountReversed: 0, recipient: "acc_A1", createdAt: 1_700_000_000, generation: REQUEST, ...over });
   const base = (over: Partial<TransferRetryFacts> = {}): TransferRetryFacts => ({
     now: NOW,
     attempts: 1,
@@ -270,6 +291,7 @@ describe("decideTransferRetry: an unknown create result", () => {
     lastCheckedAt: null,
     refundExists: false,
     storedTransferId: null,
+    requestKey: REQUEST,
     expected: { recipient: "acc_A1", amountPaise: 50_000 },
     carriers: [],
     ...over,
@@ -542,5 +564,153 @@ describe("decideResume", () => {
     expect(decideResume({ ...ok, disputeStatuses: ["won"] })).toEqual({ ok: true });
     expect(decideResume({ ...ok, bankChangeBlocks: true })).toEqual({ ok: false, reason: "bank_change_pending" });
     expect(decideResume({ ...ok, accountActivated: false })).toEqual({ ok: false, reason: "account_not_activated" });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 4 review fixes
+
+describe("the release gate: the creator, the stored account state and Razorpay's refunds", () => {
+  it("only an approved creator is released for by the worker; one who closed the account only by a person; nobody else, ever", () => {
+    expect(evaluateRelease({ ...good(), creatorStatus: "approved" })).toEqual({ ok: true });
+    expect(evaluateRelease({ ...good(), creatorStatus: "approved", byStaff: true })).toEqual({ ok: true });
+    // A creator who closed their account after the post was verified is owed the money: a person may release it, the worker never does.
+    expect(evaluateRelease({ ...good(), creatorStatus: "closed" })).toEqual({ ok: false, reason: "creator_not_active" });
+    expect(evaluateRelease({ ...good(), creatorStatus: "closed", byStaff: true })).toEqual({ ok: true });
+    // A suspended, rejected, unfinished or unreadable creator is never released for: not by the worker, not by a person (reinstate first).
+    for (const status of ["suspended", "rejected", "in_review", "draft", "", "APPROVED", "something_new", null]) {
+      for (const byStaff of [false, true]) expect(evaluateRelease({ ...good(), creatorStatus: status, byStaff }), `${status}/${byStaff}`).toEqual({ ok: false, reason: "creator_not_active" });
+    }
+  });
+
+  it("the creator check is local: it costs no Razorpay call and comes before anything is asked of Razorpay", () => {
+    const unread: ReleaseFacts = { ...good(), creatorStatus: "suspended", transfer: null, duplicateTransfers: "unchecked", razorpayDisputes: "unchecked", razorpayRefunds: "unchecked", account: "unchecked" };
+    expect(evaluateLocalRelease(unread)).toEqual({ ok: false, reason: "creator_not_active" });
+  });
+
+  it("the linked account must be activated as we last stored it, judged locally; Razorpay's fresh answer is still asked after", () => {
+    for (const status of ["suspended", "needs_clarification", "under_review", "created", "", null]) {
+      expect(evaluateLocalRelease({ ...good(), accountActivation: status }), String(status)).toEqual({ ok: false, reason: "account_not_activated" });
+    }
+    expect(evaluateLocalRelease({ ...good(), accountActivation: "activated" })).toEqual({ ok: true });
+    // Stored as activated, but Razorpay says otherwise now: still refused.
+    expect(evaluateRelease({ ...good(), account: "not_activated" })).toEqual({ ok: false, reason: "account_not_activated" });
+  });
+
+  it("a refund Razorpay shows and our books do not, or a refund of this very item, refuses; an unreadable answer refuses on its own reason", () => {
+    expect(evaluateRelease({ ...good(), razorpayRefunds: "unaccounted" })).toEqual({ ok: false, reason: "refund_at_razorpay" });
+    expect(evaluateRelease({ ...good(), razorpayRefunds: "covers_item" })).toEqual({ ok: false, reason: "refund_at_razorpay" });
+    expect(evaluateRelease({ ...good(), razorpayRefunds: "unchecked" })).toEqual({ ok: false, reason: "refund_unchecked" });
+    expect(evaluateRelease({ ...good(), razorpayRefunds: "clear" })).toEqual({ ok: true });
+    // Judged after the disputes and before the account, as the engine reads them.
+    expect(evaluateRelease({ ...good(), razorpayDisputes: "blocking", razorpayRefunds: "unaccounted" })).toEqual({ ok: false, reason: "dispute_at_razorpay" });
+    expect(evaluateRelease({ ...good(), razorpayRefunds: "unaccounted", account: "not_activated" })).toEqual({ ok: false, reason: "refund_at_razorpay" });
+  });
+});
+
+describe("decideRefundVerdict", () => {
+  const ledger = (...rows: Array<[number, string | null]>) => rows.map(([amountPaise, bookingItemId]) => ({ amountPaise, bookingItemId }));
+  it("is clear when Razorpay shows nothing more than our ledger, including our own refunds of OTHER items", () => {
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 0, ledger: [], itemId: "i1" })).toBe("clear");
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 30_000, ledger: ledger([30_000, "i2"]), itemId: "i1" })).toBe("clear");
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 30_000, ledger: ledger([10_000, "i2"], [20_000, "i3"]), itemId: "i1" })).toBe("clear");
+    // A refund filed as external and not attributed to an item (staff already looked and resumed) is on the books too.
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 30_000, ledger: ledger([30_000, null]), itemId: "i1" })).toBe("clear");
+  });
+  it("is unaccounted when Razorpay shows more refunded than our books, by even one paisa", () => {
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 30_001, ledger: ledger([30_000, "i2"]), itemId: "i1" })).toBe("unaccounted");
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 1, ledger: [], itemId: "i1" })).toBe("unaccounted");
+  });
+  it("covers the item when our books show a refund of this very item, whatever the totals say", () => {
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 10_000, ledger: ledger([10_000, "i1"]), itemId: "i1" })).toBe("covers_item");
+    expect(decideRefundVerdict({ razorpayRefundedPaise: 0, ledger: ledger([10_000, "i1"]), itemId: "i1" })).toBe("covers_item");
+  });
+});
+
+describe("decideTransferRetry: a transfer an EARLIER request left behind is never this request's outcome", () => {
+  const NOWREQ = "3.1700000500";
+  const OLD = "1.1700000000";
+  const c = (over: Partial<CarrierTransfer> = {}): CarrierTransfer => ({ id: "trf_x", status: "processed", amount: 50_000, amountReversed: 0, recipient: "acc_A1", createdAt: 1_700_000_000, generation: NOWREQ, ...over });
+  const f = (over: Partial<TransferRetryFacts> = {}): TransferRetryFacts => ({
+    now: NOW,
+    attempts: 3,
+    absentChecks: 0,
+    lastCheckedAt: null,
+    refundExists: false,
+    storedTransferId: null,
+    requestKey: NOWREQ,
+    expected: { recipient: "acc_A1", amountPaise: 50_000 },
+    carriers: [],
+    ...over,
+  });
+
+  it("a failed transfer of an earlier request is history: not adopted, and the listing still counts as empty", () => {
+    // Staff pressed Retry; the retry's answer was lost; the listing shows only the OLD failed transfer.
+    const d = decideTransferRetry(f({ carriers: [c({ id: "trf_old", status: "failed", generation: OLD })] }));
+    expect(d.action).toBe("wait");
+    expect(decideTransferRetry(f({ carriers: [c({ id: "trf_old", status: "failed", generation: OLD })], absentChecks: 1, lastCheckedAt: ago(ABSENT_CHECK_GAP_MS + MIN) })).action).toBe("needs_attention");
+  });
+  it("a failed transfer of THIS request is its definite outcome", () => {
+    expect(decideTransferRetry(f({ carriers: [c({ id: "trf_now", status: "failed" })] }))).toEqual({ action: "adopt_failed", transferId: "trf_now" });
+  });
+  it("a failed transfer that carries no request key at all is never trusted as an outcome; neither is any when the payout recorded no request", () => {
+    expect(decideTransferRetry(f({ carriers: [c({ status: "failed", generation: null })] })).action).toBe("wait");
+    expect(decideTransferRetry(f({ requestKey: null, carriers: [c({ status: "failed" })] })).action).toBe("wait");
+  });
+  it("a LIVE transfer always counts, whichever request made it: money is out", () => {
+    expect(decideTransferRetry(f({ carriers: [c({ id: "trf_old", generation: OLD })] }))).toEqual({ action: "adopt", transferId: "trf_old" });
+    expect(decideTransferRetry(f({ carriers: [c({ id: "trf_old", generation: OLD }), c({ id: "trf_now" })] }))).toMatchObject({ action: "duplicates" });
+    expect(decideTransferRetry(f({ carriers: [c({ id: "trf_old", status: "failed", generation: OLD }), c({ id: "trf_live", generation: null })] }))).toEqual({ action: "adopt", transferId: "trf_live" });
+  });
+  it("a reversed transfer of an earlier request (a twin we took back) is not 'reversed outside our flow'", () => {
+    const rev = c({ id: "trf_old", status: "reversed", amountReversed: 50_000, generation: OLD });
+    expect(decideTransferRetry(f({ carriers: [rev] })).action).toBe("wait");
+    expect(decideTransferRetry(f({ carriers: [c({ status: "reversed", amountReversed: 50_000 })] }))).toEqual({ action: "needs_attention", reason: "reversed_outside_flow" });
+  });
+});
+
+describe("requestKeyOf", () => {
+  it("names a request by how many create calls were sent and the second it was claimed, and is null without a request time", () => {
+    expect(requestKeyOf(1, new Date(1_700_000_000_999))).toBe("1.1700000000");
+    expect(requestKeyOf(2, new Date(1_700_000_000_999))).not.toBe(requestKeyOf(1, new Date(1_700_000_000_999)));
+    expect(requestKeyOf(1, new Date(1_700_000_001_000))).not.toBe(requestKeyOf(1, new Date(1_700_000_000_000)));
+    expect(requestKeyOf(1, null)).toBeNull();
+    expect(requestKeyOf(1, new Date(1_700_000_000_999))).toMatch(/^[A-Za-z0-9._-]{1,40}$/);
+  });
+});
+
+describe("how long a payout that cannot move is left alone", () => {
+  const HOUR = 60 * MIN;
+  it("a refused release waits: transient ones a quarter of an hour, persistent ones a quarter of how overdue they are (30 minutes to 6 hours)", () => {
+    for (const r of ["transfer_unreadable", "duplicate_unchecked", "dispute_unchecked", "refund_unchecked", "account_unchecked"] as const) {
+      expect(releaseRefusalBackoffMs(r, { now: NOW, releaseAfter: ago(10 * HOUR) }), r).toBe(15 * MIN);
+    }
+    for (const r of ["account_not_activated", "dispute_at_razorpay", "refund_at_razorpay", "creator_not_active", "transfer_mismatch", "transfer_not_on_hold", "bank_change_pending", "item_not_live"] as const) {
+      expect(releaseRefusalBackoffMs(r, { now: NOW, releaseAfter: ago(MIN) }), r).toBe(30 * MIN);
+      expect(releaseRefusalBackoffMs(r, { now: NOW, releaseAfter: ago(8 * HOUR) }), r).toBe(2 * HOUR);
+      expect(releaseRefusalBackoffMs(r, { now: NOW, releaseAfter: ago(100 * HOUR) }), r).toBe(6 * HOUR);
+      expect(releaseRefusalBackoffMs(r, { now: NOW, releaseAfter: null }), r).toBe(30 * MIN);
+    }
+  });
+  it("a refusal that selects nothing again anyway is not waited on (the switch, a pause, not held, not due, not scheduled)", () => {
+    for (const r of ["release_paused", "payout_not_held", "payout_paused", "no_transfer", "release_not_scheduled", "release_not_due"] as const) expect(releaseRefusalBackoffMs(r, { now: NOW, releaseAfter: ago(HOUR) }), r).toBeNull();
+  });
+  it("EVERY refusal reason has a defined wait or none, never a missing branch", () => {
+    for (const r of RELEASE_REFUSALS) {
+      const ms = releaseRefusalBackoffMs(r, { now: NOW, releaseAfter: ago(HOUR) });
+      expect(ms === null || (Number.isFinite(ms) && ms >= 15 * MIN && ms <= 6 * HOUR), r).toBe(true);
+    }
+  });
+  it("a payout parked with its hold gone is read again after 5 minutes, doubling, never over 2 hours", () => {
+    expect([0, 1, 2, 3, 4, 5, 9, 50].map(heldAnomalyBackoffMs)).toEqual([5 * MIN, 10 * MIN, 20 * MIN, 40 * MIN, 80 * MIN, 2 * HOUR, 2 * HOUR, 2 * HOUR]);
+    expect(heldAnomalyBackoffMs(-3)).toBe(5 * MIN);
+    expect(heldAnomalyBackoffMs(Number.NaN)).toBeGreaterThan(0);
+  });
+  it("a planned payout that waits: 2 minutes for a capture that has not landed, else a quarter of its age between 5 and 60 minutes", () => {
+    expect(plannedWaitBackoffMs("payment_not_captured", 5 * HOUR)).toBe(2 * MIN);
+    expect(plannedWaitBackoffMs("account_not_ready", 0)).toBe(5 * MIN);
+    expect(plannedWaitBackoffMs("account_not_ready", 2 * HOUR)).toBe(30 * MIN);
+    expect(plannedWaitBackoffMs("item_closed", 100 * HOUR)).toBe(HOUR);
+    expect(plannedWaitBackoffMs("booking_closed", -5)).toBe(5 * MIN);
   });
 });

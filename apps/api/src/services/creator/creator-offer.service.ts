@@ -474,7 +474,10 @@ interface CloseArgs {
   /**
    * Tell staff NOW that the item needs a refund (the creator declining does; a member of staff clicking Withdraw is already
    * looking at it). The worker passes false and sends one digest per booking instead (cron alertPending), because a per-offer
-   * alert against the shared hourly ceiling drops the 13th of 15 offers that expire together.
+   * alert against the hourly ceiling drops the 13th of 15 offers that expire together.
+   * ⚠️ A creator's decline is something a CREATOR can cause in bulk (twelve pages declined in a minute), so its key (`creator-offer-closed:`)
+   * is on the routine lane of payout-alert.ts, with its own small allowance: it can never use up the budget a failed transfer, a dispute or a
+   * stuck refund needs. That is also why it may stay `alert: true`.
    */
   alert: boolean;
   /** Told what became of the creator's payout and the client's refund, when the close itself waited for it (a staff withdraw). */

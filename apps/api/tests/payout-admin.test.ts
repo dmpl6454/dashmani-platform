@@ -14,7 +14,8 @@ vi.mock("../src/services/email.service", async (orig) => {
 });
 
 import app from "../src/app";
-import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
+import { notifyAdminByEmail } from "../src/services/email.service";
+import { clearPayoutAlertMarkersForTests, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { settlePayoutKicksForTests } from "../src/services/campaign/payment.service";
 import { settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
 import { onCreatorLinkVerified } from "../src/services/creator/payout-ledger";
@@ -23,7 +24,7 @@ import { RELEASE_SWITCH_KEY } from "../src/services/creator/payout.service";
 import { resetCreatorPayoutsCronForTests, runCreatorPayoutsTick } from "../src/cron/creator-payouts.cron";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
 import { generateClientToken, generateCreatorToken, generateHrToken, generateToken } from "./helpers";
-import { DAY, MIN, callLog, capture, countOf, mkStaff, mkWorld, openOffer, payoutOf, stubPayoutEnv, verifiedOffer, type StaffWorld, type World } from "./payout-fixtures";
+import { DAY, HOUR, MIN, callLog, capture, countOf, ensureStaffUser, mkStaff, mkWorld, openOffer, payoutOf, stubPayoutEnv, verifiedOffer, type StaffWorld, type World } from "./payout-fixtures";
 import { randomUUID } from "node:crypto";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -34,6 +35,7 @@ let staff: StaffWorld;
 beforeEach(async () => {
   // system_settings is not truncated between tests: the release switch must start every test absent (= on).
   await prisma.systemSetting.deleteMany({ where: { key: "creatorPayouts.release" } });
+  await clearPayoutAlertMarkersForTests();
   stubPayoutEnv();
   fake.reset();
   fake.install();
@@ -160,8 +162,8 @@ describe("the gate: internal Admin / Super Admin only, for every route", () => {
 describe("rows are an allow-list: ids, names, amounts in paise, statuses, times and the destination HINT; never bank data or a Razorpay body", () => {
   const ROW_KEYS = [
     "amountPaise", "amountReversedPaise", "attempts", "bookingId", "bookingItemId", "bookingName", "createdAt", "creatorId", "creatorName", "destinationHint", "errorCode",
-    "format", "grossPaise", "heldAt", "id", "itemPricePaise", "lastEvent", "pageName", "pausedAt", "pausedReason", "platform", "releaseAfter", "releasedAt", "reversedAt",
-    "settledAt", "status", "tdsPaise", "updatedAt",
+    "format", "grossPaise", "heldAt", "id", "itemPricePaise", "itemStatus", "lastEvent", "linkVerifiedAt", "manualPaidAt", "manualReference", "pageName", "pausedAt",
+    "pausedReason", "platform", "releaseAfter", "releasedAt", "reversedAt", "settledAt", "settlementUtr", "status", "tdsPaise", "updatedAt",
   ];
 
   it("a queue row has exactly the allow-listed keys, and a canary in every column that must not leave the server never appears", async () => {
@@ -174,12 +176,30 @@ describe("rows are an allow-list: ids, names, amounts in paise, statuses, times 
     const row = res.body.data.rows[0];
     expect(Object.keys(row).sort()).toEqual(ROW_KEYS);
     expect(row.destinationHint).toBe("HDFC ••••1234");
+    // The staff-recorded bank-transfer REFERENCE is the one thing of that group a finished payout's row now carries on purpose ("was creator X paid, and
+    // under which reference?"): it is a reference, never an account detail (a PAN- or IFSC-shaped one is refused when it is recorded). Its note stays out.
+    expect(row.manualReference).toBe("CANARY_REF1234");
     const text = JSON.stringify(res.body);
-    for (const secret of ["CANARY_RAZORPAY_BODY", "CANARY_NOTE", "CANARY_REF1234", "acc_P4I", "trf_", "pay_P4I", "razorpayAccountId", "razorpayTransferId", "razorpayPaymentId", "account_number", "ifsc", "beneficiary"]) {
+    for (const secret of ["CANARY_RAZORPAY_BODY", "CANARY_NOTE", "acc_P4I", "trf_", "pay_P4I", "razorpayAccountId", "razorpayTransferId", "razorpayPaymentId", "account_number", "ifsc", "beneficiary"]) {
       expect(text, secret).not.toContain(secret);
     }
     expect(Object.keys(res.body.data).sort()).toEqual(["counts", "filter", "nextCursor", "rows", "switches"]);
-    expect(res.body.data.switches).toEqual({ release: true, newTransfers: true, worker: true });
+    expect(res.body.data.switches).toEqual({ release: true, newTransfers: true, worker: true, razorpay: true });
+  });
+
+  it("the queue says whether Razorpay's keys are set: without them nothing moves, whatever the other switches say", async () => {
+    await paid({ pages: [{}] });
+    expect((await get("")).body.data.switches.razorpay).toBe(true);
+    // Either key missing (an operator removed one) reads as not configured. The worker and every engine step are idle/refused in that state, and the
+    // staff page draws a bar for it (a CREATOR_ROUTE_ENABLED bar would name the wrong cause).
+    for (const k of ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"]) {
+      vi.stubEnv(k, "");
+      const res = await get("");
+      expect(res.status, k).toBe(200);
+      expect(res.body.data.switches, k).toEqual({ release: true, newTransfers: true, worker: true, razorpay: false });
+      vi.stubEnv(k, k === "RAZORPAY_KEY_ID" ? "rzp_test_key" : "rzp_test_secret");
+    }
+    expect((await get("")).body.data.switches.razorpay).toBe(true);
   });
 
   it("the detail adds the history and references (the linked account's id is what staff look up), but still never bank details", async () => {
@@ -228,7 +248,7 @@ describe("the queue: views, counts and keyset paging", () => {
     expect(open).toHaveLength(6);
     expect(open).not.toContain(m.finished.id);
     const res = await get("");
-    expect(res.body.data.counts).toEqual({ open: 6, needs_attention: 1, manual_required: 1, paused: 1, held_awaiting_verify: 2, releasing: 1, settlement_pending: 0, failed: 1 });
+    expect(res.body.data.counts).toEqual({ open: 6, needs_attention: 1, manual_required: 1, paused: 1, held_awaiting_verify: 2, releasing: 1, settlement_pending: 0, failed: 1, owed_after_reversal: 0, finished: 1, all: 7 });
     for (const f of PAYOUT_FILTERS) expect(Object.keys(res.body.data.counts)).toContain(f);
     // An unknown view is the default view, never an error and never "everything including finished".
     expect((await get("?filter=everything")).body.data.filter).toBe("open");
@@ -488,6 +508,22 @@ describe("actions: one engine step run as the staff member, safe to repeat, a pl
       expect((await payoutOf(c.id)).status).toBe("released");
     });
 
+    it("a verified post whose release was never scheduled is scheduled first (Release now works); an unverified one is refused and nothing is scheduled for it", async () => {
+      const w = await paid({ pages: [{}, {}] });
+      const [verified, unverified] = w.creators;
+      await verifiedOffer(w, verified.id, { verifiedAt: new Date(Date.now() - 2 * HOUR) }); // the follow-up after the verification never ran
+      await openOffer(w, unverified.id, { status: "accepted" });
+      expect((await payoutOf(verified.id)).releaseAfter).toBeNull();
+      const ok = await post(`/${await idOf(verified.id)}/release-now`);
+      expect(ok.status).toBe(200);
+      expect((await payoutOf(verified.id)).status).toBe("released");
+      expect(await prisma.creatorPayoutEvent.count({ where: { payoutId: (await payoutOf(verified.id)).id, kind: "schedule" } })).toBe(1);
+      const no = await post(`/${await idOf(unverified.id)}/release-now`);
+      expect(no.status).toBe(409); // the post is not even live: the gate says so, and nothing was scheduled or changed
+      expect((await payoutOf(unverified.id)).status).toBe("held");
+      expect((await payoutOf(unverified.id)).releaseAfter).toBeNull();
+    });
+
     it("an unknown payout is a 404 on every action", async () => {
       const missing = "00000000-0000-0000-0000-000000000000";
       for (const [path, body] of [["pause", {}], ["resume", {}], ["retry-transfer", {}], ["reverse", {}], ["release-now", {}], ["require-manual", { reason: "x" }], ["mark-manual-paid", { reference: "UTR12345" }]] as const) {
@@ -604,7 +640,7 @@ describe("the CSV of the queue", () => {
 
 describe("the release switch", () => {
   it("is on when absent; PUT off pauses every release at once; PUT on (or deleting the row) resumes; junk is a 400 and changes nothing", async () => {
-    expect((await get("/release-switch")).body.data).toEqual({ key: RELEASE_SWITCH_KEY, release: "on" });
+    expect((await get("/release-switch")).body.data).toEqual({ key: RELEASE_SWITCH_KEY, release: "on", updatedAt: null, lastChange: null });
     const off = await put("/release-switch", { mode: "off" });
     expect(off.status).toBe(200);
     expect(off.body.data.release).toBe("off");
@@ -640,7 +676,8 @@ describe("the release switch", () => {
     expect((await payoutOf(released.id)).status).toBe("released");
   });
 
-  it("the change is written once per call and the audit of who did it is in the server log (never in a response)", async () => {
+  it("⚠️ who flipped it is ON RECORD: an audit row (staff, time, before, after) that the GET returns; a call that changes nothing writes none; the console line stays", async () => {
+    await ensureStaffUser(staff);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       await put("/release-switch", { mode: "off" });
@@ -648,5 +685,244 @@ describe("the release switch", () => {
     } finally {
       warn.mockRestore();
     }
+    const auditRows = () => prisma.auditLog.findMany({ where: { action: "creator_payouts.release_switch" }, orderBy: { createdAt: "asc" } });
+    let log = await auditRows();
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ userId: staff.staffId, resource: "system_settings", resourceId: RELEASE_SWITCH_KEY, before: { release: "on" }, after: { release: "off" } });
+    // A double click (nothing changes) adds no row.
+    expect((await put("/release-switch", { mode: "off" })).status).toBe(200);
+    expect(await auditRows()).toHaveLength(1);
+    // The GET says who, when and from what, and a response never carries more than that.
+    const g = (await get("/release-switch")).body.data;
+    expect(g.release).toBe("off");
+    expect(g.updatedAt).toEqual(expect.any(String));
+    expect(g.lastChange).toMatchObject({ byId: staff.staffId, from: "on", to: "off" });
+    expect(Object.keys(g.lastChange).sort()).toEqual(["at", "byId", "byName", "from", "to"]);
+    // Resuming is on record too, and the GET follows the newest change.
+    await put("/release-switch", { mode: "on" });
+    log = await auditRows();
+    expect(log).toHaveLength(2);
+    expect(log[1]).toMatchObject({ before: { release: "off" }, after: { release: "on" } });
+    expect((await get("/release-switch")).body.data.lastChange).toMatchObject({ from: "off", to: "on" });
+  });
+
+  it("⚠️ an audit table that cannot be written never blocks the emergency 'off': the switch is set, the answer is 200", async () => {
+    await ensureStaffUser(staff);
+    await prisma.$executeRawUnsafe("ALTER TABLE audit_logs RENAME TO audit_logs_gone");
+    try {
+      const r = await put("/release-switch", { mode: "off" });
+      expect(r.status).toBe(200);
+      expect(r.body.data.release).toBe("off");
+      expect(r.body.data.lastChange).toBeNull();
+    } finally {
+      await prisma.$executeRawUnsafe("ALTER TABLE audit_logs_gone RENAME TO audit_logs");
+    }
+    expect((await prisma.systemSetting.findUnique({ where: { key: RELEASE_SWITCH_KEY } }))?.value).toBe("off");
+    expect(await prisma.auditLog.count({ where: { action: "creator_payouts.release_switch" } })).toBe(0);
+  });
+});
+
+// ── Finished payouts stay reachable ──────────────────────────────────────────────────
+
+describe("finished payouts are visible: the `finished` and `all` views, a summary on the campaign page, and the CSV carries who was paid and under which reference", () => {
+  async function history() {
+    const w = await paid({ pages: [{}, {}, {}, {}] });
+    const [settled, byHand, reversed, open] = w.creators;
+    await setPayout(settled.id, { status: "settled", settledAt: new Date(Date.now() - 2 * DAY), settlementUtr: "UTR0000123456", releasedAt: new Date(Date.now() - 3 * DAY) });
+    await setPayout(byHand.id, { status: "paid_manual", manualReference: "NEFT-98765", manualPaidAt: new Date(Date.now() - DAY) });
+    await setPayout(reversed.id, { status: "reversed", reversedAt: new Date(Date.now() - DAY), amountReversedPaise: reversed.payout });
+    return { w, settled, byHand, reversed, open };
+  }
+  const itemIds = async (q: string) => (await get(q)).body.data.rows.map((r: { bookingItemId: string }) => r.bookingItemId);
+
+  it("`open` hides them; `finished` lists exactly the four finished states, newest first, with the UTR and the transfer reference; `all` lists everything of the campaign", async () => {
+    const h = await history();
+    expect(await itemIds("?filter=open")).toEqual([h.open.id]);
+    const fin = (await get("?filter=finished")).body.data;
+    expect(fin.filter).toBe("finished");
+    expect(fin.rows.map((r: { bookingItemId: string }) => r.bookingItemId).sort()).toEqual([h.settled.id, h.byHand.id, h.reversed.id].sort());
+    // Newest first: creation order reversed.
+    const created = await prisma.creatorPayout.findMany({ where: { id: { in: fin.rows.map((r: { id: string }) => r.id) } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true } });
+    expect(fin.rows.map((r: { id: string }) => r.id)).toEqual(created.map((c) => c.id));
+    const byItem = new Map<string, { settlementUtr: string | null; manualReference: string | null; manualPaidAt: string | null; status: string }>(fin.rows.map((r: { bookingItemId: string }) => [r.bookingItemId, r]));
+    expect(byItem.get(h.settled.id)).toMatchObject({ status: "settled", settlementUtr: "UTR0000123456", manualReference: null });
+    expect(byItem.get(h.byHand.id)).toMatchObject({ status: "paid_manual", manualReference: "NEFT-98765", settlementUtr: null });
+    expect(byItem.get(h.byHand.id)!.manualPaidAt).toEqual(expect.any(String));
+    expect((await itemIds(`?filter=all&bookingId=${h.w.booking.id}`)).sort()).toEqual([h.settled.id, h.byHand.id, h.reversed.id, h.open.id].sort());
+    expect((await get("")).body.data.counts).toMatchObject({ open: 1, finished: 3, all: 4 });
+  });
+
+  it("the history views page newest first without a repeat or a gap", async () => {
+    await history();
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 6; i++) {
+      const res: request.Response = await get(`?filter=all&limit=1${cursor ? `&cursor=${cursor}` : ""}`);
+      seen.push(...res.body.data.rows.map((r: { id: string }) => r.id));
+      cursor = res.body.data.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen).toHaveLength(4);
+    expect(new Set(seen).size).toBe(4);
+    const all = await prisma.creatorPayout.findMany({ orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true } });
+    expect(seen).toEqual(all.map((a) => a.id));
+  });
+
+  it("the campaign page's offers carry a compact summary of their post's payout, finished ones too, from an allow-list: a UTR and a reference, never a Razorpay id or a bank detail", async () => {
+    const h = await history();
+    await verifiedOffer(h.w, h.settled.id);
+    await verifiedOffer(h.w, h.byHand.id);
+    const res = await request(app).get(`/v1/admin/campaigns/${h.w.booking.id}`).set("Authorization", `Bearer ${staff.admin}`);
+    expect(res.status).toBe(200);
+    const offers: Array<{ itemId: string; payout: Record<string, unknown> | null }> = res.body.data.creatorOffers;
+    const of = (id: string) => offers.find((o) => o.itemId === id)!;
+    expect(of(h.settled.id).payout).toMatchObject({ status: "settled", settlementUtr: "UTR0000123456", manualReference: null });
+    expect(of(h.byHand.id).payout).toMatchObject({ status: "paid_manual", manualReference: "NEFT-98765" });
+    expect(Object.keys(of(h.settled.id).payout!).sort()).toEqual([
+      "amountPaise", "amountReversedPaise", "errorCode", "id", "manualPaidAt", "manualReference", "pausedAt", "pausedReason", "releaseAfter", "releasedAt", "reversedAt", "settledAt", "settlementUtr", "status",
+    ]);
+    const text = JSON.stringify(offers);
+    for (const secret of ["acc_P4I", "trf_", "pay_P4I", "razorpayAccountId", "razorpayTransferId", "razorpayPaymentId", "account_number", "ifsc", "beneficiary", "destinationHint"]) expect(text, secret).not.toContain(secret);
+  });
+
+  it("the CSV of the finished view has the UTR, the bank transfer reference and when it was recorded (appended: the older columns keep their place)", async () => {
+    const h = await history();
+    const res = await get(".csv?filter=finished").buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (d: Buffer) => chunks.push(d));
+      r.on("end", () => cb(null, Buffer.concat(chunks).toString("utf8")));
+    });
+    expect(res.status).toBe(200);
+    const rows = parseCsv(res.body as unknown as string);
+    expect(rows[0]).toEqual([...PAYOUT_CSV_HEADERS]);
+    expect(rows[0].slice(0, 5)).toEqual(["Payout", "Campaign", "Campaign name", "Post", "Creator"]);
+    expect(rows).toHaveLength(4);
+    const col = (name: string) => PAYOUT_CSV_HEADERS.indexOf(name as never);
+    const row = (itemId: string) => rows.find((r) => r[3] === itemId)!;
+    expect(row(h.settled.id)[col("Paid: settlement UTR")]).toBe("UTR0000123456");
+    expect(row(h.byHand.id)[col("Paid: bank transfer reference")]).toBe("NEFT-98765");
+    expect(row(h.byHand.id)[col("Bank transfer recorded at (UTC)")]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(row(h.reversed.id)[col("Status")]).toBe("reversed");
+    expect(rows.slice(1).map((r) => r[col("Status")]).sort()).toEqual(["paid_manual", "reversed", "settled"]);
+  });
+});
+
+describe("⚠️ reverse first, then pay by hand: a reversed payout of a LIVE post stays reachable and can be paid by hand; one of a post that will not be paid cannot", () => {
+  async function reversedLive() {
+    const w = await paid({ pages: [{}, {}] });
+    const [a, b] = w.creators;
+    await verifiedOffer(w, a.id);
+    await onCreatorLinkVerified(a.id, { type: "staff", id: staff.staffId });
+    const pid = await idOf(a.id);
+    expect((await post(`/${pid}/reverse`, {})).status).toBe(200);
+    expect((await payoutOf(a.id)).status).toBe("reversed");
+    return { w, a, b, pid };
+  }
+
+  it("the reversed payout of a live post is in `owed_after_reversal` (and on the badge); require-manual, then mark-manual-paid, ends it with its reference on record", async () => {
+    const { w, a, b, pid } = await reversedLive();
+    expect(await itemIds2("?filter=owed_after_reversal")).toEqual([a.id]);
+    expect((await get("")).body.data.counts.owed_after_reversal).toBe(1);
+    // The other post is still held, live-less: not in the view.
+    expect(await itemIds2("?filter=owed_after_reversal")).not.toContain(b.id);
+    const req = await post(`/${pid}/require-manual`, { reason: "account_suspended" });
+    expect(req.status).toBe(200);
+    expect((await payoutOf(a.id)).status).toBe("manual_required");
+    expect(await itemIds2("?filter=owed_after_reversal")).toEqual([]);
+    expect(await itemIds2("?filter=manual_required")).toEqual([a.id]);
+    const paidRes = await post(`/${pid}/mark-manual-paid`, { reference: "NEFT-20261018-77" });
+    expect(paidRes.status).toBe(200);
+    expect(await payoutOf(a.id)).toMatchObject({ status: "paid_manual", manualReference: "NEFT-20261018-77" });
+    expect(await itemIds2("?filter=finished")).toContain(a.id);
+    void w;
+  });
+
+  it("a reversed payout whose post was refunded or withdrawn is NOT offered for a bank transfer: the client was repaid for it", async () => {
+    const { a, pid } = await reversedLive();
+    await prisma.campaignBookingItem.update({ where: { id: a.id }, data: { status: "refunded" } });
+    expect(await itemIds2("?filter=owed_after_reversal")).toEqual([]);
+    const refused = await post(`/${pid}/require-manual`, { reason: "account_suspended" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toMatch(/\[post_not_live\]/);
+    expect((await payoutOf(a.id)).status).toBe("reversed");
+  });
+
+  it("a live post the client has ALSO been refunded for (a refund of it is on the ledger) is refused too", async () => {
+    const { w, a, pid } = await reversedLive();
+    const pay = await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: w.booking.id } });
+    await prisma.campaignRefund.create({ data: { idempotencyKey: `rf-item-${a.id}`, paymentId: pay.id, razorpayPaymentId: pay.razorpayPaymentId!, bookingId: w.booking.id, bookingItemId: a.id, amountPaise: a.price, status: "processed", origin: "ours", reason: "item_refunded" } });
+    const refused = await post(`/${pid}/require-manual`, { reason: "account_suspended" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toMatch(/\[post_not_live\]/);
+    expect((await payoutOf(a.id)).status).toBe("reversed");
+  });
+
+  async function itemIds2(q: string): Promise<string[]> {
+    return (await get(q)).body.data.rows.map((r: { bookingItemId: string }) => r.bookingItemId);
+  }
+});
+
+describe("Reverse on a payout that has no transfer is refused up front: nothing is claimed, nothing is overwritten, nobody is emailed", () => {
+  it("a parked payout with no transfer id keeps its real reason, its events and its status", async () => {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    const pid = await idOf(c.id);
+    await setPayout(c.id, { status: "needs_attention", errorCode: "transfer_unknown_after_retry", razorpayTransferId: null, lastError: "no transfer ever showed up" });
+    const before = { events: (await events(pid)).length, calls: fake.calls.length };
+    const mails = vi.mocked(notifyAdminByEmail).mock.calls.length;
+    const r = await post(`/${pid}/reverse`, {});
+    expect(r.status).toBe(409);
+    expect(r.body.error.message).toMatch(/\[no_transfer\]/);
+    const p = await payoutOf(c.id);
+    expect(p).toMatchObject({ status: "needs_attention", errorCode: "transfer_unknown_after_retry", lastError: "no transfer ever showed up" });
+    expect((await events(pid)).length).toBe(before.events);
+    expect(fake.calls.length).toBe(before.calls);
+    await flushPayoutAlertsForTests();
+    expect(vi.mocked(notifyAdminByEmail).mock.calls.length).toBe(mails);
+  });
+});
+
+// ── The CSV is a worklist: a failure must never look like a complete file ─────────────────────
+
+describe("⚠️ the CSV never looks complete when it is not", () => {
+  const read = (path: string) =>
+    get(path).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (d: Buffer) => chunks.push(d));
+      r.on("end", () => cb(null, Buffer.concat(chunks).toString("utf8")));
+      r.on("aborted", () => cb(new Error("aborted"), ""));
+      r.on("error", (e) => cb(e, ""));
+    });
+
+  it("a failure in the FIRST batch's names and pages (the decorating queries), after the rows were read, is a clean 500 with nothing of a file in it, not a header-only 200", async () => {
+    const w = await paid({ pages: [{}] });
+    await setPayout(w.creators[0].id, { status: "manual_required" });
+    await prisma.$executeRawUnsafe("ALTER TABLE creators RENAME TO creators_gone");
+    let res: request.Response;
+    try {
+      res = await get(".csv?filter=manual_required");
+    } finally {
+      await prisma.$executeRawUnsafe("ALTER TABLE creators_gone RENAME TO creators");
+    }
+    expect(res.status).toBe(500);
+    expect(res.headers["content-type"]).not.toMatch(/text\/csv/);
+    expect(res.text).not.toContain("Payout,Campaign");
+  });
+
+  it("a failure AFTER the first bytes went out aborts the connection: the download fails instead of ending as a normal, shorter file", async () => {
+    await paid({ pages: [{}] });
+    const staffService = await import("../src/services/creator/payout-staff.service");
+    const spy = vi.spyOn(staffService, "streamPayoutsCsv").mockImplementation(async (_q, write) => {
+      write("\uFEFFPayout,Campaign\r\n");
+      write("p1,c1\r\n");
+      throw new Error("pool timeout on batch 2");
+    });
+    try {
+      await expect(read(".csv?filter=manual_required")).rejects.toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+    // The route is healthy again afterwards.
+    expect((await get(".csv?filter=open")).status).toBe(200);
   });
 });

@@ -6,6 +6,7 @@ import { PAYOUT_STATUSES, mapTransferEvent, type PayoutStatus, type TransferFact
 import { pausePayoutsOfPaymentRows, type PausedPayout } from "../creator/payout-pause";
 import { alertStaffOncePerHour } from "../creator/payout-alert";
 import { applyProductStatus } from "../creator/payout-account.service";
+import { confirmHold } from "../creator/payout.service";
 
 // Razorpay Route webhooks: transfers, settlements, linked-account (product) status, and
 // payment disputes. Phase 1 of docs/superpowers/plans/2026-10-12-creator-payouts-razorpay-route.md.
@@ -194,6 +195,30 @@ function unreadable(name: string, problem: string): Result {
 // ── Shared: one status change + its audit row ───────────────────────────────────
 
 type PayoutRow = Pick<CreatorPayout, "id" | "bookingId" | "status" | "amountPaise" | "razorpayAccountId" | "razorpayPaymentId">;
+
+// ── Putting a lost hold back, without making Razorpay wait for us ───────────────
+
+const background = new Set<Promise<unknown>>();
+
+/** Tests only: wait for the re-holds a webhook started (they run after the 2xx has been sent). */
+export async function flushRouteWebhookBackgroundForTests(): Promise<void> {
+  await Promise.allSettled([...background]);
+}
+
+/**
+ * A transfer.processed event that showed the transfer NOT on hold (or with an automatic release date) parked its payout, and the event
+ * itself puts nothing back: left to the worker the transfer would sit un-held until its next pass. So the engine's own step (confirmHold:
+ * a fresh read, PATCH on_hold:true, an audit row, staff told) is started at once, in the background: the webhook answers Razorpay within
+ * its deadline, and the step never throws into it. The worker picks the payout up again whatever happens here.
+ */
+function kickHoldBack(payoutId: string): void {
+  const run: Promise<unknown> = confirmHold(payoutId)
+    .catch(() => undefined)
+    .finally(() => {
+      background.delete(run);
+    });
+  background.add(run);
+}
 
 const REASON_TEXT: Record<string, string> = {
   processed_not_held: "Razorpay shows the transfer processed but NOT on hold. Check it in Razorpay before anything is released.",
@@ -393,7 +418,7 @@ async function onTransferEvent(name: string, evt: any, eventId?: string): Promis
   // replaced and reversed) matches nothing, and that is silent by design.
   const row = await prisma.creatorPayout.findUnique({
     where: { razorpayTransferId: read.id },
-    select: { id: true, bookingId: true, status: true, amountPaise: true, razorpayAccountId: true, razorpayPaymentId: true },
+    select: { id: true, bookingId: true, status: true, amountPaise: true, razorpayAccountId: true, razorpayPaymentId: true, attempts: true },
   });
   if (!row) return { handled: false, note: "no payout for this transfer" };
 
@@ -420,6 +445,11 @@ async function onTransferEvent(name: string, evt: any, eventId?: string): Promis
 
   const move = mapTransferEvent(row.status, read.facts);
   if (!move.to) return { handled: true, note: move.reason };
+  // ⚠️ A payout whose create call was sent more than once may have a TWIN of this transfer (the first request, landing late), and the engine
+  // does not call such a payout held, failed or parked until a listing, taken after the last request, shows the twin is not there. That audit
+  // is scheduled when the transfer is adopted and runs from its own read of Razorpay, so an event that arrives first changes nothing: it
+  // would skip the audit, and the twin's share would then stay in the linked account when the brand is refunded.
+  if (row.status === "transfer_requested" && row.attempts > 1 && (move.to === "held" || move.to === "failed" || move.to === "needs_attention")) return { handled: true, note: "audit_pending" };
   // "Legal from" is every status the SAME facts would move to the SAME target, so the WHERE of
   // the update and the decision above can never disagree, even if the row moved after the read.
   const from = PAYOUT_STATUSES.filter((s) => mapTransferEvent(s, read.facts).to === move.to);
@@ -437,6 +467,7 @@ async function onTransferEvent(name: string, evt: any, eventId?: string): Promis
   if (move.alert || ALERT_STATUSES.has(move.to)) {
     alertPayout(row, move.to, move.reason, name, read.error?.code ? [{ label: "Razorpay code", value: read.error.code }] : []);
   }
+  if (move.to === "needs_attention" && (move.reason === "processed_not_held" || move.reason === "processed_hold_expires")) kickHoldBack(row.id);
   return { handled: true, note: move.reason };
 }
 

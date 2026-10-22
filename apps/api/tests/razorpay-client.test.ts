@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import crypto from "crypto";
+import { FakeRazorpay, is } from "./fake-razorpay-route";
 import {
   razorpayHttp,
   RazorpayError,
@@ -31,6 +32,8 @@ import {
   listAllPaymentTransfers,
   listDisputes,
   fetchTransfer,
+  fetchTransferSettlement,
+  UNPAGED_COMPLETE_BELOW,
   setTransferHold,
   reverseTransfer,
   listTransferReversals,
@@ -187,10 +190,15 @@ describe("transport", () => {
     expect(calls[0].headers["X-Refund-Idempotency"]).toBe("rf-item-0000001");
   });
 
-  it("builds query strings with URLSearchParams and keeps the documented literal expand[] key", async () => {
+  it("builds query strings with URLSearchParams and keeps the documented literal expand[] key (the transfer LIST, never the single read)", async () => {
+    // The single read documents no `expand`: it is a plain GET, so a refusal of an undocumented parameter can never stop it.
     stub(() => json(transferEntity()));
     await fetchTransfer("trf_1");
-    expect(calls[0].url).toBe("https://api.razorpay.com/v1/transfers/trf_1?expand[]=recipient_settlement");
+    expect(calls[0].url).toBe("https://api.razorpay.com/v1/transfers/trf_1");
+
+    stub(() => json({ items: [] }));
+    await fetchTransferSettlement("trf_1", "setl_1");
+    expect(calls[calls.length - 1].url).toBe("https://api.razorpay.com/v1/transfers?expand[]=recipient_settlement&recipient_settlement_id=setl_1&count=100&skip=0");
 
     stub(() => json({ items: [] }));
     await fetchPaymentRefunds("pay_1");
@@ -732,6 +740,19 @@ describe("createTransferFromPayment", () => {
     expect(t).toMatchObject({ id: "trf_JJD535tJtk6Yy0", status: "pending", recipient: "acc_IROu8Nod6PXPtZ", amount: 12345, on_hold: true, amount_reversed: 0 });
   });
 
+  it("names the request in the notes when asked to, so a listing can tell which request made a transfer; and reads it back (a token of ours only)", async () => {
+    stub(() => created({ notes: { payout_id: "po_1", booking_item_id: "it_1", attempt: "2.1700000000" } }));
+    const t = await createTransferFromPayment("pay_1", { ...input, notes: { ...input.notes, attempt: "2.1700000000" } });
+    expect(calls[0].body.transfers[0].notes).toEqual({ payout_id: "po_1", booking_item_id: "it_1", attempt: "2.1700000000" });
+    expect(t.notes).toEqual({ payout_id: "po_1", booking_item_id: "it_1", attempt: "2.1700000000" });
+    // Not asked: not sent. Odd text in that note is not ours: dropped on the way back.
+    stub(() => created({ notes: { payout_id: "po_1", attempt: "<script>x</script> 123456789" } }));
+    calls.length = 0;
+    const odd = await createTransferFromPayment("pay_1", input);
+    expect(calls[0].body.transfers[0].notes).toEqual({ payout_id: "po_1", booking_item_id: "it_1" });
+    expect(odd.notes).toEqual({ payout_id: "po_1" });
+  });
+
   it("is always created on hold, even if a caller forces the type", async () => {
     stub(() => created());
     const err = await failure(() => createTransferFromPayment("pay_1", { ...input, onHold: false as unknown as true }));
@@ -943,12 +964,63 @@ describe("exact lists (listAllPaymentTransfers, listDisputes)", () => {
     expect(new Set(list.map((t) => t.id)).size).toBe(25);
   });
 
-  it("a server that ignores `skip` (the same page every time) is UNKNOWN_RESULT, never a loop and never a partial answer", async () => {
+  it("a server that ignores BOTH `count` and `skip` and returns a SHORT page (under 10: short on either reading of `count`) is read once more and the page IS the list", async () => {
     stub(() => collection([tr("trf_1"), tr("trf_2")]));
+    const list = await listAllPaymentTransfers("pay_1");
+    expect(list.map((t) => t.id)).toEqual(["trf_1", "trf_2"]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it(`a server that ignores \`skip\` and returns ${UNPAGED_COMPLETE_BELOW} or more (a default page that may have been cut) is UNKNOWN_RESULT, never a loop and never a partial answer`, async () => {
+    stub(() => collection(Array.from({ length: UNPAGED_COMPLETE_BELOW }, (_, i) => tr(`trf_${i}`))));
     const err = await failure(() => listAllPaymentTransfers("pay_1"));
     expect(err.code).toBe("UNKNOWN_RESULT");
     expect(isDefinitelyRejected(err)).toBe(false);
     expect(calls).toHaveLength(2);
+    // And with one fewer it is the list.
+    calls.length = 0;
+    stub(() => collection(Array.from({ length: UNPAGED_COMPLETE_BELOW - 1 }, (_, i) => tr(`trf_${i}`))));
+    expect(await listAllPaymentTransfers("pay_1")).toHaveLength(UNPAGED_COMPLETE_BELOW - 1);
+  });
+
+  it("a page that repeats only SOME of what we hold, or a repeat on a later page, is not 'skip ignored': it is unreadable", async () => {
+    let n = 0;
+    stub(() => collection(++n === 1 ? [tr("trf_1"), tr("trf_2")] : [tr("trf_2"), tr("trf_3")]));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).code).toBe("UNKNOWN_RESULT");
+    calls.length = 0;
+    n = 0;
+    stub(() => collection(n++ === 0 ? [tr("trf_1")] : n === 2 ? [tr("trf_2")] : [tr("trf_1")]));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).code).toBe("UNKNOWN_RESULT");
+    // The same id twice inside one page is unreadable too.
+    stub(() => collection([tr("trf_1"), tr("trf_1")]));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).code).toBe("UNKNOWN_RESULT");
+  });
+
+  it("an endpoint that REFUSES count and skip with a 400 is asked once more with no paging parameters, and a short answer is the list", async () => {
+    stub((c) => (new URL(c.url).searchParams.has("count") ? json({ error: { code: "BAD_REQUEST_ERROR", description: "count is not required" } }, 400) : collection([tr("trf_1"), tr("trf_2")])));
+    const list = await listAllPaymentTransfers("pay_1");
+    expect(list.map((t) => t.id)).toEqual(["trf_1", "trf_2"]);
+    expect(calls.map((c) => c.url)).toEqual(["https://api.razorpay.com/v1/payments/pay_1/transfers?count=100&skip=0", "https://api.razorpay.com/v1/payments/pay_1/transfers"]);
+  });
+
+  it("an unpaged answer of 10 or more entries cannot be proven complete: UNKNOWN_RESULT; a refusal of the plain read too; any other failure is NOT retried plain", async () => {
+    stub((c) => (new URL(c.url).searchParams.has("count") ? json({ error: { code: "BAD_REQUEST_ERROR", description: "no" } }, 400) : collection(Array.from({ length: 12 }, (_, i) => tr(`trf_${i}`)))));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).code).toBe("UNKNOWN_RESULT");
+    stub(() => json({ error: { code: "BAD_REQUEST_ERROR", description: "no" } }, 422));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).status).toBe(422);
+    calls.length = 0;
+    stub(() => json({ error: { code: "SERVER_ERROR", description: "boom" } }, 500));
+    expect((await failure(() => listAllPaymentTransfers("pay_1"))).status).toBe(500);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("the disputes list stays STRICT (its paging is documented): a server that ignores skip is UNKNOWN_RESULT even when the page is short, and a 400 is not retried plain", async () => {
+    stub(() => collection([dispute("disp_1")]));
+    expect((await failure(() => listDisputes({ fromEpoch: 1, toEpoch: 2 }))).code).toBe("UNKNOWN_RESULT");
+    calls.length = 0;
+    stub(() => json({ error: { code: "BAD_REQUEST_ERROR", description: "bad" } }, 400));
+    expect((await failure(() => listDisputes({ fromEpoch: 1, toEpoch: 2 }))).status).toBe(400);
+    expect(calls).toHaveLength(1);
   });
 
   it("an entry that cannot be read, or more entries than we are willing to hold, make the whole list UNKNOWN_RESULT", async () => {
@@ -1014,6 +1086,133 @@ describe("exact lists (listAllPaymentTransfers, listDisputes)", () => {
     const err = await failure(() => listDisputes({ fromEpoch: 1, toEpoch: 2 }));
     expect(err).toBeInstanceOf(RazorpayError);
     expect(err.status).toBe(400);
+  });
+});
+
+// ── The settlement of a transfer: the LIST with expand, found by id ─────────────
+
+describe("fetchTransferSettlement", () => {
+  const settlement = (over: Record<string, unknown> = {}) => ({ id: "setl_1", entity: "settlement", amount: 200000, status: "processed", fees: 12, tax: 2, utr: "UTR0001234", created_at: 1678854659, ...over });
+  const withSettlement = (id: string, over: Record<string, unknown> = {}) => transferEntity({ id, settlement_status: "settled", recipient_settlement_id: "setl_1", recipient_settlement: settlement(), ...over });
+  const collection = (items: unknown[]) => json({ entity: "collection", count: items.length, items });
+
+  it("asks the transfer LIST for the settlement (expand mandatory there), filtered by settlement id, and finds our transfer BY ID in a batch", async () => {
+    stub(() => collection([withSettlement("trf_other"), withSettlement("trf_mine")]));
+    const st = await fetchTransferSettlement("trf_mine", "setl_1");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "GET", url: "https://api.razorpay.com/v1/transfers?expand[]=recipient_settlement&recipient_settlement_id=setl_1&count=100&skip=0" });
+    expect(st).toEqual({ id: "setl_1", status: "processed", utr: "UTR0001234", fee: 12, tax: 2, amount_settled: 200000 });
+  });
+
+  it("is null, never a guess, when our transfer is not in the answer, is shown without its settlement, or shows another settlement", async () => {
+    stub(() => collection([withSettlement("trf_other")]));
+    // Second request (skip=1) answers the SAME entry again: skip was ignored, so there is nothing more to look at.
+    expect(await fetchTransferSettlement("trf_mine", "setl_1")).toBeNull();
+    stub(() => collection([]));
+    expect(await fetchTransferSettlement("trf_mine", "setl_1")).toBeNull();
+    stub(() => collection([withSettlement("trf_mine", { recipient_settlement: undefined })]));
+    expect(await fetchTransferSettlement("trf_mine", "setl_1")).toBeNull();
+    stub(() => collection([withSettlement("trf_mine", { recipient_settlement: settlement({ id: "setl_OTHER" }) })]));
+    expect(await fetchTransferSettlement("trf_mine", "setl_1")).toBeNull();
+  });
+
+  it("pages on until it finds the transfer, and gives up when a page adds nothing new", async () => {
+    const batch = Array.from({ length: 150 }, (_, i) => withSettlement(`trf_${i}`));
+    stub((c) => {
+      const skip = Number(new URL(c.url).searchParams.get("skip"));
+      return collection(batch.slice(skip, skip + 100));
+    });
+    expect((await fetchTransferSettlement("trf_120", "setl_1"))?.utr).toBe("UTR0001234");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("an unreadable or refused answer is an error (the caller leaves the payout as it is), and an id that is not an id is refused before any request", async () => {
+    stub(() => json({ error: { code: "BAD_REQUEST_ERROR", description: "expand" } }, 400));
+    expect((await failure(() => fetchTransferSettlement("trf_1", "setl_1"))).status).toBe(400);
+    stub(() => json({ nope: 1 }));
+    expect((await failure(() => fetchTransferSettlement("trf_1", "setl_1"))).code).toBe("UNKNOWN_RESULT");
+    calls.length = 0;
+    expect((await failure(() => fetchTransferSettlement("../x", "setl_1"))).code).toBe("INVALID_REQUEST");
+    expect((await failure(() => fetchTransferSettlement("trf_1", "a/b"))).code).toBe("INVALID_REQUEST");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+// ── The fake itself: what the engine's tests are proven against ─────────────────
+
+describe("the fake Razorpay (what the payout tests rely on being faithful)", () => {
+  const fake = new FakeRazorpay();
+  beforeEach(() => {
+    fake.reset();
+    fake.install();
+  });
+  afterEach(() => fake.restore());
+
+  it("pays refunds out of the platform's balance: a refund beyond it is refused the way Razorpay refuses, and nothing is debited", async () => {
+    fake.seedPayment({ id: "pay_B1", amount: 100_000 });
+    fake.balance = 99_999;
+    const err = await failure(() => refundPayment("pay_B1", 100_000, "r", "rf-item-balance-1"));
+    expect(err.status).toBe(400);
+    expect(isDefinitelyRejected(err)).toBe(true);
+    expect(err.message).toMatch(/enough balance/i);
+    expect(fake.balance).toBe(99_999);
+    expect(fake.payments.get("pay_B1")!.refunds).toHaveLength(0);
+  });
+
+  it("a refund that succeeds is debited from the balance, and a reversal credits it back: reverse-then-refund needs the reversed money", async () => {
+    fake.seedPayment({ id: "pay_B2", amount: 100_000 });
+    const t = fake.seedTransfer({ source: "pay_B2", recipient: "acc_B2", amount: 70_000, notes: { payout_id: "po_B2" } });
+    // The creator's share has left, and what was left of the payment went to our bank weeks ago: only 30 000 of the 100 000 is not ours to give back.
+    fake.balance = 30_000;
+    expect((await failure(() => refundPayment("pay_B2", 100_000, "r", "rf-item-balance-2"))).message).toMatch(/enough balance/i);
+    await reverseTransfer(t.id, 70_000);
+    expect(fake.balance).toBe(100_000);
+    const refund = await refundPayment("pay_B2", 100_000, "r", "rf-item-balance-2");
+    expect(refund.status).toBe("processed");
+    expect(fake.balance).toBe(0);
+    // The same key again answers with the refund it made and debits nothing more.
+    await refundPayment("pay_B2", 100_000, "r", "rf-item-balance-2");
+    expect(fake.balance).toBe(0);
+  });
+
+  it("the single-transfer read REFUSES `expand` by default (the docs show it only on the list); ignoring or honouring it is a switch", async () => {
+    const t = fake.seedTransfer({ source: "pay_X", recipient: "acc_X", amount: 1000 });
+    fake.settleTransfer(t.id);
+    const withExpand = (m: "reject" | "ignore" | "honor") => {
+      fake.singleGetExpand = m;
+      return razorpayHttp.fetch(`https://api.razorpay.com/v1/transfers/${t.id}?expand[]=recipient_settlement`, { method: "GET" });
+    };
+    expect((await withExpand("reject")).status).toBe(400);
+    const ignored = (await (await withExpand("ignore")).json()) as { recipient_settlement?: unknown };
+    expect(ignored.recipient_settlement).toBeUndefined();
+    const honored = (await (await withExpand("honor")).json()) as { recipient_settlement: { id: string; utr: string } };
+    expect(honored.recipient_settlement.utr).toMatch(/^UTRFAKE/);
+    // The plain read always works, and carries the settlement id (the base field).
+    expect(await fetchTransfer(t.id)).toMatchObject({ id: t.id, recipient_settlement_id: honored.recipient_settlement.id, settlement_status: "settled", recipient_settlement: null });
+  });
+
+  it("serves the settlement through the transfer LIST: expand is mandatory there, and the settlement id filters", async () => {
+    const a = fake.seedTransfer({ source: "pay_Y", recipient: "acc_Y", amount: 1000 });
+    const b = fake.seedTransfer({ source: "pay_Y", recipient: "acc_Y", amount: 2000 });
+    const st = fake.settleTransfer(a.id, { utr: "UTRLIST0001" });
+    expect((await razorpayHttp.fetch("https://api.razorpay.com/v1/transfers", { method: "GET" })).status).toBe(400);
+    expect((await fetchTransferSettlement(a.id, st.id))?.utr).toBe("UTRLIST0001");
+    expect(await fetchTransferSettlement(b.id, st.id)).toBeNull();
+    expect(fake.count(is.listTransfers)).toBe(0);
+  });
+
+  it("can model a payment-transfer list that refuses count and skip, or ignores them", async () => {
+    fake.seedPayment({ id: "pay_L", amount: 100_000 });
+    for (let i = 0; i < 3; i++) fake.seedTransfer({ source: "pay_L", recipient: "acc_L", amount: 1000, notes: { payout_id: `po_${i}` } });
+    fake.rejectListParams = true;
+    expect((await listAllPaymentTransfers("pay_L")).map((t) => t.notes.payout_id)).toEqual(["po_0", "po_1", "po_2"]);
+    fake.rejectListParams = false;
+    fake.honorSkip = false;
+    fake.listPageSize = 5;
+    expect(await listAllPaymentTransfers("pay_L")).toHaveLength(3);
+    for (let i = 3; i < 12; i++) fake.seedTransfer({ source: "pay_L", recipient: "acc_L", amount: 1000, notes: { payout_id: `po_${i}` } });
+    fake.listPageSize = 10;
+    expect((await failure(() => listAllPaymentTransfers("pay_L"))).code).toBe("UNKNOWN_RESULT");
   });
 });
 

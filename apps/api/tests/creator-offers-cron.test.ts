@@ -41,7 +41,7 @@ import {
 import { submitOfferLink, loadDeadlineGrace } from "../src/services/creator/creator-offer.service";
 import { GRACE_KEY, HEARTBEAT_KEY, OFFER_EMAIL, alertMarker, retryMarker } from "../src/services/creator/creator-offers-config";
 import { declineOffer, withdrawOffer } from "../src/services/creator/creator-offer.service";
-import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
+import { ALERT_CEILINGS, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -604,17 +604,24 @@ describe("creator offers worker", () => {
       expect(vi.mocked(notifyAdminByEmail).mock.calls.filter((c) => c[0] === REFUND_ALERT)).toHaveLength(2);
     });
 
-    it("⚠️ the shared hourly ceiling never drops an alert for good: 14 bookings, 12 go out, the other 2 follow in the next hour", async () => {
+    it("⚠️ the hourly ceiling never drops an alert for good: 14 bookings go out as many as the routine lane allows an hour (never more, so they cannot use up the money-critical budget), the rest follow in the next hours", async () => {
+      const lane = ALERT_CEILINGS.routine; // the per-booking digests are routine-lane alerts: an expiry wave must not starve a failed-transfer alert
       const all: Seeded[] = [];
       for (let i = 0; i < 14; i++) all.push(await seedOffer({ expiresAt: new Date(NOW.getTime() - HOUR) }));
       expect(await expireDueOffers(NOW)).toEqual({ expired: 14, failed: 0 });
-      expect((await alertPending(NOW)).refund).toBe(12);
+      expect((await alertPending(NOW)).refund).toBe(lane);
       await flushPayoutAlertsForTests();
-      expect(alertSubjects().filter((x) => x === REFUND_ALERT)).toHaveLength(12);
-      resetPayoutAlertsForTests(); // an hour later
-      expect((await alertPending(NOW)).refund).toBe(2);
-      await flushPayoutAlertsForTests();
-      expect(alertSubjects().filter((x) => x === REFUND_ALERT)).toHaveLength(14);
+      expect(alertSubjects().filter((x) => x === REFUND_ALERT)).toHaveLength(lane);
+      let sent = lane;
+      for (let hour = 1; sent < 14 && hour <= 4; hour++) {
+        resetPayoutAlertsForTests(); // an hour later
+        const n = Math.min(lane, 14 - sent);
+        expect((await alertPending(NOW)).refund).toBe(n);
+        await flushPayoutAlertsForTests();
+        sent += n;
+        expect(alertSubjects().filter((x) => x === REFUND_ALERT)).toHaveLength(sent);
+      }
+      expect(sent).toBe(14);
       let marked = 0;
       for (const x of all) marked += (await eventsOf(x.booking.id)).filter((n) => n === alertMarker("refund", x.offer.id)).length;
       expect(marked).toBe(14);

@@ -57,6 +57,15 @@ export async function mkStaff(): Promise<StaffWorld> {
   return { staffId: staff.id, admin: generateToken(staff.id, staff.email, ["Admin"]) };
 }
 
+/**
+ * Make sure the staff member's user row exists. The files create it in a beforeEach that can run alongside setup.ts's TRUNCATE (vitest runs
+ * hooks in parallel), which wipes `users`: harmless for a token, fatal for anything with a foreign key to the user (an audit row). A test that
+ * needs the row calls this first.
+ */
+export async function ensureStaffUser(s: StaffWorld): Promise<void> {
+  await prisma.user.upsert({ where: { id: s.staffId }, create: { id: s.staffId, name: "Staff Member", email: `${s.staffId}@p4i.test`, passwordHash: "x", status: "ACTIVE" }, update: {} });
+}
+
 export interface PageSpec {
   /** What the brand pays for this post. Default ₹2,500. */
   price?: number;

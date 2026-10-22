@@ -11,6 +11,35 @@ function clearAuthAndRedirect() {
   window.location.href = "/login";
 }
 
+/**
+ * The API answered and said no: its own JSON envelope with `success: false`. Still an `Error` carrying the API's sentence (every caller that
+ * shows `e.message` is unchanged); `status` and `code` let a money action tell a REFUSAL (a 4xx: nothing was changed) from "we don't know".
+ */
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null = null) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/**
+ * Something answered, but not with the API's JSON envelope: a gateway's HTML 502/504 page (a pm2 restart during a deploy, an nginx or
+ * Cloudflare timeout). The request may or may not have reached the API, so this is NOT a refusal. Before this class existed the
+ * unguarded `res.json()` threw a SyntaxError ("Unexpected token '<' …") that was shown to people verbatim.
+ */
+export class ApiUnreadableError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`The server's answer couldn't be read (HTTP ${status}).`);
+    this.name = "ApiUnreadableError";
+    this.status = status;
+  }
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}, _retried = false): Promise<T> {
   const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
 
@@ -23,7 +52,12 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, _retr
     },
   });
 
-  const data = await res.json();
+  let data: { success?: boolean; error?: { message?: string; code?: string } };
+  try {
+    data = await res.json();
+  } catch {
+    throw new ApiUnreadableError(res.status);
+  }
 
   if (!data.success) {
     if (res.status === 401 && typeof window !== "undefined" && !_retried) {
@@ -32,12 +66,12 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, _retr
         return apiFetch(path, options, true);
       }
       clearAuthAndRedirect();
-      throw new Error("Session expired");
+      throw new ApiRequestError("Session expired", 401);
     }
-    throw new Error(data.error?.message || "API error");
+    throw new ApiRequestError(data.error?.message || "API error", res.status, data.error?.code ?? null);
   }
 
-  return data;
+  return data as T;
 }
 
 export async function apiUpload<T>(path: string, formData: FormData, _retried = false): Promise<T> {

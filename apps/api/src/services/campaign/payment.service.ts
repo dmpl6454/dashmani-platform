@@ -541,7 +541,7 @@ type Claim = { kind: "claimed"; row: RefundRow } | { kind: "existing"; row: Refu
  * deliberately ONE intent (one amount) wide. The generations of a stale refund (`…-g2`) are other
  * intents; the sweep reads them together through staleGenerationOf.
  */
-const isAttemptOf = (rowKey: string | null, key: string) =>
+export const isAttemptOf = (rowKey: string | null, key: string) =>
   rowKey !== null && (rowKey === key || (rowKey.startsWith(`${key}-r`) && /^\d+$/.test(rowKey.slice(key.length + 2))));
 
 const toResult = (row: RefundRow, refundId: string | null = row.razorpayRefundId): RefundResult => ({
@@ -1337,7 +1337,7 @@ const ITEM_REFUND_RETRY_WINDOW_MS = 14 * 24 * 3600_000;
  * Both families use it: an item refund (step 4) and one remainder of a `refund_due` payment (step 1).
  * An asynchronously failed refund is usually a problem with the destination, which retrying does not fix.
  */
-const ITEM_REFUND_MAX_AUTO_ATTEMPTS = 5;
+export const ITEM_REFUND_MAX_AUTO_ATTEMPTS = 5;
 
 /** Alerts that skip or give up on an item refund are sent once per row per process, not once a minute. */
 const itemRefundAlerted = new Set<string>();

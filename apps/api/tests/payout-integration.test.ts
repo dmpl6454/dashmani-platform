@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { prisma } from "@dashmani/db";
@@ -22,14 +23,14 @@ vi.mock("../src/services/email.service", async (orig) => {
 
 import app from "../src/app";
 import { notifyAdminByEmail } from "../src/services/email.service";
-import { resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
+import { clearPayoutAlertMarkersForTests, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { settlePayoutKicksForTests } from "../src/services/campaign/payment.service";
 import { expireOffer, withdrawOffer } from "../src/services/creator/creator-offer.service";
 import { onCreatorLinkVerified } from "../src/services/creator/payout-ledger";
 import { RELEASE_SWITCH_KEY, executePlannedPayout, reservedPaiseForPayment } from "../src/services/creator/payout.service";
 import { runRefundDueJob, settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
-import { resetCreatorPayoutsCronForTests, runCreatorPayoutsTick } from "../src/cron/creator-payouts.cron";
-import { FakeRazorpay, is } from "./fake-razorpay-route";
+import { findStuckPayouts, resetCreatorPayoutsCronForTests, runCreatorPayoutsTick } from "../src/cron/creator-payouts.cron";
+import { FakeRazorpay, is, type FakeCall } from "./fake-razorpay-route";
 import { generateCreatorToken } from "./helpers";
 import {
   DAY,
@@ -62,6 +63,7 @@ let staff: StaffWorld;
 beforeEach(async () => {
   // system_settings is not truncated between tests: the release switch must start every test absent (= on).
   await prisma.systemSetting.deleteMany({ where: { key: "creatorPayouts.release" } });
+  await clearPayoutAlertMarkersForTests();
   stubPayoutEnv();
   fake.reset();
   fake.install();
@@ -72,6 +74,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await prisma.systemSetting.deleteMany({ where: { key: "creatorPayouts.release" } }); // leave nothing behind for the next file
+  await clearPayoutAlertMarkersForTests();
   await settlePayoutKicksForTests();
   await settleCreatorRefundsForTests();
   fake.restore();
@@ -639,5 +642,340 @@ describe("paidAt is never written by the money leg", () => {
     expect((await staffPost(`${w.booking.id}/items/${b.id}/withdraw-offer`)).status).toBe(200);
     expect((await payoutOf(b.id)).status).toBe("reversed");
     expect((await bookingOf(w.booking.id)).paidAt!.getTime()).toBe(paidAt!.getTime());
+  });
+});
+
+
+// ── A refund Razorpay refused is never re-sent blindly ────────────────────────────────
+
+const later = (minutes: number) => new Date(Date.now() + minutes * MIN);
+const refundCalls = () => countOf(callLog(fake), "refund.create");
+const mails = () => vi.mocked(notifyAdminByEmail).mock.calls.map((c) => String(c[0]));
+const listRefunds = (c: FakeCall) => c.method === "GET" && /^\/v1\/payments\/[^/]+\/refunds$/.test(c.path);
+
+describe("⚠️ job 10 never re-sends a refund Razorpay refused blindly: a backoff, a cap, a read of the payment's refunds first, and a stand-down", () => {
+  /** A booking of two creator pages and one network page; staff withdraw the first creator's accepted offer while Razorpay refuses the client's refund `times` times. */
+  async function refusedOnce(refusals = 1) {
+    const w = await paid({ pages: [{}, {}], network: [250_000] });
+    const a = w.creators[0];
+    await openOffer(w, a.id, { status: "accepted" });
+    fake.intercept({ match: is.refund, mode: "reject", status: 400, times: refusals });
+    const r = await staffPost(`${w.booking.id}/items/${a.id}/withdraw-offer`);
+    expect(r.status).toBe(200);
+    expect((await itemOf(a.id)).status).toBe("refund_due"); // the creator's share is taken back, the client is owed, Razorpay said no
+    expect((await payoutOf(a.id)).status).toBe("reversed");
+    expect(refundCalls()).toBe(1);
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: a.id, status: "failed" } })).toBe(1);
+    return { w, a };
+  }
+
+  it("a refund staff made in the Razorpay dashboard after the refusal stands the automatic path down: NO second refund, the post says why, one email, and it is parked", async () => {
+    const { w, a } = await refusedOnce();
+    // The dashboard refund of this post's price: the ledger cannot say which post it was for, and the payment still has room for another one.
+    fake.payments.get(w.payId)!.refunds.push({ id: "rfnd_dashboard01", amount: a.price, status: "processed" });
+    const r1 = await runRefundDueJob({ now: later(10) });
+    expect(r1).toMatchObject({ checked: 1, blocked: 1, refunded: 0 });
+    expect(refundCalls()).toBe(1); // still only the refused one: the client is not repaid twice out of the other posts' share
+    const item = await itemOf(a.id);
+    expect(item.status).toBe("refund_due");
+    expect(item.lastError).toMatch(/refund we did not issue/);
+    expect(item.nextAttemptAt).not.toBeNull();
+    expect(item.attempts).toBeGreaterThanOrEqual(12);
+    expect(await prisma.campaignRefund.count({ where: { paymentId: (await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: w.booking.id } })).id, origin: "external" } })).toBe(1);
+    await flushPayoutAlertsForTests();
+    expect(mails().filter((m) => /refund was not re-sent/.test(m))).toHaveLength(1);
+    // Parked: the next passes neither look at it nor read Razorpay, and nothing more is mailed.
+    const mark = fake.calls.length;
+    for (const m of [20, 30, 40]) expect((await runRefundDueJob({ now: later(m) })).checked).toBe(0);
+    expect(fake.calls.length).toBe(mark);
+    await flushPayoutAlertsForTests();
+    expect(mails().filter((m) => /refund was not re-sent/.test(m))).toHaveLength(1);
+    // The daily digest still names it (attempts is pinned at the stuck mark).
+    expect((await findStuckPayouts(later(60))).map((f) => f.key)).toContain("refund_due");
+  });
+
+  it("a refund refused again and again is retried with a backoff at most five times; then a person is told ONCE and nothing more is sent or read", async () => {
+    const { a } = await refusedOnce(99);
+    // Too soon: three minutes after the refusal the post is old enough for the job but the backoff has not run out. No request.
+    const mark = fake.calls.length;
+    expect(await runRefundDueJob({ now: later(3) })).toMatchObject({ checked: 1, waiting: 1 });
+    expect(fake.calls.length).toBe(mark);
+    // Spaced out, it is tried again until the fifth refusal.
+    for (let i = 1; i <= 4; i++) {
+      expect((await runRefundDueJob({ now: later(70 * i) })).checked).toBe(1);
+      expect(refundCalls()).toBe(1 + i);
+    }
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: a.id, status: "failed" } })).toBe(5);
+    // The sixth: capped. Nothing is sent.
+    expect(await runRefundDueJob({ now: later(70 * 5) })).toMatchObject({ checked: 1, blocked: 1 });
+    expect(refundCalls()).toBe(5);
+    const item = await itemOf(a.id);
+    expect(item.status).toBe("refund_due");
+    expect(item.lastError).toMatch(/refused it several times/);
+    expect(item.nextAttemptAt).not.toBeNull();
+    await flushPayoutAlertsForTests();
+    expect(mails().filter((m) => /needs a manual refund/.test(m))).toHaveLength(1);
+    // And from then on it costs nothing: not selected, no read, no mail.
+    const after = fake.calls.length;
+    for (let i = 6; i <= 9; i++) expect((await runRefundDueJob({ now: later(70 * i) })).checked).toBe(0);
+    expect(fake.calls.length).toBe(after);
+    await flushPayoutAlertsForTests();
+    expect(mails().filter((m) => /needs a manual refund/.test(m))).toHaveLength(1);
+  });
+
+  it("the payment's refund list is READ before every re-send; if it cannot be read nothing is sent, and the next pass goes on", async () => {
+    const { a } = await refusedOnce();
+    fake.intercept({ match: listRefunds, mode: "reject", status: 500, times: 1 });
+    const r1 = await runRefundDueJob({ now: later(10) });
+    expect(r1).toMatchObject({ checked: 1, waiting: 1, refunded: 0 });
+    expect(refundCalls()).toBe(1);
+    expect((await itemOf(a.id)).nextAttemptAt).toBeNull(); // an unreadable list is not a stand-down
+    const r2 = await runRefundDueJob({ now: later(20) });
+    expect(r2).toMatchObject({ checked: 1, refunded: 1 });
+    expect(refundCalls()).toBe(2);
+    expect((await itemOf(a.id)).status).toBe("refunded");
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: a.id, idempotencyKey: `rf-item-${a.id}-r2` } })).toBe(1);
+  });
+
+  it("the staff Refund click is the deliberate override: it sends even when the automatic path stood down", async () => {
+    const { w, a } = await refusedOnce(5);
+    for (let i = 1; i <= 5; i++) await runRefundDueJob({ now: later(70 * i) });
+    expect(refundCalls()).toBe(5);
+    expect((await itemOf(a.id)).nextAttemptAt).not.toBeNull();
+    // Razorpay accepts again (the intercept has used its five refusals); a person presses Refund.
+    const r = await staffPost(`${w.booking.id}/items/${a.id}/refund`);
+    expect(r.status).toBe(200);
+    expect(refundCalls()).toBe(6);
+    expect((await itemOf(a.id)).status).toBe("refunded");
+  });
+});
+
+describe("⚠️ 'Mark refunded': the way out when the client was repaid outside the portal", () => {
+  /** One creator page; staff withdraw its offer while Razorpay refuses the refund, and the dashboard repays the client: the refund is stuck for ever without it. */
+  async function repaidElsewhere() {
+    const w = await paid({ pages: [{}] });
+    const a = w.creators[0];
+    await openOffer(w, a.id, { status: "accepted" });
+    fake.intercept({ match: is.refund, mode: "reject", status: 400, times: 1 });
+    expect((await staffPost(`${w.booking.id}/items/${a.id}/withdraw-offer`)).status).toBe(200);
+    fake.payments.get(w.payId)!.refunds.push({ id: "rfnd_dashboard77", amount: a.price, status: "processed" });
+    const job = await runRefundDueJob({ now: later(10) });
+    expect(job).toMatchObject({ blocked: 1 });
+    return { w, a };
+  }
+  const mark = (w: World, itemId: string, body: object = {}) => staffPost(`${w.booking.id}/items/${itemId}/mark-refunded`, body);
+
+  it("records THAT refund against the post, marks it refunded and moves the booking on, with a history line and without sending another refund", async () => {
+    const { w, a } = await repaidElsewhere();
+    const before = refundCalls();
+    const r = await mark(w, a.id);
+    expect(r.status).toBe(200);
+    expect(refundCalls()).toBe(before); // nothing is refunded again
+    expect((await itemOf(a.id)).status).toBe("refunded");
+    const ledger = await prisma.campaignRefund.findFirstOrThrow({ where: { razorpayRefundId: "rfnd_dashboard77" } });
+    expect(ledger).toMatchObject({ origin: "external", bookingItemId: a.id });
+    const events = await prisma.campaignBookingEvent.findMany({ where: { bookingId: w.booking.id }, orderBy: { createdAt: "asc" } });
+    expect(events.some((e) => e.actorType === "staff" && /marked refunded by hand.*rfnd_dashboard77/.test(e.note ?? ""))).toBe(true);
+    // Done is done: a second press is a plain refusal, and the refund is attributed to this post only.
+    const again = await mark(w, a.id);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe("ALREADY_REFUNDED");
+  });
+
+  it("refuses, changing nothing, when Razorpay lists no such refund, when the refund id is not one of the payment's, or when the creator's payout is not taken back", async () => {
+    const w = await paid({ pages: [{}] });
+    const a = w.creators[0];
+    await openOffer(w, a.id, { status: "accepted" });
+    fake.intercept({ match: is.refund, mode: "reject", status: 400, times: 1 });
+    expect((await staffPost(`${w.booking.id}/items/${a.id}/withdraw-offer`)).status).toBe(200);
+    // No refund exists anywhere but our refused attempt.
+    const none = await mark(w, a.id);
+    expect(none.status).toBe(409);
+    expect(none.body.error.code).toBe("NO_EXTERNAL_REFUND");
+    // A refund that exists but is smaller than the post's price does not count either.
+    fake.payments.get(w.payId)!.refunds.push({ id: "rfnd_small0001", amount: a.price - 1, status: "processed" });
+    expect((await mark(w, a.id)).body.error.code).toBe("NO_EXTERNAL_REFUND");
+    fake.payments.get(w.payId)!.refunds.push({ id: "rfnd_enough0001", amount: a.price, status: "processed" });
+    expect((await mark(w, a.id, { refundId: "rfnd_nothere99" })).body.error.code).toBe("NO_EXTERNAL_REFUND");
+    expect((await itemOf(a.id)).status).toBe("refund_due");
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: a.id, origin: "external" } })).toBe(0);
+    // The payout must already be out of the way: this never decides anything about the creator's money.
+    await setPayout(a.id, { status: "held" });
+    const held = await mark(w, a.id);
+    expect(held.status).toBe(409);
+    expect(held.body.error.code).toBe("PAYOUT_NOT_TAKEN_BACK");
+    expect((await itemOf(a.id)).status).toBe("refund_due");
+    // Taken back: now the exact refund is accepted.
+    await setPayout(a.id, { status: "reversed" });
+    expect((await mark(w, a.id)).status).toBe(200);
+    expect(await prisma.campaignRefund.findFirstOrThrow({ where: { razorpayRefundId: "rfnd_enough0001" } })).toMatchObject({ bookingItemId: a.id });
+  });
+
+  it("with two refunds that could be this post's the staff member names the one; one refund can only ever be recorded against ONE post", async () => {
+    const w = await paid({ pages: [{}, {}] });
+    const [a, b] = w.creators;
+    for (const c of [a, b]) {
+      await openOffer(w, c.id, { status: "accepted" });
+      fake.intercept({ match: is.refund, mode: "reject", status: 400, times: 1 });
+      expect((await staffPost(`${w.booking.id}/items/${c.id}/withdraw-offer`)).status).toBe(200);
+    }
+    fake.payments.get(w.payId)!.refunds.push({ id: "rfnd_dash_a0001", amount: a.price, status: "processed" }, { id: "rfnd_dash_b0001", amount: b.price, status: "processed" });
+    const ambiguous = await mark(w, a.id);
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.body.error.code).toBe("AMBIGUOUS_REFUND");
+    expect(ambiguous.body.error.message).toContain("rfnd_dash_a0001");
+    expect((await mark(w, a.id, { refundId: "rfnd_dash_a0001" })).status).toBe(200);
+    // A's refund cannot be reused for B: naming it again finds nothing unattributed.
+    const reuse = await mark(w, b.id, { refundId: "rfnd_dash_a0001" });
+    expect(reuse.status).toBe(409);
+    expect(reuse.body.error.code).toBe("NO_EXTERNAL_REFUND");
+    expect((await mark(w, b.id, { refundId: "rfnd_dash_b0001" })).status).toBe(200);
+    expect((await itemOf(a.id)).status).toBe("refunded");
+    expect((await itemOf(b.id)).status).toBe("refunded");
+  });
+});
+
+// ── A post becomes `refunded` only once its refund is on the ledger ─────────────────
+
+/** Block a kind of write for the duration of `work`, the way a failing database would. Every statement of the trigger is dropped afterwards. */
+async function withBlockedWrites(blocks: Array<{ table: string; op: "INSERT" | "UPDATE"; when: string }>, work: () => Promise<void>) {
+  await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION p4_ops_block() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'blocked by the test'; END; $$ LANGUAGE plpgsql`);
+  try {
+    for (const [i, b] of blocks.entries()) {
+      await prisma.$executeRawUnsafe(`CREATE TRIGGER p4_ops_block_${i} BEFORE ${b.op} ON ${b.table} FOR EACH ROW WHEN (${b.when}) EXECUTE FUNCTION p4_ops_block()`);
+    }
+    await work();
+  } finally {
+    for (const [i, b] of blocks.entries()) await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS p4_ops_block_${i} ON ${b.table}`);
+    await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS p4_ops_block()`);
+  }
+}
+
+describe("⚠️ no post is ever `refunded` without a refund behind it: the post is marked LAST, after the ledger row exists", () => {
+  it("a database error when the refund is claimed, EVEN WHEN the recovery update cannot run either, leaves the post refund_due (never refunded with no refund)", async () => {
+    const w = await paid({ pages: [{}] });
+    const a = w.creators[0];
+    await openOffer(w, a.id, { status: "accepted" });
+    await withBlockedWrites(
+      [
+        { table: "campaign_refunds", op: "INSERT", when: "true" }, // the claim (the ledger row) fails
+        { table: "campaign_booking_items", op: "UPDATE", when: "OLD.status = 'refunded' AND NEW.status = 'refund_due'" }, // and so would any attempt to undo an early mark
+      ],
+      async () => {
+        const r = await staffPost(`${w.booking.id}/items/${a.id}/withdraw-offer`);
+        expect(r.status).toBe(200);
+      },
+    );
+    expect((await itemOf(a.id)).status).toBe("refund_due");
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: a.id } })).toBe(0);
+    expect(refundCalls()).toBe(0);
+    // Healthy again: the worker refunds it, once.
+    expect(await runRefundDueJob({ now: later(10) })).toMatchObject({ refunded: 1 });
+    expect((await itemOf(a.id)).status).toBe("refunded");
+    expect(refundCalls()).toBe(1);
+  });
+
+  it("a failure to mark the post AFTER the ledger row exists loses nothing: the next pass finds the row, marks the post, and sends no second refund", async () => {
+    const w = await paid({ pages: [{}] });
+    const a = w.creators[0];
+    await openOffer(w, a.id, { status: "accepted" });
+    await withBlockedWrites([{ table: "campaign_booking_items", op: "UPDATE", when: "OLD.status = 'refund_due' AND NEW.status = 'refunded'" }], async () => {
+      const r = await staffPost(`${w.booking.id}/items/${a.id}/withdraw-offer`);
+      expect(r.status).toBe(200);
+    });
+    // The client WAS refunded (the row and the refund exist), but the post could not be marked yet.
+    expect((await itemOf(a.id)).status).toBe("refund_due");
+    expect(refundCalls()).toBe(1);
+    expect(await prisma.campaignRefund.findFirstOrThrow({ where: { bookingItemId: a.id } })).toMatchObject({ status: "processed", idempotencyKey: `rf-item-${a.id}` });
+    // The payment is now fully refunded: no payment "can cover" the post any more, which must not strand it.
+    expect((await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: w.booking.id } })).status).toBe("refunded");
+    const job = await runRefundDueJob({ now: later(10) });
+    expect(job).toMatchObject({ checked: 1, refunded: 1 });
+    expect((await itemOf(a.id)).status).toBe("refunded");
+    expect(refundCalls()).toBe(1);
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: a.id } })).toBe(1);
+  });
+});
+
+// ── Verifying a creator's post must schedule its release even when what follows fails ──
+
+describe("⚠️ verification schedules the release BEFORE anything that can throw", () => {
+  it("a settle failure right after the verification committed (the staff member sees an error) still leaves the release scheduled; a retry of Verify is a 409, so nothing else could have", async () => {
+    const w = await paid({ pages: [{}] });
+    const a = w.creators[0];
+    await openOffer(w, a.id, { status: "accepted", linkSubmitted: true });
+    await prisma.creatorOffer.update({ where: { bookingItemId: a.id }, data: { ownershipCheck: "auto_ok" } });
+    let status = 0;
+    await withBlockedWrites([{ table: "campaign_bookings", op: "UPDATE", when: "NEW.status = 'completed'" }], async () => {
+      const r = await staffPost(`${w.booking.id}/items/${a.id}/verify-creator-link`, { linkCanonicalKey: "ig:ABC123" });
+      status = r.status;
+    });
+    expect(status).toBe(500); // the settle step failed ...
+    expect((await itemOf(a.id)).status).toBe("posted_manual"); // ... after the verification had committed
+    expect((await offerOf(a.id)).linkVerifiedAt).not.toBeNull();
+    const p = await payoutOf(a.id);
+    expect(p.releaseAfter).not.toBeNull(); // and the release was scheduled first
+    expect(p.releaseAfter!.getTime()).toBe((await offerOf(a.id)).linkVerifiedAt!.getTime());
+    const retry = await staffPost(`${w.booking.id}/items/${a.id}/verify-creator-link`, { linkCanonicalKey: "ig:ABC123" });
+    expect(retry.status).toBe(409);
+    expect(retry.body.error.code).toBe("ALREADY_VERIFIED");
+  });
+});
+
+// ── A suspended creator is not paid ──────────────────────────────────────────────────
+
+describe("⚠️ suspending a creator pauses their payouts (reinstating does not resume them)", () => {
+  const admin = () => `Bearer ${staff.admin}`;
+
+  it("pauses every payout of theirs that still has something in flight (reason creator_suspended, audited, one alert), leaves other creators and finished payouts alone, and a payout already paused keeps its first reason", async () => {
+    const w = await paid({ pages: [{}, {}] });
+    const [mine, other] = w.creators;
+    const template = await payoutOf(mine.id);
+    const extra = (data: Record<string, unknown>) =>
+      prisma.creatorPayout.create({
+        data: {
+          bookingId: template.bookingId,
+          bookingItemId: randomUUID(),
+          creatorId: template.creatorId,
+          payoutAccountId: template.payoutAccountId,
+          razorpayAccountId: template.razorpayAccountId,
+          razorpayPaymentId: template.razorpayPaymentId,
+          itemPricePaise: 250_000,
+          shareBps: 4000,
+          grossPaise: 100_000,
+          amountPaise: 100_000,
+          ...data,
+        } as never,
+      });
+    const settled = await extra({ status: "settled" });
+    const disputed = await extra({ status: "held", pausedAt: new Date(Date.now() - HOUR), pausedReason: "dispute" });
+    await verifiedOffer(w, mine.id);
+    await onCreatorLinkVerified(mine.id, { type: "staff", id: staff.staffId });
+
+    const res = await request(app).post(`/v1/admin/creators/${mine.creatorId}/suspend`).set("Authorization", admin()).send({ note: "Posts that are not theirs" });
+    expect(res.status).toBe(200);
+    const p = await payoutOf(mine.id);
+    expect(p).toMatchObject({ status: "held", pausedReason: "creator_suspended" });
+    expect(p.pausedAt).not.toBeNull();
+    const ev = await prisma.creatorPayoutEvent.findFirstOrThrow({ where: { payoutId: p.id, kind: "pause" } });
+    expect(ev).toMatchObject({ actorType: "staff", actorId: staff.staffId });
+    expect(await prisma.creatorPayout.findUniqueOrThrow({ where: { id: disputed.id } })).toMatchObject({ pausedReason: "dispute" }); // the first reason is kept
+    expect((await prisma.creatorPayout.findUniqueOrThrow({ where: { id: settled.id } })).pausedAt).toBeNull(); // finished: nothing to pause
+    expect((await payoutOf(other.id)).pausedAt).toBeNull(); // another creator's payout, on the same campaign, is untouched
+    await flushPayoutAlertsForTests();
+    expect(mails().filter((m) => /paused because the creator was suspended/.test(m))).toHaveLength(1);
+    // The due release does not go while the creator is suspended.
+    await runCreatorPayoutsTick({ now: later(3 * 24 * 60) });
+    expect(fake.count((c) => is.setHold(c, false))).toBe(0);
+    expect((await payoutOf(mine.id)).status).toBe("held");
+
+    // Reinstating the creator does NOT resume the payout: staff decide.
+    expect((await request(app).post(`/v1/admin/creators/${mine.creatorId}/reinstate`).set("Authorization", admin()).send({})).status).toBe(200);
+    expect(await payoutOf(mine.id)).toMatchObject({ pausedReason: "creator_suspended" });
+    expect((await payoutOf(mine.id)).pausedAt).not.toBeNull();
+    // ... and a person resumes it deliberately.
+    const resume = await request(app).post(`/v1/admin/creator-payouts/${p.id}/resume`).set("Authorization", admin()).send({});
+    expect(resume.status).toBe(200);
+    expect((await payoutOf(mine.id)).pausedAt).toBeNull();
   });
 });

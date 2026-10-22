@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { mutate as globalMutate } from "swr";
-import { ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { PAYOUTS_BASE, runPayoutAction, usePayoutDetail, type PayoutDetail, type PayoutRow } from "@/lib/hooks/use-creator-payouts";
+import { ChevronDown, ChevronUp, PauseCircle, RefreshCw } from "lucide-react";
+import { PAYOUTS_BASE, isUnconfirmed, runPayoutAction, usePayoutDetail, type PayoutDetail, type PayoutRow } from "@/lib/hooks/use-creator-payouts";
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, ErrorBar, INPUT, Pill, fmtWhen, rupees } from "./_ds";
 import {
-  actionsFor, actorWord, buildTimeline, eventTitle, payoutHint, payoutStatusView, pauseText, referenceProblem, splitRefusal, statusWord,
+  actionsFor, actorWord, buildTimeline, eventTitle, payoutHint, payoutStatusView, pauseEffect, pauseText, referenceProblem, splitRefusal, statusWord,
   type PayoutActionKey, type PayoutActionView, type StepState, type TimelineStep,
 } from "./_payout";
 
@@ -56,6 +57,31 @@ export function NoticeBar({ notice, onClose }: { notice: Notice; onClose?: () =>
   );
 }
 
+/**
+ * The red banner for "ALL releases are paused" (the runtime switch). Shown on the payout queue (with the Resume button) and on a campaign
+ * page that has creator posts (with a link to the queue), so a held payout that isn't moving always has its reason on the page it is read on.
+ * `line` is who paused it and when (releaseChangeLine), when known.
+ */
+export function ReleasePausedBanner({ line, onResume, href }: { line?: string | null; onResume?: () => void; href?: string }) {
+  return (
+    <div role="status" className="rounded-[12px] border border-[rgba(229,45,71,.5)] bg-[rgba(229,45,71,.08)] px-4 py-3.5 flex flex-wrap items-center gap-x-4 gap-y-2.5">
+      <PauseCircle aria-hidden className="h-5 w-5 text-ds-redsoft shrink-0" />
+      <div className="min-w-0 flex-1 basis-[240px]">
+        <div className="text-[14px] font-semibold text-ds-redsoft">Releases are paused</div>
+        <div className="mt-0.5 text-[12.5px] text-ds-t2">
+          No creator payout is being released, so nobody is being paid out. Money already set aside stays set aside; transfers, reversals and refunds carry on.
+          {line ? ` ${line}` : ""}
+        </div>
+      </div>
+      {onResume ? (
+        <button type="button" className={`${BTN_GOLD} w-full sm:w-auto`} onClick={onResume}>Resume releases</button>
+      ) : href ? (
+        <Link href={href} className={`${BTN_GHOST} w-full sm:w-auto`}>Resume from Creator payouts</Link>
+      ) : null}
+    </div>
+  );
+}
+
 // ── The confirm dialog ──────────────────────────────────────────────────────────────────────────
 
 export interface DialogField {
@@ -87,11 +113,18 @@ export interface DialogSpec {
  * The one confirm dialog. Focus goes to Cancel (the safe default for a money action) and returns to the button that opened it;
  * Escape closes (not mid-request); Tab stays inside; a refusal stays on screen and the dialog stays open.
  */
-export function ActionDialog({ spec, onCancel, onDone }: { spec: DialogSpec; onCancel: () => void; onDone: (result: unknown, values: Record<string, string>) => void }) {
+export function ActionDialog({ spec, onCancel, onDone, onUnconfirmed }: {
+  spec: DialogSpec;
+  onCancel: () => void;
+  onDone: (result: unknown, values: Record<string, string>) => void;
+  /** The request got no usable answer (a gateway error, a dropped connection): it MAY have gone through, so the page re-reads what is behind this dialog. */
+  onUnconfirmed?: () => void;
+}) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ text: string; code: string | null } | null>(null);
+  const [error, setError] = useState<{ text: string; code: string | null; unconfirmed: boolean } | null>(null);
   const box = useRef<HTMLDivElement>(null);
+  const refocus = useRef(false);
   const fields = spec.fields ?? [];
 
   useEffect(() => {
@@ -101,6 +134,15 @@ export function ActionDialog({ spec, onCancel, onDone }: { spec: DialogSpec; onC
     (box.current?.querySelector<HTMLElement>("[data-autofocus]") ?? box.current?.querySelector<HTMLElement>("[data-first]") ?? box.current)?.focus();
     return () => opener?.focus?.();
   }, []);
+
+  // After a failed attempt the controls are enabled again: put the cursor back on the safe one (Cancel). While the request ran every control was
+  // disabled and the browser had dropped focus to the page behind the dialog.
+  useEffect(() => {
+    if (!busy && refocus.current) {
+      refocus.current = false;
+      box.current?.querySelector<HTMLElement>("[data-first]")?.focus();
+    }
+  }, [busy]);
 
   const problem = (f: DialogField): string | null => {
     const v = (values[f.name] ?? "").trim();
@@ -118,7 +160,8 @@ export function ActionDialog({ spec, onCancel, onDone }: { spec: DialogSpec; onC
     }
     if (e.key !== "Tab" || !box.current) return;
     const f = [...box.current.querySelectorAll<HTMLElement>("a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled])")];
-    if (f.length === 0) return;
+    // Mid-request every control is disabled: Tab must not walk out to the page behind the dialog.
+    if (f.length === 0) { e.preventDefault(); box.current.focus(); return; }
     const first = f[0];
     const last = f[f.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -129,24 +172,32 @@ export function ActionDialog({ spec, onCancel, onDone }: { spec: DialogSpec; onC
     if (busy || invalid) return;
     setBusy(true);
     setError(null);
+    box.current?.focus();
     const clean = Object.fromEntries(fields.map((f) => [f.name, (values[f.name] ?? "").trim()]));
     try {
       const result = await spec.run(clean);
       onDone(result, clean);
     } catch (e) {
-      // Stay open: the API's reason is the thing to read. Nothing was changed by a refusal.
-      setError(splitRefusal(e instanceof Error && e.message ? e.message : "That didn't work. Nothing was changed."));
+      // Stay open: the API's reason is the thing to read. Nothing was changed by a refusal. An UNCONFIRMED request is different: it may have
+      // gone through, so it says so (never "nothing was changed") and the page re-reads the payout so the row behind shows the truth.
+      const unconfirmed = isUnconfirmed(e);
+      setError({ ...splitRefusal(e instanceof Error && e.message ? e.message : "That didn't work. Nothing was changed."), unconfirmed });
+      refocus.current = true;
       setBusy(false);
+      if (unconfirmed) onUnconfirmed?.();
     }
   };
 
   return (
+    // 100dvh, not 100vh: on iOS Safari 100vh is the LARGE viewport (the toolbar hidden), so a tall dialog (Reverse and Release have long lists) was taller
+    // than what is visible and its buttons sat under the toolbar. The padding keeps clear of the notch and the home bar; the box scrolls inside.
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
+      style={{ paddingTop: "max(1rem, env(safe-area-inset-top))", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}
       onKeyDown={onKeyDown}
     >
-      <div ref={box} role="dialog" aria-modal="true" aria-labelledby="payout-dialog-title" tabIndex={-1} className={`${CARD} w-full max-w-[520px] max-h-[calc(100vh-32px)] overflow-y-auto p-5`}>
+      <div ref={box} role="dialog" aria-modal="true" aria-labelledby="payout-dialog-title" tabIndex={-1} className={`${CARD} w-full max-w-[520px] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5`}>
         <h2 id="payout-dialog-title" className="text-[16px] font-semibold text-ds-text">{spec.title}</h2>
         <div className="mt-2 text-[13px] text-ds-t2 grid gap-2.5">{spec.body}</div>
 
@@ -169,7 +220,14 @@ export function ActionDialog({ spec, onCancel, onDone }: { spec: DialogSpec; onC
 
         {error && (
           <div className="mt-3">
-            <ErrorBar message={error.text} />
+            {error.unconfirmed ? (
+              // Amber, not red: this is not "it failed", it is "we don't know".
+              <div role="alert" className="px-3.5 py-2.5 rounded-[8px] border border-[rgba(233,189,98,.4)] bg-[rgba(233,189,98,.08)] text-ds-gold text-[12.5px]">
+                {error.text}
+              </div>
+            ) : (
+              <ErrorBar message={error.text} />
+            )}
             {error.code && <div className="mt-1 text-[11px] text-ds-t4 font-mono break-all">code: {error.code}</div>}
           </div>
         )}
@@ -194,24 +252,23 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
   const act = (path: Parameters<typeof runPayoutAction>[1], body?: Record<string, string | undefined>) => runPayoutAction(row.id, path, body);
   const amount = rupees(row.amountPaise);
   switch (key) {
-    case "pause":
+    case "pause": {
+      // What pausing does depends on where the payout is: only a HELD one has money set aside that pausing leaves where it is.
+      const eff = pauseEffect(row.status);
       return {
         title: "Pause this payout?",
         confirm: "Pause",
         busy: "Pausing…",
         body: (
           <>
-            <p>A paused payout is never released: nothing happens to it until you resume it.</p>
-            {["released", "release_requested"].includes(row.status) ? (
-              <p className="text-ds-gold">It has already been released, so Razorpay may still settle it to the creator&apos;s bank. Pausing does not stop that: use Reverse to take the money back.</p>
-            ) : (
-              <p>The money stays set aside at Razorpay. Transfers, checks and refunds for other payouts carry on.</p>
-            )}
+            <p>Pausing stops this payout going any further until you resume it.</p>
+            <p className={eff.warn ? "text-ds-gold" : undefined}>{eff.text}</p>
           </>
         ),
         fields: [{ name: "reason", label: "Reason (kept in the payout's history)", max: 120, placeholder: "For example: creator asked to wait" }],
         run: (v) => act("pause", { reason: v.reason }),
       };
+    }
     case "resume":
       return {
         title: "Resume this payout?",
@@ -235,7 +292,7 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
           <>
             <p>
               {planned
-                ? `The worker does this by itself within minutes. This runs it now: ${amount} is set aside for ${who(row)} at Razorpay, on hold.`
+                ? `The worker normally does this by itself within minutes. This runs it now: ${amount} is set aside for ${who(row)} at Razorpay, on hold.`
                 : `Razorpay refused the transfer of ${amount} for ${who(row)}. This asks it to set the money aside again, on hold.`}
             </p>
             <p>Nothing is paid to the creator by this: the transfer is created on hold and is released only after the post is verified.</p>
@@ -262,6 +319,7 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
                 It does <strong className="text-ds-t5">not</strong> refund the client&apos;s {rupees(row.itemPricePaise)} for this post. A post that was withdrawn, declined, expired or rejected is refunded to the client automatically once its payout is taken back; for any other post, press Refund on the campaign page afterwards.
               </li>
               <li>To cancel a post whose offer is still open, use Withdraw offer or Refund this account on the campaign page instead: they end the offer, take this payout back and refund the client in the right order. Reversing from here leaves the offer open.</li>
+              <li>To pay a creator by bank transfer instead (their payout account was suspended, say) take it back first: the payout then appears under Owed after reversal, where Pay by bank transfer instead records the payment.</li>
               {moved && (
                 <li className="text-ds-gold">
                   The money has already been released to the creator&apos;s account. Razorpay can only take it back while it is still there, before it settles to their bank. If Razorpay refuses, the payout is parked as Needs attention for a person.
@@ -291,20 +349,33 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
         ),
         run: () => act("release-now"),
       };
-    case "require_manual":
+    case "require_manual": {
+      const taken = row.status === "reversed";
+      const planned = row.status === "planned";
       return {
         title: "Pay this creator by bank transfer instead?",
         confirm: "Switch to manual payment",
         busy: "Switching…",
         body: (
           <>
-            <p>Use this when Razorpay can&apos;t pay {who(row)}. The payout stops going through Razorpay: no transfer is made or retried for it.</p>
+            {taken ? (
+              <p>
+                {who(row)}&apos;s share was taken back into our Razorpay balance, but the post is live, so they are still owed {amount}. This marks the payout as one to pay by bank transfer. No money moves. The system refuses it once the client has been refunded for the post.
+              </p>
+            ) : planned ? (
+              <p>
+                Use this when the transfer can&apos;t be made (a suspended payout account, new transfers switched off). The payout stops going through Razorpay: no transfer is made for it, and it no longer holds up refunds on the same client payment.
+              </p>
+            ) : (
+              <p>Use this when Razorpay can&apos;t pay {who(row)}. The payout stops going through Razorpay: no transfer is made or retried for it.</p>
+            )}
             <p>Afterwards you pay {amount} to the creator yourself, then press Mark paid manually and record the bank reference. Nothing is paid by this step.</p>
           </>
         ),
         fields: [{ name: "reason", label: "Why", required: true, min: 3, max: 80, placeholder: "For example: payout account suspended" }],
         run: (v) => act("require-manual", { reason: v.reason }),
       };
+    }
     case "mark_paid":
       return {
         title: `Record ${amount} as paid to ${who(row)}?`,
@@ -331,7 +402,7 @@ export function noticeFor(key: PayoutActionKey, d: PayoutDetail, values: Record<
   const note = d.result?.note ? ` ${d.result.note}` : "";
   switch (key) {
     case "pause":
-      return { tone: "ok", text: "Paused. It won't be released until you resume it." };
+      return { tone: "ok", text: "Paused. Nothing more is done with it until you resume it." };
     case "resume":
       return { tone: "ok", text: d.result?.outcome === "not_paused" ? "It wasn't paused." : `Resumed. ${now} It is released only when every check passes.` };
     case "retry":
@@ -364,6 +435,11 @@ export function usePayoutDialog({ onChanged, onNotice }: { onChanged: () => unkn
     <ActionDialog
       spec={dialogFor(state.key, state.row)}
       onCancel={() => setState(null)}
+      // No usable answer: the move may have been made, so the row behind the dialog is re-read now rather than at the next 30 s refresh.
+      onUnconfirmed={() => {
+        void globalMutate(`${PAYOUTS_BASE}/${state.row.id}`);
+        void onChanged();
+      }}
       onDone={(result, values) => {
         const d = result as PayoutDetail;
         const { key, row } = state;
@@ -511,8 +587,8 @@ export function PayoutDetailView({ row }: { row: PayoutRow }) {
             {p.releaseAfter && <Fact k="Release after">{fmtWhen(p.releaseAfter)}</Fact>}
             {facts?.razorpayTransferId && <Fact k="Transfer"><span className="font-mono">{facts.razorpayTransferId}</span></Fact>}
             {facts?.recipientSettlementId && <Fact k="Settlement"><span className="font-mono">{facts.recipientSettlementId}</span></Fact>}
-            {facts?.settlementUtr && <Fact k="Bank reference"><span className="font-mono">{facts.settlementUtr}</span></Fact>}
-            {facts?.manualReference && <Fact k="Paid by hand"><span className="font-mono">{facts.manualReference}</span>{facts.manualPaidAt ? <span className="text-ds-t3"> · {fmtWhen(facts.manualPaidAt)}</span> : null}</Fact>}
+            {p.settlementUtr && <Fact k="Bank reference"><span className="font-mono">{p.settlementUtr}</span></Fact>}
+            {p.manualReference && <Fact k="Paid by hand"><span className="font-mono">{p.manualReference}</span>{p.manualPaidAt ? <span className="text-ds-t3"> · {fmtWhen(p.manualPaidAt)}</span> : null}</Fact>}
             {facts?.manualNote && <Fact k="Note"><span className="whitespace-pre-line">{facts.manualNote}</span></Fact>}
             {(facts?.transferStatus || facts?.settlementStatus) && (
               <Fact k="Razorpay says">
@@ -556,12 +632,12 @@ export function PayoutDetailView({ row }: { row: PayoutRow }) {
   );
 }
 
-/** The sentence under a payout: where it stands, and why it is paused if it is. */
-export function PayoutHint({ row, postVerified }: { row: PayoutRow; postVerified?: boolean }) {
+/** The sentence under a payout: where it stands, and why it is paused if it is. Never predicts a release that a pause or the global switch is holding back. */
+export function PayoutHint({ row, postVerified, releaseOn }: { row: PayoutRow; postVerified?: boolean; releaseOn?: boolean }) {
   return (
     <>
-      <p className="text-ds-t2">{payoutHint(row, Date.now(), { postVerified })}</p>
-      {row.pausedAt && <p className="mt-1 text-ds-gold">Paused: {pauseText(row.pausedReason)}. {row.status === "held" ? "It won't be released until it is resumed." : ""}</p>}
+      <p className="text-ds-t2">{payoutHint(row, Date.now(), { postVerified, releaseOn })}</p>
+      {row.pausedAt && !["settled", "paid_manual", "void", "reversed"].includes(row.status) && <p className="mt-1 text-ds-gold">Paused: {pauseText(row.pausedReason)}.</p>}
     </>
   );
 }

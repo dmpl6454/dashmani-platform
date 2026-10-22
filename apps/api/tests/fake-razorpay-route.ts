@@ -28,7 +28,15 @@
  *     the docs);
  *   • the transfer list can hide a just-created transfer for the first N listings (an unknown create
  *     result whose transfer only appears later), and its paging can be dishonest (default page size, or
- *     skip ignored) to prove the client does not trust a short page.
+ *     skip ignored, or count and skip refused with a 400) to prove the client does not trust a short page;
+ *   • the platform's balance pays for transfers AND refunds: a refund beyond it is refused the way Razorpay
+ *     refuses one ("does not have enough balance"), a reversal returns money to it, and a test sets `balance`
+ *     to model the real timeline (the share went out, the rest was settled to our bank, weeks later a refund of
+ *     the full price needs money that is no longer there);
+ *   • the single-transfer read documents NO `expand`: by default the fake REFUSES it with a 400 (`singleGetExpand`
+ *     = "reject"), so nothing in the engine can come to depend on it; "ignore" and "honor" are there to test both
+ *     other worlds. The settlement is read from the transfer LIST with expand[] (mandatory there) and the
+ *     documented recipient_settlement_id filter, like the docs show.
  * Every call, with its query string, is recorded in `calls`.
  */
 import { razorpayHttp } from "../src/services/campaign/razorpay";
@@ -171,6 +179,10 @@ export class FakeRazorpay {
   listPageSize: number | null = null;
   /** false: `skip` is ignored, the same first page comes back every time. */
   honorSkip = true;
+  /** true: the payment's transfer list answers 400 to `count` / `skip` (an endpoint that validates its query), and only a plain read works. */
+  rejectListParams = false;
+  /** What GET /v1/transfers/:id does with `expand[]` (the docs show it only on the list): refuse it (default), ignore it, or honour it. */
+  singleGetExpand: "reject" | "ignore" | "honor" = "reject";
   /**
    * ── Concurrency suite only (additive; null = the fake behaves exactly as before) ──
    * Simulated network time per call: `before` = the request is in flight (nothing applied yet, so other work interleaves with it),
@@ -230,6 +242,8 @@ export class FakeRazorpay {
     this.floating.clear();
     this.listPageSize = null;
     this.honorSkip = true;
+    this.rejectListParams = false;
+    this.singleGetExpand = "reject";
     this.refundStatus = "processed";
     this.refundKeys.clear();
     this.latency = null;
@@ -540,11 +554,21 @@ export class FakeRazorpay {
     if (m && method === "GET") {
       const pay = this.payments.get(m[1]);
       if (!pay) return err("The id provided does not exist", 400);
+      if (this.rejectListParams && ("count" in query || "skip" in query)) return err("count is/are not required and should not be sent", 400);
       const all = [...this.transfers.values()].filter((t) => t.source === pay.id);
       const visible = all.filter((t) => t.hidden === 0);
-      const items = this.page(visible, query).map((t) => this.transferEntity(t));
+      const items = (this.rejectListParams ? visible.slice(0, this.listPageSize ?? 10) : this.page(visible, query)).map((t) => this.transferEntity(t));
       // A transfer that "appears later" stays out of this listing, then comes closer to appearing.
       for (const t of all) if (t.hidden > 0) t.hidden--;
+      return json({ entity: "collection", count: items.length, items });
+    }
+
+    // The transfer LIST with expand (the one route the docs show for a settlement): `expand` is mandatory, `recipient_settlement_id` filters.
+    if (path === "/v1/transfers" && method === "GET") {
+      if (query["expand[]"] !== "recipient_settlement") return err("expand is required. Supported value is recipient_settlement", 400);
+      let all = [...this.transfers.values()];
+      if (query.recipient_settlement_id) all = all.filter((t) => t.settlementId === query.recipient_settlement_id);
+      const items = this.page(all, query).map((t) => this.transferEntity(t, true));
       return json({ entity: "collection", count: items.length, items });
     }
 
@@ -552,7 +576,9 @@ export class FakeRazorpay {
     if (m && method === "GET") {
       const t = this.transfers.get(m[1]);
       if (!t) return err("The id provided does not exist", 400);
-      return json(this.transferEntity(t, query["expand[]"] === "recipient_settlement"));
+      const expand = "expand[]" in query;
+      if (expand && this.singleGetExpand === "reject") return err("Value of each expand must be one of the supported values", 400);
+      return json(this.transferEntity(t, expand && this.singleGetExpand === "honor" && query["expand[]"] === "recipient_settlement"));
     }
     if (m && method === "PATCH") {
       const t = this.transfers.get(m[1]);
@@ -629,6 +655,9 @@ export class FakeRazorpay {
       const amount = body?.amount ?? pay.amount;
       const refunded = pay.refunds.filter((r) => r.status !== "failed").reduce((a, r) => a + r.amount, 0);
       if (!Number.isInteger(amount) || amount <= 0 || amount > pay.amount - refunded) return err("The refund amount is greater than the amount available for refund", 400);
+      // A refund is paid out of OUR balance [refund-payments-and-reverse-transfer: "deducted from your main account balance"].
+      if (this.balance < amount) return err("Your account does not have enough balance to carry out the refund operation.", 400);
+      this.balance -= amount;
       const rf = { id: `rfnd_FakeRef${String(++this.m).padStart(4, "0")}`, amount, status: this.refundStatus };
       pay.refunds.push(rf);
       if (key) this.refundKeys.set(`${pay.id}:${key}`, rf);

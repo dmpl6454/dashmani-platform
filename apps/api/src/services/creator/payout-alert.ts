@@ -1,3 +1,4 @@
+import { prisma } from "@dashmani/db";
 import { adminAlert } from "./creator-email";
 
 /**
@@ -27,21 +28,45 @@ import { adminAlert } from "./creator-email";
  * would otherwise open a connection, which is the flood this file exists to prevent. At most
  * MAX_PER_WINDOW attempts an hour reach the mail server, successful or not.
  *
- * The state is in process memory on purpose: it costs nothing on the webhook path (which must
+ * The hourly state is in process memory on purpose: it costs nothing on the webhook path (which must
  * answer in 5 seconds), and a restart at worst lets one more email through per key.
+ *
+ * ⚠️ TWO BUDGETS, MONEY FIRST. A creator can cause an alert by their own action (declining an offer, asking for a
+ * bank change), and a publisher with a dozen pages can decline them all in a minute. If those shared ONE ceiling with
+ * "a transfer failed", "a dispute opened" and "a refund is stuck", a creator could silence the alerts staff most need
+ * for the rest of the hour. So the ceiling is counted per LANE: the routine lane (routineAlertKey: creator-triggered and
+ * digest-style keys) has its own small allowance, and every other key (the default, so an unknown caller is treated as
+ * money-critical) counts only against the critical one. The lanes never borrow from each other.
+ *
+ * ⚠️ "ONCE A DAY" NEEDS A MARKER THAT SURVIVES A RESTART: alertStaffDurably keeps its last-sent marker in system_settings
+ * (no DDL: the table already holds the runtime switches), written only after the mailer said the email went out. Every
+ * deploy restarts the process and wipes the in-memory state, so a daily alert kept only in memory is re-sent after every
+ * deploy, from the mailbox that also sends every portal's password resets.
  *
  * Provider text must never reach a value here unescaped or unscrubbed: adminAlert() escapes
  * every label and value, and callers pass only our own wording, ids and scrubbed codes.
  */
 
 const WINDOW_MS = 60 * 60 * 1000;
-/** Across ALL keys: a hard ceiling per window, so many different keys cannot add up to a flood. */
+/** Across ALL money-critical keys: a hard ceiling per window, so many different keys cannot add up to a flood. */
 const MAX_PER_WINDOW = 12;
+/** The routine lane's own ceiling. It is deliberately smaller: these alerts say "nothing to do unless this repeats". */
+const MAX_ROUTINE_PER_WINDOW = 6;
+/** The two ceilings, for the tests that prove a burst is spread over several hours and never dropped. */
+export const ALERT_CEILINGS = { critical: MAX_PER_WINDOW, routine: MAX_ROUTINE_PER_WINDOW } as const;
 const MAX_KEYS = 200;
+
+/**
+ * Keys a creator (or a routine digest) can cause. They count against the routine lane only. Anything NOT listed here is
+ * money-critical: a new caller is protected by default and has to be listed on purpose to be demoted.
+ */
+const ROUTINE_KEY_PREFIXES = ["creator-offer-closed:", "creator-offer-problem:", "creator-offers-", "payout-bank-change:", "payout-bank-change-pending"];
+export const routineAlertKey = (key: string): boolean => ROUTINE_KEY_PREFIXES.some((p) => key.startsWith(p));
 
 const lastSent = new Map<string, { at: number; held: number }>();
 let windowStart = 0;
 let sentInWindow = 0;
+let routineSentInWindow = 0;
 /** Sends still waiting on the mailer, so a test can wait for them (and for their `onSent`). */
 const inFlight = new Set<Promise<void>>();
 
@@ -54,6 +79,8 @@ export interface PayoutAlertOptions {
    * not wait for SMTP), so it must not assume the caller is still waiting. A throw is logged.
    */
   onSent?: () => void | Promise<void>;
+  /** Force a lane. Default: derived from the key (routineAlertKey). */
+  lane?: "critical" | "routine";
 }
 
 /**
@@ -74,11 +101,13 @@ export function alertStaffOncePerHour(
     if (now - windowStart >= WINDOW_MS) {
       windowStart = now;
       sentInWindow = 0;
+      routineSentInWindow = 0;
     }
+    const routine = (opts.lane ?? (routineAlertKey(key) ? "routine" : "critical")) === "routine";
     const prev = lastSent.get(key);
     const quiet = prev !== undefined && now - prev.at < WINDOW_MS;
     if (!prev && lastSent.size >= MAX_KEYS) lastSent.clear(); // bounded: a restart-sized reset is fine
-    if (quiet || sentInWindow >= MAX_PER_WINDOW) {
+    if (quiet || (routine ? routineSentInWindow >= MAX_ROUTINE_PER_WINDOW : sentInWindow >= MAX_PER_WINDOW)) {
       // Held back: remember how many, so the next email that does go out can say so.
       const entry = lastSent.get(key) ?? { at: 0, held: 0 };
       entry.held++;
@@ -87,7 +116,8 @@ export function alertStaffOncePerHour(
     }
     const held = lastSent.get(key)?.held ?? 0;
     lastSent.set(key, { at: now, held: 0 });
-    sentInWindow++;
+    if (routine) routineSentInWindow++;
+    else sentInWindow++;
     const body = held > 0 ? [...details, { label: "Held back", value: `${held} similar alert(s) since the last email for this event` }] : details;
 
     // Fire and forget: SMTP can take seconds and the webhook has 5 to answer [R28].
@@ -125,11 +155,68 @@ export function alertStaffOncePerHour(
   }
 }
 
+// ── Once a day, across restarts ─────────────────────────────────────────────────────────────────
+
+/** system_settings key prefix of the last-sent markers (one row per alert key, overwritten, never one per day). */
+export const ALERT_MARKER_PREFIX = "creatorPayouts.alerted:";
+
+export interface DurableAlertOptions extends PayoutAlertOptions {
+  /** Quiet while the stored marker equals this token (for example the IST day). */
+  token?: string;
+  /** Quiet while the stored marker, an epoch ms, is younger than this. Ignored when `token` is given. */
+  quietMs?: number;
+}
+
+/**
+ * alertStaffOncePerHour with a quiet period that outlives the process: the marker is read first and written only after the mailer
+ * reported the email went out (a failed send leaves the slot open for the next try). If the marker cannot be read (a database
+ * blip) it falls back to the in-memory hour rather than skipping an alert about money. Never throws.
+ * @returns true when an email was handed to the mailer.
+ */
+export async function alertStaffDurably(
+  key: string,
+  subject: string,
+  details: Array<{ label: string; value: string }>,
+  path?: string,
+  opts: DurableAlertOptions = {},
+): Promise<boolean> {
+  try {
+    const now = opts.now ?? Date.now();
+    let marker: string | null = null;
+    try {
+      marker = (await prisma.systemSetting.findUnique({ where: { key: ALERT_MARKER_PREFIX + key }, select: { value: true } }))?.value ?? null;
+    } catch (err) {
+      console.error("[payout-alert] could not read the alert marker:", (err as Error)?.message ?? "unknown error");
+    }
+    if (marker !== null) {
+      const quiet = opts.token !== undefined ? marker === opts.token : opts.quietMs !== undefined && now - Number(marker) < opts.quietMs;
+      if (quiet) return false;
+    }
+    const stamp = opts.token ?? String(now);
+    return alertStaffOncePerHour(key, subject, details, path, {
+      ...opts,
+      onSent: async () => {
+        await prisma.systemSetting.upsert({ where: { key: ALERT_MARKER_PREFIX + key }, create: { key: ALERT_MARKER_PREFIX + key, value: stamp }, update: { value: stamp } });
+        await opts.onSent?.();
+      },
+    });
+  } catch (err) {
+    console.error("[payout-alert] could not alert:", (err as Error)?.message ?? "unknown error");
+    return false;
+  }
+}
+
 /** Tests only. */
 export function resetPayoutAlertsForTests(): void {
   lastSent.clear();
   windowStart = 0;
   sentInWindow = 0;
+  routineSentInWindow = 0;
+}
+
+/** Tests only: forget every durable marker (system_settings is not truncated between tests). */
+export async function clearPayoutAlertMarkersForTests(): Promise<void> {
+  await prisma.systemSetting.deleteMany({ where: { key: { startsWith: ALERT_MARKER_PREFIX } } });
 }
 
 /** Tests only: resolves once every alert handed to the mailer so far has finished, `onSent` included. */

@@ -18,10 +18,11 @@ vi.mock("../src/services/email.service", async (orig) => {
 });
 
 import { notifyAdminByEmail } from "../src/services/email.service";
-import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
+import { alertStaffOncePerHour, clearPayoutAlertMarkersForTests, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { settlePayoutKicksForTests } from "../src/services/campaign/payment.service";
 import { onCreatorLinkVerified } from "../src/services/creator/payout-ledger";
 import { settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
+import { withdrawOffer } from "../src/services/creator/creator-offer.service";
 import { JOB_COST, REFUND_RESERVE, TICK_CALL_BUDGET, alertSuspendedHolding, findStuckPayouts, resetCreatorPayoutsCronForTests, runCreatorPayoutsTick } from "../src/cron/creator-payouts.cron";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
 import { DAY, HOUR, MIN, callLog, capture, countOf, itemOf, mkWorld, openOffer, payoutOf, stubPayoutEnv, verifiedOffer, mkStaff, type World } from "./payout-fixtures";
@@ -35,6 +36,7 @@ let staffId: string;
 beforeEach(async () => {
   // system_settings is not truncated between tests: the release switch must start every test absent (= on).
   await prisma.systemSetting.deleteMany({ where: { key: "creatorPayouts.release" } });
+  await clearPayoutAlertMarkersForTests(); // the once-a-day markers are in the database, which is not truncated between tests
   stubPayoutEnv();
   fake.reset();
   fake.install();
@@ -45,6 +47,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await prisma.systemSetting.deleteMany({ where: { key: "creatorPayouts.release" } }); // leave nothing behind for the next file
+  await clearPayoutAlertMarkersForTests();
   await settlePayoutKicksForTests();
   await settleCreatorRefundsForTests();
   await flushPayoutAlertsForTests();
@@ -382,7 +385,7 @@ describe("alerts", () => {
     const w = await paid({ pages: [{}] });
     const c = w.creators[0];
     // A payout parked for a person for over an hour, and nobody was ever alerted.
-    await setPayout(c.id, { status: "needs_attention", errorCode: "processed_not_held", updatedAt: new Date(Date.now() - 3 * HOUR) });
+    await setPayout(c.id, { status: "needs_attention", errorCode: "needs_look", updatedAt: new Date(Date.now() - 3 * HOUR) });
     const found = await findStuckPayouts(new Date());
     expect(found.map((f) => f.key)).toEqual(expect.arrayContaining(["needs_attention", "unalerted"]));
     const DIGEST = /creator payout.* past the point they should have moved/;
@@ -417,4 +420,289 @@ describe("alerts", () => {
     await flushPayoutAlertsForTests();
     expect(subjects().filter((s) => /past the point/.test(s))).toHaveLength(0);
   });
+
+  it("⚠️ 'once per IST day' survives a restart and a later hour: a deploy wipes the in-memory state, the database marker does not", async () => {
+    const w = await paid({ pages: [{}] });
+    await prisma.creatorPayoutAccount.update({ where: { id: w.creators[0].accountId! }, data: { activationStatus: "suspended" } });
+    const SUBJECT = "A creator's payout account is suspended while it holds money";
+    const morning = new Date("2026-10-20T06:00:00.000Z"); // 11:30 IST
+    expect(await alertSuspendedHolding(morning)).toBe(1);
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => s === SUBJECT)).toHaveLength(1);
+    // A restart: the hourly memory is gone. Three hours on, the same IST day: found again, not mailed again.
+    resetPayoutAlertsForTests();
+    expect(await alertSuspendedHolding(new Date(morning.getTime() + 3 * HOUR))).toBe(1);
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => s === SUBJECT)).toHaveLength(1);
+    // And hour after hour, with the memory forgotten each time: still one for the day.
+    for (let h = 4; h <= 8; h++) {
+      resetPayoutAlertsForTests();
+      await alertSuspendedHolding(new Date(morning.getTime() + h * HOUR));
+    }
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => s === SUBJECT)).toHaveLength(1);
+    // The next IST day it is a new alert, once.
+    resetPayoutAlertsForTests();
+    await alertSuspendedHolding(new Date(morning.getTime() + DAY));
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => s === SUBJECT)).toHaveLength(2);
+  });
+
+  it("⚠️ the daily digest is not sent again after a restart (every deploy restarts the process): the day is counted from the last digest that really went out, kept in the database", async () => {
+    const w = await paid({ pages: [{}] });
+    await setPayout(w.creators[0].id, { status: "needs_attention", errorCode: "needs_look", updatedAt: new Date(Date.now() - 3 * HOUR) });
+    const DIGEST = /creator payout.* past the point they should have moved/;
+    const T0 = Date.now();
+    expect((await runCreatorPayoutsTick({ now: new Date(T0) })).stuck).toBeGreaterThan(0);
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => DIGEST.test(s))).toHaveLength(1);
+    // Deploy: the process restarts a few minutes later. Everything in memory is gone, the payout is still stuck.
+    resetPayoutAlertsForTests();
+    resetCreatorPayoutsCronForTests();
+    expect((await runCreatorPayoutsTick({ now: new Date(T0 + 4 * MIN) })).stuck).toBeGreaterThan(0);
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => DIGEST.test(s))).toHaveLength(1);
+    // Another deploy the next morning: still stuck, a day has passed: one more, and only one.
+    resetPayoutAlertsForTests();
+    resetCreatorPayoutsCronForTests();
+    await runCreatorPayoutsTick({ now: new Date(T0 + DAY + 2 * HOUR) });
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => DIGEST.test(s))).toHaveLength(2);
+  });
+
+  it("⚠️ a failed digest send does not use up the day: the marker is written only once the mailer said the email went out", async () => {
+    const w = await paid({ pages: [{}] });
+    await setPayout(w.creators[0].id, { status: "needs_attention", errorCode: "needs_look", updatedAt: new Date(Date.now() - 3 * HOUR) });
+    const DIGEST = /creator payout.* past the point they should have moved/;
+    const T0 = Date.now();
+    vi.mocked(notifyAdminByEmail).mockResolvedValueOnce(null as never); // SMTP down: sendEmail answers null
+    await runCreatorPayoutsTick({ now: new Date(T0) });
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => DIGEST.test(s))).toHaveLength(1); // tried
+    expect(await prisma.systemSetting.count({ where: { key: { startsWith: "creatorPayouts.alerted:payout-digest" } } })).toBe(0);
+    // The next hourly check tries again (and this one is delivered).
+    resetPayoutAlertsForTests();
+    await runCreatorPayoutsTick({ now: new Date(T0 + 2 * HOUR) });
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => DIGEST.test(s))).toHaveLength(2);
+    expect(await prisma.systemSetting.count({ where: { key: { startsWith: "creatorPayouts.alerted:payout-digest" } } })).toBe(1);
+  });
+
+  it("⚠️ a creator cannot use up the alert budget that money-critical alerts need: twenty declines, then a failed transfer still emails (and a critical flood is still capped)", async () => {
+    const sent = () => vi.mocked(notifyAdminByEmail).mock.calls.length;
+    const t0 = Date.now();
+    const declines = Array.from({ length: 20 }, (_, i) => alertStaffOncePerHour(`creator-offer-closed:item-${i}`, "A creator declined a campaign post", [], undefined, { now: t0 }));
+    expect(declines.filter(Boolean).length).toBeLessThanOrEqual(6); // the routine lane has its own, smaller allowance
+    expect(declines.filter(Boolean).length).toBeGreaterThan(0);
+    await flushPayoutAlertsForTests();
+    const afterDeclines = sent();
+    expect(alertStaffOncePerHour("payout-engine:transfer_failed:failed", "Creator payout transfer FAILED", [], undefined, { now: t0 })).toBe(true);
+    expect(alertStaffOncePerHour("dispute:disp_x:open", "Payment dispute opened on a creator booking", [], undefined, { now: t0 })).toBe(true);
+    await flushPayoutAlertsForTests();
+    expect(sent()).toBe(afterDeclines + 2);
+    // The critical lane keeps its own ceiling: a flood of DIFFERENT critical keys is still stopped at 12.
+    resetPayoutAlertsForTests();
+    const flood = Array.from({ length: 20 }, (_, i) => alertStaffOncePerHour(`payout-engine:flood:${i}`, "x", [], undefined, { now: t0 }));
+    expect(flood.filter(Boolean)).toHaveLength(12);
+  });
+
+  it("names a verified post whose release was never scheduled, a reversed payout of a live post, and a post that reads refunded with no refund behind it", async () => {
+    const w = await paid({ pages: [{}, {}, {}] });
+    const [unscheduled, reversed, refundedNoRefund] = w.creators;
+    await verifiedOffer(w, unscheduled.id, { verifiedAt: new Date(Date.now() - 2 * HOUR) });
+    await setPayout(reversed.id, { status: "reversed", reversedAt: new Date(Date.now() - 2 * DAY), amountReversedPaise: reversed.payout });
+    await prisma.campaignBookingItem.update({ where: { id: reversed.id }, data: { status: "posted_manual" } });
+    await setPayout(refundedNoRefund.id, { status: "void", voidReason: "test" });
+    await prisma.campaignBookingItem.update({ where: { id: refundedNoRefund.id }, data: { status: "refunded", updatedAt: new Date(Date.now() - 7 * HOUR) } });
+    const found = await findStuckPayouts(new Date());
+    const by = new Map(found.map((f) => [f.key, f]));
+    expect(by.get("verified_not_scheduled")?.sample).toEqual([(await payoutOf(unscheduled.id)).id]);
+    expect(by.get("reversed_owed")?.sample).toEqual([(await payoutOf(reversed.id)).id]);
+    expect(by.get("refunded_no_ledger")?.sample).toEqual([refundedNoRefund.id]);
+    // The same facts one minute after the verification are not stuck yet.
+    expect((await findStuckPayouts(new Date(Date.now() - 3 * HOUR))).map((f) => f.key)).not.toContain("verified_not_scheduled");
+  });
+
+  it("⚠️ 'parked since' is the time of the last real MOVE into the status, not updated_at: a payout re-polled every few minutes is still named", async () => {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    const p = await payoutOf(c.id);
+    // Parked three hours ago ...
+    await prisma.creatorPayoutEvent.create({ data: { payoutId: p.id, bookingId: p.bookingId, kind: "status_change", fromStatus: "held", toStatus: "needs_attention", actorType: "system", createdAt: new Date(Date.now() - 3 * HOUR) } });
+    // ... and every backoff of the cleanup loop since has bumped updated_at to now.
+    await setPayout(c.id, { status: "needs_attention", errorCode: "duplicate_transfer", alertedStatus: "needs_attention", updatedAt: new Date() });
+    expect((await findStuckPayouts(new Date())).map((f) => f.key)).toContain("needs_attention");
+    // A payout that really moved into the status a minute ago is not.
+    const fresh = await paid({ pages: [{}] });
+    const q = await payoutOf(fresh.creators[0].id);
+    await prisma.creatorPayoutEvent.create({ data: { payoutId: q.id, bookingId: q.bookingId, kind: "status_change", fromStatus: "held", toStatus: "needs_attention", actorType: "system", createdAt: new Date() } });
+    await setPayout(fresh.creators[0].id, { status: "needs_attention", errorCode: "duplicate_transfer", alertedStatus: "needs_attention", updatedAt: new Date() });
+    expect((await findStuckPayouts(new Date())).find((f) => f.key === "needs_attention")?.sample).toEqual([p.id]);
+  });
 });
+
+// ── Repairs the worker does around the plan's jobs ───────────────────────────────────────
+
+describe("⚠️ a verified post can never stay unscheduled: the worker schedules a release the follow-up lost", () => {
+  it("release_after = the REAL verification time + the hold, only the first scheduling counts, and the release goes only when it is due", async () => {
+    vi.stubEnv("CREATOR_PAYOUT_HOLD_DAYS", "2");
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    const verifiedAt = new Date(Date.now() - 2 * HOUR);
+    await verifiedOffer(w, c.id, { verifiedAt }); // the follow-up (onCreatorLinkVerified) never ran
+    expect((await payoutOf(c.id)).releaseAfter).toBeNull();
+    const t1 = await runCreatorPayoutsTick({ now: after(1) });
+    expect(t1.scheduled).toBe(1);
+    const p = await payoutOf(c.id);
+    expect(p.releaseAfter!.getTime()).toBe(verifiedAt.getTime() + 2 * DAY); // the hold is not restarted from now
+    expect(p.status).toBe("held");
+    expect(t1.jobs.release).toBe(0);
+    expect(fake.count((x) => is.setHold(x, false))).toBe(0);
+    // Idempotent: a second pass changes nothing.
+    expect((await runCreatorPayoutsTick({ now: after(2) })).scheduled).toBe(0);
+    expect((await payoutOf(c.id)).releaseAfter!.getTime()).toBe(verifiedAt.getTime() + 2 * DAY);
+    // Due: released by the gate.
+    const t3 = await runCreatorPayoutsTick({ now: new Date(verifiedAt.getTime() + 2 * DAY + MIN) });
+    expect(t3.jobs.release).toBe(1);
+    expect((await payoutOf(c.id)).status).toBe("released");
+    expect(await prisma.creatorPayoutEvent.count({ where: { payoutId: p.id, kind: "schedule" } })).toBe(1);
+  });
+
+  it("a hand-checked post waits at least a day after the verification, and with no hold days an automatic one is due at once (in the same tick)", async () => {
+    const w = await paid({ pages: [{}, {}] });
+    const [byHand, auto] = w.creators;
+    const verifiedAt = new Date(Date.now() - 2 * HOUR);
+    await verifiedOffer(w, byHand.id, { verifiedAt, ownership: "manual_ok" });
+    await verifiedOffer(w, auto.id, { verifiedAt });
+    const t = await runCreatorPayoutsTick({ now: after(1) });
+    expect(t.scheduled).toBe(2);
+    expect((await payoutOf(byHand.id)).releaseAfter!.getTime()).toBe(verifiedAt.getTime() + DAY);
+    expect((await payoutOf(byHand.id)).status).toBe("held");
+    expect((await payoutOf(auto.id)).status).toBe("released"); // scheduled first, so it was due in the very tick that scheduled it
+  });
+
+  it("an unverified post, one whose ownership check did not pass, a paused payout's neighbour and a finished payout are never scheduled by it", async () => {
+    const w = await paid({ pages: [{}, {}] });
+    const [unverified, odd] = w.creators;
+    await verifiedOffer(w, odd.id, { ownership: "unverifiable" });
+    expect((await runCreatorPayoutsTick({ now: after(1) })).scheduled).toBe(0);
+    expect((await payoutOf(unverified.id)).releaseAfter).toBeNull();
+    expect((await payoutOf(odd.id)).releaseAfter).toBeNull();
+  });
+});
+
+describe("⚠️ a payout that can never be created does not hold every refund of its payment for ever", () => {
+  /** Two creators on one campaign: A's payout is held, B's stays planned because B's payout account needs clarification. */
+  async function stuckSibling() {
+    const w = await plannedWorld({ pages: [{}, {}] });
+    const [a, b] = w.creators;
+    await prisma.creatorPayoutAccount.update({ where: { id: b.accountId! }, data: { activationStatus: "needs_clarification" } });
+    await runCreatorPayoutsTick(); // A is made (held), B waits: "not ready"
+    expect((await payoutOf(a.id)).status).toBe("held");
+    expect((await payoutOf(b.id)).status).toBe("planned");
+    const offer = await openOffer(w, a.id, { status: "offered" });
+    await withdrawOffer(offer.id, { staffId, closedReason: "withdrawn" }); // A's post ends: its share is taken back, the refund waits behind B
+    expect((await itemOf(a.id)).status).toBe("refund_due");
+    expect((await payoutOf(a.id)).status).toBe("reversed");
+    expect(countOf(callLog(fake), "refund.create")).toBe(0);
+    return { w, a, b };
+  }
+
+  it("after the budget (24 hours) the sibling becomes manual_required with an alert, and A's refund goes out in the same tick", async () => {
+    const { a, b } = await stuckSibling();
+    // Not yet: 23 hours in, it is still waited for.
+    const early = await runCreatorPayoutsTick({ now: after(23 * 60) });
+    expect(early.gaveUp).toBe(0);
+    expect((await payoutOf(b.id)).status).toBe("planned");
+    expect((await itemOf(a.id)).status).toBe("refund_due");
+    // After the budget:
+    const t = await runCreatorPayoutsTick({ now: after(25 * 60) });
+    expect(t.gaveUp).toBe(1);
+    expect(await payoutOf(b.id)).toMatchObject({ status: "manual_required", errorCode: "transfer_never_created" });
+    expect(t.refunds).toMatchObject({ refunded: 1 });
+    expect((await itemOf(a.id)).status).toBe("refunded");
+    expect(countOf(callLog(fake), "refund.create")).toBe(1);
+    expect(countOf(callLog(fake), "transfer.create")).toBe(1); // only A's: B's was never made, and nothing else was
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => /could not be set aside and must be paid by hand/.test(s))).toHaveLength(1);
+    // A second pass gives up on nothing more and mails nothing more.
+    expect((await runCreatorPayoutsTick({ now: after(26 * 60) })).gaveUp).toBe(0);
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => /could not be set aside/.test(s))).toHaveLength(1);
+    // The payout is on record as alerted, so the digest does not call it "unalerted".
+    expect((await payoutOf(b.id)).alertedStatus).toBe("manual_required");
+  });
+
+  it("never while the Route switch is off (that pause is the owner's), never for a paused payout, and a payout that CAN be made is made, not given up on", async () => {
+    const { b } = await stuckSibling();
+    vi.stubEnv("CREATOR_ROUTE_ENABLED", "0");
+    expect((await runCreatorPayoutsTick({ now: after(48 * 60) })).gaveUp).toBe(0);
+    expect((await payoutOf(b.id)).status).toBe("planned");
+    vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
+    await setPayout(b.id, { pausedAt: new Date(), pausedReason: "staff" });
+    expect((await runCreatorPayoutsTick({ now: after(48 * 60) })).gaveUp).toBe(0);
+    expect((await payoutOf(b.id)).status).toBe("planned");
+    // Unpaused and the account fixed meanwhile: the last attempt MAKES the transfer.
+    await setPayout(b.id, { pausedAt: null, pausedReason: null });
+    await prisma.creatorPayoutAccount.update({ where: { id: (await payoutOf(b.id)).payoutAccountId }, data: { activationStatus: "activated" } });
+    const t = await runCreatorPayoutsTick({ now: after(49 * 60) });
+    expect(t.gaveUp).toBe(0);
+    expect((await payoutOf(b.id)).status).toBe("held");
+  });
+});
+
+describe("⚠️ a post marked refunded with no refund behind it is found and re-opened (never refunded twice)", () => {
+  async function lost() {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    await setPayout(c.id, { status: "reversed", reversedAt: new Date(), amountReversedPaise: c.payout });
+    // The crash window of the old order: the post was flipped to refunded and no ledger row was ever written.
+    await prisma.campaignBookingItem.update({ where: { id: c.id }, data: { status: "refunded", updatedAt: new Date(Date.now() - 2 * HOUR) } });
+    return { w, c };
+  }
+
+  it("re-opens it, then job 10 refunds it ONCE under the post's own key", async () => {
+    const { w, c } = await lost();
+    const t1 = await runCreatorPayoutsTick({ now: after(1) });
+    expect(t1.reopened).toBe(1);
+    expect((await itemOf(c.id)).status).toBe("refund_due");
+    expect(countOf(callLog(fake), "refund.create")).toBe(0);
+    const t2 = await runCreatorPayoutsTick({ now: after(10) });
+    expect(t2.refunds).toMatchObject({ refunded: 1 });
+    expect((await itemOf(c.id)).status).toBe("refunded");
+    expect(countOf(callLog(fake), "refund.create")).toBe(1);
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: c.id, idempotencyKey: `rf-item-${c.id}` } })).toBe(1);
+    // Nothing is left to repair.
+    expect((await runCreatorPayoutsTick({ now: after(20) })).reopened).toBe(0);
+    void w;
+  });
+
+  it("⚠️ but not when a refund nobody here issued has appeared since: the client may already be repaid, so a person is told instead", async () => {
+    const { w, c } = await lost();
+    fake.payments.get(w.payId)!.refunds.push({ id: "rfnd_dashboard01", amount: c.price, status: "processed" });
+    const t = await runCreatorPayoutsTick({ now: after(1) });
+    expect(t.reopened).toBe(0);
+    expect((await itemOf(c.id)).status).toBe("refunded");
+    expect(countOf(callLog(fake), "refund.create")).toBe(0);
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => /reads refunded but no refund of it was found/.test(s))).toHaveLength(1);
+    // Looked at again, it is not mailed again the same day.
+    resetPayoutAlertsForTests();
+    await runCreatorPayoutsTick({ now: after(2) });
+    await flushPayoutAlertsForTests();
+    expect(subjects().filter((s) => /reads refunded but no refund of it was found/.test(s))).toHaveLength(1);
+  });
+
+  it("is left alone when the post is refunded properly (a refund of it is on the ledger), when its payout is not out of the way, and for a network post", async () => {
+    const w = await paid({ pages: [{}, {}], network: [100_000] });
+    const [proper, held] = w.creators;
+    await setPayout(proper.id, { status: "reversed", reversedAt: new Date() });
+    const pay = await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: w.booking.id } });
+    await prisma.campaignRefund.create({ data: { idempotencyKey: `rf-item-${proper.id}`, paymentId: pay.id, razorpayPaymentId: pay.razorpayPaymentId!, bookingId: w.booking.id, bookingItemId: proper.id, amountPaise: proper.price, status: "processed", origin: "ours", reason: "item_refunded" } });
+    const old = new Date(Date.now() - 2 * HOUR);
+    for (const id of [proper.id, held.id, w.networkItems[0].id]) await prisma.campaignBookingItem.update({ where: { id }, data: { status: "refunded", updatedAt: old } });
+    expect((await runCreatorPayoutsTick({ now: after(1) })).reopened).toBe(0);
+    for (const id of [proper.id, held.id, w.networkItems[0].id]) expect((await itemOf(id)).status).toBe("refunded");
+  });
+});
+

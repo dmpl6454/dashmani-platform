@@ -112,6 +112,16 @@ router.post("/admin/campaigns/:id/items/:itemId/refund", ...gate, asyncHandler(a
   return success(res, await review.refundItem(req.params.id, req.params.itemId, staffId(req)));
 }));
 
+/**
+ * "Mark refunded": the client was repaid OUTSIDE the portal (a refund made from the Razorpay dashboard) and this creator post's refund is still
+ * owed here. It records that refund against the post instead of sending another (409 unless Razorpay lists an unattributed refund of at least the
+ * post's price, and the creator's payout is already taken back). `refundId` names the Razorpay refund when more than one could be this post's.
+ */
+const markRefundedSchema = z.object({ refundId: safeString.pipe(z.string().min(4).max(60)).optional() });
+router.post("/admin/campaigns/:id/items/:itemId/mark-refunded", ...gate, validate(markRefundedSchema), asyncHandler(async (req, res) => {
+  return success(res, await review.markItemRefundedByHand(req.params.id, req.params.itemId, staffId(req), { refundId: req.body.refundId ?? null }));
+}));
+
 router.post("/admin/campaigns/:id/items/:itemId/publish-now", ...gate, asyncHandler(async (req, res) => {
   return success(res, await review.publishNow(req.params.id, req.params.itemId, staffId(req)));
 }));
@@ -190,9 +200,17 @@ router.get("/admin/creator-payouts.csv", ...gate, async (req: Request, res, next
     await payouts.streamPayoutsCsv(q, (chunk) => res.write(chunk));
     res.end();
   } catch (err) {
-    // Once streaming has begun the status line is gone: end what was sent. Before that, the error handler answers cleanly.
-    if (res.headersSent) res.end();
-    else next(err);
+    // ⚠️ Before the first byte the error handler answers cleanly (a 500). Once streaming has begun the status line is gone, and ending the
+    // response would send the terminating chunk: a truncated worklist would arrive as a complete 200 file and the creators after the cut-off
+    // would silently drop off the bank-transfer list. So the connection is ABORTED instead: the browser's download fails, the page says so,
+    // and nobody ever holds a file that looks complete and is not.
+    if (res.headersSent) res.destroy(err instanceof Error ? err : new Error("creator payouts csv failed"));
+    else {
+      // The answer is an error, not a file: take back the headers that announced one.
+      res.removeHeader("Content-Type");
+      res.removeHeader("Content-Disposition");
+      next(err);
+    }
   }
 });
 

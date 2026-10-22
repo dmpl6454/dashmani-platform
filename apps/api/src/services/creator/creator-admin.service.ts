@@ -17,6 +17,8 @@ import {
   type PayoutAccountView,
 } from "./payout-account-view";
 import { routeAvailable } from "./payout-account.service";
+import { pausePayoutsOfCreatorRows } from "./payout-pause";
+import { alertStaffOncePerHour } from "./payout-alert";
 
 // Staff review queue for the creator portal (internal portal → /creators).
 // ⚠️ Every response goes through creator-view.ts builders plus the admin extras below — never a
@@ -482,11 +484,12 @@ export async function reviewCreator(id: string, action: ReviewAction, staffId: s
   const now = new Date();
   const reviewNote = note?.trim() || null;
 
-  const count = await prisma.$transaction(async (tx) => {
+  const { count, paused } = await prisma.$transaction(async (tx) => {
     const res = await tx.creator.updateMany({
       where: { id, status: { in: from } },
       data: { status: to, reviewNote, reviewedById: staffId, reviewedAt: now },
     });
+    let paused: Array<{ id: string; status: string }> = [];
     // A suspended creator's pages stop being offered at once; reinstating does NOT turn them
     // back on (staff re-enable each page deliberately).
     if (res.count === 1 && action === "suspend") {
@@ -495,8 +498,40 @@ export async function reviewCreator(id: string, action: ReviewAction, staffId: s
         data: { enabled: false, enabledById: null, enabledAt: null },
       });
     }
-    return res.count;
+    // ⚠️ A creator staff suspend (or reject) must not be PAID while that stands. Their payouts that still have something in flight
+    // are paused in this same transaction, so the suspension can never commit without the pause, and the release gate refuses a
+    // suspended creator on its own as a second layer. The pause survives a later suspended → closed move, and reinstating does NOT
+    // lift it: staff resume each payout on purpose (a payout already paused for a dispute, a bank change or by staff keeps its first
+    // reason). Nothing here talks to Razorpay.
+    if (res.count === 1 && (action === "suspend" || action === "reject")) {
+      paused = await pausePayoutsOfCreatorRows(tx, id, {
+        reason: "creator_suspended",
+        actorType: "staff",
+        actorId: staffId,
+        note: action === "suspend" ? "Paused: staff suspended the creator." : "Paused: staff rejected the creator.",
+        at: now,
+      });
+    }
+    return { count: res.count, paused };
   });
+
+  if (count === 1 && paused.length > 0) {
+    // After the commit, never inside it. The pause itself is already written, so a held-back email loses nothing.
+    alertStaffOncePerHour(
+      `creator-suspended-payouts:${id}:${action}`,
+      `${paused.length} creator payout${paused.length === 1 ? "" : "s"} paused because the creator was ${action === "suspend" ? "suspended" : "rejected"}`,
+      [
+        { label: "Creator", value: id },
+        { label: "Payouts paused", value: String(paused.length) },
+        {
+          label: "What to do",
+          value:
+            "Nothing is paid out to this creator while they stay suspended. Open the payout queue (Paused): each payout stays paused after a reinstatement until you resume it. If the work is not to be paid, take the payout back there (Reverse) and refund the post from its campaign.",
+        },
+      ],
+      "/campaigns/payouts",
+    );
+  }
 
   if (count === 0) {
     const exists = await prisma.creator.findUnique({ where: { id }, select: { status: true } });

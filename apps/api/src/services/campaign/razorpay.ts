@@ -623,10 +623,27 @@ export async function fetchRouteProduct(accountId: string, productId: string) {
 
 // ── Route: transfers, holds and reversals [R3][R10][R11][R13][R16][R21] ──────────
 
+/** Collection reads (see listExact): up to LIST_MAX_PAGES pages of LIST_PAGE. */
+const LIST_PAGE = 100;
+const LIST_MAX_PAGES = 5;
+/**
+ * Razorpay's standard default page for a collection is 10 entries [Pagination & Rate Limiting; ⚠️ not in our copy of the docs, so
+ * UNVERIFIED]. A page SHORTER than this is the whole list whether or not the endpoint honours `count`: an endpoint that ignores
+ * `count` returns at most its default page, and one that honours it returns at most LIST_PAGE, so a page under 10 is short on
+ * either reading. A page of 10 or more proves nothing when paging is not honoured.
+ */
+export const UNPAGED_COMPLETE_BELOW = 10;
+
 /** What we put in a transfer's `notes` and read back to recognise our own transfers [R11]. Nothing else is kept. */
 export interface TransferNotes {
   payout_id?: string;
   booking_item_id?: string;
+  /**
+   * Which REQUEST made the transfer (see requestKeyOf in the payout engine): a payout can be sent to Razorpay more than
+   * once (an automatic retry, a staff Retry), and a transfer left over from an earlier request must never be mistaken for
+   * the outcome of the current one. Written at creation, read back from a listing. Absent on a transfer we did not tag.
+   */
+  attempt?: string;
 }
 
 /**
@@ -687,8 +704,11 @@ function parseTransferNotes(v: unknown): TransferNotes {
   if (!isObj(v)) return out; // Razorpay sends [] for "no notes"
   const payout = str(v.payout_id);
   const item = str(v.booking_item_id);
+  const attempt = str(v.attempt);
   if (payout) out.payout_id = payout.slice(0, 64);
   if (item) out.booking_item_id = item.slice(0, 64);
+  // A request key is a short token of our own making; anything else is not ours and is dropped.
+  if (attempt && /^[A-Za-z0-9._-]{1,40}$/.test(attempt)) out.attempt = attempt;
   return out;
 }
 
@@ -753,8 +773,8 @@ export interface CreateTransferInput {
   amountPaise: number;
   /** Always true: a transfer is created HELD and released only after the post is verified [R11][R13]. The literal type makes an un-held transfer a compile error. */
   onHold: true;
-  /** What we recognise the transfer by later. Never the brand's price, never `linked_account_notes`. */
-  notes: { payout_id: string; booking_item_id: string };
+  /** What we recognise the transfer by later. Never the brand's price, never `linked_account_notes`. `attempt` names the request (see TransferNotes). */
+  notes: { payout_id: string; booking_item_id: string; attempt?: string };
 }
 
 /**
@@ -773,7 +793,15 @@ export async function createTransferFromPayment(paymentId: string, input: Create
     `/payments/${id}/transfers`,
     {
       body: {
-        transfers: [{ account, amount: input.amountPaise, currency: "INR", on_hold: true, notes: { payout_id: input.notes.payout_id, booking_item_id: input.notes.booking_item_id } }],
+        transfers: [
+          {
+            account,
+            amount: input.amountPaise,
+            currency: "INR",
+            on_hold: true,
+            notes: { payout_id: input.notes.payout_id, booking_item_id: input.notes.booking_item_id, ...(input.notes.attempt ? { attempt: input.notes.attempt } : {}) },
+          },
+        ],
       },
     },
     parseTransferCollection,
@@ -789,15 +817,51 @@ export async function listPaymentTransfers(paymentId: string) {
   return request("GET", `/payments/${pathId(paymentId, "payment")}/transfers`, {}, parseTransferCollection, "transfer list");
 }
 
-/** GET /v1/transfers/:id with expand[]=recipient_settlement [R21]: the transfer and, once it has one, its settlement and bank UTR. */
+/**
+ * GET /v1/transfers/:id: the transfer as it is now. ⚠️ A PLAIN read, deliberately with NO `expand`. The docs show
+ * `expand[]=recipient_settlement` only on the LIST call (GET /v1/transfers?expand[]=recipient_settlement, where it is
+ * mandatory); the single-transfer page documents no such parameter. Every step of the payout engine reads the transfer
+ * this way (confirm the hold, the release gate, the reversal), so a refusal of an undocumented parameter here would stop
+ * the whole money leg, including taking money back. The base entity already carries `settlement_status` and
+ * `recipient_settlement_id`; the settlement itself (its status and bank UTR) comes from fetchTransferSettlement.
+ */
 export async function fetchTransfer(transferId: string) {
-  return request(
-    "GET",
-    `/transfers/${pathId(transferId, "transfer")}`,
-    { query: [["expand[]", "recipient_settlement"]] },
-    parseRazorpayTransfer,
-    "transfer",
-  );
+  return request("GET", `/transfers/${pathId(transferId, "transfer")}`, {}, parseRazorpayTransfer, "transfer");
+}
+
+/**
+ * The settlement a transfer ended up in (its status and bank UTR), through the one route the docs show for it: the transfer
+ * LIST with `expand[]=recipient_settlement` [R21], narrowed with the documented `recipient_settlement_id` filter
+ * (GET /v1/transfers?recipient_settlement_id=:id) and read with the standard `count` / `skip`. Our transfer is found in the
+ * answer BY ID, so another transfer batched into the same settlement is never mistaken for it. null = the settlement is not
+ * shown for this transfer (not found, or shown without its settlement): the caller treats that as "not settled yet", never as paid.
+ * ⚠️ UNVERIFIED against a live account: that `expand[]` and `recipient_settlement_id` can be combined in one request.
+ */
+export async function fetchTransferSettlement(transferId: string, settlementId: string): Promise<RazorpaySettlement | null> {
+  const tid = pathId(transferId, "transfer");
+  const sid = pathId(settlementId, "settlement");
+  const seen = new Set<string>();
+  for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    const items = await request(
+      "GET",
+      "/transfers",
+      { query: [["expand[]", "recipient_settlement"], ["recipient_settlement_id", sid], ["count", LIST_PAGE], ["skip", seen.size]] },
+      parseTransferCollection,
+      "settlement lookup",
+    );
+    if (items.length === 0) return null;
+    const mine = items.find((t) => t.id === tid);
+    if (mine) return mine.recipient_settlement && mine.recipient_settlement.id === sid ? mine.recipient_settlement : null;
+    let fresh = 0;
+    for (const it of items) {
+      if (!seen.has(it.id)) {
+        seen.add(it.id);
+        fresh++;
+      }
+    }
+    if (fresh === 0) return null; // `skip` was ignored: the same page again, so there is nothing more to look at
+  }
+  return null;
 }
 
 /**
@@ -869,9 +933,6 @@ export async function listTransferReversals(transferId: string) {
 
 // ── Exact collections (transfers of a payment, disputes) ─────────────────────────
 
-const LIST_PAGE = 100;
-const LIST_MAX_PAGES = 5;
-
 /**
  * Reads a whole Razorpay collection. ⚠️ Used where "the list shows nothing" is a MONEY decision (a
  * transfer that did not show up in the payment's transfer list is sent again; a dispute that does not
@@ -881,20 +942,29 @@ const LIST_MAX_PAGES = 5;
  *    verified (the payment's transfer list is documented with neither parameter) may ignore both and
  *    return its default page, and a default page looks exactly like a short complete list. So it keeps
  *    paging until a page comes back EMPTY, and the final empty page is the proof that nothing was left.
- *  • An entry seen twice means the server ignored `skip` (the same page again): the list cannot be
- *    read exactly, so it throws UNKNOWN_RESULT instead of looping or returning a partial answer.
+ *  • An entry seen twice means the server ignored `skip` (the same page again). By default that makes the
+ *    list unreadable: it throws UNKNOWN_RESULT instead of looping or returning a partial answer. With
+ *    `completeBelow` set, the page we hold is accepted as the WHOLE list when it is shorter than that
+ *    (see UNPAGED_COMPLETE_BELOW: short on either reading of `count`); at or above it, still UNKNOWN_RESULT.
+ *  • With `plainFallback`, a first request that Razorpay refuses outright (400 or 422: a parameter the
+ *    endpoint does not take) is asked once more with NO paging parameters, and the answer is judged by the
+ *    same `completeBelow` rule. Any other failure is thrown as it is.
  *  • An entry we cannot parse, or more than LIST_PAGE × LIST_MAX_PAGES entries, also throws
- *    UNKNOWN_RESULT. Callers treat that as "unchecked" and fail closed.
+ *    UNKNOWN_RESULT. Callers treat that as "unchecked" and fail closed, with a human exit.
  * Costs one extra request over the number of pages, on purpose.
  */
-async function listExact<T extends { id: string }>(path: string, base: QueryPairs, parse: (v: unknown) => T | null, what: string): Promise<T[]> {
-  const out: T[] = [];
-  const seen = new Set<string>();
-  for (let page = 0; page <= LIST_MAX_PAGES; page++) {
-    const items = await request(
+async function listExact<T extends { id: string }>(
+  path: string,
+  base: QueryPairs,
+  parse: (v: unknown) => T | null,
+  what: string,
+  opts: { completeBelow?: number; plainFallback?: boolean } = {},
+): Promise<T[]> {
+  const getPage = (query: QueryPairs) =>
+    request(
       "GET",
       path,
-      { query: [...base, ["count", LIST_PAGE], ["skip", out.length]] },
+      { query },
       (json) => {
         if (!isObj(json) || !Array.isArray(json.items)) return null;
         const parsed = json.items.map(parse);
@@ -902,10 +972,39 @@ async function listExact<T extends { id: string }>(path: string, base: QueryPair
       },
       what,
     );
+  const unreliable = () => new RazorpayError(`Razorpay's ${what} paging could not be relied on`, 200, "UNKNOWN_RESULT");
+  const completeBelow = opts.completeBelow ?? 0;
+  /** One page that is all we will ever see: complete only when short, and never with the same entry twice. */
+  const wholeIfShort = (items: T[]): T[] => {
+    if (new Set(items.map((i) => i.id)).size !== items.length || items.length >= completeBelow) throw unreliable();
+    return items;
+  };
+
+  let first: T[];
+  try {
+    first = await getPage([...base, ["count", LIST_PAGE], ["skip", 0]]);
+  } catch (err) {
+    if (opts.plainFallback && err instanceof RazorpayError && (err.status === 400 || err.status === 422)) return wholeIfShort(await getPage(base));
+    throw err;
+  }
+  if (first.length === 0) return [];
+  const out: T[] = [];
+  const seen = new Set<string>();
+  for (const it of first) {
+    if (seen.has(it.id)) throw unreliable();
+    seen.add(it.id);
+    out.push(it);
+  }
+  for (let page = 1; page <= LIST_MAX_PAGES; page++) {
+    const items = await getPage([...base, ["count", LIST_PAGE], ["skip", out.length]]);
     if (items.length === 0) return out;
     if (page === LIST_MAX_PAGES) break; // data after the last allowed page: more than we are willing to hold
+    if (items.some((it) => seen.has(it.id))) {
+      // `skip` was ignored. Only the second request can show it honestly: the page repeated is the page we hold.
+      if (page === 1 && items.length === out.length && items.every((it) => seen.has(it.id))) return wholeIfShort(out);
+      throw unreliable();
+    }
     for (const it of items) {
-      if (seen.has(it.id)) throw new RazorpayError(`Razorpay's ${what} paging could not be relied on`, 200, "UNKNOWN_RESULT");
       seen.add(it.id);
       out.push(it);
     }
@@ -916,9 +1015,12 @@ async function listExact<T extends { id: string }>(path: string, base: QueryPair
 /**
  * GET /v1/payments/:id/transfers [R3], EVERY transfer of the payment (see listExact). This, not
  * listPaymentTransfers, is what the "did our create call land?" decision reads.
+ * ⚠️ UNVERIFIED against a live account: whether this endpoint honours `count` / `skip` (its docs list neither), ignores them,
+ * or refuses them with a 400. All three are handled and none is ever guessed at: honoured → read to an empty page; ignored → the
+ * page is the list only when it is under UNPAGED_COMPLETE_BELOW entries, else UNKNOWN_RESULT; refused → one plain read, same rule.
  */
 export async function listAllPaymentTransfers(paymentId: string): Promise<RazorpayTransfer[]> {
-  return listExact(`/payments/${pathId(paymentId, "payment")}/transfers`, [], parseRazorpayTransfer, "transfer list");
+  return listExact(`/payments/${pathId(paymentId, "payment")}/transfers`, [], parseRazorpayTransfer, "transfer list", { completeBelow: UNPAGED_COMPLETE_BELOW, plainFallback: true });
 }
 
 /** A chargeback or other dispute on a payment [R31]. Only what money logic needs; the evidence and reason text are dropped. */

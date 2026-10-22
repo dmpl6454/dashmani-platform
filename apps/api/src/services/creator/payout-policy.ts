@@ -87,6 +87,19 @@ export interface ReleaseFacts {
   disputeStatuses: readonly string[];
   /** bankChangeBlocksRelease(payout account): a bank change is pending, or was cleared less than 72 hours ago. */
   bankChangeBlocks: boolean;
+  /**
+   * creators.status of the payout's creator: approved | closed | suspended | rejected | in_review | draft. null = the row could not be
+   * read (or is gone), which is a refusal like any other unread fact. A creator staff suspended after verifying the post must not be
+   * paid by the next worker tick, and "approved" is the only status the worker releases for.
+   */
+  creatorStatus: string | null;
+  /**
+   * A person asked for this release (a staff "Release now"). The only thing it changes: a creator who CLOSED their account after the
+   * post was verified is owed the money (their payouts keep reconciling), so a person may release it, and the worker never does.
+   */
+  byStaff: boolean;
+  /** The payout account's activation_status as we last stored it (the poll and the webhooks keep it current). null = no such account row. */
+  accountActivation: string | null;
   // ── read from Razorpay, fresh ──
   transfer: TransferView | null;
   /**
@@ -97,6 +110,12 @@ export interface ReleaseFacts {
   duplicateTransfers: "none" | "found" | "unchecked";
   /** The payment's disputes asked of Razorpay. "unchecked" = the question could not be answered. */
   razorpayDisputes: "clear" | "blocking" | "unchecked";
+  /**
+   * The payment's refunds asked of Razorpay and set against OUR ledger (a refund webhook is the only other way we hear of one, and a
+   * missed webhook leaves no trace): "unaccounted" = Razorpay shows more refunded than our books do, "covers_item" = our books show a
+   * refund of THIS item (its price is going back to the brand, so the creator's share must not leave), "unchecked" = it could not be read.
+   */
+  razorpayRefunds: "clear" | "unaccounted" | "covers_item" | "unchecked";
   /** The linked account's Route product, asked of Razorpay. */
   account: "activated" | "not_activated" | "unchecked";
 }
@@ -107,6 +126,7 @@ export const RELEASE_REFUSALS = [
   "payout_not_held",
   "payout_paused",
   "no_transfer",
+  "creator_not_active",
   "booking_not_releasable",
   "item_not_live",
   "offer_missing",
@@ -127,6 +147,8 @@ export const RELEASE_REFUSALS = [
   "duplicate_unchecked",
   "dispute_at_razorpay",
   "dispute_unchecked",
+  "refund_at_razorpay",
+  "refund_unchecked",
   "account_not_activated",
   "account_unchecked",
 ] as const;
@@ -146,6 +168,9 @@ export function evaluateLocalRelease(f: ReleaseFacts): ReleaseDecision {
   if (f.payout.status !== "held") return refuse("payout_not_held");
   if (f.payout.pausedAt !== null) return refuse("payout_paused");
   if (!f.payout.transferId) return refuse("no_transfer");
+  // The creator's own standing. A suspended, rejected or unreadable creator is never paid (staff must reinstate first); one who closed
+  // the account is paid only by a person.
+  if (!(f.creatorStatus === "approved" || (f.creatorStatus === "closed" && f.byStaff))) return refuse("creator_not_active");
   if (!f.booking || !RELEASABLE_BOOKING_STATUSES.includes(f.booking.status)) return refuse("booking_not_releasable");
   if (!f.item || !LIVE_ITEM_STATUSES_FOR_RELEASE.includes(f.item.status)) return refuse("item_not_live");
   if (!f.offer) return refuse("offer_missing");
@@ -155,6 +180,9 @@ export function evaluateLocalRelease(f: ReleaseFacts): ReleaseDecision {
   if (f.offer.ownershipCheck === null || !OWNERSHIP_PASSED.includes(f.offer.ownershipCheck)) return refuse("ownership_unchecked");
   if (f.disputeStatuses.some((s) => !DISPUTE_NOT_BLOCKING.includes(s))) return refuse("dispute_recorded");
   if (f.bankChangeBlocks) return refuse("bank_change_pending");
+  // What we last stored of the linked account's state; the fresh read of Razorpay's product (below) stays the authority for ALLOWING.
+  // A stale "not activated" only delays a release until the next poll, and costs no Razorpay call to say so.
+  if (f.accountActivation !== "activated") return refuse("account_not_activated");
   if (f.payout.releaseAfter === null) return refuse("release_not_scheduled");
   if (f.payout.releaseAfter.getTime() > f.now.getTime()) return refuse("release_not_due");
   return OK;
@@ -174,12 +202,14 @@ export function evaluateTransferForRelease(f: Pick<ReleaseFacts, "payout" | "tra
   return OK;
 }
 
-/** What else Razorpay says: no duplicate transfer, no dispute that is not won, an activated account. */
-export function evaluateRemoteForRelease(f: Pick<ReleaseFacts, "razorpayDisputes" | "account" | "duplicateTransfers">): ReleaseDecision {
+/** What else Razorpay says: no duplicate transfer, no dispute that is not won, no refund our books do not know, an activated account. */
+export function evaluateRemoteForRelease(f: Pick<ReleaseFacts, "razorpayDisputes" | "razorpayRefunds" | "account" | "duplicateTransfers">): ReleaseDecision {
   if (f.duplicateTransfers === "found") return refuse("duplicate_transfer");
   if (f.duplicateTransfers !== "none") return refuse("duplicate_unchecked");
   if (f.razorpayDisputes === "blocking") return refuse("dispute_at_razorpay");
   if (f.razorpayDisputes !== "clear") return refuse("dispute_unchecked");
+  if (f.razorpayRefunds === "unaccounted" || f.razorpayRefunds === "covers_item") return refuse("refund_at_razorpay");
+  if (f.razorpayRefunds !== "clear") return refuse("refund_unchecked");
   if (f.account === "not_activated") return refuse("account_not_activated");
   if (f.account !== "activated") return refuse("account_unchecked");
   return OK;
@@ -189,11 +219,13 @@ export function evaluateRemoteForRelease(f: Pick<ReleaseFacts, "razorpayDisputes
  * P4 Release: the ONE function that says whether a held payout may be released. Money leaves our control
  * only when this returns { ok: true }, and it does only when every fact below holds at the same time:
  *
- *   the switch is on · payout held and not paused · a transfer exists · booking approved on · item live ·
- *   offer completed with a verified link and a passed ownership check · no dispute on our books ·
- *   no bank change in flight · release_after set and reached · the FRESH transfer is processed, on hold,
- *   without an automatic release date, never reversed, and is ours · no duplicate transfer carries our id ·
- *   Razorpay lists no dispute that is not won · the linked account is activated.
+ *   the switch is on · payout held and not paused · a transfer exists · the creator is approved (a creator who
+ *   closed the account is released for by a person only) · booking approved on · item live · offer completed
+ *   with a verified link and a passed ownership check · no dispute on our books · no bank change in flight · the
+ *   linked account is activated as we stored it · release_after set and reached · the FRESH transfer is
+ *   processed, on hold, without an automatic release date, never reversed, and is ours · no duplicate transfer
+ *   carries our id · Razorpay lists no dispute that is not won · Razorpay shows no refund our books do not know
+ *   and none of this item · the linked account is activated as Razorpay says now.
  *
  * Anything missing, unreadable or unchecked is a refusal with its own reason. Local checks come first and
  * the reason returned is the first that fails, in the order of RELEASE_REFUSALS (documentation order, not
@@ -205,6 +237,69 @@ export function evaluateRelease(f: ReleaseFacts): ReleaseDecision {
   const transfer = evaluateTransferForRelease(f);
   if (!transfer.ok) return transfer;
   return evaluateRemoteForRelease(f);
+}
+
+/**
+ * How a payment's refunds, as Razorpay lists them, compare with our own ledger of them. A refund that Razorpay shows and our books
+ * do not (a staff refund from the Razorpay dashboard whose webhook was lost or is late) means the brand has already been repaid
+ * out of our balance, and paying the creator as well is paying twice. A refund of THIS item in our own ledger says the same.
+ * A refund of a DIFFERENT item is normal and never blocks: our ledger carries it and the totals agree.
+ */
+export function decideRefundVerdict(f: {
+  /** What Razorpay says is refunded on the payment (pending and processed, not failed). */
+  razorpayRefundedPaise: number;
+  /** Our ledger's refunds of the payment that did not fail, whatever their origin (our own in-flight ones count). */
+  ledger: ReadonlyArray<{ amountPaise: number; bookingItemId: string | null }>;
+  itemId: string;
+}): "clear" | "unaccounted" | "covers_item" {
+  if (f.ledger.some((r) => r.bookingItemId === f.itemId)) return "covers_item";
+  const known = f.ledger.reduce((sum, r) => sum + r.amountPaise, 0);
+  return f.razorpayRefundedPaise > known ? "unaccounted" : "clear";
+}
+
+const REFUSAL_MIN_BACKOFF_MS = 30 * 60_000;
+const REFUSAL_MAX_BACKOFF_MS = 6 * 60 * 60_000;
+const REFUSAL_TRANSIENT_BACKOFF_MS = 15 * 60_000;
+/** Refusals that read as "we could not ask", which clear on their own: asked again after a short wait. */
+const TRANSIENT_REFUSALS: readonly ReleaseRefusal[] = ["transfer_unreadable", "duplicate_unchecked", "dispute_unchecked", "refund_unchecked", "account_unchecked"];
+/**
+ * Refusals that need no wait because the row is not selected again anyway (not held, paused, not scheduled, not due) or because the
+ * whole bucket is skipped (the release switch is off, so a release resumes the moment it is switched on).
+ */
+const NO_BACKOFF_REFUSALS: readonly ReleaseRefusal[] = ["release_paused", "payout_not_held", "payout_paused", "no_transfer", "release_not_scheduled", "release_not_due"];
+
+/**
+ * When a release the gate REFUSED should be looked at again by the worker (null = no wait). Every refusal that can go on for a long time
+ * is waited on, whether it was reached locally or after asking Razorpay: a few payouts that stay refused would otherwise sit in every
+ * tick's selection and spend the per-tick request budget on every tick, and every payout behind them would wait for ever. A transient
+ * refusal waits a quarter of an hour; a persistent one waits a quarter of the time it has already been overdue, between half an hour
+ * and six hours. (A person's "Release now" never waits on this, and never writes it.)
+ */
+export function releaseRefusalBackoffMs(reason: ReleaseRefusal, o: { now: Date; releaseAfter: Date | null }): number | null {
+  if (NO_BACKOFF_REFUSALS.includes(reason)) return null;
+  if (TRANSIENT_REFUSALS.includes(reason)) return REFUSAL_TRANSIENT_BACKOFF_MS;
+  const overdue = o.releaseAfter === null ? 0 : Math.max(0, o.now.getTime() - o.releaseAfter.getTime());
+  return Math.min(REFUSAL_MAX_BACKOFF_MS, Math.max(REFUSAL_MIN_BACKOFF_MS, Math.floor(overdue / 4)));
+}
+
+/**
+ * The wait before a payout that Razorpay shows NOT on hold (parked, with the hold put back) is read again: 5 minutes after the first
+ * check, doubling each time, never more than 2 hours. `checks` = how many reads have already found it still not held.
+ */
+export function heldAnomalyBackoffMs(checks: number): number {
+  const n = Number.isFinite(checks) ? Math.max(0, Math.min(10, Math.floor(checks))) : 0;
+  return Math.min(2 * 60 * 60_000, 5 * 60_000 * 2 ** n);
+}
+
+/**
+ * How long a `planned` payout that waits (the linked account not ready, the item closed, paused …) is left alone before the worker looks
+ * at it again: a quarter of the time it has already been waiting, between 5 minutes and an hour. A capture that has not landed yet is
+ * looked at again after 2 minutes. `ageMs` = how long ago the payout was planned.
+ */
+export function plannedWaitBackoffMs(reason: string, ageMs: number): number {
+  if (reason === "payment_not_captured") return 2 * 60_000;
+  const age = Number.isFinite(ageMs) ? Math.max(0, ageMs) : 0;
+  return Math.min(60 * 60_000, Math.max(5 * 60_000, Math.floor(age / 4)));
 }
 
 /**
@@ -229,6 +324,17 @@ export interface CarrierTransfer {
   recipient: string;
   /** unix seconds; null when Razorpay sent none. Used only to pick which of two duplicates to keep. */
   createdAt: number | null;
+  /** notes.attempt: the request that made this transfer (see requestKeyOf). null on a transfer that carries none. */
+  generation: string | null;
+}
+
+/**
+ * Names ONE request to Razorpay for a payout: how many create calls the payout had sent when this one went out, and the second it was
+ * claimed. A payout can be sent more than once (the automatic retry, a staff Retry), and the key is written into the transfer's notes
+ * so a transfer found later in a listing says WHICH request made it. null = the payout never recorded a request time.
+ */
+export function requestKeyOf(attempts: number, requestedAt: Date | null): string | null {
+  return requestedAt === null ? null : `${attempts}.${Math.floor(requestedAt.getTime() / 1000)}`;
 }
 
 export interface TransferRetryFacts {
@@ -243,6 +349,8 @@ export interface TransferRetryFacts {
   refundExists: boolean;
   /** The transfer id we already stored, if any. */
   storedTransferId: string | null;
+  /** The key of the CURRENT request (requestKeyOf), or null when none was recorded. */
+  requestKey: string | null;
   expected: { recipient: string; amountPaise: number };
   /** THIS listing: every transfer of the payment whose notes.payout_id is this payout's. */
   carriers: readonly CarrierTransfer[];
@@ -272,13 +380,18 @@ export type TransferRetryDecision =
  * unread list is not an empty one.
  */
 export function decideTransferRetry(f: TransferRetryFacts): TransferRetryDecision {
+  // ⚠️ A LIVE transfer always counts, whichever request made it (money is out). A transfer that is NOT live (failed, reversed) counts
+  // only when it was made by THIS request: a failed one left over from an earlier request (before a staff Retry, say) is history, and
+  // adopting it as "the outcome" would call the payout failed while the retry's own transfer, which has simply not shown up in the
+  // listing yet, sits held in the linked account with nothing tracking it. A non-live carrier with no key at all is never trusted.
   const live = f.carriers.filter((c) => c.status !== "failed" && !isFullyReversed(c));
+  const outcomes = [...live, ...f.carriers.filter((c) => (c.status === "failed" || isFullyReversed(c)) && f.requestKey !== null && c.generation === f.requestKey)];
   const mismatched = live.some((c) => c.recipient !== f.expected.recipient || c.amount !== f.expected.amountPaise);
-  if (live.length === 0 && f.carriers.length > 0) {
-    // Everything that carries our id has failed or been reversed. A failure is a definite outcome; a reversal
+  if (live.length === 0 && outcomes.length > 0) {
+    // Everything of this request that carries our id has failed or been reversed. A failure is a definite outcome; a reversal
     // nobody asked for is not ours to interpret.
-    const failed = f.carriers.filter((c) => c.status === "failed");
-    if (failed.length === f.carriers.length) return { action: "adopt_failed", transferId: pickKeeper(failed, f.storedTransferId) };
+    const failed = outcomes.filter((c) => c.status === "failed");
+    if (failed.length === outcomes.length) return { action: "adopt_failed", transferId: pickKeeper(failed, f.storedTransferId) };
     return { action: "needs_attention", reason: "reversed_outside_flow" };
   }
   if (live.length >= 1 && mismatched) return { action: "needs_attention", reason: "transfer_mismatch" };

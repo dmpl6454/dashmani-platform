@@ -37,6 +37,8 @@ export interface PauseSpec {
   note: string;
   /** x-razorpay-event-id when a webhook caused the pause (kept on the audit row). */
   eventId?: string | null;
+  /** The staff member (creator_payout_events.actor_id) when a person caused the pause. */
+  actorId?: string | null;
   /** The pause time; defaults to now. */
   at?: Date;
 }
@@ -76,6 +78,42 @@ export async function pausePayoutsOfPaymentRows(tx: Tx, razorpayPaymentId: strin
       amountPaise: r.amount_paise,
       actorType: spec.actorType,
       razorpayEventId: spec.eventId ? spec.eventId.slice(0, 100) : null,
+      actorId: spec.actorId ?? null,
+      note: spec.note,
+    })),
+  });
+  return rows.map((r) => ({ id: r.id, status: r.status }));
+}
+
+/**
+ * The same pause for every pausable, not-yet-paused payout OF ONE CREATOR: staff suspended (or rejected) the creator, and nothing of
+ * theirs may pay out until a person decides. It is the very rule above (only payouts with something in flight; a payout already
+ * paused for a dispute, a bank change or by staff keeps its first reason; the audit row only for a payout this call paused; locked in
+ * id order), keyed on the creator instead of the payment. It runs INSIDE the transaction that changes the creator's status, so a
+ * suspension can never commit without it. Reinstating does NOT undo it: staff resume each payout deliberately.
+ */
+export async function pausePayoutsOfCreatorRows(tx: Tx, creatorId: string, spec: PauseSpec): Promise<PausedPayout[]> {
+  const rows = await tx.$queryRaw<Array<{ id: string; booking_id: string; status: string; amount_paise: number }>>`
+    SELECT id, booking_id, status, amount_paise FROM creator_payouts
+    WHERE creator_id = ${creatorId} AND paused_at IS NULL AND status = ANY(${[...PAUSABLE_STATUSES]})
+    ORDER BY id
+    FOR UPDATE`;
+  if (rows.length === 0) return [];
+  await tx.creatorPayout.updateMany({
+    where: { id: { in: rows.map((r) => r.id) }, pausedAt: null, status: { in: [...PAUSABLE_STATUSES] } },
+    data: { pausedAt: spec.at ?? new Date(), pausedReason: spec.reason },
+  });
+  await tx.creatorPayoutEvent.createMany({
+    data: rows.map((r) => ({
+      payoutId: r.id,
+      bookingId: r.booking_id,
+      kind: "pause",
+      fromStatus: r.status,
+      toStatus: r.status,
+      amountPaise: r.amount_paise,
+      actorType: spec.actorType,
+      razorpayEventId: spec.eventId ? spec.eventId.slice(0, 100) : null,
+      actorId: spec.actorId ?? null,
       note: spec.note,
     })),
   });

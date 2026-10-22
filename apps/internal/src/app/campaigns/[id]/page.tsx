@@ -12,8 +12,9 @@ import {
 import { CREATOR_TARGET_TYPE, LinkChangedError, creatorItemStatus, frozenCreatorItems, isLinkChangedMessage, isOpenOffer, safeHref, type StaffOffer } from "../_creator";
 import { OfferPanel } from "./_offer";
 import { PayoutPanel, type PayoutPanelProps } from "./_payout";
-import { usePayoutDialog } from "../_payout-ui";
-import { useBookingPayouts } from "@/lib/hooks/use-creator-payouts";
+import { ActionDialog, ReleasePausedBanner, usePayoutDialog, type DialogSpec } from "../_payout-ui";
+import { releaseChangeLine, releaseOnOf } from "../_payout";
+import { guardedAction, isUnconfirmed, markItemRefunded, useBookingPayouts, useReleaseSwitch } from "@/lib/hooks/use-creator-payouts";
 
 type Item = {
   id: string; targetType: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number;
@@ -61,8 +62,15 @@ export default function CampaignBookingDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
-  // The creator payouts of this campaign (only asked for when it has a creator's post). The API lists the open ones.
-  const pay = useBookingPayouts(b?.items.some((i) => i.targetType === CREATOR_TARGET_TYPE) ? id : null);
+  // The creator payouts of this campaign (only asked for when it has a creator's post): every one, finished ones included, so a payout that was
+  // paid shows "Paid" with its bank reference and one that was taken back says so.
+  const hasCreatorPosts = !!b?.items.some((i) => i.targetType === CREATOR_TARGET_TYPE);
+  const pay = useBookingPayouts(hasCreatorPosts ? id : null);
+  // Whether ALL releases are paused is read on its own (a light request): a held payout that isn't moving must always say why on this page.
+  const relSwitch = useReleaseSwitch(hasCreatorPosts);
+  const releaseOn = releaseOnOf(relSwitch.data?.release, pay.data?.switches?.release);
+  // "Mark refunded": the dialog is held by the page, like the payout dialog, so a refresh under it never takes it away.
+  const [markRefunded, setMarkRefunded] = useState<Item | null>(null);
   // One payout dialog for the page: the list under it refreshes by itself and must not take the dialog away.
   const payoutDialog = usePayoutDialog({
     onChanged: () => Promise.all([pay.mutate(), mutate()]),
@@ -75,7 +83,8 @@ export default function CampaignBookingDetail() {
     setErr("");
     setInfo("");
     try {
-      const r = await apiFetch<{ data: Booking & ActExtras }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+      // guardedAction: a gateway error or a dropped connection says "it may have gone through" instead of showing a raw parse error.
+      const r = await guardedAction(() => apiFetch<{ data: Booking & ActExtras }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }));
       if (r.data?.refundError) setErr(`Rejected, but a refund didn't go through. ${r.data.refundError}`);
       else if (r.data?.refundNotice) setInfo(r.data.refundNotice);
       else if (r.data?.withdrawNotice) setInfo(r.data.withdrawNotice);
@@ -84,6 +93,8 @@ export default function CampaignBookingDetail() {
       return true;
     } catch (e: any) {
       setErr(e.message || "That didn't work.");
+      // No usable answer: the action may have been done, so show what the server now says.
+      if (isUnconfirmed(e)) { void mutate(); void pay.mutate(); }
       return false;
     } finally {
       setBusy(null);
@@ -97,7 +108,7 @@ export default function CampaignBookingDetail() {
     setErr("");
     setInfo("");
     try {
-      await apiFetch(`/admin/campaigns/${id}/items/${itemId}/verify-creator-link`, { method: "POST", body: JSON.stringify({ ownershipCheckedByHand, linkCanonicalKey }) });
+      await guardedAction(() => apiFetch(`/admin/campaigns/${id}/items/${itemId}/verify-creator-link`, { method: "POST", body: JSON.stringify({ ownershipCheckedByHand, linkCanonicalKey }) }));
     } catch (e) {
       // Whatever the refusal was, look at the booking again: if the creator's link (or the check on it) is not what the dialog
       // showed, the dialog follows it. The API's 409 LINK_CHANGED says so by its sentence; the comparison also covers a refusal
@@ -148,6 +159,7 @@ export default function CampaignBookingDetail() {
       />
 
       <div className="grid gap-4 mb-4">
+        {hasCreatorPosts && releaseOn === false && <ReleasePausedBanner line={releaseChangeLine(relSwitch.data)} href="/campaigns/payouts" />}
         {err && <ErrorBar message={err} onClose={() => setErr("")} />}
         {info && <div className="px-3.5 py-2.5 rounded-[8px] bg-[rgba(0,215,160,.08)] border border-[rgba(0,215,160,.3)] text-ds-teal text-[12.5px]">{info}</div>}
         {postable && queuedItems.length > 0 && (autoOn ? (
@@ -265,13 +277,15 @@ export default function CampaignBookingDetail() {
                 act={act}
                 offer={offerOf(i.id)}
                 onVerify={(hand, key, shown) => verifyCreatorLink(i.id, hand, key, shown)}
+                onMarkRefunded={() => setMarkRefunded(i)}
                 payout={{
                   row: pay.data?.rows.find((r) => r.bookingItemId === i.id),
+                  summary: offerOf(i.id)?.payout,
                   loading: !pay.data && !pay.error,
                   failed: !pay.data && !!pay.error,
                   stale: !!pay.data && !!pay.error,
                   onRetry: () => void pay.mutate(),
-                  releaseOn: pay.data?.switches?.release,
+                  releaseOn,
                   onOpen: payoutDialog.open,
                   postVerified: !!offerOf(i.id)?.linkVerifiedAt,
                 }}
@@ -368,8 +382,42 @@ export default function CampaignBookingDetail() {
         </div>
       </div>
       {payoutDialog.dialog}
+      {markRefunded && (
+        <ActionDialog
+          spec={markRefundedSpec(b.id, markRefunded, b.client.companyName)}
+          onCancel={() => setMarkRefunded(null)}
+          // No usable answer: the refund may have been recorded, so the booking and its payouts are re-read now.
+          onUnconfirmed={() => { void mutate(); void pay.mutate(); }}
+          onDone={async () => {
+            const name = markRefunded.accountName;
+            setMarkRefunded(null);
+            setErr("");
+            setInfo(`Recorded: the client's refund is now on ${name}. Nothing was sent to Razorpay: the refund that was already made is the one on record.`);
+            await mutate();
+            void pay.mutate();
+          }}
+        />
+      )}
     </div>
   );
+}
+
+/** The confirm dialog for "Mark refunded". The API reads Razorpay's refund list itself and refuses unless a matching refund exists. */
+function markRefundedSpec(bookingId: string, item: Item, client: string): DialogSpec {
+  const price = rupees(item.pricePaise);
+  return {
+    title: `Record ${client}'s refund for ${item.accountName}?`,
+    confirm: "Record refund",
+    busy: "Recording…",
+    body: (
+      <>
+        <p>Use this only when {client} has <strong className="text-ds-t5">already been repaid {price} outside the portal</strong> for this post (a refund made from the Razorpay dashboard). It records THAT refund against the post: it never sends another.</p>
+        <p>The system reads Razorpay&apos;s refund list first and refuses unless the creator&apos;s payout is already taken back and Razorpay lists a refund of at least {price} that is not already recorded against another post. If it refuses, nothing was changed.</p>
+      </>
+    ),
+    fields: [{ name: "refundId", label: "Razorpay refund id", max: 60, min: 4, help: "Only needed when more than one refund could be this post's (it looks like rfnd_…).", placeholder: "rfnd_…", validate: (v) => (/^[A-Za-z0-9_]{4,60}$/.test(v) ? null : "Letters, digits and _ only.") }],
+    run: (v) => markItemRefunded(bookingId, item.id, v.refundId || undefined),
+  };
 }
 
 /**
@@ -394,12 +442,14 @@ function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish, offline, busy, act, offer, onVerify, payout }: {
+function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish, offline, busy, act, offer, onVerify, onMarkRefunded, payout }: {
   item: Item; booking: Booking; files: ItemFiles | undefined; bookingId: string; postable: boolean; autoPublish: boolean; offline: boolean; busy: string | null;
   act: (key: string, path: string, body?: unknown, confirmText?: string) => Promise<boolean | undefined>;
   /** This post's creator offer (creator pages only). */
   offer: StaffOffer | undefined;
   onVerify: (ownershipCheckedByHand: boolean, linkCanonicalKey: string, shown: { check: string | null; detail: string | null }) => Promise<void>;
+  /** Opens the "Mark refunded" dialog for this post (a refund made outside the portal). */
+  onMarkRefunded: () => void;
   /** The creator's payout for this post (creator pages only), as the page read it. */
   payout: Omit<PayoutPanelProps, "accountName" | "bookingId">;
 }) {
@@ -530,6 +580,11 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
           >
             Refund this account
           </button>
+          {i.status === "refund_due" && (
+            <button type="button" className="text-ds-t2 hover:text-ds-text" disabled={!!busy} onClick={onMarkRefunded}>
+              Mark refunded (client already repaid in Razorpay)
+            </button>
+          )}
         </div>
       )}
       {!isCreator && postable && (

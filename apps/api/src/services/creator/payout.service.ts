@@ -47,6 +47,9 @@ import {
   reverseTransfer,
   listTransferReversals,
   listAllPaymentTransfers,
+  fetchTransferSettlement,
+  fetchPaymentRefunds,
+  refundedTotalPaise,
   listDisputes,
   fetchRouteProduct,
   type RazorpayTransfer,
@@ -54,6 +57,7 @@ import {
 import { scrubPayoutSecrets } from "../../utils/payout-scrub";
 import { alertStaffOncePerHour } from "./payout-alert";
 import { bankChangeBlocksRelease } from "./payout-account-view";
+import { pausePayoutsOfPayment } from "./payout-pause";
 import { PAUSABLE_STATUSES, canMove, type PayoutStatus, type TransferFacts } from "./payout-states";
 import {
   ABSENT_CHECK_GAP_MS,
@@ -61,6 +65,7 @@ import {
   canRetryFailedTransfer,
   decideManualFallback,
   decideRefundAllowed,
+  decideRefundVerdict,
   decideResume,
   decideReversal,
   decideReversalOutcome,
@@ -68,14 +73,20 @@ import {
   decideTransferRetry,
   evaluateLocalRelease,
   evaluateRelease,
+  evaluateRemoteForRelease,
   evaluateTransferForRelease,
+  heldAnomalyBackoffMs,
   isFullyReversed,
   mapTransferFactsToState,
+  plannedWaitBackoffMs,
   releaseAfter,
+  releaseRefusalBackoffMs,
+  requestKeyOf,
   reservedPaiseOf,
   type CarrierTransfer,
   type RefundAllowance,
   type ReleaseFacts,
+  type ReleaseRefusal,
   type TransferStateDecision,
   type TransferView,
 } from "./payout-policy";
@@ -262,6 +273,7 @@ const SUBJECTS: Record<string, string> = {
   settlement_slow: "A released creator payout has not settled",
   duplicate_transfer: "A duplicate creator payout transfer was found",
   rehold: "A released creator payout could not be held again",
+  refund_conflict: "A creator payout was stopped: a refund of the brand's payment is not accounted for",
   reheld: "A released creator payout was put back on hold",
   id_not_recorded: "A Razorpay transfer could not be recorded",
 };
@@ -310,6 +322,8 @@ const REASON_TEXT: Record<string, string> = {
   reversal_refused_after_release: "Razorpay refused to take back money that was already released. Check Razorpay and the linked account's balance.",
   reversal_failed_state: "The transfer could not be reversed in its current state. Check Razorpay.",
   transfer_failed: "Razorpay reports the transfer failed.",
+  listing_unreadable: "Razorpay's list of this payment's transfers could not be read for half an hour, so nobody can tell whether this payout's transfer exists. Nothing is repeated or refunded meanwhile. Look in the Razorpay dashboard: if the transfer is there, adopt it by its id; if there is none, say so.",
+  live_transfer_found: "A live transfer carrying this payout's id was found on a payout that had been marked failed or manual. It is being tracked again; nothing is refunded or paid by hand until it is reversed or confirmed.",
 };
 
 // ── What Razorpay's transfer says, as columns and as facts ──────────────────────
@@ -361,8 +375,13 @@ function settlementPollDelayMs(releasedAt: Date | null, now: Date): number {
 // ── Facts read from our own database ────────────────────────────────────────────
 
 /** The release gate's local facts (everything except what only Razorpay can say). Fails closed on a switch it cannot read. */
-async function loadLocalReleaseFacts(p: PayoutRow, now: Date): Promise<Omit<ReleaseFacts, "transfer" | "duplicateTransfers" | "razorpayDisputes" | "account"> & { productId: string | null; hint: string | null; accountRowMatches: boolean }> {
-  const [releaseEnabled, booking, item, offer, disputes, acct] = await Promise.all([
+type LocalReleaseFacts = Omit<ReleaseFacts, "transfer" | "duplicateTransfers" | "razorpayDisputes" | "razorpayRefunds" | "account"> & { productId: string | null; hint: string | null; accountRowMatches: boolean };
+
+/** The facts only Razorpay can add to the local ones, all "unchecked" until they are read. */
+const UNREAD_REMOTE = { transfer: null, duplicateTransfers: "unchecked", razorpayDisputes: "unchecked", razorpayRefunds: "unchecked", account: "unchecked" } as const satisfies Pick<ReleaseFacts, "transfer" | "duplicateTransfers" | "razorpayDisputes" | "razorpayRefunds" | "account">;
+
+async function loadLocalReleaseFacts(p: PayoutRow, now: Date, actor: PayoutActor = SYSTEM): Promise<LocalReleaseFacts> {
+  const [releaseEnabled, booking, item, offer, disputes, acct, creator] = await Promise.all([
     releaseSwitchOn(),
     prisma.campaignBooking.findUnique({ where: { id: p.bookingId }, select: { status: true } }),
     prisma.campaignBookingItem.findUnique({ where: { id: p.bookingItemId }, select: { status: true } }),
@@ -370,8 +389,9 @@ async function loadLocalReleaseFacts(p: PayoutRow, now: Date): Promise<Omit<Rele
     prisma.campaignDispute.findMany({ where: { razorpayPaymentId: p.razorpayPaymentId }, select: { status: true } }),
     prisma.creatorPayoutAccount.findUnique({
       where: { id: p.payoutAccountId },
-      select: { razorpayAccountId: true, razorpayProductId: true, destinationHint: true, bankChangeRequestedAt: true, bankChangeClearedAt: true },
+      select: { razorpayAccountId: true, razorpayProductId: true, destinationHint: true, bankChangeRequestedAt: true, bankChangeClearedAt: true, activationStatus: true },
     }),
+    prisma.creator.findUnique({ where: { id: p.creatorId }, select: { status: true } }),
   ]);
   return {
     now,
@@ -390,6 +410,9 @@ async function loadLocalReleaseFacts(p: PayoutRow, now: Date): Promise<Omit<Rele
     offer,
     disputeStatuses: disputes.map((d) => d.status),
     bankChangeBlocks: acct ? bankChangeBlocksRelease(acct, now) : false,
+    creatorStatus: creator?.status ?? null,
+    byStaff: actor.type === "staff",
+    accountActivation: acct?.activationStatus ?? null,
     productId: acct?.razorpayProductId ?? null,
     hint: acct?.destinationHint ?? null,
     accountRowMatches: acct?.razorpayAccountId === p.razorpayAccountId,
@@ -402,6 +425,81 @@ async function refundExistsFor(razorpayPaymentId: string): Promise<boolean> {
     prisma.campaignRefund.count({ where: { razorpayPaymentId, status: { not: "failed" } } }),
   ]);
   return n > 0 || (pay?.refundedPaise ?? 0) > 0 || pay?.status === "refund_pending" || pay?.status === "refunded";
+}
+
+// ── Transfers of the payment that carry this payout's id ────────────────────────
+
+/** The LIVE transfers (not failed, not fully reversed) of a payment's listing that carry this payout's id, whichever request made them. */
+function liveCarriersOf(listing: readonly RazorpayTransfer[], payoutId: string): RazorpayTransfer[] {
+  return listing.filter((t) => t.notes.payout_id === payoutId && t.status !== "failed" && !isFullyReversed({ status: t.status, amount: t.amount, amountReversed: t.amount_reversed }));
+}
+
+/** Every transfer of the payment, or null when the listing could not be read: an unread list is never an empty one. */
+async function readListing(ctx: Ctx, p: Pick<PayoutRow, "razorpayPaymentId">): Promise<RazorpayTransfer[] | null> {
+  try {
+    return await rz(ctx, () => listAllPaymentTransfers(p.razorpayPaymentId), 2);
+  } catch {
+    return null;
+  }
+}
+
+const ATTEST_KIND = "attest_no_transfer";
+
+/**
+ * A person looked in the Razorpay dashboard, AFTER this payout's last request to Razorpay, and attested that no transfer exists for it. The
+ * only way past a payment-transfer listing that cannot be read for good (see attestNoTransfer); it stands in for the listing and for nothing else.
+ */
+async function hasNoTransferAttestation(p: Pick<PayoutRow, "id" | "transferRequestedAt" | "createdAt">): Promise<boolean> {
+  const ev = await prisma.creatorPayoutEvent.findFirst({
+    where: { payoutId: p.id, kind: ATTEST_KIND, actorType: "staff", createdAt: { gte: p.transferRequestedAt ?? p.createdAt } },
+    select: { id: true },
+  });
+  return ev !== null;
+}
+
+/** What it takes to say "no transfer of this payout can still release money" (the facts decideManualFallback judges), read fresh. */
+interface NoTransferProof {
+  /** This payout's own transfer, read fresh (null = none stored, or unread: see transferChecked). */
+  transfer: { status: string; amount: number; amountReversed: number } | null;
+  transferChecked: boolean;
+  /** Live transfers of the payment carrying this payout's id; null = the listing was not read (and not attested away). */
+  live: RazorpayTransfer[] | null;
+  activeCarriers: number | null;
+  listing: RazorpayTransfer[] | null;
+}
+
+async function readNoTransferProof(ctx: Ctx, p: PayoutRow, o: { allowAttestation: boolean; fetchOwn?: boolean }): Promise<NoTransferProof> {
+  const out: NoTransferProof = { transfer: null, transferChecked: false, live: null, activeCarriers: null, listing: null };
+  // A create call that was never sent cannot have made a transfer, so nothing needs reading.
+  if (p.razorpayTransferId === null && p.attempts === 0) return { ...out, live: [], activeCarriers: 0 };
+  out.listing = await readListing(ctx, p);
+  if (out.listing) {
+    out.live = liveCarriersOf(out.listing, p.id);
+    out.activeCarriers = out.live.length;
+  } else if (o.allowAttestation && (await hasNoTransferAttestation(p))) {
+    out.live = [];
+    out.activeCarriers = 0;
+  }
+  if (p.razorpayTransferId !== null && o.fetchOwn !== false) {
+    try {
+      const t = await rz(ctx, () => fetchTransfer(p.razorpayTransferId!));
+      out.transfer = { status: t.status, amount: t.amount, amountReversed: t.amount_reversed };
+      out.transferChecked = true;
+    } catch {
+      out.transferChecked = false;
+    }
+  }
+  return out;
+}
+
+/**
+ * Staff-typed text that is about to be STORED (a reason, a note): scrubPayoutSecrets, and also a run of five or more digits split by
+ * dots, slashes, underscores or a few spaces and hyphens ("5010.0123.4567") counts as one run and is masked. Scrub first, then cut:
+ * cutting first could leave the front of a long number unmasked.
+ */
+export function scrubStaffText(text: string): string {
+  const bounded = String(text ?? "").slice(0, 400);
+  return scrubPayoutSecrets(bounded).replace(/[0-9](?:[ _./:#-]{0,3}[0-9]){4,}/g, "[redacted]");
 }
 
 // ── Creating the transfer ───────────────────────────────────────────────────────
@@ -438,7 +536,14 @@ export async function executePlannedPayout(payoutId: string, opts: StepOptions =
     if (moved) alertPayout(p, "manual_required", "manual_required", decision.reason);
     return result(ctx, moved ? "manual_required" : (await loadPayout(payoutId))?.status ?? null, moved, moved ? "manual_required" : "lost_claim", decision.reason);
   }
-  if (decision.action === "wait") return result(ctx, p.status, false, "waiting", decision.reason);
+  if (decision.action === "wait") {
+    // ⚠️ A payout that has to wait is not asked about again on the very next tick: it would sit in the selection every tick, and enough
+    // of them crowd out the work that takes money BACK (a staff Execute and the capture kick ignore this and always try).
+    if (decision.reason !== "paused" && opts.actor?.type !== "staff") {
+      await prisma.creatorPayout.updateMany({ where: { id: p.id, status: "planned" }, data: { nextAttemptAt: new Date(now.getTime() + plannedWaitBackoffMs(decision.reason, now.getTime() - p.createdAt.getTime())) } });
+    }
+    return result(ctx, p.status, false, "waiting", decision.reason);
+  }
 
   if (opts.hooks?.beforeClaim) await opts.hooks.beforeClaim();
   const claimed = await transition({
@@ -484,7 +589,8 @@ async function performCreate(ctx: Ctx, p: PayoutRow, now: Date, actor: PayoutAct
         account: p.razorpayAccountId,
         amountPaise: p.amountPaise,
         onHold: true,
-        notes: { payout_id: p.id, booking_item_id: p.bookingItemId },
+        // The request's key rides in the notes, so a listing can tell this request's transfer from one an earlier request left behind.
+        notes: { payout_id: p.id, booking_item_id: p.bookingItemId, ...(requestKeyOf(p.attempts, p.transferRequestedAt) ? { attempt: requestKeyOf(p.attempts, p.transferRequestedAt)! } : {}) },
       }),
     );
   } catch (err) {
@@ -598,16 +704,24 @@ async function applyFreshTransfer(ctx: Ctx, p: PayoutRow, t: RazorpayTransfer, n
   if (!dec.to) {
     // Nothing to move. Record what was read and when to look again.
     let next: number | null = null;
+    const stillNotHeld = p.status === "needs_attention" && dec.action === "rehold";
     if (p.status === "transfer_requested") next = IN_FLIGHT_RECHECK_MS;
     else if (p.status === "released" || p.status === "settlement_failed") next = settlementPollDelayMs(p.releasedAt, now);
     else if (p.status === "release_requested" || p.status === "reversal_requested") next = IN_FLIGHT_RECHECK_MS;
+    // A payout parked because its hold is gone is read again at a growing pace (5 minutes, doubling, never over 2 hours): the hold is put back
+    // every time, and a transfer that cannot be held for good must not keep the worker busy every few minutes.
+    else if (stillNotHeld) next = heldAnomalyBackoffMs(p.absentChecks);
     else if (p.status === "needs_attention") next = RETRY_BACKOFF_MS;
     const data: Prisma.CreatorPayoutUpdateManyMutationInput = { ...base, lockedUntil: null };
     if (p.status === "held" && dec.reason === "confirmed_held") data.onHoldVerifiedAt = now;
+    if (stillNotHeld) data.absentChecks = { increment: 1 };
     if (next !== null) data.nextAttemptAt = new Date(now.getTime() + next);
     await prisma.creatorPayout.updateMany({ where: { id: p.id, status: p.status }, data });
-    // A parked payout whose hold has still not been put back: try again.
-    if (dec.action === "rehold") await putHoldBack(ctx, p, t.id, actor);
+    // A parked payout whose hold has still not been put back: try again, and keep telling staff (the alert is limited to one an hour).
+    if (dec.action === "rehold") {
+      await putHoldBack(ctx, p, t.id, actor);
+      if (stillNotHeld && p.absentChecks >= 2) alertPayout(p, "not_on_hold", "needs_attention", "still_not_held", [{ label: "Transfer", value: t.id }, { label: "Checks", value: String(p.absentChecks + 1) }]);
+    }
     return result(ctx, p.status, dec.reason === "confirmed_held", dec.reason);
   }
 
@@ -616,7 +730,7 @@ async function applyFreshTransfer(ctx: Ctx, p: PayoutRow, t: RazorpayTransfer, n
   let kind = "transfer";
   switch (dec.to) {
     case "held":
-      data = { ...base, heldAt: now, onHoldVerifiedAt: now, errorCode: null, lastError: null, lockedUntil: null, nextAttemptAt: null };
+      data = { ...base, heldAt: now, onHoldVerifiedAt: now, errorCode: null, lastError: null, lockedUntil: null, nextAttemptAt: null, absentChecks: 0 };
       text = "Razorpay shows the transfer processed and on hold.";
       break;
     case "failed":
@@ -664,7 +778,7 @@ async function applyFreshTransfer(ctx: Ctx, p: PayoutRow, t: RazorpayTransfer, n
       kind = "reversal";
       break;
     case "needs_attention":
-      data = { ...base, errorCode: dec.reason.slice(0, 80), lastError: REASON_TEXT[dec.reason] ?? dec.reason, lockedUntil: null, nextAttemptAt: null };
+      data = { ...base, errorCode: dec.reason.slice(0, 80), lastError: REASON_TEXT[dec.reason] ?? dec.reason, lockedUntil: null, nextAttemptAt: null, absentChecks: 0 };
       text = `Parked: ${dec.reason}.`;
       break;
     default:
@@ -698,7 +812,12 @@ async function putHoldBack(ctx: Ctx, p: PayoutRow, transferId: string, actor: Pa
 
 // ── An unknown create result ────────────────────────────────────────────────────
 
-const carrierOf = (t: RazorpayTransfer): CarrierTransfer => ({ id: t.id, status: t.status, amount: t.amount, amountReversed: t.amount_reversed, recipient: t.recipient, createdAt: t.created_at });
+const carrierOf = (t: RazorpayTransfer): CarrierTransfer => ({ id: t.id, status: t.status, amount: t.amount, amountReversed: t.amount_reversed, recipient: t.recipient, createdAt: t.created_at, generation: t.notes.attempt ?? null });
+
+/** A listing that cannot be read for this long, while a create call's outcome is still unknown, is not waited on any more: a person looks. */
+export const LISTING_UNREADABLE_PARK_MS = 30 * 60_000;
+/** How often a payout parked as listing_unreadable asks Razorpay again whether the listing works now. */
+const LISTING_UNREADABLE_RECHECK_MS = 60 * 60_000;
 
 /**
  * A payout in transfer_requested with NO transfer id: the create call's answer was lost or unreadable (or the
@@ -706,9 +825,14 @@ const carrierOf = (t: RazorpayTransfer): CarrierTransfer => ({ id: t.id, status:
  * payment's transfers and decides (decideTransferRetry):
  *   exactly one carries our payout_id → adopt it;
  *   several → keep one, reverse the extras while they are still on hold, park the payout for a person;
- *   none, for the second time and ≥ ABSENT_CHECK_GAP_MS after the first → send the create call ONCE more;
+ *   none, for the second time and ≥ ABSENT_CHECK_GAP_MS after the first → send the create call ONCE more
+ *     (only with the Route switch on and the payout not paused: it is a NEW transfer request like any other);
  *   none, with a refund on the payment → manual_required; none after the retry → needs_attention.
- * A listing that fails changes nothing: an unread list is not an empty one.
+ * A listing that fails changes nothing: an unread list is not an empty one. But a listing that STAYS unreadable for
+ * LISTING_UNREADABLE_PARK_MS parks the payout as needs_attention(listing_unreadable) and tells staff, because every
+ * refund on the payment waits for it and nothing else can end that wait. Such a parked payout asks again hourly and
+ * resumes by itself when the listing works; a person can also adopt the transfer by its id (adoptTransferByStaff) or
+ * attest that none exists (attestNoTransfer).
  */
 export async function resolveUnknownTransfer(payoutId: string, opts: StepOptions = {}): Promise<StepResult> {
   const now = opts.now ?? new Date();
@@ -716,21 +840,55 @@ export async function resolveUnknownTransfer(payoutId: string, opts: StepOptions
   const ctx = newCtx(payoutId);
   const p0 = await loadPayout(payoutId);
   if (!p0) return result(ctx, null, false, "not_found");
-  if (p0.status !== "transfer_requested" || p0.razorpayTransferId !== null) return result(ctx, p0.status, false, "not_applicable");
+  const parked = p0.status === "needs_attention" && p0.errorCode === "listing_unreadable" && p0.razorpayTransferId === null;
+  if ((p0.status !== "transfer_requested" && !parked) || p0.razorpayTransferId !== null) return result(ctx, p0.status, false, "not_applicable");
   if (!razorpayConfig.configured()) return result(ctx, p0.status, false, "disabled", "not_configured");
-  const lease = await takeLease(payoutId, ["transfer_requested"], now);
+  const lease = await takeLease(payoutId, [p0.status as PayoutStatus], now);
   if (!lease) return result(ctx, p0.status, false, "leased");
   try {
-    const p = (await loadPayout(payoutId))!;
-    if (p.status !== "transfer_requested" || p.razorpayTransferId !== null) return result(ctx, p.status, false, "not_applicable");
+    let p = (await loadPayout(payoutId))!;
+    if (p.razorpayTransferId !== null || p.status !== p0.status) return result(ctx, p.status, false, "not_applicable");
 
-    let listing: RazorpayTransfer[];
-    try {
-      listing = await rz(ctx, () => listAllPaymentTransfers(p.razorpayPaymentId), 2);
-    } catch (err) {
-      await backoff(p.id, "transfer_requested", now, RETRY_BACKOFF_MS, { errorCode: "listing_failed" });
-      return result(ctx, p.status, false, "unread", errCode(err));
+    const listing = await readListing(ctx, p);
+    if (!listing) {
+      if (p.status === "needs_attention") {
+        await backoff(p.id, "needs_attention", now, LISTING_UNREADABLE_RECHECK_MS);
+        return result(ctx, p.status, false, "unread", "listing_unreadable");
+      }
+      const since = (p.transferRequestedAt ?? p.createdAt).getTime();
+      if (now.getTime() - since < LISTING_UNREADABLE_PARK_MS) {
+        await backoff(p.id, "transfer_requested", now, RETRY_BACKOFF_MS, { errorCode: "listing_failed" });
+        return result(ctx, p.status, false, "unread", "listing_failed");
+      }
+      const parkedNow = await transition({
+        id: p.id,
+        from: ["transfer_requested"],
+        to: "needs_attention",
+        data: { errorCode: "listing_unreadable", lastError: REASON_TEXT.listing_unreadable, lockedUntil: null, nextAttemptAt: new Date(now.getTime() + LISTING_UNREADABLE_RECHECK_MS) },
+        kind: "transfer",
+        actor,
+        note: "Razorpay's list of this payment's transfers has not been readable for 30 minutes; a person must look.",
+      });
+      if (parkedNow) alertPayout(p, "needs_attention", "needs_attention", "listing_unreadable");
+      return result(ctx, parkedNow ? "needs_attention" : (await loadPayout(p.id))?.status ?? null, false, "parked", "listing_unreadable");
     }
+
+    if (p.status === "needs_attention") {
+      // The listing works again: the payout goes back to being an unknown create result, and is judged like one.
+      const back = await transition({
+        id: p.id,
+        from: ["needs_attention"],
+        to: "transfer_requested",
+        where: { razorpayTransferId: null },
+        data: { errorCode: null, lastError: null, absentChecks: 0, lastCheckedAt: null, nextAttemptAt: null },
+        kind: "transfer",
+        actor,
+        note: "Razorpay's list of this payment's transfers can be read again; the unknown transfer request is judged from it.",
+      });
+      if (!back) return result(ctx, (await loadPayout(p.id))?.status ?? null, false, "lost_claim");
+      p = (await loadPayout(payoutId))!;
+    }
+
     const mine = listing.filter((t) => t.notes.payout_id === p.id);
     const refundExists = await refundExistsFor(p.razorpayPaymentId);
     const d = decideTransferRetry({
@@ -740,6 +898,7 @@ export async function resolveUnknownTransfer(payoutId: string, opts: StepOptions
       lastCheckedAt: p.lastCheckedAt,
       refundExists,
       storedTransferId: p.razorpayTransferId,
+      requestKey: requestKeyOf(p.attempts, p.transferRequestedAt),
       expected: { recipient: p.razorpayAccountId, amountPaise: p.amountPaise },
       carriers: mine.map(carrierOf),
     });
@@ -765,9 +924,16 @@ export async function resolveUnknownTransfer(payoutId: string, opts: StepOptions
         return result(ctx, p.status, false, "waiting", "no_transfer_seen_yet");
       }
       case "retry": {
-        // The second empty listing, far enough from the first: the create call did not land. Once more, never more.
+        // The second empty listing, far enough from the first: the create call did not land. Once more, never more. ⚠️ A repeat is a NEW
+        // transfer request, so it needs what the first one needed: the Route switch on, and the payout not paused. (The item and the
+        // booking are NOT re-judged here: a closed item's transfer is made and taken straight back, which is the designed way out, and
+        // refusing it would leave the item's refund waiting on a transfer that never comes.) Waiting loses nothing: each wait lists first.
+        if (!transfersEnabled() || p.pausedAt !== null) {
+          await prisma.creatorPayout.updateMany({ where: { id: p.id, status: "transfer_requested", razorpayTransferId: null }, data: { nextAttemptAt: new Date(now.getTime() + RETRY_BACKOFF_MS), lockedUntil: null } });
+          return result(ctx, p.status, false, "waiting", p.pausedAt !== null ? "paused" : "route_off_or_not_configured");
+        }
         const claimed = await prisma.creatorPayout.updateMany({
-          where: { id: p.id, status: "transfer_requested", razorpayTransferId: null, attempts: p.attempts },
+          where: { id: p.id, status: "transfer_requested", razorpayTransferId: null, attempts: p.attempts, pausedAt: null },
           data: { attempts: { increment: 1 }, absentChecks: 0, lastCheckedAt: now, transferRequestedAt: now, nextAttemptAt: null, lockedUntil: new Date(now.getTime() + LEASE_MS) },
         });
         if (claimed.count !== 1) return result(ctx, p.status, false, "lost_claim");
@@ -794,31 +960,58 @@ export async function resolveUnknownTransfer(payoutId: string, opts: StepOptions
 }
 
 /**
- * Two or more live transfers carry this payout's id (the retry landed after the first create call did). Keep
- * one, park the payout for a person, and reverse every extra WHILE IT IS STILL ON HOLD (explicit amount: what
- * is left of each). The payout returns to `held` only through cleanUpDuplicates, after a listing proves one
- * live transfer remains.
+ * Two or more live transfers carry this payout's id (the retry landed after the first create call did), or the one transfer the payout
+ * was tracking is dead and another, live one carries its id. Keep one, park the payout for a person, and reverse every extra WHILE IT IS
+ * STILL ON HOLD (explicit amount: what is left of each). The payout returns to `held` only through cleanUpDuplicates, after a listing
+ * proves exactly the kept transfer is alive. The kept transfer's id REPLACES whatever id the payout held when it was read (a dead one,
+ * or none): the update names that id, so a payout that moved on in the meantime is left alone.
  */
-async function handleDuplicates(ctx: Ctx, p: PayoutRow, keep: RazorpayTransfer, extras: RazorpayTransfer[], now: Date, actor: PayoutActor): Promise<StepResult> {
-  // Record the kept transfer's id (a payout that was found with no id yet; or the one it already carries).
-  const r = await prisma.creatorPayout.updateMany({
-    where: { id: p.id, status: p.status, OR: [{ razorpayTransferId: null }, { razorpayTransferId: keep.id }] },
-    data: { razorpayTransferId: keep.id.slice(0, 64), transferStatus: statusOf(keep.status) },
-  });
-  if (r.count !== 1) return result(ctx, (await loadPayout(p.id))?.status ?? null, false, "lost_claim");
-  const moved = await transition({
-    id: p.id,
-    from: [p.status as PayoutStatus],
-    to: "needs_attention",
-    data: { errorCode: "duplicate_transfer", lastError: REASON_TEXT.duplicate_transfer, lockedUntil: null, nextAttemptAt: new Date(now.getTime() + IN_FLIGHT_RECHECK_MS) },
-    kind: "transfer",
-    actor,
-    note: `${extras.length + 1} transfers carry this payout; one is kept, the extras are being reversed.`,
-  });
+async function handleDuplicates(ctx: Ctx, p: PayoutRow, keep: RazorpayTransfer, extras: RazorpayTransfer[], now: Date, actor: PayoutActor, lastError: string = REASON_TEXT.duplicate_transfer): Promise<StepResult> {
+  try {
+    const r = await prisma.creatorPayout.updateMany({
+      where: { id: p.id, status: p.status, razorpayTransferId: p.razorpayTransferId },
+      data: { razorpayTransferId: keep.id.slice(0, 64), transferStatus: statusOf(keep.status) },
+    });
+    if (r.count !== 1) return result(ctx, (await loadPayout(p.id))?.status ?? null, false, "lost_claim");
+  } catch (err) {
+    if ((err as { code?: string })?.code === "P2002") {
+      alertPayout(p, "id_not_recorded", p.status, "transfer_id_in_use", [{ label: "Transfer", value: keep.id }]);
+      return result(ctx, p.status, false, "id_not_recorded", "transfer_id_in_use");
+    }
+    throw err;
+  }
+  const parkText = `${extras.length + 1} transfers carry this payout; one is kept, the extras are being reversed.`;
+  const parkData = { errorCode: "duplicate_transfer", lastError, lockedUntil: null, nextAttemptAt: new Date(now.getTime() + IN_FLIGHT_RECHECK_MS) };
+  let moved: boolean;
+  if (p.status === "needs_attention") {
+    // Already parked, for another reason (its hold was put back and it is being read again): the table has no needs_attention →
+    // needs_attention move, so the reason is replaced in place, under the same condition a move would have had.
+    moved = (await prisma.creatorPayout.updateMany({ where: { id: p.id, status: "needs_attention" }, data: parkData })).count === 1;
+    if (moved) await recordEvent(p, "transfer", "needs_attention", parkText, actor);
+  } else {
+    moved = await transition({ id: p.id, from: [p.status as PayoutStatus], to: "needs_attention", data: parkData, kind: "transfer", actor, note: parkText });
+  }
   if (!moved) return result(ctx, (await loadPayout(p.id))?.status ?? null, false, "lost_claim");
   alertPayout(p, "duplicate_transfer", "needs_attention", "duplicate_transfer", [{ label: "Kept", value: keep.id }, ...extras.map((e) => ({ label: "Extra", value: e.id }))]);
   const done = await reverseExtras(ctx, p, extras, actor);
   return result(ctx, "needs_attention", false, "duplicates", done ? "extras_reversed" : "extras_not_reversed");
+}
+
+/**
+ * One call for every place that lists the payment's transfers to look for twins of a payout (the confirm audit, the daily re-read, the
+ * void before a refund, the reversal): `live` are the live transfers carrying this payout's id. Nothing to do when exactly the stored
+ * transfer is alive, or none is. Anything else (an extra beside the stored one, or live ones while the stored one is dead or missing) is
+ * handed to handleDuplicates with the keeper chosen the usual way, and the caller stops: the payout is parked and being cleaned up.
+ * Returns the StepResult when it took over, null when the caller may go on. With `anyLive`, a single live transfer is handled too (see below).
+ */
+async function parkIfTwins(ctx: Ctx, p: PayoutRow, live: RazorpayTransfer[], now: Date, actor: PayoutActor, o: { anyLive?: boolean } = {}): Promise<StepResult | null> {
+  const storedLive = live.find((x) => x.id === p.razorpayTransferId);
+  // `anyLive`: the payout is in a status that says NO transfer is out (failed, manual_required), so even the one transfer it names being alive is wrong.
+  if (live.length === 0 || (!o.anyLive && storedLive && live.length === 1)) return null;
+  const sorted = [...live].sort((a, b) => (a.created_at ?? Number.MAX_SAFE_INTEGER) - (b.created_at ?? Number.MAX_SAFE_INTEGER) || (a.id < b.id ? -1 : 1));
+  const keep = storedLive ?? sorted[0];
+  const text = storedLive ? REASON_TEXT.duplicate_transfer : REASON_TEXT.live_transfer_found;
+  return handleDuplicates(ctx, p, keep, live.filter((x) => x.id !== keep.id), now, actor, text);
 }
 
 /** Reverse what is left of each extra transfer (explicit amount). Returns true when every one is fully back. */
@@ -857,14 +1050,12 @@ export async function cleanUpDuplicates(payoutId: string, opts: StepOptions = {}
   if (!lease) return result(ctx, p0.status, false, "leased");
   try {
     const p = (await loadPayout(payoutId))!;
-    let listing: RazorpayTransfer[];
-    try {
-      listing = await rz(ctx, () => listAllPaymentTransfers(p.razorpayPaymentId), 2);
-    } catch (err) {
+    const listing = await readListing(ctx, p);
+    if (!listing) {
       await backoff(p.id, "needs_attention", now, RETRY_BACKOFF_MS);
-      return result(ctx, p.status, false, "unread", errCode(err));
+      return result(ctx, p.status, false, "unread", "listing_failed");
     }
-    const live = listing.filter((t) => t.notes.payout_id === p.id && t.status !== "failed" && !isFullyReversed({ status: t.status, amount: t.amount, amountReversed: t.amount_reversed }));
+    const live = liveCarriersOf(listing, p.id);
     const extras = live.filter((t) => t.id !== p.razorpayTransferId);
     if (extras.length > 0) {
       const ok = await reverseExtras(ctx, p, extras, actor);
@@ -875,7 +1066,8 @@ export async function cleanUpDuplicates(payoutId: string, opts: StepOptions = {}
       await backoff(p.id, "needs_attention", now, RETRY_BACKOFF_MS);
       return result(ctx, p.status, false, "kept_transfer_not_live", "kept_transfer_not_live");
     }
-    return confirmHoldLocked(ctx, p, now, actor);
+    // The listing above is the audit: exactly the kept transfer is alive.
+    return confirmHoldLocked(ctx, p, now, actor, true);
   } finally {
     await dropLease(payoutId, lease);
   }
@@ -917,25 +1109,27 @@ export async function confirmHold(payoutId: string, opts: StepOptions = {}): Pro
   }
 }
 
-async function confirmHoldLocked(ctx: Ctx, p: PayoutRow, now: Date, actor: PayoutActor): Promise<StepResult> {
-  if (p.status === "transfer_requested" && p.attempts > 1) {
-    // The request was repeated (see adoptTransfer): prove there is no twin before this transfer is called held.
-    const readyAt = (p.transferRequestedAt?.getTime() ?? 0) + ABSENT_CHECK_GAP_MS;
-    if (now.getTime() < readyAt) {
-      await backoff(p.id, "transfer_requested", now, readyAt - now.getTime() + 60_000);
-      return result(ctx, p.status, false, "audit_wait", "request_was_repeated");
+async function confirmHoldLocked(ctx: Ctx, p: PayoutRow, now: Date, actor: PayoutActor, audited = false): Promise<StepResult> {
+  // ⚠️ THE TWIN AUDIT. A payout whose create call was sent more than once (an automatic retry, a staff Retry) may have a SECOND live
+  // transfer: the first request, landing late. No transfer of such a payout is called held (and a parked one is not resolved back to
+  // held, and the daily re-read of a held one does not pass without a look) until a listing, taken at least ABSENT_CHECK_GAP_MS after
+  // the last request, shows exactly the stored transfer alive. Whatever route brought it here (the create answer, a webhook, the
+  // resolution of a parked row) is audited the same way.
+  if (!audited && p.attempts > 1 && (p.status === "transfer_requested" || p.status === "needs_attention" || p.status === "held")) {
+    if (p.status === "transfer_requested") {
+      const readyAt = (p.transferRequestedAt?.getTime() ?? 0) + ABSENT_CHECK_GAP_MS;
+      if (now.getTime() < readyAt) {
+        await backoff(p.id, "transfer_requested", now, readyAt - now.getTime() + 60_000);
+        return result(ctx, p.status, false, "audit_wait", "request_was_repeated");
+      }
     }
-    let listing: RazorpayTransfer[];
-    try {
-      listing = await rz(ctx, () => listAllPaymentTransfers(p.razorpayPaymentId), 2);
-    } catch (err) {
-      await backoff(p.id, "transfer_requested", now, RETRY_BACKOFF_MS, { errorCode: "listing_failed" });
-      return result(ctx, p.status, false, "unread", errCode(err));
+    const listing = await readListing(ctx, p);
+    if (!listing) {
+      await backoff(p.id, p.status as PayoutStatus, now, RETRY_BACKOFF_MS, { errorCode: p.status === "transfer_requested" ? "listing_failed" : p.errorCode });
+      return result(ctx, p.status, false, "unread", "listing_failed");
     }
-    const live = listing.filter((x) => x.notes.payout_id === p.id && x.status !== "failed" && !isFullyReversed({ status: x.status, amount: x.amount, amountReversed: x.amount_reversed }));
-    const extras = live.filter((x) => x.id !== p.razorpayTransferId);
-    const keep = live.find((x) => x.id === p.razorpayTransferId);
-    if (extras.length > 0 && keep) return handleDuplicates(ctx, p, keep, extras, now, actor);
+    const took = await parkIfTwins(ctx, p, liveCarriersOf(listing, p.id), now, actor);
+    if (took) return took;
   }
   let t: RazorpayTransfer;
   try {
@@ -970,6 +1164,53 @@ async function razorpayDisputeVerdict(ctx: Ctx, p: PayoutRow, now: Date): Promis
   }
 }
 
+/**
+ * The payment's refunds, asked of Razorpay and set against OUR ledger (the same reason the disputes are asked: a refund webhook that never
+ * arrived leaves no row, and the sweep only reconciles payments it already knows to be in motion). More refunded at Razorpay than our books
+ * show, or a refund of THIS item on our books while its payout was not taken back, means the brand has already been repaid. A refund of
+ * another item is normal: it is in our ledger and the totals agree.
+ */
+async function razorpayRefundVerdict(ctx: Ctx, p: PayoutRow): Promise<ReleaseFacts["razorpayRefunds"]> {
+  try {
+    const refunds = await rz(ctx, () => fetchPaymentRefunds(p.razorpayPaymentId), 2);
+    const ledger = await prisma.campaignRefund.findMany({ where: { razorpayPaymentId: p.razorpayPaymentId, status: { not: "failed" } }, select: { amountPaise: true, bookingItemId: true } });
+    return decideRefundVerdict({ razorpayRefundedPaise: refundedTotalPaise(refunds), ledger, itemId: p.bookingItemId });
+  } catch {
+    return "unchecked";
+  }
+}
+
+/**
+ * A refund the payout must not outlive: every payout of the payment is PAUSED (so the worker stops asking every few minutes and a person
+ * has to look), staff are told, and for a refund our books do not know the refund reconciler is run once so it is filed (it also pauses,
+ * which is then a no-op). Best effort: the release was refused either way, so a failure here only means the next tick asks again.
+ */
+async function holdForRefundConflict(p: PayoutRow, verdict: "unaccounted" | "covers_item"): Promise<void> {
+  try {
+    await prisma.$transaction((tx) =>
+      pausePayoutsOfPayment(tx, p.razorpayPaymentId, {
+        reason: "external_refund",
+        actorType: "system",
+        note: verdict === "unaccounted" ? "Razorpay shows a refund on the brand's payment that our records do not: payouts of this payment are paused until staff have looked." : "A refund of this very post is on our books while its payout was not taken back: payouts of this payment are paused until staff have looked.",
+      }),
+    );
+  } catch {
+    /* the refusal stands; the next tick asks again */
+  }
+  alertPayout(p, "refund_conflict", "held", verdict);
+  if (verdict !== "unaccounted") return;
+  try {
+    const pay = await prisma.campaignPayment.findUnique({ where: { razorpayPaymentId: p.razorpayPaymentId }, select: { id: true } });
+    if (pay) {
+      // Loaded here, not at the top of the file: the payment service imports this one.
+      const { reconcileRefunds } = await import("../campaign/payment.service");
+      await reconcileRefunds(pay.id);
+    }
+  } catch {
+    /* the sweep and the refund webhook are the other ways it gets filed */
+  }
+}
+
 async function accountVerdict(ctx: Ctx, p: PayoutRow, productId: string | null, rowMatches: boolean): Promise<"activated" | "not_activated" | "unchecked"> {
   if (!productId || !rowMatches) return "unchecked";
   try {
@@ -985,13 +1226,16 @@ const viewOf = (t: RazorpayTransfer): TransferView => ({ id: t.id, status: t.sta
 /**
  * held → release_requested → released. THE money-out step; it moves nothing unless evaluateRelease says ok over
  * facts read fresh (see the policy for the full list). Order: local facts first (a local refusal costs no Razorpay
- * call), then a fresh read of the transfer, then Razorpay's dispute list and the account's activation, then the
- * CLAIM (a conditional update: two callers produce exactly one PATCH), a second look at the pause, the dispute
- * rows and the switch, and only then PATCH on_hold:false. The result is confirmed by a fresh read before the
- * payout is called released, and the creator's destination is frozen onto it then.
+ * call), then a fresh read of the transfer, then Razorpay's word on twins, disputes, refunds and the account's
+ * activation (each read only if everything before it was clear), then the CLAIM (a conditional update: two callers
+ * produce exactly one PATCH), a second look at the pause, the creator, the dispute rows and the switch, and only
+ * then PATCH on_hold:false. The result is confirmed by a fresh read before the payout is called released, and the
+ * creator's destination is frozen onto it then.
  *
- * Refusals write nothing and make no Razorpay write. A definite refusal of the PATCH puts the claim back to held;
- * an unknown answer keeps release_requested for resolveRelease.
+ * Refusals make no Razorpay write. The WORKER backs a refused payout off (nextAttemptAt, see releaseRefusalBackoffMs) so a few
+ * that stay refused cannot fill every tick and starve the rest; a person's "Release now" (a staff actor) neither waits on that
+ * nor writes it. A definite refusal of the PATCH puts the claim back to held; an unknown answer keeps release_requested for
+ * resolveRelease.
  */
 export async function releasePayout(payoutId: string, opts: StepOptions = {}): Promise<StepResult> {
   const now = opts.now ?? new Date();
@@ -1001,11 +1245,19 @@ export async function releasePayout(payoutId: string, opts: StepOptions = {}): P
   if (!p) return result(ctx, null, false, "not_found");
   if (!razorpayConfig.configured()) return result(ctx, p.status, false, "disabled", "not_configured");
 
+  const refuse = async (reason: ReleaseRefusal): Promise<StepResult> => {
+    if (actor.type !== "staff") {
+      const ms = releaseRefusalBackoffMs(reason, { now, releaseAfter: p.releaseAfter });
+      if (ms !== null) await prisma.creatorPayout.updateMany({ where: { id: p.id, status: "held", pausedAt: null }, data: { nextAttemptAt: new Date(now.getTime() + ms) } });
+    }
+    return result(ctx, p.status, false, "refused", reason);
+  };
+
   // 1. Local facts.
-  const local = await loadLocalReleaseFacts(p, now);
-  const localFacts: ReleaseFacts = { ...local, transfer: null, duplicateTransfers: "unchecked", razorpayDisputes: "unchecked", account: "unchecked" };
+  const local = await loadLocalReleaseFacts(p, now, actor);
+  const localFacts: ReleaseFacts = { ...local, ...UNREAD_REMOTE };
   const localDecision = evaluateLocalRelease(localFacts);
-  if (!localDecision.ok) return result(ctx, p.status, false, "refused", localDecision.reason);
+  if (!localDecision.ok) return refuse(localDecision.reason);
 
   // 2. The transfer, fresh.
   let t: RazorpayTransfer | null = null;
@@ -1015,29 +1267,40 @@ export async function releasePayout(payoutId: string, opts: StepOptions = {}): P
     t = null;
   }
   const transferDecision = evaluateTransferForRelease({ payout: localFacts.payout, transfer: t ? viewOf(t) : null });
-  if (!transferDecision.ok) return result(ctx, p.status, false, "refused", transferDecision.reason);
+  if (!transferDecision.ok) return refuse(transferDecision.reason);
 
-  // 3. Razorpay's own word on duplicates, disputes and the account. A payout whose create call was only ever sent
-  //    once cannot have a twin, so it costs no listing; one that was sent twice must prove it has none.
-  let duplicateTransfers: ReleaseFacts["duplicateTransfers"] = "none";
+  // 3. Razorpay's own word on twins, disputes, refunds and the account, in the order the gate judges them and each read only while
+  //    everything before it was clear (a refusal costs only what it took to reach). Every fact starts at the value that REFUSES nothing
+  //    only because the final evaluation below runs over what was really read: a fact that was skipped sits behind a refusal that was
+  //    already decided, so no skipped fact can ever be what lets a release through. A payout whose create call was only ever sent once
+  //    cannot have a twin, so it costs no listing; one that was sent twice must prove it has none.
+  let remote: Pick<ReleaseFacts, "duplicateTransfers" | "razorpayDisputes" | "razorpayRefunds" | "account"> = { duplicateTransfers: "none", razorpayDisputes: "clear", razorpayRefunds: "clear", account: "activated" };
+  let early: ReturnType<typeof evaluateRemoteForRelease> = { ok: true };
   let extras: RazorpayTransfer[] = [];
   if (p.attempts > 1) {
-    try {
-      const listing = await rz(ctx, () => listAllPaymentTransfers(p.razorpayPaymentId), 2);
-      extras = listing.filter((x) => x.notes.payout_id === p.id && x.id !== p.razorpayTransferId && x.status !== "failed" && !isFullyReversed({ status: x.status, amount: x.amount, amountReversed: x.amount_reversed }));
-      duplicateTransfers = extras.length > 0 ? "found" : "none";
-    } catch {
-      duplicateTransfers = "unchecked";
-    }
+    const listing = await readListing(ctx, p);
+    extras = listing ? liveCarriersOf(listing, p.id).filter((x) => x.id !== p.razorpayTransferId) : [];
+    remote = { ...remote, duplicateTransfers: listing ? (extras.length > 0 ? "found" : "none") : "unchecked" };
+    early = evaluateRemoteForRelease(remote);
   }
-  const razorpayDisputes = await razorpayDisputeVerdict(ctx, p, now);
-  const account = await accountVerdict(ctx, p, local.productId, local.accountRowMatches);
-  const full: ReleaseFacts = { ...localFacts, transfer: viewOf(t!), duplicateTransfers, razorpayDisputes, account };
-  const decision = evaluateRelease(full);
+  if (early.ok) {
+    remote = { ...remote, razorpayDisputes: await razorpayDisputeVerdict(ctx, p, now) };
+    early = evaluateRemoteForRelease(remote);
+  }
+  if (early.ok) {
+    remote = { ...remote, razorpayRefunds: await razorpayRefundVerdict(ctx, p) };
+    early = evaluateRemoteForRelease(remote);
+  }
+  if (early.ok) remote = { ...remote, account: await accountVerdict(ctx, p, local.productId, local.accountRowMatches) };
+  const decision = evaluateRelease({ ...localFacts, transfer: viewOf(t!), ...remote });
   if (!decision.ok) {
     // Twins found at release time: nothing is released, the extras are reversed while they are on hold, and a person is told.
-    if (decision.reason === "duplicate_transfer") await handleDuplicates(ctx, p, t!, extras, now, actor);
-    return result(ctx, (await loadPayout(payoutId))?.status ?? p.status, false, "refused", decision.reason);
+    if (decision.reason === "duplicate_transfer") {
+      await handleDuplicates(ctx, p, t!, extras, now, actor);
+      return result(ctx, (await loadPayout(payoutId))?.status ?? p.status, false, "refused", decision.reason);
+    }
+    if (decision.reason === "refund_at_razorpay") await holdForRefundConflict(p, remote.razorpayRefunds === "covers_item" ? "covers_item" : "unaccounted");
+    return refuse(decision.reason);
   }
 
   // 4. Claim. Conditional on the payout still being held and not paused: two callers make exactly one PATCH.
@@ -1056,9 +1319,9 @@ export async function releasePayout(payoutId: string, opts: StepOptions = {}): P
   if (!claimed) return result(ctx, (await loadPayout(payoutId))?.status ?? null, false, "lost_claim");
   if (opts.hooks?.afterClaim) await opts.hooks.afterClaim();
 
-  // 5. A pause, a dispute or the kill switch can land between the checks and the claim. Look once more, then PATCH.
+  // 5. A pause, a suspension, a dispute or the kill switch can land between the checks and the claim. Look once more, then PATCH.
   const again = (await loadPayout(payoutId))!;
-  const second = evaluateLocalRelease({ ...(await loadLocalReleaseFacts({ ...again, status: "held" }, now)), transfer: null, duplicateTransfers: "unchecked", razorpayDisputes: "unchecked", account: "unchecked" });
+  const second = evaluateLocalRelease({ ...(await loadLocalReleaseFacts({ ...again, status: "held" }, now, actor)), ...UNREAD_REMOTE });
   if (!second.ok) {
     await transition({ id: p.id, from: ["release_requested"], to: "held", data: { lockedUntil: null, nextAttemptAt: new Date(now.getTime() + RETRY_BACKOFF_MS) }, kind: "release", actor, note: `Release stopped before Razorpay was asked: ${second.reason}.` });
     return result(ctx, "held", false, "refused", second.reason);
@@ -1155,11 +1418,13 @@ export async function resolveRelease(payoutId: string, opts: StepOptions = {}): 
 // ── Settlement ──────────────────────────────────────────────────────────────────
 
 /**
- * Poll a released payout's settlement (fetch with expand[]=recipient_settlement), from the moment of release:
- * the settlement id is written as soon as Razorpay shows it (the settlement webhook links by it), a PROCESSED
- * settlement with a usable bank reference (UTR) → settled, a FAILED one → settlement_failed with an alert. "Paid"
- * exists only from this: transfer.processed and a released hold are never "paid". Also re-reads a
- * settlement_failed payout, which Razorpay may settle later.
+ * Poll a released payout's settlement, from the moment of release. The transfer is read PLAIN (its base fields carry settlement_status
+ * and recipient_settlement_id, and the id is written as soon as Razorpay shows it: the settlement webhook links by it). Once the transfer
+ * names a settlement, that settlement (its status and bank UTR) is read through the one route the docs show, the transfer list with
+ * expand[]=recipient_settlement filtered to that settlement (fetchTransferSettlement). A PROCESSED settlement with a usable bank
+ * reference (UTR) → settled, a FAILED one → settlement_failed with an alert. "Paid" exists only from this: transfer.processed, a
+ * released hold and a base-field settlement_status of "settled" are never "paid" without the UTR. A settlement that cannot be read now
+ * changes nothing and is read again later. Also re-reads a settlement_failed payout, which Razorpay may settle later.
  */
 export async function pollSettlement(payoutId: string, opts: StepOptions = {}): Promise<StepResult> {
   const now = opts.now ?? new Date();
@@ -1181,6 +1446,15 @@ export async function pollSettlement(payoutId: string, opts: StepOptions = {}): 
       return result(ctx, p.status, false, "unread", errCode(err));
     }
     if (!transferMatches(p, t)) return parkMismatch(ctx, p, t, actor);
+    const settlementId = t.recipient_settlement?.id ?? t.recipient_settlement_id;
+    if (settlementId && !t.recipient_settlement) {
+      try {
+        const st = await rz(ctx, () => fetchTransferSettlement(t.id, settlementId), 2);
+        if (st) t = { ...t, recipient_settlement: st };
+      } catch {
+        // Not readable now: the transfer's own fields are still recorded (the settlement id the webhook links by), and nothing is called settled without the UTR.
+      }
+    }
     const out = await applyFreshTransfer(ctx, p, t, now, actor);
     if (out.status === "released" && p.releasedAt && now.getTime() - p.releasedAt.getTime() > SETTLEMENT_SLOW_MS) {
       alertPayout(p, "settlement_slow", "released", "settlement_slow");
@@ -1280,6 +1554,28 @@ async function rollbackReversal(ctx: Ctx, p: PayoutRow, to: PayoutStatus, reason
 async function runReversal(ctx: Ctx, p: PayoutRow, prior: string, now: Date, actor: PayoutActor, why: string): Promise<StepResult> {
   if (!p.razorpayTransferId) {
     return rollbackReversal(ctx, p, "needs_attention", "reversal_failed_state", now, actor);
+  }
+  // ⚠️ THE TWIN AUDIT, before anything is called reversed. A payout whose create call was sent more than once may have a second live
+  // transfer; reversing only the stored one would make the payout "reversed", release the item's price for the brand's refund, and leave
+  // the twin's share in the linked account with nothing tracking it. So every live transfer carrying this payout's id is taken back first
+  // (explicit amounts), and a reversal whose transfer list cannot be read is not finished.
+  if (p.attempts > 1) {
+    const listing = await readListing(ctx, p);
+    if (!listing) {
+      await backoff(p.id, "reversal_requested", now, IN_FLIGHT_RECHECK_MS, { errorCode: "reversal_unread" });
+      return result(ctx, "reversal_requested", false, "unknown", "listing_failed");
+    }
+    const live = liveCarriersOf(listing, p.id);
+    // The transfer we are taking back is not the live one: re-point the payout at the live one and let the duplicates flow settle it.
+    if (live.length > 0 && !live.some((x) => x.id === p.razorpayTransferId)) {
+      const took = await parkIfTwins(ctx, p, live, now, actor);
+      if (took) return took;
+    }
+    const extras = live.filter((x) => x.id !== p.razorpayTransferId);
+    if (extras.length > 0 && !(await reverseExtras(ctx, p, extras, actor))) {
+      await backoff(p.id, "reversal_requested", now, IN_FLIGHT_RECHECK_MS, { errorCode: "reversal_unknown", lastError: "A second transfer carrying this payout's id could not be taken back yet. It is being retried." });
+      return result(ctx, "reversal_requested", false, "unknown", "extras_not_reversed");
+    }
   }
   let fresh: RazorpayTransfer;
   try {
@@ -1400,13 +1696,38 @@ export async function reverseForRefund(itemId: string, opts: { actor?: PayoutAct
   const reason = opts.reason.slice(0, 40);
   const p = await prisma.creatorPayout.findUnique({ where: { bookingItemId: itemId } });
   if (!p) return { refundable: true, state: "no_payout", payoutId: null, calls: 0 };
+  const ctx = newCtx(p.id);
 
   const voidIt = async (from: PayoutStatus, text: string): Promise<RefundReadiness> => {
     const moved = await transition({ id: p.id, from: [from], to: "void", data: { voidReason: reason, lockedUntil: null, nextAttemptAt: null }, kind: "void", actor, note: text });
-    if (moved) return { refundable: true, state: "voided", payoutId: p.id, calls: 0 };
+    if (moved) return { refundable: true, state: "voided", payoutId: p.id, calls: ctx.calls };
     const cur = await loadPayout(p.id);
-    if (cur?.status === "void") return { refundable: true, state: "void", payoutId: p.id, calls: 0 };
-    return { refundable: false, state: "blocked", payoutId: p.id, reason: "payout_moved", calls: 0 };
+    if (cur?.status === "void") return { refundable: true, state: "void", payoutId: p.id, calls: ctx.calls };
+    return { refundable: false, state: "blocked", payoutId: p.id, reason: "payout_moved", calls: ctx.calls };
+  };
+
+  /**
+   * ⚠️ NO PAYOUT IS VOIDED WHILE A TRANSFER OF IT IS ALIVE. A payout that was sent to Razorpay more than once may have a live transfer
+   * that its row does not know (the first request, landing late; the retry that a lost answer left unrecorded), and voiding the payout
+   * lets the brand be refunded in full while that transfer's share sits in the linked account. So before a `failed` or `manual_required`
+   * payout is voided its payment's transfers are listed: a live one parks the payout (duplicate flow: it is tracked again and taken
+   * back), an unread list waits. A payout that was only ever sent once needs no listing for `failed` (a single request refused or
+   * failed cannot have a twin); a `manual_required` one is proven by decideManualFallback's own rules.
+   */
+  const voidAfterAudit = async (from: "failed" | "manual_required", text: string): Promise<RefundReadiness> => {
+    if (from === "failed" && p.attempts <= 1) return voidIt(from, text);
+    const proof = await readNoTransferProof(ctx, p, { allowAttestation: false, fetchOwn: from === "manual_required" });
+    if (proof.live && proof.live.length > 0) {
+      const took = await parkIfTwins(ctx, p, proof.live, now, actor, { anyLive: true });
+      if (took) return { refundable: false, state: "reversal_pending", payoutId: p.id, reason: "transfer_active", calls: ctx.calls };
+      return { refundable: false, state: "blocked", payoutId: p.id, reason: "payout_moved", calls: ctx.calls };
+    }
+    if (proof.activeCarriers === null) return { refundable: false, state: "reversal_pending", payoutId: p.id, reason: "listing_unread", calls: ctx.calls };
+    if (from === "manual_required") {
+      const d = decideManualFallback({ status: "manual_required", transferId: p.razorpayTransferId, attempts: p.attempts, reversedAt: p.reversedAt, transfer: proof.transfer, transferChecked: proof.transferChecked, activeCarriers: proof.activeCarriers });
+      if (!d.ok) return { refundable: false, state: d.reason === "transfer_unchecked" ? "reversal_pending" : "blocked", payoutId: p.id, reason: d.reason === "transfer_unchecked" ? "transfer_unread" : "manual_required_unproven", calls: ctx.calls };
+    }
+    return voidIt(from, text);
   };
 
   switch (p.status) {
@@ -1417,10 +1738,11 @@ export async function reverseForRefund(itemId: string, opts: { actor?: PayoutAct
     case "planned":
       return voidIt("planned", `Voided before any money moved (${reason}).`);
     case "failed":
-      return voidIt("failed", `Voided: Razorpay refused the transfer, so no money moved (${reason}).`);
+      return voidAfterAudit("failed", `Voided: Razorpay refused the transfer, so no money moved (${reason}).`);
     case "manual_required": {
-      const proven = p.reversedAt !== null || (p.razorpayTransferId === null && p.attempts === 0);
-      return proven ? voidIt("manual_required", `Voided: no money is out (${reason}).`) : { refundable: false, state: "blocked", payoutId: p.id, reason: "manual_required_unproven", calls: 0 };
+      // Nothing was ever sent: no read can add to that.
+      if (p.razorpayTransferId === null && p.attempts === 0) return voidIt("manual_required", `Voided: no money is out (${reason}).`);
+      return voidAfterAudit("manual_required", `Voided: no money is out (${reason}).`);
     }
     case "transfer_requested":
       return { refundable: false, state: "in_flight", payoutId: p.id, reason: "transfer_in_flight", calls: 0 };
@@ -1428,9 +1750,16 @@ export async function reverseForRefund(itemId: string, opts: { actor?: PayoutAct
     case "reversal_requested": {
       const r = await reversePayout(p.id, { reason, actor, now });
       if (r.status === "reversed") return { refundable: true, state: "reversed", payoutId: p.id, calls: r.calls };
-      if (r.outcome === "unknown" || r.outcome === "partial" || r.outcome === "leased" || r.status === "reversal_requested") return { refundable: false, state: "reversal_pending", payoutId: p.id, reason: r.outcome, calls: r.calls };
+      // A twin was found and the payout is being cleaned up by the worker: the refund waits, nobody is asked to decide.
+      if (r.outcome === "unknown" || r.outcome === "partial" || r.outcome === "leased" || r.outcome === "duplicates" || r.status === "reversal_requested") {
+        return { refundable: false, state: "reversal_pending", payoutId: p.id, reason: r.outcome === "duplicates" ? "twin_transfer_found" : r.outcome, calls: r.calls };
+      }
       return { refundable: false, state: "blocked", payoutId: p.id, reason: r.reason ?? r.outcome, calls: r.calls };
     }
+    case "needs_attention":
+      // A payout the worker is cleaning up by itself (duplicates, a hold being put back) is not a decision a person must take yet: the refund waits.
+      if (p.errorCode === "duplicate_transfer" || HOLD_RESOLVABLE_REASONS.includes(p.errorCode ?? "")) return { refundable: false, state: "reversal_pending", payoutId: p.id, reason: "reconciling", calls: 0 };
+      return { refundable: false, state: "blocked", payoutId: p.id, reason: `payout_${p.status}`, calls: 0 };
     default:
       return { refundable: false, state: "blocked", payoutId: p.id, reason: `payout_${p.status}`, calls: 0 };
   }
@@ -1494,7 +1823,7 @@ export async function scheduleRelease(
 /**
  * Staff Retry of a `failed` payout: allowed only while nothing has been refunded on the payment [R4], while it is
  * not paused, and only when a listing proves no live transfer already carries this payout's id. The failed transfer's
- * id is dropped (the retry makes a NEW transfer); the attempt counter restarts.
+ * id is dropped (the retry makes a NEW transfer, tagged as a new request); the attempt counter restarts at one but never drops from two or more.
  */
 export async function retryFailedPayout(payoutId: string, opts: StepOptions = {}): Promise<StepResult> {
   const now = opts.now ?? new Date();
@@ -1508,20 +1837,20 @@ export async function retryFailedPayout(payoutId: string, opts: StepOptions = {}
   if (!canRetryFailedTransfer({ status: p.status, refundExists: facts.refundExists })) return result(ctx, p.status, false, "retry_disabled", "refund_exists");
   const decision = decideTransferCreation(facts);
   if (decision.action !== "create") return result(ctx, p.status, false, "waiting", decision.reason);
-  let listing: RazorpayTransfer[];
-  try {
-    listing = await rz(ctx, () => listAllPaymentTransfers(p.razorpayPaymentId), 2);
-  } catch (err) {
-    return result(ctx, p.status, false, "unread", errCode(err));
-  }
-  const live = listing.filter((t) => t.notes.payout_id === p.id && t.status !== "failed" && !isFullyReversed({ status: t.status, amount: t.amount, amountReversed: t.amount_reversed }));
+  const listing = await readListing(ctx, p);
+  // A listing that cannot be read at all is stood in for only by a person's attestation, made after the last request (attestNoTransfer).
+  if (!listing && !(actor.type === "staff" && (await hasNoTransferAttestation(p)))) return result(ctx, p.status, false, "unread", "listing_failed");
+  const live = listing ? liveCarriersOf(listing, p.id) : [];
   if (live.length > 0) return result(ctx, p.status, false, "transfer_still_active", "transfer_still_active");
   const claimed = await transition({
     id: p.id,
     from: ["failed"],
     to: "transfer_requested",
     where: { pausedAt: null, OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] },
-    data: { razorpayTransferId: null, attempts: 1, absentChecks: 0, transferRequestedAt: now, lockedUntil: new Date(now.getTime() + LEASE_MS), nextAttemptAt: null, errorCode: null, lastError: null },
+    // ⚠️ The attempt count restarts at ONE after a clean failure (a new request, one automatic repeat still allowed), but is never brought
+    // DOWN from two or more: a payout that was once sent twice keeps that memory, and with it the twin audits (release, reversal, the hold
+    // confirmation, the void before a refund) that look for a transfer an earlier request left behind.
+    data: { razorpayTransferId: null, attempts: Math.max(1, p.attempts), absentChecks: 0, transferRequestedAt: now, lockedUntil: new Date(now.getTime() + LEASE_MS), nextAttemptAt: null, errorCode: null, lastError: null },
     kind: "transfer",
     actor,
     note: "Staff retried the failed transfer.",
@@ -1532,10 +1861,18 @@ export async function retryFailedPayout(payoutId: string, opts: StepOptions = {}
 
 /**
  * Staff mark a payout as one that must be paid by bank transfer (planned, failed, reversed or parked). This only
- * RECORDS the decision: paid_manual is reachable only through markManualPaid, which re-checks that no transfer could
- * still release.
+ * RECORDS the decision, and only when nothing could still release the money: paid_manual is reachable only through
+ * markManualPaid, but a payout moved to manual_required while its transfer is alive can be neither reversed, refunded
+ * nor recorded as paid by anything after that, and the creator would be paid twice the day someone releases the transfer
+ * from the Razorpay dashboard. So the move follows the same rules as the manual fallback itself (decideManualFallback)
+ * over FRESH facts: nothing was ever sent, or the transfer failed (or was reversed, and the whole of it is back) and the
+ * payment lists no other live transfer carrying this payout's id. A parked payout whose transfer is alive is refused
+ * with `transfer_exists`: reverse it first. A reversal seen at Razorpay that our row never recorded (a dashboard
+ * reversal) is recorded here, because the fresh read proves it. A reversed payout whose item has been refunded (or is
+ * being) is refused: the price is not owed any more and the manual payment would put it back on reserve.
  */
 export async function requireManualPayment(payoutId: string, opts: StepOptions & { reason: string }): Promise<StepResult> {
+  const now = opts.now ?? new Date();
   const ctx = newCtx(payoutId);
   const actor = opts.actor ?? SYSTEM;
   const p = await loadPayout(payoutId);
@@ -1544,19 +1881,64 @@ export async function requireManualPayment(payoutId: string, opts: StepOptions &
   const from = (["planned", "failed", "reversed", "needs_attention"] as PayoutStatus[]).filter((s) => s === p.status);
   if (from.length === 0) return result(ctx, p.status, false, "not_applicable");
   if (p.status === "needs_attention" && actor.type !== "staff") return result(ctx, p.status, false, "needs_human");
-  const moved = await transition({ id: p.id, from, to: "manual_required", data: { errorCode: opts.reason.slice(0, 80), lockedUntil: null, nextAttemptAt: null }, kind: "manual", actor, note: `Manual payment required (${opts.reason}).` });
+
+  if (p.status === "reversed") {
+    const item = await prisma.campaignBookingItem.findUnique({ where: { id: p.bookingItemId }, select: { status: true } });
+    if (!item || item.status === "refunded" || item.status === "refund_due") return result(ctx, p.status, false, "refused", "item_refunded");
+  }
+
+  let reversedNow = false;
+  if (!(p.status === "planned" && p.razorpayTransferId === null && p.attempts === 0)) {
+    if (!razorpayConfig.configured()) return result(ctx, p.status, false, "refused", "listing_unchecked");
+    const proof = await readNoTransferProof(ctx, p, { allowAttestation: actor.type === "staff" });
+    reversedNow = p.reversedAt === null && proof.transfer !== null && isFullyReversed(proof.transfer);
+    const d = decideManualFallback({
+      status: "manual_required",
+      transferId: p.razorpayTransferId,
+      attempts: p.attempts,
+      reversedAt: reversedNow ? now : p.reversedAt,
+      transfer: proof.transfer,
+      transferChecked: proof.transferChecked,
+      activeCarriers: proof.activeCarriers,
+    });
+    if (!d.ok) return result(ctx, p.status, false, "refused", d.reason === "transfer_not_failed" ? "transfer_exists" : d.reason);
+  }
+
+  const moved = await transition({
+    id: p.id,
+    from,
+    to: "manual_required",
+    data: { errorCode: scrubStaffText(opts.reason).slice(0, 80), lockedUntil: null, nextAttemptAt: null, ...(reversedNow ? { reversedAt: now } : {}) },
+    kind: "manual",
+    actor,
+    note: `Manual payment required (${scrubStaffText(opts.reason)}).`,
+  });
   return result(ctx, moved ? "manual_required" : (await loadPayout(payoutId))?.status ?? null, moved, moved ? "manual_required" : "lost_claim");
 }
 
 const REFERENCE_RE = /^[A-Za-z0-9][A-Za-z0-9 _./:#-]{3,99}$/;
 const PAN_SHAPE = /[A-Za-z]{5}[0-9]{4}[A-Za-z]/;
 const IFSC_SHAPE = /[A-Za-z]{4}0[A-Za-z0-9]{6}/;
+/** Every character REFERENCE_RE allows besides letters and digits: a PAN or an IFSC typed with them in the middle is still one. */
+const REFERENCE_SEPARATORS = /[ _./:#-]/g;
+
+/** Whether staff text for a bank-transfer reference may be kept: well formed, and not a PAN or an IFSC however it is spaced. */
+export function referenceProblem(reference: string): "invalid" | "looks_like_bank_details" | null {
+  if (!REFERENCE_RE.test(reference)) return "invalid";
+  const flat = reference.replace(REFERENCE_SEPARATORS, "");
+  if (PAN_SHAPE.test(reference) || IFSC_SHAPE.test(reference) || PAN_SHAPE.test(flat) || IFSC_SHAPE.test(flat)) return "looks_like_bank_details";
+  return null;
+}
 
 /**
  * manual_required → paid_manual. Staff paid the creator by bank transfer and record the reference. Refused unless
  * no transfer can still release money (decideManualFallback): none was ever created, or a fresh read shows it
  * failed with no other live transfer carrying this payout's id, or it was reversed and the whole transfer is
  * back. Paying by hand while a transfer could still release is paying twice.
+ *
+ * The reference is kept exactly as typed, because it is a bank UTR and a UTR is a run of digits that a scrubber would
+ * mask; so what is checked is its SHAPE (a PAN or an IFSC is refused however it is spaced, hyphenated or dotted), and
+ * the free-text note beside it is scrubbed.
  */
 export async function markManualPaid(payoutId: string, opts: StepOptions & { reference: string; note?: string }): Promise<StepResult> {
   const now = opts.now ?? new Date();
@@ -1565,45 +1947,88 @@ export async function markManualPaid(payoutId: string, opts: StepOptions & { ref
   const p = await loadPayout(payoutId);
   if (!p) return result(ctx, null, false, "not_found");
   const reference = (opts.reference ?? "").trim();
-  if (!REFERENCE_RE.test(reference) || PAN_SHAPE.test(reference) || IFSC_SHAPE.test(reference)) return result(ctx, p.status, false, "invalid_reference");
+  if (referenceProblem(reference) !== null) return result(ctx, p.status, false, "invalid_reference");
   if (p.status !== "manual_required") return result(ctx, p.status, false, "not_manual_required");
 
   // Fresh facts, read only when the decision needs them.
-  let transfer: { status: string; amount: number; amountReversed: number } | null = null;
-  let transferChecked = false;
-  let activeCarriers: number | null = null;
-  const needsListing = p.razorpayTransferId !== null || p.attempts > 0;
-  if (needsListing) {
-    if (!razorpayConfig.configured()) return result(ctx, p.status, false, "refused", "listing_unchecked");
-    try {
-      const listing = await rz(ctx, () => listAllPaymentTransfers(p.razorpayPaymentId), 2);
-      activeCarriers = listing.filter((t) => t.notes.payout_id === p.id && t.status !== "failed" && !isFullyReversed({ status: t.status, amount: t.amount, amountReversed: t.amount_reversed })).length;
-    } catch {
-      activeCarriers = null;
-    }
-    if (p.razorpayTransferId !== null) {
-      try {
-        const t = await rz(ctx, () => fetchTransfer(p.razorpayTransferId!));
-        transfer = { status: t.status, amount: t.amount, amountReversed: t.amount_reversed };
-        transferChecked = true;
-      } catch {
-        transferChecked = false;
-      }
-    }
-  }
-  const d = decideManualFallback({ status: p.status, transferId: p.razorpayTransferId, attempts: p.attempts, reversedAt: p.reversedAt, transfer, transferChecked, activeCarriers });
+  if ((p.razorpayTransferId !== null || p.attempts > 0) && !razorpayConfig.configured()) return result(ctx, p.status, false, "refused", "listing_unchecked");
+  const proof = await readNoTransferProof(ctx, p, { allowAttestation: actor.type === "staff" });
+  const d = decideManualFallback({ status: p.status, transferId: p.razorpayTransferId, attempts: p.attempts, reversedAt: p.reversedAt, transfer: proof.transfer, transferChecked: proof.transferChecked, activeCarriers: proof.activeCarriers });
   if (!d.ok) return result(ctx, p.status, false, "refused", d.reason);
 
   const moved = await transition({
     id: p.id,
     from: ["manual_required"],
     to: "paid_manual",
-    data: { manualReference: reference, manualPaidAt: now, manualPaidById: actor.id ?? null, manualNote: opts.note ? scrubPayoutSecrets(opts.note).slice(0, 500) : null, errorCode: null, lastError: null, lockedUntil: null, nextAttemptAt: null },
+    data: { manualReference: reference, manualPaidAt: now, manualPaidById: actor.id ?? null, manualNote: opts.note ? scrubStaffText(opts.note).slice(0, 500) : null, errorCode: null, lastError: null, lockedUntil: null, nextAttemptAt: null },
     kind: "manual",
     actor,
     note: `Paid by bank transfer (${d.basis}). Reference recorded.`,
   });
   return result(ctx, moved ? "paid_manual" : (await loadPayout(payoutId))?.status ?? null, moved, moved ? "paid_manual" : "lost_claim", moved ? d.basis : undefined);
+}
+
+// ── A listing that cannot be read: the two things a person can do ───────────────
+
+/**
+ * A person looked in the Razorpay dashboard and found NO transfer for this payout (nor a transfer carrying its id on the payment). Recorded as
+ * an audit row with the person's id; it stands in for the payment-transfer listing, and only for a listing that cannot be read, in
+ * requireManualPayment, markManualPaid and a staff Retry. It is valid only until the payout is sent to Razorpay again. Staff only; a
+ * payout that has a transfer id is refused (adopt or reverse that transfer instead): an attestation cannot hide a transfer we know of.
+ */
+export async function attestNoTransfer(payoutId: string, opts: StepOptions & { note: string; actor: PayoutActor }): Promise<StepResult> {
+  const ctx = newCtx(payoutId);
+  const p = await loadPayout(payoutId);
+  if (!p) return result(ctx, null, false, "not_found");
+  if (opts.actor.type !== "staff" || !opts.actor.id) return result(ctx, p.status, false, "needs_human");
+  if (p.razorpayTransferId !== null) return result(ctx, p.status, false, "refused", "transfer_exists");
+  if (!["needs_attention", "failed", "transfer_requested", "manual_required"].includes(p.status) || p.attempts === 0) return result(ctx, p.status, false, "not_applicable");
+  await prisma.creatorPayoutEvent.create({
+    data: { payoutId: p.id, bookingId: p.bookingId, kind: ATTEST_KIND, fromStatus: p.status, toStatus: p.status, amountPaise: p.amountPaise, actorType: "staff", actorId: opts.actor.id, note: note(`Staff checked the Razorpay dashboard and found no transfer for this payout. ${scrubStaffText(opts.note)}`) },
+  });
+  return result(ctx, p.status, true, "attested");
+}
+
+/**
+ * A person found this payout's transfer in the Razorpay dashboard (its id) while the payment's transfer listing could not be read. The
+ * engine reads THAT transfer and adopts it only if it is this payout's: carrying this payout's id in its notes, the same linked account,
+ * the same payment, the same amount. Never a transfer on the staff member's word alone. Works for a payout parked as listing_unreadable
+ * (or any parked payout that has no transfer id yet); it goes back to transfer_requested with the id recorded and is judged like any
+ * transfer found by a listing (held, a twin audit for a repeated request, a mismatch parked).
+ */
+export async function adoptTransferByStaff(payoutId: string, opts: StepOptions & { transferId: string; actor: PayoutActor }): Promise<StepResult> {
+  const now = opts.now ?? new Date();
+  const ctx = newCtx(payoutId);
+  const p0 = await loadPayout(payoutId);
+  if (!p0) return result(ctx, null, false, "not_found");
+  if (opts.actor.type !== "staff") return result(ctx, p0.status, false, "needs_human");
+  if (p0.status !== "needs_attention" || p0.razorpayTransferId !== null) return result(ctx, p0.status, false, "not_applicable");
+  if (!razorpayConfig.configured()) return result(ctx, p0.status, false, "disabled", "not_configured");
+  const lease = await takeLease(payoutId, ["needs_attention"], now);
+  if (!lease) return result(ctx, p0.status, false, "leased");
+  try {
+    let t: RazorpayTransfer;
+    try {
+      t = await rz(ctx, () => fetchTransfer(opts.transferId));
+    } catch (err) {
+      return result(ctx, p0.status, false, "unread", errCode(err));
+    }
+    if (t.notes.payout_id !== p0.id || !transferMatches(p0, t) || t.source === null) return result(ctx, p0.status, false, "refused", "transfer_not_ours");
+    const back = await transition({
+      id: p0.id,
+      from: ["needs_attention"],
+      to: "transfer_requested",
+      where: { razorpayTransferId: null },
+      data: { errorCode: null, lastError: null, nextAttemptAt: null },
+      kind: "transfer",
+      actor: opts.actor,
+      note: "Staff found this payout's transfer in Razorpay and gave its id; the transfer is read and checked before it is recorded.",
+    });
+    if (!back) return result(ctx, (await loadPayout(payoutId))?.status ?? null, false, "lost_claim");
+    return adoptTransfer(ctx, (await loadPayout(payoutId))!, t, now, opts.actor, "Staff identified this payout's transfer.");
+  } finally {
+    await dropLease(payoutId, lease);
+  }
 }
 
 /** Staff pause: nothing about the payout moves until it is resumed. Idempotent. */
@@ -1688,6 +2113,9 @@ export async function reholdReleasedPayout(payoutId: string, opts: StepOptions =
     }
     if (!transferMatches(p, t)) return parkMismatch(ctx, p, t, actor);
     if (settledAtBank(t)) {
+      // Too late to hold it: record what was read (the settlement status is what takes this payout out of the re-hold bucket, so the
+      // settlement poll can finish it) and make the poll due now. A person is told once an hour.
+      await prisma.creatorPayout.updateMany({ where: { id: p.id, status: "released" }, data: { ...columnsFrom(t, now), lockedUntil: null, nextAttemptAt: null } });
       alertPayout(p, "rehold", "released", "already_settled");
       return result(ctx, p.status, false, "already_settled", "already_settled");
     }
@@ -1772,9 +2200,17 @@ export function runPayoutJob(job: PayoutJob, payoutId: string, opts: StepOptions
 }
 
 /**
- * The payouts each job should look at now, in the plan's order (P4 reconciliation jobs 1 to 9), oldest first. A row
- * leased by another step, or backed off to a later time, is not due. `release` lists only held payouts whose
- * release_after has passed and that are not paused: releasePayout still evaluates the whole gate.
+ * The payouts each job should look at now, in the plan's order (P4 reconciliation jobs 1 to 9). A row leased by another step, or backed
+ * off to a later time, is not due. `release` lists only held payouts whose release_after has passed and that are not paused:
+ * releasePayout still evaluates the whole gate.
+ *
+ * ⚠️ FAIR, because the cut at `limit` is made HERE and the worker can only reorder what it is given. The buckets are merged in the
+ * worker's own priority order (taking money back, putting a lost hold back and clearing up come before letting more money out, and the
+ * settlement poll, which only reads, comes last), and the two buckets that can hold a long backlog of payouts that do nothing (new
+ * transfers waiting for an account, releases that keep being refused) are each capped at a third of the limit, so a backlog of either
+ * can never crowd out a reversal, a settlement poll or the daily re-read. The release bucket is not even queried while the release
+ * switch is off (every row in it would be refused again, at no gain), and it resumes at once when the switch goes back on. Every
+ * bucket skips what is backed off (`nextAttemptAt`), which is what keeps a refused payout from coming back every tick.
  */
 export async function selectDuePayouts(now: Date, limit = 50): Promise<Array<{ id: string; job: PayoutJob }>> {
   const unleased: Prisma.CreatorPayoutWhereInput = { OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] };
@@ -1782,37 +2218,57 @@ export async function selectDuePayouts(now: Date, limit = 50): Promise<Array<{ i
   const q = (where: Prisma.CreatorPayoutWhereInput, order: "createdAt" | "lastCheckedAt" = "createdAt") =>
     prisma.creatorPayout.findMany({ where: { AND: [where, unleased] }, select: { id: true }, orderBy: order === "createdAt" ? { createdAt: "asc" } : { lastCheckedAt: "asc" }, take: limit });
   const dayAgo = new Date(now.getTime() - HELD_RECHECK_MS);
-  const [execute, unknown, confirm, dup, release, resolveRel, settle, reversal, recheck, rehold] = await Promise.all([
-    q({ status: "planned", pausedAt: null }),
+  const releaseOn = await releaseSwitchOn();
+  const [execute, unknown, unreadable, confirm, parkedHold, dup, release, resolveRel, settle, reversal, recheck, rehold] = await Promise.all([
+    q({ status: "planned", pausedAt: null, AND: [due] }),
     q({ status: "transfer_requested", razorpayTransferId: null, AND: [due] }),
+    // Parked because the payment's transfer list could not be read: asked again when it is due, and resumed by itself if it works.
+    q({ status: "needs_attention", errorCode: "listing_unreadable", razorpayTransferId: null, AND: [due] }),
     q({ status: "transfer_requested", razorpayTransferId: { not: null }, AND: [due] }),
+    // Parked because the hold was gone (processed and not on hold, or with an automatic release date): the hold was put back, and this read
+    // is what puts the payout back to `held`, or puts the hold back again.
+    q({ status: "needs_attention", razorpayTransferId: { not: null }, errorCode: { in: [...HOLD_RESOLVABLE_REASONS] }, AND: [due] }),
     q({ status: "needs_attention", errorCode: "duplicate_transfer", AND: [due] }),
-    q({ status: "held", pausedAt: null, releaseAfter: { lte: now }, AND: [due] }),
+    releaseOn ? q({ status: "held", pausedAt: null, releaseAfter: { lte: now }, AND: [due] }) : Promise.resolve([] as Array<{ id: string }>),
     q({ status: "release_requested" }),
     q({ status: { in: ["released", "settlement_failed"] }, AND: [due] }),
     q({ status: "reversal_requested", AND: [due] }),
-    q({ status: "held", OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: dayAgo } }] }, "lastCheckedAt"),
-    // Only a dispute or an outside refund pauses a released payout in a way that asks for its hold back (a staff pause is the staff's to act on).
-    q({ status: "released", pausedAt: { not: null }, pausedReason: { in: ["dispute", "external_refund"] }, AND: [due] }),
+    q({ status: "held", AND: [due], OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: dayAgo } }] }, "lastCheckedAt"),
+    // Only a dispute or an outside refund pauses a released payout in a way that asks for its hold back (a staff pause is the staff's to act on),
+    // and one that has already SETTLED cannot be re-held: it is left to the settlement poll, or the same row would shadow it for ever.
+    q({
+      status: "released",
+      pausedAt: { not: null },
+      pausedReason: { in: ["dispute", "external_refund"] },
+      // (`not` alone would also drop the rows where the column is still empty.)
+      AND: [due, { OR: [{ settlementStatus: null }, { settlementStatus: { not: "settled" } }] }, { OR: [{ recipientSettlementStatus: null }, { recipientSettlementStatus: { not: "processed" } }] }],
+    }),
   ]);
   const out: Array<{ id: string; job: PayoutJob }> = [];
   const seen = new Set<string>();
-  const add = (rows: Array<{ id: string }>, job: PayoutJob) => {
+  const backlogCap = Math.max(1, Math.ceil(limit / 3));
+  const add = (rows: Array<{ id: string }>, job: PayoutJob, cap = limit) => {
+    let taken = 0;
     for (const r of rows) {
-      if (seen.has(r.id) || out.length >= limit) continue;
+      if (seen.has(r.id)) continue;
+      if (out.length >= limit || taken >= cap) break;
       seen.add(r.id);
       out.push({ id: r.id, job });
+      taken++;
     }
   };
-  add(execute, "execute");
-  add(unknown, "resolve_unknown");
-  add(confirm, "confirm_hold");
-  add(dup, "cleanup_duplicates");
-  add(rehold, "rehold_paused");
-  add(release, "release");
-  add(resolveRel, "resolve_release");
-  add(settle, "poll_settlement");
+  // The worker's priority order (cron/creator-payouts.cron.ts PRIORITY), with the re-hold of a parked payout right behind the reversals.
   add(reversal, "resolve_reversal");
+  add(rehold, "rehold_paused");
+  add(parkedHold, "confirm_hold");
+  add(unknown, "resolve_unknown");
+  add(unreadable, "resolve_unknown");
+  add(dup, "cleanup_duplicates");
+  add(execute, "execute", backlogCap);
+  add(confirm, "confirm_hold");
+  add(resolveRel, "resolve_release");
+  add(release, "release", backlogCap);
+  add(settle, "poll_settlement");
   add(recheck, "recheck_held");
   return out;
 }

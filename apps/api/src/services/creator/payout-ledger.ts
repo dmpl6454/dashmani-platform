@@ -512,7 +512,11 @@ export function payoutAllowsLink(status: string): boolean {
  *
  * ⚠️ By the time this runs the creator's offer is `completed` (verifyCreatorItem moves it there together with stamping
  * link_verified_at): the gate reads link_verified_at, never `status = 'accepted'`. It must never throw into the caller: a
- * failure here is the worker's to repair, never a reason to undo a verification that already committed.
+ * failure here is never a reason to undo a verification that already committed. And it is NOT lost: the reconciliation worker's
+ * repairUnscheduledReleases (cron/creator-payouts.cron.ts) finds every verified post whose payout still has no release_after and
+ * schedules it by the same scheduleRelease (idempotent: only a payout with no release_after is touched), the daily digest names one that
+ * stays unscheduled (`verified_not_scheduled`), and staff "Release now" runs this first, so a failed step here can delay a payout by
+ * minutes, never strand it.
  */
 export async function onCreatorLinkVerified(itemId: string, actor: PayoutActor = { type: "system" }): Promise<void> {
   try {

@@ -11,6 +11,9 @@
 # =============================================================
 
 set -eo pipefail
+# Backups hold every secret and the whole database: readable by root only (files 600, folders 700).
+# The PHP user on this box must never be able to read them (see the 2026-10-22 PHP2Shell runbook).
+umask 077
 
 BACKUP_DIR="/opt/backups/dashmani"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -19,6 +22,7 @@ MAX_BACKUPS=8  # Keep last 8 backups (2 months of weekly)
 
 # Create backup directory
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 echo "[$TIMESTAMP] Starting backup..."
 

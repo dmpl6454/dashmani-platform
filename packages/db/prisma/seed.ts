@@ -33,6 +33,22 @@ async function main() {
       ),
     },
     {
+      // Keep in step with DEFAULT_ROLES.HR_MANAGER in packages/shared/src/constants/roles.ts
+      // (scripts/create-hr-manager-role.ts creates it on production from that copy).
+      name: "HR Manager",
+      description: "HR features only: employees, attendance, leave, payroll documents and hiring",
+      isSystemRole: true,
+      permissions: [
+        ...["employees", "attendance"].flatMap((resource) =>
+          ["view", "create", "edit", "delete", "approve", "export"].map((action) => ({
+            resource, action, scope: "global",
+          }))
+        ),
+        { resource: "teams", action: "view", scope: "global" },
+        { resource: "roles", action: "view", scope: "global" },
+      ],
+    },
+    {
       name: "Team Lead",
       description: "Manage own team",
       isSystemRole: true,

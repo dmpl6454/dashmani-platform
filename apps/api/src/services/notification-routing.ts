@@ -2,9 +2,10 @@ import { NotificationType } from "@dashmani/db";
 
 // Each type lists which audiences it should reach.
 // "ADMINS"      = users with Super Admin or Admin role
+// "HR"          = users with the HR Manager role (people-side requests they act on)
 // "RECIPIENT"   = a specific user passed by the caller (e.g. the employee whose leave was approved)
 // "ALL_EMPLOYEES" = handled by announcement.service.ts directly — skip in dispatchNotification
-export const NOTIFICATION_AUDIENCE: Record<NotificationType, Array<"ADMINS" | "RECIPIENT" | "ALL_EMPLOYEES">> = {
+export const NOTIFICATION_AUDIENCE: Record<NotificationType, Array<"ADMINS" | "HR" | "RECIPIENT" | "ALL_EMPLOYEES">> = {
   // Admin-only (operational)
   REPORT_SUBMITTED:     ["ADMINS"],
   REPORT_MISSED:        ["ADMINS"],
@@ -23,7 +24,7 @@ export const NOTIFICATION_AUDIENCE: Record<NotificationType, Array<"ADMINS" | "R
   EXTRA_HOURS_APPROVED: ["RECIPIENT"],
 
   // Admins only — raised by employee, admins need to act
-  LEAVE_REQUEST:        ["ADMINS"],
+  LEAVE_REQUEST:        ["ADMINS", "HR"],
 
   // Both — admin + originating employee
   BUG_REPORT_UPDATE:    ["ADMINS", "RECIPIENT"],
@@ -31,8 +32,9 @@ export const NOTIFICATION_AUDIENCE: Record<NotificationType, Array<"ADMINS" | "R
   // Broadcasts — handled by announcement.service.ts, not dispatchNotification
   ANNOUNCEMENT:         ["ALL_EMPLOYEES"],
 
-  // Default for job apps, expense claims, complaints, registrations, etc.
-  GENERAL:              ["ADMINS"],
+  // Default for job apps, expense claims, complaints, registrations, joining dates —
+  // every current GENERAL caller is a people-side request, so HR gets them too.
+  GENERAL:              ["ADMINS", "HR"],
 
   // Task assigned to a specific employee
   TASK_ASSIGNED:        ["RECIPIENT"],

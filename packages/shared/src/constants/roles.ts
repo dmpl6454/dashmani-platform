@@ -27,6 +27,23 @@ export const DEFAULT_ROLES = {
       "attendance", "clients", "content", "messages",
     ].flatMap(allGlobal),
   },
+  /**
+   * HR-only access to the internal portal: people records, attendance, leave,
+   * payroll documents, hiring. Deliberately no reports / accounts / analytics /
+   * clients / content, and no way to grant or edit an admin — the API enforces
+   * that in middleware/role-guard.ts, because `employees.edit` alone would let
+   * the holder hand out Super Admin through the employee form.
+   */
+  HR_MANAGER: {
+    name: "HR Manager",
+    description: "HR features only: employees, attendance, leave, payroll documents and hiring",
+    permissions: [
+      ...allGlobal("employees"),
+      ...allGlobal("attendance"),
+      { resource: "teams", action: "view" as const, scope: "global" as const },
+      { resource: "roles", action: "view" as const, scope: "global" as const },
+    ],
+  },
   TEAM_LEAD: {
     name: "Team Lead",
     description: "Manage own team, view team data",
@@ -72,3 +89,15 @@ export const DEFAULT_ROLES = {
     ],
   },
 } as const;
+
+export const HR_MANAGER_ROLE_NAME = DEFAULT_ROLES.HR_MANAGER.name;
+
+/**
+ * Roles only an Admin / Super Admin may hand out or act on. An HR Manager can
+ * create, edit and deactivate everyone else, but never a holder of one of these.
+ */
+export const PRIVILEGED_ROLE_NAMES: readonly string[] = [
+  DEFAULT_ROLES.SUPER_ADMIN.name,
+  DEFAULT_ROLES.ADMIN.name,
+  DEFAULT_ROLES.HR_MANAGER.name,
+];

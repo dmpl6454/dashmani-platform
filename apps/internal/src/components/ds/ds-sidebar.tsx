@@ -7,11 +7,19 @@ import { useState, useEffect } from "react";
 import { cn } from "@dashmani/ui";
 import { ChevronLeft, ChevronRight, LayoutGrid, Menu, X as CloseIcon } from "lucide-react";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
-import { primaryNav, moreNav } from "@/components/sidebar";
+import { primaryNav, moreNav, hrNav, type NavItem } from "@/components/sidebar";
+import { useAuth } from "@/lib/auth";
+import { isHrOnly } from "@/lib/roles";
 
 export function DsSidebar() {
   const pathname = usePathname();
-  const { data } = useOverviewStats();
+  const { user } = useAuth();
+  // An HR Manager without Admin gets the HR-only nav (lib/roles.ts). Their role
+  // cannot read /analytics/overview, so the badge fetch is skipped for them.
+  const hrOnly = isHrOnly(user);
+  const mainNav: NavItem[] = hrOnly ? hrNav : primaryNav;
+  const extraNav = hrOnly ? [] : moreNav;
+  const { data } = useOverviewStats(undefined, undefined, undefined, !hrOnly);
   const stats = (data as any)?.data;
   const [collapsed, setCollapsed] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -46,10 +54,10 @@ export function DsSidebar() {
   // "/accounts" must not light up while "/accounts/growth" (its own row) is open,
   // nor "/reports" while "/reports/link-search" is.
   const activeHref = (() => {
-    const all = [...primaryNav.map((n) => n.href), ...moreNav.map((n) => n.href)];
+    const all = [...mainNav.map((n) => n.href), ...extraNav.map((n) => n.href)];
     return all.filter(isActive).sort((a, b) => b.length - a.length)[0] ?? null;
   })();
-  const isMoreActive = moreNav.some((n) => n.href === activeHref);
+  const isMoreActive = extraNav.some((n) => n.href === activeHref);
 
   // A render function, NOT an inner component: <Body/> would be a new component type
   // on every render, remounting the nav (and losing its scroll position) on each click.
@@ -69,13 +77,14 @@ export function DsSidebar() {
           {expanded && (
             <div className="min-w-0">
               <p className="text-[11.5px] font-bold tracking-[.12em] uppercase leading-tight text-ds-text truncate">Digital Sukoon</p>
-              <p className="text-[10px] text-ds-t3 leading-snug truncate">Management Portal</p>
+              <p className="text-[10px] text-ds-t3 leading-snug truncate">{hrOnly ? "HR Portal" : "Management Portal"}</p>
             </div>
           )}
         </div>
 
-        {/* Overview — the separate command-centre plane, styled apart from the nav rows */}
-        <div className="px-2 pt-3">
+        {/* Overview — the separate command-centre plane, styled apart from the nav rows.
+            Not on the HR-only portal: it is a company-performance view, not an HR one. */}
+        {!hrOnly && <div className="px-2 pt-3">
           <Link
             href="/overview"
             title="Overview — company command centre"
@@ -87,10 +96,10 @@ export function DsSidebar() {
             <LayoutGrid className="h-[18px] w-[18px] shrink-0 text-ds-gold" strokeWidth={1.8} />
             {expanded && <span className="flex-1 truncate">Overview</span>}
           </Link>
-        </div>
+        </div>}
 
         <nav className="flex-1 min-h-0 overflow-y-auto px-2 pt-2 pb-3">
-          {primaryNav.map((item) => {
+          {mainNav.map((item) => {
             const active = item.href === activeHref;
             const showGroup = expanded && item.group && item.group !== prevGroup;
             if (item.group) prevGroup = item.group;
@@ -130,6 +139,7 @@ export function DsSidebar() {
             );
           })}
 
+          {extraNav.length > 0 && <>
           <div className="h-px bg-ds-line mx-[13px] my-2.5" />
 
           {/* More */}
@@ -147,7 +157,7 @@ export function DsSidebar() {
             {expanded && (
               <>
                 <span className="flex-1 text-left">More</span>
-                <span className="text-[10px] text-ds-t3">{moreNav.length}</span>
+                <span className="text-[10px] text-ds-t3">{extraNav.length}</span>
                 <ChevronRight className={cn("h-3.5 w-3.5 text-ds-t3 transition-transform", moreOpen && "rotate-90")} />
               </>
             )}
@@ -155,7 +165,7 @@ export function DsSidebar() {
 
           {expanded && moreOpen && (
             <div className="mt-1 mx-0.5 rounded-[6px] border border-ds-line bg-ds-card p-1.5 grid grid-cols-3 gap-1">
-              {moreNav.map((item) => {
+              {extraNav.map((item) => {
                 const active = item.href === activeHref;
                 const Icon = item.icon;
                 return (
@@ -175,6 +185,7 @@ export function DsSidebar() {
               })}
             </div>
           )}
+          </>}
         </nav>
 
         {!mobile && (

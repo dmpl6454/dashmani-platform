@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { cn } from "@dashmani/ui";
 import { isDsRoute } from "@/lib/ds-routes";
+import { useAuth } from "@/lib/auth";
+import { canAccessPath, isHrOnly } from "@/lib/roles";
 
 /* ── All navigable pages ── */
 const SEARCH_ITEMS = [
@@ -54,6 +56,13 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const router = useRouter();
   // Dark ("ds") skin on redesigned pages; classic pages keep the original light palette.
   const dark = isDsRoute(usePathname() ?? "");
+  // The HR-only portal lists only its own pages (lib/roles.ts), plus its home.
+  const { user } = useAuth();
+  const items = useMemo(() => {
+    if (!isHrOnly(user)) return SEARCH_ITEMS;
+    const hrHome = { ...SEARCH_ITEMS[0], id: "hr-home", label: "HR Home", href: "/hr" };
+    return [hrHome, ...SEARCH_ITEMS.filter((i) => canAccessPath(user, i.href))];
+  }, [user]);
   const [query, setQuery]   = useState("");
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -70,10 +79,10 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   /* Build result groups */
   const groups = useMemo(() => {
     if (!query.trim()) {
-      return [{ heading: "Quick navigation", items: SEARCH_ITEMS.slice(0, 8) }];
+      return [{ heading: "Quick navigation", items: items.slice(0, 8) }];
     }
     const q = query.toLowerCase();
-    const pageHits = SEARCH_ITEMS.filter(i => i.label.toLowerCase().includes(q));
+    const pageHits = items.filter(i => i.label.toLowerCase().includes(q));
     const out: { heading: string; items: typeof SEARCH_ITEMS }[] = [];
     const pages = pageHits.filter(i => i.group === "Pages");
     const tools = pageHits.filter(i => i.group === "Tools");
@@ -81,7 +90,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     if (tools.length) out.push({ heading: "Tools", items: tools });
     if (!out.length)  out.push({ heading: "No results", items: [] });
     return out;
-  }, [query]);
+  }, [query, items]);
 
   const flat = groups.flatMap(g => g.items);
 

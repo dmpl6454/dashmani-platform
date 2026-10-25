@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { guardTargetUser } from "../middleware/role-guard";
 import { validate } from "../middleware/validate";
 import { adminReportFilterSchema, todayIST, istMidnight, dateToIST } from "@dashmani/shared";
 import {
@@ -199,7 +200,7 @@ router.get(
             status: "ACTIVE",
             deletedAt: null,
             roles: {
-              some: { role: { name: { notIn: ["Super Admin", "Admin"] } } },
+              some: { role: { name: { notIn: ["Super Admin", "Admin", "HR Manager"] } } },
             },
           },
           select: { id: true, name: true, orgUnitId: true },
@@ -1004,6 +1005,7 @@ router.put(
   "/admin/employees/:userId/approve",
   authenticate,
   requirePermission("employees", "edit"),
+  guardTargetUser("userId"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await approveEmployee(req.params.userId);
@@ -1019,6 +1021,7 @@ router.put(
   "/admin/employees/:userId/reject",
   authenticate,
   requirePermission("employees", "edit"),
+  guardTargetUser("userId"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await rejectEmployee(req.params.userId);
@@ -1034,6 +1037,7 @@ router.put(
   "/admin/employees/:userId/profile",
   authenticate,
   requirePermission("employees", "edit"),
+  guardTargetUser("userId"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await adminUpdateProfile(req.params.userId, req.body);
@@ -1049,6 +1053,7 @@ router.put(
   "/admin/employees/:userId/profile-data",
   authenticate,
   requirePermission("employees", "edit"),
+  guardTargetUser("userId"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const allowed = [

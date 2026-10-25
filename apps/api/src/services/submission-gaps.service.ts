@@ -97,9 +97,10 @@ export const MIN_DAY = "2000-01-01";
 export const MAX_DAY = "2100-12-31";
 /**
  * People whose ONLY roles are these are not counted (the employeeWhere convention).
- * ⚠️ Must match the literal `r.name NOT IN ('Super Admin', 'Admin')` in the summary SQL.
+ * ⚠️ Must match the literal `r.name NOT IN ('Super Admin', 'Admin', 'HR Manager')` in the summary SQL.
+ * HR Manager is a management role like Admin: a pure HR Manager posts no links.
  */
-const ADMIN_ONLY_ROLES = ["Super Admin", "Admin"];
+const ADMIN_ONLY_ROLES = ["Super Admin", "Admin", "HR Manager"];
 
 export interface SubmissionGapsParams {
   startDate: string;
@@ -413,7 +414,7 @@ export function submissionGapsSql(p: SubmissionGapsParams): Prisma.Sql {
         AND u.deleted_at IS NULL
         AND EXISTS (
           SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-          WHERE ur.user_id = u.id AND r.name NOT IN ('Super Admin', 'Admin')
+          WHERE ur.user_id = u.id AND r.name NOT IN ('Super Admin', 'Admin', 'HR Manager')
         )
         AND (${employeeId}::text IS NULL OR u.id = ${employeeId}::text)
         AND (

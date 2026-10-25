@@ -30,6 +30,13 @@
       "cwd": "apps/internal"
     },
     {
+      "name": "sales",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--port", "3006"],
+      "port": 3006,
+      "cwd": "apps/sales"
+    },
+    {
       "name": "client",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["next", "dev", "--port", "3001"],

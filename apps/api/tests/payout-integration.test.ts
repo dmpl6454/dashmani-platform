@@ -26,12 +26,13 @@ import { notifyAdminByEmail } from "../src/services/email.service";
 import { clearPayoutAlertMarkersForTests, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { settlePayoutKicksForTests } from "../src/services/campaign/payment.service";
 import { expireOffer, withdrawOffer } from "../src/services/creator/creator-offer.service";
-import { onCreatorLinkVerified } from "../src/services/creator/payout-ledger";
+import { onCreatorLinkVerified, payoutRefundGuard } from "../src/services/creator/payout-ledger";
 import { RELEASE_SWITCH_KEY, executePlannedPayout, reservedPaiseForPayment } from "../src/services/creator/payout.service";
 import { runRefundDueJob, settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
 import { findStuckPayouts, resetCreatorPayoutsCronForTests, runCreatorPayoutsTick } from "../src/cron/creator-payouts.cron";
 import { FakeRazorpay, is, type FakeCall } from "./fake-razorpay-route";
 import { generateCreatorToken } from "./helpers";
+import { payoutHint, pausedChip } from "@dashmani/shared/src/payouts/staff-ui";
 import {
   DAY,
   HOUR,
@@ -977,5 +978,171 @@ describe("⚠️ suspending a creator pauses their payouts (reinstating does not
     const resume = await request(app).post(`/v1/admin/creator-payouts/${p.id}/resume`).set("Authorization", admin()).send({});
     expect(resume.status).toBe(200);
     expect((await payoutOf(mine.id)).pausedAt).toBeNull();
+  });
+
+  it("⚠️ r2 #R10: a payout already RELEASED when the creator is suspended is paused, but the pause stops nothing: the alert, the hint and the chip say so and point at Reverse", async () => {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    await verifiedOffer(w, c.id);
+    await onCreatorLinkVerified(c.id, { type: "staff", id: staff.staffId });
+    const pid = (await payoutOf(c.id)).id;
+    expect((await request(app).post(`/v1/admin/creator-payouts/${pid}/release-now`).set("Authorization", admin()).send({})).status).toBe(200);
+    expect((await payoutOf(c.id)).status).toBe("released");
+
+    expect((await request(app).post(`/v1/admin/creators/${c.creatorId}/suspend`).set("Authorization", admin()).send({ note: "Posts that are not theirs" })).status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "released", pausedReason: "creator_suspended" });
+
+    // The alert counts it apart and tells staff to Reverse it; it never says nothing is paid out.
+    await flushPayoutAlertsForTests();
+    const calls = vi.mocked(notifyAdminByEmail).mock.calls.filter((m) => /suspended creator has 1 payout already released/.test(String(m[0])));
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0][0])).toMatch(/pausing does not stop it, reverse it now/);
+    const body = JSON.stringify(calls[0]);
+    // (The email escapes apostrophes.)
+    expect(body).toMatch(/Pausing does not stop Razorpay settling it to the creator(&#39;|')s bank/);
+    expect(body).toMatch(/take it back with Reverse while the money is still in the creator(&#39;|')s linked account/);
+    expect(body).toMatch(/Already released, still settling/);
+    expect(body).not.toMatch(/Nothing is paid out to this creator/);
+
+    // The queue row the staff page draws: it is in the Paused view, and its sentence and chip say the pause does not stop it.
+    const q = await request(app).get("/v1/admin/creator-payouts?filter=paused").set("Authorization", admin());
+    expect(q.status).toBe(200);
+    const row = q.body.data.rows.find((r: { id: string }) => r.id === pid);
+    expect(row).toBeTruthy();
+    expect(payoutHint(row)).toMatch(/Pausing does not stop this: Razorpay settles it whatever the pause says/);
+    expect(pausedChip(row)).toMatchObject({ holds: false, label: expect.stringMatching(/doesn't stop it/) });
+
+    // And that is what happens: Razorpay settles it while it is paused, and the worker records the settlement.
+    fake.settleTransfer((await payoutOf(c.id)).razorpayTransferId!, { utr: "UTR4R10SETTLED" });
+    const tick = await runCreatorPayoutsTick({ now: later(180) });
+    expect(tick.jobs.poll_settlement).toBeGreaterThanOrEqual(1);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "settled", pausedReason: "creator_suspended" });
+  });
+});
+
+// ── Re-review round 2, #R3: a manual_required payout that sent a create call but records no transfer is not a dead end for the refund ──
+
+describe("r2 #R3: a manual_required payout with no transfer recorded goes through the refund guard, and the engine proves it from a fresh listing", () => {
+  it("the guard: no transfer recorded → go ahead, whatever the attempts; a recorded transfer never reversed → a person decides", () => {
+    expect(payoutRefundGuard({ status: "manual_required", reversedAt: null, razorpayTransferId: null, attempts: 2 })).toBeNull();
+    expect(payoutRefundGuard({ status: "manual_required", reversedAt: null, razorpayTransferId: null, attempts: 0 })).toBeNull();
+    expect(payoutRefundGuard({ status: "manual_required", reversedAt: new Date(), razorpayTransferId: "trf_X", attempts: 2 })).toBeNull();
+    expect(payoutRefundGuard({ status: "manual_required", reversedAt: null, razorpayTransferId: "trf_X", attempts: 2 })).toMatchObject({ statusCode: 409, code: "PAYOUT_NEEDS_ATTENTION" });
+  });
+
+  /** A captured creator post whose payout went to manual_required after its create call was sent twice and never recorded a transfer. */
+  async function manualAfterSend(o: { transferAtRazorpay: boolean }) {
+    // Without a transfer at Razorpay: capture with the kick off, so nothing is ever created for this payout.
+    if (!o.transferAtRazorpay) vi.stubEnv("CREATOR_PAYOUT_CRON_ENABLED", "0");
+    const w = await paid({ pages: [{}], network: [100_000] });
+    vi.stubEnv("CREATOR_PAYOUT_CRON_ENABLED", "");
+    const c = w.creators[0];
+    const transferId = (await payoutOf(c.id)).razorpayTransferId;
+    await setPayout(c.id, { status: "manual_required", errorCode: "transfer_unknown_after_retry", razorpayTransferId: null, attempts: 2, transferRequestedAt: new Date(Date.now() - 30 * MIN), nextAttemptAt: null });
+    await openOffer(w, c.id, { status: "accepted" });
+    return { w, c, transferId };
+  }
+
+  it("an empty listing: refundItem voids the payout and refunds the post once (no transfer is ever made)", async () => {
+    const { w, c } = await manualAfterSend({ transferAtRazorpay: false });
+    const before = fake.calls.length;
+    const r = await staffPost(`${w.booking.id}/items/${c.id}/refund`);
+    expect(r.status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "void", voidReason: "item_refunded" });
+    expect((await itemOf(c.id)).status).toBe("refunded");
+    const log = callLog(fake).slice(before);
+    expect(countOf(log, "refund.create")).toBe(1);
+    expect(countOf(callLog(fake), "transfer.create")).toBe(0);
+    expect(fakeRefunds(fake, w).filter((x) => x.amount === c.price)).toHaveLength(1);
+  });
+
+  it("⚠️ a live transfer carrying the payout's id: the payout is parked and tracks it again, and nothing is refunded", async () => {
+    const { w, c, transferId } = await manualAfterSend({ transferAtRazorpay: true });
+    expect(transferId).not.toBeNull();
+    const before = fake.calls.length;
+    const r = await staffPost(`${w.booking.id}/items/${c.id}/refund`);
+    expect(r.status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "duplicate_transfer", razorpayTransferId: transferId });
+    expect((await itemOf(c.id)).status).toBe("refund_due");
+    expect(countOf(callLog(fake).slice(before), "refund.create")).toBe(0);
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: c.id } })).toBe(0);
+  });
+});
+
+// ── Re-review round 2, #R5: a hand payment is only for a post that went live and was verified; the post that never did is refunded ──
+
+describe("⚠️ r2 #R5: a payout whose post never went live is never paid by hand, and refunding the post still works", () => {
+  const payoutPost = (payoutId: string, action: string, body: object = {}) =>
+    request(app).post(`/v1/admin/creator-payouts/${payoutId}/${action}`).set("Authorization", `Bearer ${staff.admin}`).send(body);
+
+  /** A captured creator post whose payout was never set aside (the kick off): planned, and the post never offered. */
+  async function neverHeld() {
+    vi.stubEnv("CREATOR_PAYOUT_CRON_ENABLED", "0");
+    const w = await paid({ pages: [{}], network: [100_000] });
+    vi.stubEnv("CREATOR_PAYOUT_CRON_ENABLED", "");
+    const c = w.creators[0];
+    expect((await payoutOf(c.id)).status).toBe("planned");
+    return { w, c, pid: (await payoutOf(c.id)).id };
+  }
+
+  it("given up on (the worker's manual_required): 'Mark paid manually' is refused and records nothing; Refund on the campaign page voids it and refunds the post once", async () => {
+    const { w, c, pid } = await neverHeld();
+    await setPayout(c.id, { status: "manual_required", errorCode: "transfer_never_created" });
+    const before = fake.calls.length;
+    const refused = await payoutPost(pid, "mark-manual-paid", { reference: "UTR778899200" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toMatch(/\[post_not_live\]$/);
+    expect(fake.calls.length).toBe(before); // refused before any Razorpay read
+    expect(await payoutOf(c.id)).toMatchObject({ status: "manual_required", manualReference: null, manualPaidAt: null });
+
+    const r = await staffPost(`${w.booking.id}/items/${c.id}/refund`);
+    expect(r.status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "void", voidReason: "item_refunded" });
+    expect((await itemOf(c.id)).status).toBe("refunded");
+    expect(countOf(callLog(fake).slice(before), "refund.create")).toBe(1);
+    expect(fakeRefunds(fake, w).filter((x) => x.amount === c.price)).toHaveLength(1);
+    expect(countOf(callLog(fake), "transfer.create")).toBe(0);
+  });
+
+  it("planned: a person cannot switch it to a bank transfer (nothing is owed); Refund voids it", async () => {
+    const { w, c, pid } = await neverHeld();
+    const refused = await payoutPost(pid, "require-manual", { reason: "account not ready" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toMatch(/\[post_not_live\]$/);
+    expect((await payoutOf(c.id)).status).toBe("planned");
+    expect((await staffPost(`${w.booking.id}/items/${c.id}/refund`)).status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "void" });
+    expect((await itemOf(c.id)).status).toBe("refunded");
+  });
+
+  it("a post owed a refund whose payout parks tells staff to take it back or stop it, and NEVER to pay the creator by hand (that would make the refund impossible)", async () => {
+    const { c } = await neverHeld();
+    await setPayout(c.id, { status: "needs_attention", errorCode: "transfer_unknown_after_retry", razorpayTransferId: null, attempts: 2, transferRequestedAt: new Date(Date.now() - 30 * MIN), nextAttemptAt: null });
+    await prisma.campaignBookingItem.update({ where: { id: c.id }, data: { status: "refund_due", updatedAt: new Date(Date.now() - HOUR) } });
+    expect(await runRefundDueJob({ now: later(1) })).toMatchObject({ checked: 1, blocked: 1, refunded: 0 });
+    await flushPayoutAlertsForTests();
+    const alert = vi.mocked(notifyAdminByEmail).mock.calls.find((m) => String(m[0]) === "A creator's post can't be refunded yet")!;
+    const todo = (alert[1] as Array<{ label: string; value: string }>).find((d) => d.label === "What to do")!.value;
+    expect(todo).toMatch(/Reverse/);
+    expect(todo).toMatch(/Never pay the creator by hand/);
+    expect(todo).not.toMatch(/pay the creator by hand, and the refund then goes out by itself/);
+  });
+
+  it("parked with no transfer (requested twice, nothing ever showed up): 'Stop this payout' moves it once a fresh listing shows no money out; it is never paid by hand; the post is then refunded once", async () => {
+    const { w, c, pid } = await neverHeld();
+    await setPayout(c.id, { status: "needs_attention", errorCode: "transfer_unknown_after_retry", razorpayTransferId: null, attempts: 2, transferRequestedAt: new Date(Date.now() - 30 * MIN), nextAttemptAt: null });
+    // A refund cannot start on a parked payout: a person stops it first.
+    expect((await staffPost(`${w.booking.id}/items/${c.id}/refund`)).status).toBe(409);
+    const stopped = await payoutPost(pid, "require-manual", { reason: "no transfer at Razorpay" });
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.data.payout.status).toBe("manual_required");
+    expect((await payoutPost(pid, "mark-manual-paid", { reference: "UTR778899201" })).status).toBe(409);
+    const before = fake.calls.length;
+    const r = await staffPost(`${w.booking.id}/items/${c.id}/refund`);
+    expect(r.status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "void", voidReason: "item_refunded" });
+    expect((await itemOf(c.id)).status).toBe("refunded");
+    expect(countOf(callLog(fake).slice(before), "refund.create")).toBe(1);
+    expect(countOf(callLog(fake), "transfer.create")).toBe(0);
   });
 });

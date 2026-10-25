@@ -32,7 +32,7 @@ export interface PayoutDetail {
   result?: { ok: boolean; outcome: string; reason?: string; note?: string };
 }
 
-export type PayoutActionPath = "pause" | "resume" | "retry-transfer" | "reverse" | "release-now" | "require-manual" | "mark-manual-paid";
+export type PayoutActionPath = "pause" | "resume" | "retry-transfer" | "reverse" | "release-now" | "require-manual" | "mark-manual-paid" | "attest-no-transfer" | "adopt-transfer";
 
 const unwrap = <T,>(u: string) => apiFetch<{ data: T }>(u).then((r) => r.data);
 

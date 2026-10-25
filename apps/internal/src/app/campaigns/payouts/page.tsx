@@ -5,7 +5,7 @@ import { ChevronDown, ChevronLeft, ChevronUp, Download, PauseCircle, RefreshCw }
 import { downloadPayoutsCsv, setReleaseSwitch, useBookingPayouts, usePayoutQueue, useReleaseSwitch, type PayoutFilterKey, type PayoutRow } from "@/lib/hooks/use-creator-payouts";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { BTN_GHOST, BTN_RED, CARD, ErrorBar, PageHead, PlatformDot, fmtWhen, rupees } from "../_ds";
-import { PAYOUT_CHIPS, ageShort, ago, attentionCount, isPayoutFilterKey, lastEventText, payoutCounts, payoutInFilter, payoutViewOrder, releaseChangeLine, releaseOnOf, sortPayoutsForView, switchBars, type PayoutActionKey } from "../_payout";
+import { PAYOUT_CHIPS, RELEASE_SWITCH_TEXT, ageShort, ago, attentionCount, isPayoutFilterKey, lastEventText, payoutCounts, payoutInFilter, payoutViewOrder, releaseChangeLine, releaseOnOf, sortPayoutsForView, switchBars, type PayoutActionKey } from "../_payout";
 import { ActionDialog, NoticeBar, PausedChip, PayoutActions, PayoutDetailView, PayoutHint, PayoutPill, ReleasePausedBanner, usePayoutDialog, type DialogSpec, type Notice } from "../_payout-ui";
 
 // Creator payouts: the staff queue. Everything a person has to look at between "the client paid" and "the creator's bank was paid", and
@@ -36,8 +36,8 @@ function releaseSwitchSpec(to: "on" | "off"): DialogSpec {
         danger: true,
         body: (
           <>
-            <p>No creator payout will be released while this is off: nobody is paid out. It takes effect on the next release, within seconds, with no restart.</p>
-            <p>Money already set aside stays set aside. Transfers, reversals and refunds carry on; a release that has already been requested finishes. You can switch releases back on here at any time.</p>
+            <p>{RELEASE_SWITCH_TEXT.pauseDialog[0]}</p>
+            <p className="text-ds-gold">{RELEASE_SWITCH_TEXT.pauseDialog[1]}</p>
           </>
         ),
         run: () => setReleaseSwitch("off"),
@@ -302,7 +302,7 @@ export default function CreatorPayoutsPage() {
             setErr("");
             setNotice(
               result === "off"
-                ? { tone: "info", text: "All releases are paused. Nothing will be released until you resume them." }
+                ? { tone: "info", text: RELEASE_SWITCH_TEXT.pausedNotice }
                 : { tone: "ok", text: to === "on" ? "Releases are switched back on. Due payouts are released on the worker's next run, each after its checks." : "Done." },
             );
             void sw.mutate();
@@ -341,7 +341,7 @@ function PayoutRowItem({ row, releaseOn, onOpen }: { row: PayoutRow; releaseOn: 
         <div className="col-span-2 md:col-span-1 md:col-start-4 md:row-start-1 min-w-0 text-[12px]">
           <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
             <PayoutPill row={row} />
-            {row.pausedAt && !["settled", "paid_manual", "void", "reversed"].includes(row.status) && <PausedChip />}
+            <PausedChip row={row} />
           </div>
           <PayoutHint row={row} releaseOn={releaseOn} />
         </div>

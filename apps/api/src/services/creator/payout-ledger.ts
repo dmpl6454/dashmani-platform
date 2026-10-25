@@ -357,7 +357,9 @@ export interface PayoutRefundFacts {
  *   released, settlement_failed, settled, paid_manual
  *                                             → 409 PAYOUT_PAID_OUT: the money has left (or is leaving) for the creator's bank.
  *                                               A person reverses it from the payout queue first, then refunds.
- *   needs_attention, manual_required (unproven) → 409 PAYOUT_NEEDS_ATTENTION: the facts and our row disagree; a person decides.
+ *   needs_attention, manual_required with a recorded transfer that was never reversed
+ *                                             → 409 PAYOUT_NEEDS_ATTENTION: the facts and our row disagree; a person decides.
+ *   (manual_required with NO transfer recorded goes ahead, whatever its attempts: the engine proves it from a fresh listing after the claim.)
  */
 export function payoutRefundGuard(p: PayoutRefundFacts | null | undefined): AppError | null {
   if (!p) return null;
@@ -371,8 +373,12 @@ export function payoutRefundGuard(p: PayoutRefundFacts | null | undefined): AppE
     case "transfer_requested":
       return null;
     case "manual_required":
-      // Voidable only when no money is out or it came back (the engine's own proof in reverseForRefund).
-      return p.reversedAt !== null || (p.razorpayTransferId === null && p.attempts === 0)
+      // Through to the engine's own proof (reverseForRefund → voidAfterAudit) whenever it CAN be proven from Razorpay: reversed, or no transfer id
+      // recorded. A create call that was sent (attempts > 0) with no id recorded is judged AFTER the claim by a fresh listing taken long enough
+      // after the last request: a live transfer carrying the payout's id parks it (tracked again and taken back), an unread list waits, and only a
+      // list showing none voids it. Refusing it here would strand the brand's refund for good (no staff action voids a manual_required payout).
+      // A recorded transfer that was never reversed stays a person's decision.
+      return p.reversedAt !== null || p.razorpayTransferId === null
         ? null
         : new AppError(409, "PAYOUT_NEEDS_ATTENTION", "This creator's payout is waiting to be paid by hand and may already have money out, so it can't be refunded from here. Check it in the payout queue first. Nothing has been changed.");
     case "release_requested":

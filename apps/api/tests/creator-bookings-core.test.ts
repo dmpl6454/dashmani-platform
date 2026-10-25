@@ -55,7 +55,7 @@ import { creatorConfig } from "../src/services/creator/creator-config";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
 import { encryptToken } from "../src/utils/token-crypto";
 import { generateClientToken, generateCreatorToken, generateHrToken, generateToken } from "./helpers";
-import { FakeRazorpay } from "./fake-razorpay-route";
+import { FakeRazorpay, is } from "./fake-razorpay-route";
 import { holdPayoutsOf, routeTransfersToFake } from "./payout-fixtures";
 import { runRefundDueJob } from "../src/services/creator/creator-refund.service";
 
@@ -1896,6 +1896,7 @@ describe("creator bookings, the core", () => {
       return { page, paid, item };
     }
     const reversals = () => route.calls.filter((c) => c.method === "POST" && /\/reversals$/.test(c.path));
+    let maybeSeq = 0;
     /** An approved booking whose creator item waits for the creator, with the offer that goes with it. */
     async function approvedWithOffer(state: "planned" | "held", o: { offerStatus?: string; linkSubmitted?: boolean } = {}) {
       const { page, paid, item } = await payoutItem(state);
@@ -1982,10 +1983,38 @@ describe("creator bookings, the core", () => {
     });
 
     it("manual_required that may have moved money is a person's decision, not a refund's; one that provably never sent a transfer is voided", async () => {
-      const unproven = await payoutItem("manual_required");
-      await prisma.creatorPayout.updateMany({ where: { bookingItemId: unproven.item.id }, data: { attempts: 2, razorpayTransferId: "trf_maybe" } });
+      /** A manual_required payout whose request was sent twice and that records transfer `trf_maybe`, its last request `agoMin` minutes ago. */
+      async function maybeMoved(agoMin: number) {
+        const x = await payoutItem("manual_required");
+        const p = await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: x.item.id } });
+        if (!route.payments.has(p.razorpayPaymentId)) route.seedPayment({ id: p.razorpayPaymentId, amount: p.itemPricePaise });
+        const id = `trf_maybe${++maybeSeq}`;
+        // ALIVE at Razorpay (processed, on hold) and carrying the payout's id, but not on the payment's listing yet (Razorpay's list lags).
+        route.seedTransfer({ id, source: p.razorpayPaymentId, recipient: p.razorpayAccountId, amount: p.amountPaise, status: "processed", onHold: true, notes: { payout_id: p.id }, hidden: 10 });
+        await prisma.creatorPayout.update({ where: { id: p.id }, data: { attempts: 2, razorpayTransferId: id, transferRequestedAt: new Date(Date.now() - agoMin * 60_000) } });
+        return { ...x, payoutId: p.id, transferId: id };
+      }
+      const statusOf = async (itemId: string) => (await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: itemId } })).status;
+
+      // Its transfer is read and is alive (not failed, not reversed): nothing proves the money is back, so a PERSON decides; nothing is voided.
+      const unproven = await maybeMoved(15);
       await expect(ensurePayoutRefundable(unproven.item.id)).rejects.toMatchObject({ statusCode: 409, code: "PAYOUT_NEEDS_ATTENTION" });
-      expect((await prisma.creatorPayout.findFirstOrThrow({ where: { bookingItemId: unproven.item.id } })).status).toBe("manual_required");
+      expect(await statusOf(unproven.item.id)).toBe("manual_required");
+
+      // Its transfer cannot be read: the refund WAITS (asked again by the worker), it is not voided and nobody is asked to decide yet.
+      const unread = await maybeMoved(15);
+      route.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+      await expect(ensurePayoutRefundable(unread.item.id)).rejects.toMatchObject({ statusCode: 409, code: "PAYOUT_BUSY" });
+      expect(await statusOf(unread.item.id)).toBe("manual_required");
+
+      // Its last request was sent minutes ago (a request can still be on its way in): it waits too, and nothing is even read yet.
+      const recent = await maybeMoved(2);
+      const calls = route.calls.length;
+      await expect(ensurePayoutRefundable(recent.item.id)).rejects.toMatchObject({ statusCode: 409, code: "PAYOUT_BUSY" });
+      expect(route.calls.length).toBe(calls);
+      expect(await statusOf(recent.item.id)).toBe("manual_required");
+      expect(route.writes()).toHaveLength(0);
+      expect(refundPosts()).toHaveLength(0);
 
       const proven = await payoutItem("manual_required");
       await prisma.creatorPayout.updateMany({ where: { bookingItemId: proven.item.id }, data: { attempts: 0, razorpayTransferId: null } });

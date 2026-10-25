@@ -263,4 +263,18 @@ router.post("/admin/creator-payouts/:id/mark-manual-paid", ...gate, validate(man
   return success(res, await payouts.staffMarkManualPaid(req.params.id, staffId(req), { reference: req.body.reference, note: req.body.note }));
 }));
 
+/**
+ * The two things staff can say after looking in the Razorpay dashboard, for a payout whose transfer nobody can see (Razorpay's list of the
+ * payment's transfers could not be read, or a repeated request never showed up). Neither moves money: an attestation is recorded with the staff
+ * id, and an adopted transfer is READ and recorded only if it is this payout's.
+ */
+router.post("/admin/creator-payouts/:id/attest-no-transfer", ...gate, validate(z.object({ note: safeString.pipe(z.string().min(1).max(300)) })), asyncHandler(async (req, res) => {
+  return success(res, await payouts.staffAttestNoTransfer(req.params.id, staffId(req), req.body.note));
+}));
+
+const transferIdSchema = z.object({ transferId: z.string().trim().regex(/^trf_[A-Za-z0-9]{4,40}$/, "A Razorpay transfer id looks like trf_ followed by letters and digits") });
+router.post("/admin/creator-payouts/:id/adopt-transfer", ...gate, validate(transferIdSchema), asyncHandler(async (req, res) => {
+  return success(res, await payouts.staffAdoptTransfer(req.params.id, staffId(req), req.body.transferId));
+}));
+
 export default router;

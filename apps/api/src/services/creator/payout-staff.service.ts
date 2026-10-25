@@ -18,13 +18,33 @@
  */
 import { prisma, Prisma } from "@dashmani/db";
 import { LIVE_ITEM_STATUSES } from "@dashmani/shared";
+// The staff pages' own words for a status and a pause reason, so a refusal names them exactly as the row behind the dialog does. Imported by
+// module path: the module is pure (no React, no fetch).
+import { pauseText, payoutStatusView } from "@dashmani/shared/src/payouts/staff-ui";
 import { AppError } from "../../middleware/error-handler";
 import { csvCell } from "../report-links-csv.service";
 import { createAuditLog } from "../audit.service";
 import { razorpayConfig } from "../campaign/config";
 import { creatorConfig } from "./creator-config";
 import { onCreatorLinkVerified } from "./payout-ledger";
-import { RELEASE_SWITCH_KEY, executePlannedPayout, markManualPaid, pausePayout, releasePayout, releaseSwitchOn, requireManualPayment, resumePayout, retryFailedPayout, reversePayout, type PayoutActor, type StepResult } from "./payout.service";
+import {
+  RELEASE_SWITCH_KEY,
+  adoptTransferByStaff,
+  attestNoTransfer,
+  confirmHold,
+  executePlannedPayout,
+  markManualPaid,
+  pausePayout,
+  releasePayout,
+  releaseSwitchOn,
+  requireManualPayment,
+  resumePayout,
+  retryFailedPayout,
+  reversePayout,
+  scrubStaffText,
+  type PayoutActor,
+  type StepResult,
+} from "./payout.service";
 
 // ── Filters ─────────────────────────────────────────────────────────────────────
 
@@ -128,6 +148,8 @@ const ROW_SELECT = {
   reversedAt: true,
   errorCode: true,
   attempts: true,
+  // Read only to say WHETHER a transfer is recorded (`hasTransfer`): the id itself is dropped in decorate() and reaches only the detail.
+  razorpayTransferId: true,
   // The references that answer "was the creator paid?" for a finished payout: Razorpay's settlement UTR, or the reference staff recorded for a bank
   // transfer. Both are bank transaction references, never an account detail (a reference shaped like a PAN or an IFSC is refused when it is recorded).
   settlementUtr: true,
@@ -173,6 +195,8 @@ export interface PayoutRow {
   itemStatus: string | null;
   /** When staff verified the creator's link. Set on a `held` row with no `releaseAfter` = verified, release not scheduled yet (the worker does it). */
   linkVerifiedAt: Date | null;
+  /** Whether a Razorpay transfer is recorded on the payout (the id is only in the detail): decides "No other transfer" and "reverse it first". */
+  hasTransfer: boolean;
   lastEvent: { kind: string; toStatus: string | null; note: string | null; at: Date } | null;
 }
 
@@ -196,11 +220,12 @@ async function decorate(rows: RowRecord[]): Promise<PayoutRow[]> {
   const item = new Map(items.map((i) => [i.id, i]));
   const booking = new Map(bookings.map((b) => [b.id, b.name]));
   const event = new Map(events.map((e) => [e.payoutId, e]));
-  return rows.map((r) => {
+  return rows.map(({ razorpayTransferId, ...r }) => {
     const it = item.get(r.bookingItemId);
     const ev = event.get(r.id);
     return {
       ...r,
+      hasTransfer: razorpayTransferId !== null,
       bookingName: booking.get(r.bookingId) ?? null,
       creatorName: creator.get(r.creatorId) ?? null,
       pageName: it?.accountName ?? null,
@@ -330,6 +355,19 @@ export const PAYOUT_CSV_HEADERS = [
 const inr = (paise: number) => (paise / 100).toFixed(2);
 const iso = (d: Date | null) => (d ? d.toISOString() : "");
 
+/**
+ * A bank transaction reference as a CSV cell that a spreadsheet keeps as TEXT. A 12-digit IMPS or UPI reference written bare is read as a
+ * number by Excel: shown as 4.23612E+11, and every digit past the 15th becomes a zero once the file is saved. A reference of digits and
+ * separators only ("2026-10-18", "12/10") is turned into a date the same way. Those are written as the formula ="…", which a spreadsheet
+ * shows as the plain text inside it. That is safe because what is inside can only be digits and the separators a reference may carry (no
+ * quote, nothing a formula could use). Anything else (it has a letter, or it is not reference-shaped) is the ordinary formula-guarded cell.
+ */
+const NUMERIC_LOOKING_REFERENCE = /^[0-9][0-9 _./:#-]{0,99}$/;
+export function referenceCsvCell(v: string | null): string {
+  if (v && NUMERIC_LOOKING_REFERENCE.test(v)) return `"=""${v}"""`;
+  return csvCell(v);
+}
+
 export function payoutCsvLine(r: PayoutRow): string {
   return (
     [
@@ -358,12 +396,11 @@ export function payoutCsvLine(r: PayoutRow): string {
       r.lastEvent ? `${r.lastEvent.kind}${r.lastEvent.toStatus ? ` -> ${r.lastEvent.toStatus}` : ""}` : "",
       r.itemStatus,
       iso(r.linkVerifiedAt),
-      r.settlementUtr,
-      r.manualReference,
-      iso(r.manualPaidAt),
     ]
       // Every cell is formula-guarded: a creator's name and a page's name are text somebody else chose.
       .map(csvCell)
+      // The two bank references stay text in a spreadsheet (referenceCsvCell); the time the hand payment was recorded is an ordinary cell.
+      .concat([referenceCsvCell(r.settlementUtr), referenceCsvCell(r.manualReference), csvCell(iso(r.manualPaidAt))])
       .join(",") + "\r\n"
   );
 }
@@ -423,7 +460,7 @@ const WHY: Record<string, string> = {
   not_planned: "its transfer has already been requested",
   not_manual_required: "only a payout marked as to-be-paid-by-bank-transfer can be recorded as paid",
   not_reversible: "it is not in a state where its transfer can be taken back",
-  retry_disabled: "a refund already exists on the brand's payment, so Razorpay can no longer transfer from it: pay the creator by bank transfer instead",
+  retry_disabled: "a refund already exists on the brand's payment, so Razorpay can no longer transfer from it: if the post is live and verified, pay the creator by bank transfer instead; if it never went live, nothing is owed, so refund the post",
   transfer_still_active: "a transfer for it is still alive at Razorpay (reverse it, or wait for it)",
   waiting: "it is waiting for something that has not happened yet",
   disabled: "new transfers are switched off, or Razorpay is not configured",
@@ -462,7 +499,7 @@ const WHY: Record<string, string> = {
   account_unchecked: "the creator's payout account could not be read at Razorpay",
   creator_suspended: "the creator is suspended: nothing is paid to a suspended creator",
   creator_not_active: "the creator's account is not in good standing: nothing is paid until a person has looked at it",
-  post_not_live: "the post is not live any more (it was withdrawn, declined or refunded), or the client has been refunded for it, so there is nothing to pay the creator for",
+  post_not_live: "the creator's post is not live and verified (it never went live, or it was withdrawn, declined or refunded), or the client has been refunded for it, so there is nothing to pay the creator for (a post that is not going ahead is refunded from the campaign page)",
   reversal_failed_state: "its transfer could not be taken back in its current state: look at the payout in Razorpay",
   // refunds on the client's payment, and the proof that no transfer could still release money (the manual-payment and refund-ordering gates)
   refund_at_razorpay: "Razorpay lists a refund on the client's payment that this payout cannot account for, so nothing is released: look at the payment's refunds in the Razorpay dashboard",
@@ -475,9 +512,36 @@ const WHY: Record<string, string> = {
   not_reversed: "the transfer is fully reversed at Razorpay, but this payout has not recorded taking it back: it is being reconciled, try again in a few minutes",
   item_refunded: "the client has been (or is being) refunded for this post, so the creator is owed nothing for it",
   transfer_not_ours: "the transfer with that id at Razorpay is not this payout's (a different payout, account, payment or amount)",
+  // the two things a person can say after looking in the Razorpay dashboard (attest-no-transfer, adopt-transfer)
+  transfer_not_found: "Razorpay has no transfer with that id (check it was copied whole, starting with trf_)",
+  transfer_in_use: "that transfer is already recorded on another payout: look at both in the payout queue",
+  attest_too_soon: "its last request to Razorpay was less than 10 minutes ago, and a request can still be on its way in: look in the dashboard again in a few minutes",
+  transfer_recorded: "it already records a transfer at Razorpay, and only a payout whose request was sent twice and that is waiting on its check for a second transfer can be confirmed this way: take the recorded transfer back (Reverse), or wait for Razorpay's list of the payment's transfers",
   // resume
   dispute_open: "a dispute is still open on the brand's payment",
   not_paused: "it is not paused",
+  // a reversal Razorpay refused (rollbackReversal), and one with nothing to take back
+  reversal_refused: "Razorpay refused to take the transfer back, so it is held again as it was: look at the transfer in the Razorpay dashboard",
+  reversal_refused_after_release:
+    "Razorpay refused to take back money that was already released (it may have settled to the creator's bank, or the linked account no longer holds it): check the transfer and the linked account's balance in the Razorpay dashboard",
+  nothing_to_reverse: "no transfer was ever made for it, so there is nothing to take back",
+  // "Make transfer now" / "Retry transfer" waiting for something (decideTransferCreation), and Razorpay refusing the new transfer
+  paused: "it is paused: resume it first",
+  payment_not_captured: "the client's payment has not been captured yet",
+  booking_closed: "the campaign is not in a state where a creator can be paid (rejected, cancelled or refunded)",
+  item_closed: "the post is not going ahead (withdrawn, declined, refunded or failed), so nothing is transferred for it",
+  account_not_ready: "the creator's payout account is not activated at Razorpay yet",
+  amount_too_small: "the creator's share is below the smallest amount we transfer",
+  failed: "Razorpay refused the new transfer (its answer is in the payout's history)",
+};
+
+/**
+ * How a refusal ends when the payout still looks the same afterwards but the step wrote something anyway (an empty entry means the default:
+ * "Nothing was changed."). A refusal whose payout visibly moved says that instead (changeSince).
+ */
+const ENDING: Record<string, string> = {
+  reversal_refused: "No money moved; Razorpay's refusal is recorded in its history.",
+  failed: "No money was set aside; Razorpay's refusal is recorded in its history.",
 };
 
 /** The words above, for the test that holds every reason the engine can give against them (a reason without a sentence reads as "not possible in its current state"). */
@@ -487,10 +551,50 @@ function why(r: StepResult): string {
   return WHY[r.reason ?? ""] ?? WHY[r.outcome] ?? "it is not possible in its current state";
 }
 
-/** An action that the engine refused: a 404 for no such payout, else a 409 saying why in plain words (and the code, for the support trail). */
-function refusal(what: string, r: StepResult): never {
+/** What the staff UI sees of a payout around a refused step: whether it moved, whether it got paused, whether its release got scheduled. */
+type Snapshot = { status: string; pausedAt: Date | null; pausedReason: string | null; releaseAfter: Date | null } | null;
+const SNAPSHOT_SELECT = { status: true, pausedAt: true, pausedReason: true, releaseAfter: true } satisfies Prisma.CreatorPayoutSelect;
+const snapshot = (id: string): Promise<Snapshot> => prisma.creatorPayout.findUnique({ where: { id }, select: SNAPSHOT_SELECT });
+
+/**
+ * What changed on a payout between two reads, in a sentence (null = nothing the staff UI shows). A refused step can still write before it
+ * refuses (the release gate pauses the payment's payouts on a refund it cannot account for and parks a payout with a twin transfer; a reversal
+ * Razorpay refuses parks it), and the worker can move a payout meanwhile: the person must never read "Nothing was changed" then. It says
+ * what IS, not who did it.
+ */
+export function changeSince(before: Snapshot, after: Snapshot, reason?: string): string | null {
+  if (!before || !after) return null;
+  const parts: string[] = [];
+  if (after.status !== before.status) parts.push(`its status is now ${after.status === "held" ? "Held" : payoutStatusView({ status: after.status, releaseAfter: null }).label}`);
+  if (after.pausedAt && !before.pausedAt) {
+    parts.push(
+      reason === "refund_at_razorpay" && after.pausedReason === "external_refund"
+        ? "it is now paused, with every other payout of the same client payment that was still in flight, until a person has looked at the payment's refunds"
+        : `it is now paused (${pauseText(after.pausedReason)})`,
+    );
+  } else if (!after.pausedAt && before.pausedAt) parts.push("it is no longer paused");
+  if (after.releaseAfter && !before.releaseAfter) parts.push("its release is now scheduled");
+  if (parts.length === 0) return null;
+  const s = parts.join(", and ");
+  return `${s.charAt(0).toUpperCase()}${s.slice(1)}: see its history.`;
+}
+
+/**
+ * An action that the engine refused: a 404 for no such payout, else a 409 saying why in plain words (and the code, for the support trail,
+ * always LAST: the staff UI splits it off there). `change` is what the step changed all the same (changeSince); without one the refusal says
+ * "Nothing was changed.", or the reason's own ending when the step wrote something the row does not show.
+ */
+function refusal(what: string, r: StepResult, change?: string | null): never {
   if (r.outcome === "not_found") throw new AppError(404, "NOT_FOUND", "Payout not found");
-  throw new AppError(409, "PAYOUT_ACTION_REFUSED", `Not done: ${what}. ${why(r).replace(/^./, (c) => c.toUpperCase())}. Nothing was changed. [${r.reason ?? r.outcome}]`);
+  const code = r.reason ?? r.outcome;
+  const ending = change ?? ENDING[r.reason ?? ""] ?? ENDING[r.outcome] ?? "Nothing was changed.";
+  throw new AppError(409, "PAYOUT_ACTION_REFUSED", `Not done: ${what}. ${why(r).replace(/^./, (c) => c.toUpperCase())}. ${ending} [${code}]`);
+}
+
+/** Refuses with what the step changed since `before` (one more read, on a refusal only). */
+async function refusalAfter(what: string, id: string, before: Snapshot, r: StepResult): Promise<never> {
+  if (r.outcome === "not_found") refusal(what, r);
+  refusal(what, r, changeSince(before, await snapshot(id), r.reason));
 }
 
 async function done(id: string, r: StepResult, note?: string) {
@@ -510,19 +614,23 @@ export async function staffResume(id: string, staffId: string) {
   return done(id, r.ok ? r : { ...r, ok: true, outcome: "not_paused" });
 }
 
-/** A failed payout is retried (a fresh transfer, behind two empty listings); a planned one that never started is run now. */
+/**
+ * A failed payout is retried: a fresh transfer, made only after ONE read of Razorpay's list of the payment's transfers shows that no live
+ * transfer carries this payout's id (an unreadable list refuses it, unless a person attested that no transfer exists). A planned one that never
+ * started is run now.
+ */
 export async function staffRetryTransfer(id: string, staffId: string) {
-  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { status: true } });
+  const cur = await snapshot(id);
   if (!cur) throw new AppError(404, "NOT_FOUND", "Payout not found");
   if (cur.status === "failed") {
     const r = await retryFailedPayout(id, { actor: staffActor(staffId) });
     // An unknown answer is not a refusal: the payout is transfer_requested and the worker reads Razorpay.
-    if (!r.ok && r.outcome !== "unknown" && r.status !== "transfer_requested" && r.status !== "held") refusal("retry the transfer", r);
+    if (!r.ok && r.outcome !== "unknown" && r.status !== "transfer_requested" && r.status !== "held") await refusalAfter("retry the transfer", id, cur, r);
     return done(id, r);
   }
   if (cur.status === "planned") {
     const r = await executePlannedPayout(id, { actor: staffActor(staffId) });
-    if (!r.ok && r.outcome !== "unknown" && r.status === "planned") refusal("make the transfer", r);
+    if (!r.ok && r.outcome !== "unknown" && r.status === "planned") await refusalAfter("make the transfer", id, cur, r);
     return done(id, r);
   }
   throw new AppError(409, "PAYOUT_ACTION_REFUSED", `Not done: retry the transfer. Only a failed or a planned payout can be retried (this one is ${cur.status}). Nothing was changed.`);
@@ -536,28 +644,35 @@ export async function staffRetryTransfer(id: string, staffId: string) {
 export async function staffReverse(id: string, staffId: string, reason?: string) {
   // A payout that has no transfer has nothing to take back (a result that stayed unknown and was parked, for one): asking the engine would
   // claim the row, fail to find a transfer, roll back, overwrite the real reason it was parked and send an alert. Refused up front, nothing touched.
-  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { status: true, razorpayTransferId: true } });
+  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { ...SNAPSHOT_SELECT, razorpayTransferId: true } });
   if (cur && !cur.razorpayTransferId && ["needs_attention", "held", "released", "settlement_failed"].includes(cur.status)) {
     refusal("take this payout back", { ok: false, outcome: "refused", payoutId: id, status: cur.status, calls: 0, reason: "no_transfer" });
   }
-  const r = await reversePayout(id, { actor: staffActor(staffId), reason: (reason?.trim() || "staff").slice(0, 40) });
+  // Scrubbed BEFORE it is cut: cutting first could leave the front of a long number (an account number typed into the reason) unmasked.
+  const r = await reversePayout(id, { actor: staffActor(staffId), reason: scrubStaffText(reason?.trim() || "staff").slice(0, 40) });
   const pending = r.status === "reversal_requested" || r.outcome === "unknown" || r.outcome === "partial" || r.outcome === "waiting";
-  if (!r.ok && !pending) refusal("take this payout back", r);
+  // A reversal Razorpay refused has already been rolled back (held again, or parked for a person, with an alert): the refusal says which.
+  if (!r.ok && !pending) await refusalAfter("take this payout back", id, cur, r);
   return done(id, r, pending ? "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically." : undefined);
 }
 
-/** Staff paid the creator by bank transfer and record its reference. Refused while a transfer could still release money. */
+/** Staff paid the creator by bank transfer and record its reference. Refused while a transfer could still release money, and for a post that is not live and verified. */
 export async function staffMarkManualPaid(id: string, staffId: string, o: { reference: string; note?: string }) {
+  const before = await snapshot(id);
   const r = await markManualPaid(id, { actor: staffActor(staffId), reference: o.reference, note: o.note });
-  if (!r.ok && r.status !== "paid_manual") refusal("record this payment", r);
+  if (!r.ok && r.status !== "paid_manual") await refusalAfter("record this payment", id, before, r);
   return done(id, r.ok ? r : { ...r, ok: true, outcome: "already_paid_manual" });
 }
 
-/** Mark a payout as one that must be paid by bank transfer (planned, failed, reversed or parked); recording the payment is a separate step. */
+/**
+ * Mark a payout as one that must be paid by bank transfer (planned, failed, reversed or parked); recording the payment is a separate step.
+ * The engine refuses it (post_not_live) unless the post is live and verified, except for a PARKED payout: for one whose post never went live
+ * this is "Stop this payout" (nothing is owed; the post is then refunded), and markManualPaid still refuses to record a payment for it.
+ */
 export async function staffRequireManual(id: string, staffId: string, reason: string) {
   // ⚠️ "Reverse first, then pay by hand" is for a post that is LIVE and was delivered. A payout taken back because the post was withdrawn,
   // declined or refunded must not be turned into "pay the creator by bank transfer": that would invite paying for a post the client was refunded for.
-  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { status: true, bookingItemId: true } });
+  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { ...SNAPSHOT_SELECT, bookingItemId: true } });
   if (cur?.status === "reversed") {
     const [item, refunds] = await Promise.all([
       prisma.campaignBookingItem.findUnique({ where: { id: cur.bookingItemId }, select: { status: true } }),
@@ -568,7 +683,8 @@ export async function staffRequireManual(id: string, staffId: string, reason: st
     }
   }
   const r = await requireManualPayment(id, { actor: staffActor(staffId), reason: reason.slice(0, 80) });
-  if (!r.ok) refusal("mark this payout as to be paid by bank transfer", r);
+  // The proof that no money is out can find a live transfer and park the payout before it refuses: the refusal says so.
+  if (!r.ok) await refusalAfter("mark this payout as to be paid by bank transfer", id, cur, r);
   return done(id, r);
 }
 
@@ -580,12 +696,76 @@ export async function staffReleaseNow(id: string, staffId: string) {
   // A post that was verified but whose release was never scheduled (the scheduling step failed after the verification committed) is scheduled
   // first, exactly as the worker's repair would: idempotent (only a payout with no release_after is touched), never throws, and the release gate
   // below still checks everything fresh, so this can only turn "no release is scheduled" into the real answer (due now, or "the hold runs until …").
-  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { bookingItemId: true, releaseAfter: true } });
+  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { ...SNAPSHOT_SELECT, bookingItemId: true } });
   if (cur && cur.releaseAfter === null) await onCreatorLinkVerified(cur.bookingItemId, staffActor(staffId));
   const r = await releasePayout(id, { actor: staffActor(staffId) });
   const inFlight = r.status === "release_requested" || r.outcome === "unknown";
-  if (!r.ok && !inFlight) refusal("release this payout", r);
+  // ⚠️ The gate can write before it refuses: a refund it cannot account for pauses every payout of the payment; a twin transfer parks the
+  // payout and takes the extra one back; scheduling the release (above) is itself a change. The refusal names what it finds changed.
+  if (!r.ok && !inFlight) await refusalAfter("release this payout", id, cur, r);
   return done(id, r, inFlight ? "The release was requested and Razorpay has not confirmed it yet; it is being read back and finished automatically." : undefined);
+}
+
+// ── After looking in the Razorpay dashboard: the human exits of a transfer nobody can see ──
+
+/** The words of the hold check the "no other transfer" attestation runs straight away, so the person sees what it decided. */
+function confirmWords(r: StepResult): string {
+  if (r.status === "held") return "The transfer is confirmed held.";
+  if (r.outcome === "duplicates") return "Razorpay's list shows a second transfer for this payout after all: the extra one is being taken back, and the payout is parked until only one is left.";
+  if (r.status === "transfer_requested") return "Razorpay has not finished the transfer yet; the worker confirms the hold within a few minutes.";
+  if (r.status === "failed") return "Razorpay shows the transfer failed.";
+  if (r.status === "needs_attention") return "The check of the transfer parked the payout again: read its last problem.";
+  return "The transfer will be checked again by the worker.";
+}
+
+/**
+ * A person looked in the Razorpay dashboard and says no transfer carries this payout's id (it records none), or, for a payout whose request
+ * was sent twice and that waits on its check for a second transfer, that none OTHER than the recorded one does. Only the person's word is
+ * recorded (an audit row with their id): nothing is paid or refunded on it. It stands in for Razorpay's list of the payment's transfers while
+ * that list cannot be read, and only where the engine says (manual payment, a Retry, the hold confirmation and the release; never a refund).
+ * The "no other" form runs the hold confirmation at once, as the staff member, when the payout is waiting on it.
+ */
+export async function staffAttestNoTransfer(id: string, staffId: string, note: string) {
+  const r = await attestNoTransfer(id, { actor: staffActor(staffId), note });
+  if (!r.ok) refusal("record that there is no transfer", r.reason === "transfer_exists" ? { ...r, reason: "transfer_recorded" } : r);
+  if (r.outcome === "attested_no_other") {
+    const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { status: true } });
+    if (cur?.status === "transfer_requested" || cur?.status === "needs_attention") {
+      const c = await confirmHold(id, { actor: staffActor(staffId) });
+      return done(id, r, `Recorded: no transfer other than the recorded one carries this payout's id. ${confirmWords(c)}`);
+    }
+    return done(id, r, "Recorded: no transfer other than the recorded one carries this payout's id. It counts while Razorpay's list of the payment's transfers cannot be read.");
+  }
+  return done(id, r, "Recorded: no transfer exists for this payout. While Razorpay's list of the payment's transfers cannot be read it stands in for that list for 'Pay by bank transfer instead' and for recording the payment, until the payout is sent to Razorpay again. Nothing else changed.");
+}
+
+/**
+ * A person found this payout's transfer in the Razorpay dashboard and gives its id. The engine reads THAT transfer and records it only if it is
+ * this payout's (its notes carry this payout's id; same linked account, payment and amount), then judges it like any transfer found by a
+ * listing: held, failed, a mismatch, or (a request sent twice) waiting for the check for a second transfer.
+ */
+export async function staffAdoptTransfer(id: string, staffId: string, transferId: string) {
+  const want = transferId.trim();
+  const r = await adoptTransferByStaff(id, { actor: staffActor(staffId), transferId: want });
+  const cur = await prisma.creatorPayout.findUnique({ where: { id }, select: { status: true, razorpayTransferId: true } });
+  if (!cur) throw new AppError(404, "NOT_FOUND", "Payout not found");
+  if (cur.razorpayTransferId !== want) {
+    if (r.outcome === "id_not_recorded") {
+      // The payout may have left its park before the id could be written: it is re-checked by the worker, and staff were emailed.
+      throw new AppError(409, "PAYOUT_ACTION_REFUSED", `Not done: adopt this transfer. The transfer could not be recorded on this payout (it changed while you were doing this, or the id is in use). The payout is checked again automatically; refresh and look again. [${r.reason ?? r.outcome}]`);
+    }
+    refusal("adopt this transfer", r);
+  }
+  // Recorded (now, or by an earlier click: the same answer, safe to repeat).
+  let words: string;
+  if (cur.status === "held") words = "Recorded: the transfer is this payout's, and it is confirmed held.";
+  else if (r.outcome === "audit_pending")
+    words =
+      "Recorded: the transfer is this payout's. Because its request was sent twice, it is called held only once Razorpay's list of the payment's transfers shows no second transfer for it. If that list still cannot be read, check the dashboard and record that no other transfer carries this payout's id.";
+  else if (cur.status === "transfer_requested") words = "Recorded: the transfer is this payout's. Razorpay has not finished it yet; the worker confirms the hold within a few minutes.";
+  else if (cur.status === "failed") words = "Recorded: the transfer is this payout's, and Razorpay shows it failed.";
+  else words = "Recorded: the transfer is this payout's, but the check of it parked the payout again: read its last problem.";
+  return done(id, { ...r, ok: true, outcome: r.outcome === "not_applicable" ? "already_adopted" : r.outcome }, words);
 }
 
 // ── The runtime switch ──────────────────────────────────────────────────────────

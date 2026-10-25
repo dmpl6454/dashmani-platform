@@ -6,7 +6,8 @@ import { ChevronDown, ChevronUp, PauseCircle, RefreshCw } from "lucide-react";
 import { PAYOUTS_BASE, isUnconfirmed, runPayoutAction, usePayoutDetail, type PayoutDetail, type PayoutRow } from "@/lib/hooks/use-creator-payouts";
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, ErrorBar, INPUT, Pill, fmtWhen, rupees } from "./_ds";
 import {
-  actionsFor, actorWord, buildTimeline, eventTitle, payoutHint, payoutStatusView, pauseEffect, pauseText, referenceProblem, splitRefusal, statusWord,
+  RELEASE_SWITCH_TEXT, actionsFor, actorWord, buildTimeline, eventTitle, isLiveItem, manualNeedsReverseFirst, payoutHint, payoutStatusView, pauseEffect, pausedChip, pauseText, referenceProblem,
+  splitRefusal, statusWord, transferIdProblem,
   type PayoutActionKey, type PayoutActionView, type StepState, type TimelineStep,
 } from "./_payout";
 
@@ -20,15 +21,25 @@ import {
 
 // ── Pills ───────────────────────────────────────────────────────────────────────────────────────
 
-export function PayoutPill({ row }: { row: Pick<PayoutRow, "status" | "releaseAfter"> }) {
+export function PayoutPill({ row }: { row: Pick<PayoutRow, "status" | "releaseAfter"> & { linkVerifiedAt?: string | null } }) {
   const v = payoutStatusView(row);
   return <Pill label={v.label} color={v.color} />;
 }
 
-export function PausedChip() {
+/**
+ * The chip beside a paused payout. ⚠️ A pause on a payout that was already released (or whose release was requested, or whose settlement
+ * failed) stops nothing: Razorpay settles it anyway. Such a row gets a red chip that says so, never the gold "Paused" a real hold gets. Draws
+ * nothing for a payout that is not paused or has finished.
+ */
+export function PausedChip({ row }: { row: { status: string; pausedAt?: string | null; pausedReason?: string | null } }) {
+  const c = pausedChip(row);
+  if (!c) return null;
   return (
-    <span className="inline-flex items-center h-6 px-2.5 rounded-full text-[11.5px] font-semibold whitespace-nowrap text-ds-gold border border-[rgba(233,189,98,.4)] bg-[rgba(233,189,98,.08)]">
-      Paused
+    <span
+      title={c.title}
+      className={`inline-flex items-center h-6 px-2.5 rounded-full text-[11.5px] font-semibold whitespace-nowrap border ${c.holds ? "text-ds-gold border-[rgba(233,189,98,.4)] bg-[rgba(233,189,98,.08)]" : "text-[#FB7185] border-[rgba(251,113,133,.45)] bg-[rgba(251,113,133,.08)]"}`}
+    >
+      {c.label}
     </span>
   );
 }
@@ -69,7 +80,7 @@ export function ReleasePausedBanner({ line, onResume, href }: { line?: string | 
       <div className="min-w-0 flex-1 basis-[240px]">
         <div className="text-[14px] font-semibold text-ds-redsoft">Releases are paused</div>
         <div className="mt-0.5 text-[12.5px] text-ds-t2">
-          No creator payout is being released, so nobody is being paid out. Money already set aside stays set aside; transfers, reversals and refunds carry on.
+          {RELEASE_SWITCH_TEXT.banner}
           {line ? ` ${line}` : ""}
         </div>
       </div>
@@ -296,7 +307,11 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
                 : `Razorpay refused the transfer of ${amount} for ${who(row)}. This asks it to set the money aside again, on hold.`}
             </p>
             <p>Nothing is paid to the creator by this: the transfer is created on hold and is released only after the post is verified.</p>
-            {!planned && <p>Razorpay can&apos;t make the same transfer safely twice, so before sending a new one the system checks, twice and minutes apart, that none already exists for this payout. This can take a few minutes. It is refused once the client has been refunded for the payment; then pay the creator by bank transfer.</p>}
+            {!planned && (
+              <p>
+                Razorpay can&apos;t make the same transfer safely twice, so just before sending a new one the system reads Razorpay&apos;s list of the client payment&apos;s transfers once, and refuses if a live transfer already carries this payout&apos;s id, or if that list can&apos;t be read. It is refused once the client has been refunded for the payment; then, if the post is live, pay the creator by bank transfer.
+              </p>
+            )}
           </>
         ),
         run: () => act("retry-transfer"),
@@ -352,6 +367,32 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
     case "require_manual": {
       const taken = row.status === "reversed";
       const planned = row.status === "planned";
+      // ⚠️ A parked payout that records a transfer: the system refuses this while that transfer could still release money (it would pay the
+      // creator twice). Said up front, so nobody types a reason only to be refused for something they could have done first.
+      const reverseFirst = manualNeedsReverseFirst(row) ? (
+        <p className="text-ds-gold">
+          This payout records a transfer at Razorpay. Unless that transfer failed or was fully taken back, the system refuses this, because the transfer could still release money and the creator would be paid twice. Take it back first with Reverse:{" "}
+          {isLiveItem(row.itemStatus) ? "the payout then shows under Owed after reversal, where Pay by bank transfer instead records the payment." : "once it is taken back, the post can be refunded from the campaign page."}
+        </p>
+      ) : null;
+      // ⚠️ Offered for a post that never went live only on a PARKED payout ("Stop this payout"): nothing is owed, and this is how the payout is stopped
+      // so the post can be refunded. The API refuses a hand payment for such a post (post_not_live), so the dialog never says "pay them yourself".
+      if (!taken && !isLiveItem(row.itemStatus)) {
+        return {
+          title: "Stop this payout?",
+          confirm: "Stop the payout",
+          busy: "Stopping…",
+          body: (
+            <>
+              <p>{who(row)}&apos;s post never went live, so nothing is owed to them. This stops the payout: no transfer is made or retried for it. The system refuses it while Razorpay could still have money out for it.</p>
+              {reverseFirst}
+              <p>It pays nobody, and it can&apos;t be recorded as paid. Refund the post from the campaign page afterwards (a post already waiting for its refund is refunded automatically once the payout is out of the way).</p>
+            </>
+          ),
+          fields: [{ name: "reason", label: "Why", required: true, min: 3, max: 80, placeholder: "For example: no transfer exists at Razorpay" }],
+          run: (v) => act("require-manual", { reason: v.reason }),
+        };
+      }
       return {
         title: "Pay this creator by bank transfer instead?",
         confirm: "Switch to manual payment",
@@ -369,6 +410,7 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
             ) : (
               <p>Use this when Razorpay can&apos;t pay {who(row)}. The payout stops going through Razorpay: no transfer is made or retried for it.</p>
             )}
+            {reverseFirst}
             <p>Afterwards you pay {amount} to the creator yourself, then press Mark paid manually and record the bank reference. Nothing is paid by this step.</p>
           </>
         ),
@@ -393,6 +435,61 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
         ],
         run: (v) => act("mark-manual-paid", { reference: v.reference, note: v.note }),
       };
+    // ── After looking in the Razorpay dashboard. None of these moves money: what the person found is recorded with their name. ──
+    case "adopt_transfer":
+      return {
+        title: "Adopt this payout's transfer?",
+        confirm: "Adopt transfer",
+        busy: "Checking at Razorpay…",
+        body: (
+          <>
+            <p>Use this when you found this payout&apos;s transfer in the Razorpay dashboard (the client&apos;s payment, its transfers) and Razorpay&apos;s list here couldn&apos;t be read, or never showed it.</p>
+            <ul className="grid gap-1.5 list-disc pl-5">
+              <li>The system reads that transfer at Razorpay and records it only if it is this payout&apos;s: it carries this payout&apos;s id, and the same linked account, payment and amount. Your word alone records nothing.</li>
+              <li>It is then judged like any transfer the system finds: confirmed held, failed, or parked if something doesn&apos;t match. A payout whose request was sent twice also waits for the check that no second transfer carries its id.</li>
+              <li>It pays nothing and refunds nothing. It is recorded in the payout&apos;s history with your name.</li>
+            </ul>
+          </>
+        ),
+        fields: [{ name: "transferId", label: "Razorpay transfer id", required: true, min: 8, max: 44, placeholder: "trf_…", help: "Copy it from the Razorpay dashboard. Never a payment, account or bank number.", validate: transferIdProblem }],
+        run: (v) => act("adopt-transfer", { transferId: v.transferId }),
+      };
+    case "attest_no_transfer":
+      return {
+        title: "Record that no transfer exists?",
+        confirm: "Record: no transfer",
+        busy: "Recording…",
+        body: (
+          <>
+            <p>Use this only after you looked in the Razorpay dashboard, at the client&apos;s payment and its transfers, and found no transfer for this payout (none carries its id).</p>
+            <ul className="grid gap-1.5 list-disc pl-5">
+              <li>It is recorded with your name in the payout&apos;s history. It pays nothing and refunds nothing.</li>
+              <li>While Razorpay&apos;s list of the payment&apos;s transfers can&apos;t be read, your record stands in for that list for {isLiveItem(row.itemStatus) ? "Pay by bank transfer instead and for recording the payment" : "Stop this payout"}, until the payout is sent to Razorpay again. It is never used for a refund.</li>
+              <li>A request made less than 10 minutes before can still be on its way in, so the system refuses this until then: look again a little later.</li>
+            </ul>
+          </>
+        ),
+        fields: [{ name: "note", label: "What you checked", required: true, min: 3, max: 300, multiline: true, placeholder: "For example: payment's transfers in the dashboard at 10:40, none for this payout", help: "Kept in the payout's history with your name. No bank details." }],
+        run: (v) => act("attest-no-transfer", { note: v.note }),
+      };
+    case "attest_no_other":
+      return {
+        title: "Record that no other transfer exists?",
+        confirm: "Record: no other transfer",
+        busy: "Recording…",
+        body: (
+          <>
+            <p>This payout&apos;s request was sent to Razorpay twice, so before it is called held (or released) the system checks that no SECOND transfer carries its id. Use this only when Razorpay&apos;s list of the payment&apos;s transfers can&apos;t be read and you looked in the Razorpay dashboard yourself: the client&apos;s payment shows no transfer for this payout other than the one it records.</p>
+            <ul className="grid gap-1.5 list-disc pl-5">
+              <li>It is recorded with your name in the payout&apos;s history. It pays nothing and refunds nothing.</li>
+              <li>It stands in for that list for the hold check and the release only, never for a refund. If the payout is waiting on the hold check, that check runs straight away and its answer appears here.</li>
+              <li>A request made less than 10 minutes before can still be on its way in, so the system refuses this until then.</li>
+            </ul>
+          </>
+        ),
+        fields: [{ name: "note", label: "What you checked", required: true, min: 3, max: 300, multiline: true, placeholder: "For example: only one transfer carries this payout in the dashboard at 10:40", help: "Kept in the payout's history with your name. No bank details." }],
+        run: (v) => act("attest-no-transfer", { note: v.note }),
+      };
   }
 }
 
@@ -412,9 +509,17 @@ export function noticeFor(key: PayoutActionKey, d: PayoutDetail, values: Record<
     case "release":
       return { tone: d.payout.status === "released" ? "ok" : "info", text: d.payout.status === "released" ? `Released. Razorpay now settles it to the creator's bank: it shows as Paid only once it has.${note}` : `Release requested. ${now}${note}` };
     case "require_manual":
-      return { tone: "ok", text: "Marked to be paid by bank transfer. Pay the creator, then press Mark paid manually and record the reference." };
+      // A post that never went live is owed nothing: the payout is only stopped (the API refuses a hand payment for it).
+      return isLiveItem(d.payout.itemStatus ?? d.item?.status)
+        ? { tone: "ok", text: "Marked to be paid by bank transfer. Pay the creator, then press Mark paid manually and record the reference." }
+        : { tone: "ok", text: "The payout is stopped: no transfer is made for it. Nothing is owed to the creator, because the post never went live. Refund the post from the campaign page." };
     case "mark_paid":
       return { tone: "ok", text: `Recorded as paid by bank transfer (reference ${values.reference ?? ""}).` };
+    // The engine's own words say what it decided (held, waiting for the twin check, failed, parked again): never a guess here.
+    case "adopt_transfer":
+    case "attest_no_transfer":
+    case "attest_no_other":
+      return { tone: d.payout.status === "held" ? "ok" : "info", text: `${(d.result?.note ?? "Recorded.").trim()} ${now}` };
   }
 }
 
@@ -462,7 +567,7 @@ export function PayoutActions({ row, releaseOn, onOpen, postVerified }: {
   /** The runtime release switch as the page last read it (undefined = unknown: the API decides). */
   releaseOn: boolean | undefined;
   onOpen: (key: PayoutActionKey, row: PayoutRow) => void;
-  /** Only the campaign page knows the creator's link was verified. */
+  /** The creator's link was verified, as the page knows it (the campaign page reads the offer). The row's own linkVerifiedAt counts too. */
   postVerified?: boolean;
 }) {
   const actions = actionsFor(row, { releaseOn, now: Date.now(), postVerified });

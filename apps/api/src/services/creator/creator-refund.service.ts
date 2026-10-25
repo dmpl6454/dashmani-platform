@@ -94,7 +94,8 @@ async function alertBlocked(item: { id: string; bookingId: string; accountName: 
       { label: "Why", value: why },
       {
         label: "What to do",
-        value: "The client is owed this refund, but it is not issued while the creator's payout could still pay out. Open the payout queue, look at this payout, take it back (Reverse) or pay the creator by hand, and the refund then goes out by itself.",
+        value:
+          "The client is owed this refund, but it is not issued while the creator's payout could still pay out. Open the payout queue and look at this payout: take its transfer back (Reverse), or stop a parked payout that has no money out, and the refund then goes out by itself. Never pay the creator by hand for this post: nothing is owed for a post that is being refunded, and a payment recorded by hand would make the refund impossible.",
       },
     ],
     `/campaigns/${item.bookingId}`,
@@ -449,6 +450,20 @@ export interface RepairRefundedSummary {
 
 /** A refunded post is only suspect once it has looked like this for a while (everything the product does itself marks the post after the ledger row). */
 const REFUNDED_NO_LEDGER_AFTER_MS = 30 * 60_000;
+/** How long a suspect the repair stood down for is left out of its queue before it is looked at again (its alert repeats once a day at most). */
+export const REFUNDED_NO_LEDGER_RECHECK_MS = 6 * 3_600_000;
+
+/**
+ * Leave a stood-down suspect out of the repair's queue until `until` (next_attempt_at), so the next suspect behind it is reached on the next tick
+ * and its payment's refund list is not re-read every 5 minutes. ⚠️ RAW SQL ON PURPOSE: a Prisma write would move updated_at (@updatedAt fires on
+ * updateMany), and updated_at is when the post was marked refunded, the baseline of the external-refund check below. Moved, a refund filed from
+ * the Razorpay dashboard BEFORE it would stop counting as "appeared after the post was marked", the post would be re-opened, and a client who was
+ * already repaid would be refunded twice. Only a `refunded` creator post is touched (next_attempt_at is not read for one by anything else).
+ */
+async function parkSuspect(itemId: string, until: Date): Promise<void> {
+  await prisma.$executeRaw`UPDATE campaign_booking_items SET next_attempt_at = ${until}::timestamptz AT TIME ZONE 'UTC'
+     WHERE id = ${itemId} AND status = 'refunded' AND target_type = ${CREATOR_TARGET_TYPE}`;
+}
 
 /**
  * A creator post that reads `refunded` while NO refund of it is on the ledger (none that is not failed), its payout is out of the way
@@ -460,7 +475,9 @@ const REFUNDED_NO_LEDGER_AFTER_MS = 30 * 60_000;
  * It first READS the payment's refund list (a refund filed from the Razorpay dashboard after the post was marked is on the list, not on our
  * ledger): if one appeared after the post was marked refunded, the client may well have been repaid, so the post is left alone and staff are
  * told. Otherwise it is re-opened (`refund_due`), and job 10 refunds it through the usual sequence, under the post's own key, once.
- * Bounded (`limit` posts a call, 2 Razorpay requests each) and never throws.
+ * A post it stands down for (repaid outside the portal, or no refundable balance) is left out for REFUNDED_NO_LEDGER_RECHECK_MS (next_attempt_at,
+ * written without moving updated_at: see parkSuspect), so the suspects behind it are reached. Bounded (`limit` posts a call, 2 Razorpay
+ * requests each) and never throws.
  */
 export async function repairRefundedWithoutLedger(o: { now?: Date; limit?: number; budget?: number } = {}): Promise<RepairRefundedSummary> {
   const now = o.now ?? new Date();
@@ -472,6 +489,7 @@ export async function repairRefundedWithoutLedger(o: { now?: Date; limit?: numbe
     SELECT i.id, i.booking_id, i.account_name, i.price_paise, i.updated_at
       FROM campaign_booking_items i
      WHERE i.target_type = ${CREATOR_TARGET_TYPE} AND i.status = 'refunded' AND i.updated_at < ${cutoff}::timestamptz AT TIME ZONE 'UTC'
+       AND (i.next_attempt_at IS NULL OR i.next_attempt_at <= ${now}::timestamptz AT TIME ZONE 'UTC')
        AND NOT EXISTS (SELECT 1 FROM campaign_refunds r WHERE r.booking_item_id = i.id AND r.status <> 'failed')
        AND NOT EXISTS (SELECT 1 FROM creator_payouts p WHERE p.booking_item_id = i.id AND p.status NOT IN ('void', 'reversed'))
        AND EXISTS (SELECT 1 FROM campaign_payments y WHERE y.booking_id = i.booking_id AND y.razorpay_payment_id IS NOT NULL AND y.status IN ('captured', 'refund_pending', 'refund_failed'))
@@ -485,6 +503,7 @@ export async function repairRefundedWithoutLedger(o: { now?: Date; limit?: numbe
       const pay = await capturedPaymentFor(item.bookingId, item.pricePaise);
       if (!pay) {
         await alertRefundedNoLedger(item, "The payment has no refundable balance left for it, so it was not re-opened.", now);
+        await parkSuspect(item.id, new Date(now.getTime() + REFUNDED_NO_LEDGER_RECHECK_MS));
         sum.stoodDown++;
         continue;
       }
@@ -493,6 +512,8 @@ export async function repairRefundedWithoutLedger(o: { now?: Date; limit?: numbe
       const external = await prisma.campaignRefund.count({ where: { paymentId: pay.id, origin: "external", status: { not: "failed" }, createdAt: { gt: r.updated_at } } });
       if (external > 0) {
         await alertRefundedNoLedger(item, "A refund we did not issue was found on the payment after this post was marked refunded, so it may have been repaid already. It was not re-opened.", now);
+        // Not looked at again for a while: a stood-down suspect must not stay at the head of the queue (oldest first, one a tick) and starve the rest.
+        await parkSuspect(item.id, new Date(now.getTime() + REFUNDED_NO_LEDGER_RECHECK_MS));
         sum.stoodDown++;
         continue;
       }

@@ -588,6 +588,30 @@ describe("creator offers worker", () => {
       expect((await alertPending(NOW)).refund).toBe(0);
     }, 60_000);
 
+    it("⚠️ r2 #R7: 'what to do' says the refund is automatic while the payout worker and the refund sweep run, and to press Refund only while they are off", async () => {
+      const todo = () => {
+        const last = vi.mocked(notifyAdminByEmail).mock.calls.filter((c) => c[0] === REFUND_ALERT).at(-1)!;
+        return (last[1] as Array<{ label: string; value: string }>).find((d) => d.label === "What to do")!.value;
+      };
+      await seedOffer({ expiresAt: new Date(NOW.getTime() - HOUR) });
+      await expireDueOffers(NOW);
+      expect((await alertPending(NOW)).refund).toBe(1);
+      await flushPayoutAlertsForTests();
+      expect(todo()).toMatch(/refunded automatically/);
+      expect(todo()).not.toMatch(/press Refund|Nothing is refunded automatically/);
+      // Either switch off: nothing refunds by itself, and staff are told to press Refund (and that it is off).
+      for (const env of ["CAMPAIGN_REFUND_SWEEP_ENABLED", "CREATOR_PAYOUT_CRON_ENABLED"]) {
+        resetPayoutAlertsForTests();
+        vi.stubEnv(env, "0");
+        await seedOffer({ expiresAt: new Date(NOW.getTime() - HOUR) });
+        await expireDueOffers(NOW);
+        expect((await alertPending(NOW)).refund, env).toBe(1);
+        await flushPayoutAlertsForTests();
+        expect(todo(), env).toMatch(/switched off.*press Refund on each/);
+        vi.stubEnv(env, "");
+      }
+    });
+
     it("⚠️ a mailer that is down leaves NO marker, so the next pass sends the alert again; once the mailer took it, never again", async () => {
       const s = await seedOffer({ expiresAt: new Date(NOW.getTime() - HOUR) });
       await expireDueOffers(NOW);

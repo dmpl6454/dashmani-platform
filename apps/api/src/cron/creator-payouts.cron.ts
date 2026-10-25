@@ -329,9 +329,11 @@ export async function repairUnscheduledReleases(limit = 50): Promise<number> {
  * and another creator on the same campaign declined, so the brand's refund waits behind a payout nobody can create. So after
  * CREATOR_PLANNED_GIVE_UP_HOURS (24 by default) in `planned`, with Route ON, the worker makes ONE last honest attempt (executePlannedPayout:
  * it also gives a payout the budget kept starving its turn) and, if the engine still says "waiting", marks the payout manual_required and tells
- * staff. Nothing is paid or refunded by this: manual_required only says "pay this creator by bank transfer and record the reference" (which
- * markManualPaid refuses unless no transfer can ever have been made), and it stops blocking the payment's other refunds (decideRefundAllowed).
- * Paused payouts are left alone (a person holds them); the Route switch off leaves everything planned (that pause is the owner's).
+ * staff. Nothing is paid or refunded by this, and it is NOT an invitation to pay the creator: a payout that was never set aside belongs to a post
+ * that was never offered to its creator (an offer needs a held payout), so nothing is owed, and markManualPaid refuses to record a payment for it
+ * (post_not_live). All it does is stop blocking the payment's other refunds (decideRefundAllowed); the post itself can only be refunded (which
+ * voids the payout), and the campaign cannot be approved with it. Paused payouts are left alone (a person holds them); the Route switch off leaves
+ * everything planned (that pause is the owner's).
  */
 export async function giveUpOnNeverCreatedPayouts(now: Date, o: { budget: number; limit?: number; actorNow?: Date }): Promise<{ checked: number; gaveUp: number; calls: number }> {
   const out = { checked: 0, gaveUp: 0, calls: 0 };
@@ -355,7 +357,7 @@ export async function giveUpOnNeverCreatedPayouts(now: Date, o: { budget: number
     out.gaveUp++;
     alertStaffOncePerHour(
       `payout-gave-up:${row.id}`,
-      "A creator's payout could not be set aside and must be paid by hand",
+      "A creator's payout could not be set aside, so their post can't go ahead",
       [
         { label: "Payout", value: row.id },
         { label: "Booking", value: row.bookingId },
@@ -364,7 +366,7 @@ export async function giveUpOnNeverCreatedPayouts(now: Date, o: { budget: number
         {
           label: "What to do",
           value:
-            "Look at why the creator's payout account is not ready. If the creator is still owed this money, pay them by bank transfer and record the reference in the payout queue (Manual). The brand's other refunds are no longer held up by it.",
+            "Nothing is owed to the creator: a post is offered to its creator only once their payout is set aside, so this one never was, and it can't be paid by bank transfer. Refund this post from the campaign page (the campaign can't be approved with it). The brand's other refunds are no longer held up by it.",
         },
       ],
       "/campaigns/payouts",
@@ -456,7 +458,7 @@ export async function findStuckPayouts(now: Date): Promise<StuckCategory[]> {
     release_requested: "Release requested over 30 minutes ago and not confirmed",
     reversal_requested: "Reversal requested over 30 minutes ago and not confirmed",
     needs_attention: "Parked for a person, waiting over an hour",
-    manual_required: "To be paid by bank transfer, waiting over a day",
+    manual_required: "Marked to be paid by bank transfer, waiting over a day (only a live, verified post is paid by hand: any other is owed nothing and is refunded from its campaign page)",
     failed: "Failed over 6 hours ago and not dealt with",
     unalerted: "In a problem state and no alert email ever reached staff",
     slow_settlement: "Released over 4 days ago and still not settled",

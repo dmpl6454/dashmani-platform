@@ -30,10 +30,15 @@ vi.mock("../src/services/email.service", async (orig) => {
 });
 
 import {
+  HOLD_RESOLVABLE_CODES,
   LIVE_ITEM,
+  NO_TRANSFER_CODES,
   PAYOUT_ATTENTION_KEYS,
   PAYOUT_CHIPS,
   PAYOUT_FILTER_KEYS,
+  RELEASE_SWITCH_TEXT,
+  REHOLD_PAUSE_REASONS,
+  TRANSFER_ID_RE,
   UNCONFIRMED_TEXT,
   actionsFor,
   ageShort,
@@ -44,7 +49,10 @@ import {
   eventTitle,
   isOwedAfterReversal,
   isPayoutFilterKey,
+  manualNeedsReverseFirst,
   pauseEffect,
+  pauseHold,
+  pausedChip,
   payoutCounts,
   payoutHint,
   payoutInFilter,
@@ -57,6 +65,7 @@ import {
   splitRefusal,
   statusWord,
   switchBars,
+  transferIdProblem,
   type FilterInput,
   type PayoutActionKey,
   type PayoutFilterKey,
@@ -65,9 +74,9 @@ import {
   type TimelineInput,
 } from "@dashmani/shared/src/payouts/staff-ui";
 import { PAYOUT_STATUSES, canMove, isPausable } from "../src/services/creator/payout-states";
-import { PAYOUT_FILTERS, STAFF_REFUSAL_WORDS, listPayoutQueue } from "../src/services/creator/payout-staff.service";
+import { PAYOUT_FILTERS, STAFF_REFUSAL_WORDS, changeSince, listPayoutQueue, referenceCsvCell } from "../src/services/creator/payout-staff.service";
 import { RELEASE_REFUSALS } from "../src/services/creator/payout-policy";
-import { referenceProblem as engineReferenceProblem } from "../src/services/creator/payout.service";
+import { HOLD_RESOLVABLE_REASONS, PARKED_UNKNOWN_CODES, attestNoTransfer, referenceProblem as engineReferenceProblem, selectDuePayouts } from "../src/services/creator/payout.service";
 import { settlePayoutKicksForTests } from "../src/services/campaign/payment.service";
 import { settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
 import { clearPayoutAlertMarkersForTests, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
@@ -193,13 +202,38 @@ describe("hints", () => {
     expect(payoutHint(row({ status: "held" }), NOW, { postVerified: true })).toMatch(/no release is scheduled/);
   });
 
-  it("a planned payout offers the way out, and does not predict a transfer while paused", () => {
-    expect(payoutHint(row({ status: "planned" }), NOW)).toMatch(/pay the creator by bank transfer instead/);
+  it("a planned payout says nothing is owed yet and offers the real ways out, and does not predict a transfer while paused", () => {
+    // ⚠️ Its post was never offered to the creator (an offer needs a held payout): never "pay the creator by bank transfer".
+    const hint = payoutHint(row({ status: "planned", itemStatus: "pending" }), NOW);
+    expect(hint).toMatch(/nothing is owed to them/);
+    expect(hint).toMatch(/Make transfer now/);
+    expect(hint).toMatch(/refund this post from the campaign page/);
+    expect(hint).not.toMatch(/bank transfer/);
     expect(payoutHint(row({ status: "planned", pausedAt: iso(-H) }), NOW)).toMatch(/none will be while it is paused/);
   });
 
+  it("⚠️ a payout to be paid by hand says to pay only when the post is live; one whose post never went live says nothing is owed and to refund it", () => {
+    for (const itemStatus of LIVE_ITEM) expect(payoutHint(row({ status: "manual_required", itemStatus }), NOW), itemStatus).toMatch(/Pay them by bank transfer yourself/);
+    for (const itemStatus of ["pending", "awaiting_creator", "refund_due", "refunded", "failed", "manual_pending"]) {
+      const hint = payoutHint(row({ status: "manual_required", itemStatus }), NOW);
+      expect(hint, itemStatus).toMatch(/Nothing is owed to the creator/);
+      expect(hint, itemStatus).toMatch(/Refund this post/);
+      expect(hint, itemStatus).not.toMatch(/Pay them|pay them by bank transfer/);
+    }
+    // Not known (a summary without the post's status): both cases are named, never a plain "pay them".
+    const unknown = payoutHint(row({ status: "manual_required", itemStatus: null }), NOW);
+    expect(unknown).toMatch(/If the post is live/);
+    expect(unknown).toMatch(/nothing is owed/);
+  });
+
   it("a parked payout explains the codes whose next step differs, and shows any other code", () => {
-    expect(payoutHint(row({ status: "needs_attention", errorCode: "listing_unreadable" }), NOW)).toMatch(/re-checked automatically/);
+    // The two parks nobody can see into name the buttons that end them (r2 #R13), not only "it is re-checked".
+    for (const errorCode of ["listing_unreadable", "transfer_unknown_after_retry"]) {
+      const h = payoutHint(row({ status: "needs_attention", errorCode }), NOW);
+      expect(h, errorCode).toMatch(/every hour/);
+      expect(h, errorCode).toMatch(/press Adopt transfer and give its id/);
+      expect(h, errorCode).toMatch(/press No transfer exists/);
+    }
     expect(payoutHint(row({ status: "needs_attention", errorCode: "duplicate_transfer" }), NOW)).toMatch(/exactly one live transfer/);
     expect(payoutHint(row({ status: "needs_attention", errorCode: "something_new" }), NOW)).toMatch(/\(something_new\)/);
   });
@@ -267,11 +301,14 @@ describe("the action matrix", () => {
   });
 
   it("never offers a move the engine's state table does not allow, and Pause only where the engine pauses", () => {
-    const TARGET: Partial<Record<PayoutActionKey, string>> = { reverse: "reversal_requested", require_manual: "manual_required", mark_paid: "paid_manual", retry: "transfer_requested", release: "release_requested" };
+    const TARGET: Partial<Record<PayoutActionKey, string>> = { reverse: "reversal_requested", require_manual: "manual_required", mark_paid: "paid_manual", retry: "transfer_requested", release: "release_requested", adopt_transfer: "transfer_requested" };
     for (const status of PAYOUT_STATUSES) {
       for (const paused of [false, true]) {
         for (const itemStatus of ["posted_manual", "refunded", null]) {
-          for (const a of actionsFor(row({ status, itemStatus, releaseAfter: iso(-2 * H), pausedAt: paused ? iso(-H) : null }), { releaseOn: true, now: NOW })) {
+          for (const a of [
+            ...actionsFor(row({ status, itemStatus, releaseAfter: iso(-2 * H), pausedAt: paused ? iso(-H) : null }), { releaseOn: true, now: NOW }),
+            ...actionsFor(row({ status, itemStatus, releaseAfter: iso(-2 * H), pausedAt: paused ? iso(-H) : null, errorCode: "listing_unreadable" }), { releaseOn: true, now: NOW }),
+          ]) {
             if (TARGET[a.key]) expect(canMove(status, TARGET[a.key]!), `${a.key} on ${status}`).toBe(true);
             if (a.key === "pause") expect(isPausable(status), `pause on ${status}`).toBe(true);
           }
@@ -297,6 +334,25 @@ describe("the action matrix", () => {
       expect(k.includes("mark_paid"), status).toBe(status === "manual_required");
       expect(k.includes("retry"), status).toBe(status === "failed" || status === "planned");
       expect(k.includes("release"), status).toBe(status === "held");
+    }
+  });
+
+  it("⚠️ 'Pay by bank transfer' and 'Mark paid manually' only for a LIVE post: a post that never went live is owed nothing (the API refuses it: post_not_live)", () => {
+    for (const itemStatus of ["pending", "awaiting_creator", "manual_pending", "queued", "failed", "refund_due", "refunded", null]) {
+      for (const status of ["planned", "failed"]) {
+        const k = keys(row({ status, itemStatus }));
+        expect(k, `${status}/${itemStatus}`).not.toContain("require_manual");
+        expect(k, `${status}/${itemStatus}`).toContain("retry"); // retried instead, or the post is refunded from its campaign page
+      }
+      expect(keys(row({ status: "manual_required", itemStatus })), String(itemStatus)).toEqual(["pause"]);
+      // A parked payout keeps its way out (the API proves no money is out first), named for what it is: the payout is stopped so the post can be refunded.
+      const stop = actionsFor(row({ status: "needs_attention", itemStatus, errorCode: "transfer_unknown_after_retry" }), { releaseOn: true, now: NOW }).find((a) => a.key === "require_manual");
+      expect(stop, String(itemStatus)).toMatchObject({ label: "Stop this payout", enabled: true });
+    }
+    for (const itemStatus of LIVE_ITEM) {
+      expect(actionsFor(row({ status: "needs_attention", itemStatus }), { releaseOn: true, now: NOW }).find((a) => a.key === "require_manual")).toMatchObject({ label: "Pay by bank transfer instead" });
+      expect(keys(row({ status: "manual_required", itemStatus }))).toEqual(["mark_paid", "pause"]);
+      expect(keys(row({ status: "failed", itemStatus }))).toContain("require_manual");
     }
   });
 
@@ -350,6 +406,109 @@ describe("the action matrix", () => {
   });
 });
 
+// ── r2 #R1/#R13: what a person says after looking in the Razorpay dashboard ─────────────────────
+
+describe("r2 #R13: Adopt transfer, No transfer exists and No other transfer are offered where the engine accepts them", () => {
+  it("a park nobody can see into offers Adopt transfer and No transfer exists (and never Reverse); nothing else does", () => {
+    for (const errorCode of NO_TRANSFER_CODES) {
+      expect(keys(row({ status: "needs_attention", errorCode })), errorCode).toEqual(["adopt_transfer", "attest_no_transfer", "require_manual", "pause"]);
+      // A park that does record a transfer is not "unseen" (the API refuses both: not_applicable / transfer_recorded).
+      expect(keys(row({ status: "needs_attention", errorCode, hasTransfer: true })), errorCode).not.toContain("adopt_transfer");
+    }
+    for (const status of PAYOUT_STATUSES) {
+      for (const errorCode of [null, "duplicate_transfer", "transfer_mismatch", "processed_not_held"]) {
+        const k = keys(row({ status, errorCode, releaseAfter: iso(-2 * H) }));
+        expect(k, `${status}/${errorCode}`).not.toContain("adopt_transfer");
+        expect(k, `${status}/${errorCode}`).not.toContain("attest_no_transfer");
+      }
+    }
+  });
+
+  it("No other transfer: only with a transfer recorded, a request sent twice, and the payout waiting on the check for a second transfer", () => {
+    const has = (o: Partial<PayoutRow> & { status: string }) => keys(row({ hasTransfer: true, attempts: 2, releaseAfter: iso(-2 * H), ...o })).includes("attest_no_other");
+    expect(has({ status: "transfer_requested" })).toBe(true);
+    expect(has({ status: "held" })).toBe(true);
+    for (const errorCode of HOLD_RESOLVABLE_CODES) expect(has({ status: "needs_attention", errorCode }), errorCode).toBe(true);
+    expect(has({ status: "needs_attention", errorCode: "duplicate_transfer" })).toBe(false);
+    expect(has({ status: "held", attempts: 1 })).toBe(false); // sent once: no twin can exist
+    expect(has({ status: "held", hasTransfer: undefined })).toBe(false); // an older API that does not say: not offered
+    for (const status of ["planned", "release_requested", "released", "settlement_failed", "failed", "manual_required", "reversal_requested", "settled", "paid_manual", "void", "reversed"]) {
+      expect(has({ status }), status).toBe(false);
+    }
+  });
+
+  it("the UI's copies of the engine's park lists are the engine's", () => {
+    expect([...NO_TRANSFER_CODES].sort()).toEqual([...PARKED_UNKNOWN_CODES].sort());
+    expect([...HOLD_RESOLVABLE_CODES].sort()).toEqual([...HOLD_RESOLVABLE_REASONS].sort());
+  });
+
+  it("'pay by bank transfer instead' on a park that records a transfer says to reverse it first", () => {
+    expect(manualNeedsReverseFirst({ status: "needs_attention", hasTransfer: true })).toBe(true);
+    expect(manualNeedsReverseFirst({ status: "needs_attention", hasTransfer: false })).toBe(false);
+    expect(manualNeedsReverseFirst({ status: "needs_attention" })).toBe(false);
+    for (const status of ["failed", "planned", "reversed"]) expect(manualNeedsReverseFirst({ status, hasTransfer: true }), status).toBe(false);
+  });
+
+  it("the transfer id is checked like the API checks it, before the request", () => {
+    for (const ok of ["trf_ABCD", "trf_P4I1x0x00001", "  trf_abc123XYZ  ", `trf_${"a".repeat(40)}`]) {
+      expect(transferIdProblem(ok), ok).toBeNull();
+      expect(TRANSFER_ID_RE.test(ok.trim()), ok).toBe(true);
+    }
+    for (const bad of ["", "   ", "pay_ABCDEFG", "acc_ABCDEFG", "trf_AB", "trf_AB CD", "trf_ABC-DEF", `trf_${"a".repeat(41)}`, "TRF_ABCD"]) {
+      expect(transferIdProblem(bad), bad).not.toBeNull();
+      expect(TRANSFER_ID_RE.test(bad.trim()), bad).toBe(false);
+    }
+    expect(transferIdProblem("pay_ABCDEFG")).toMatch(/starts with trf_/);
+  });
+
+  describe("against the engine's attestNoTransfer, on a database", () => {
+    const fake = new FakeRazorpay();
+    beforeEach(async () => {
+      await clearPayoutAlertMarkersForTests();
+      stubPayoutEnv();
+      fake.reset();
+      fake.install();
+      resetPayoutAlertsForTests();
+    });
+    afterEach(async () => {
+      await settlePayoutKicksForTests();
+      await settleCreatorRefundsForTests();
+      await flushPayoutAlertsForTests();
+      fake.restore();
+      vi.unstubAllEnvs();
+    });
+
+    it("every 'No transfer exists' / 'No other transfer' the UI offers is one the engine records, and every 'no other' the engine records is offered", async () => {
+      const w = await mkWorld(fake, { pages: [{}] });
+      expect((await capture(fake, w)).status).toBe(200);
+      const item = w.creators[0].id;
+      const p = await prisma.creatorPayout.findUniqueOrThrow({ where: { bookingItemId: item }, select: { id: true, razorpayTransferId: true } });
+      const staffActor = { type: "staff" as const, id: "00000000-0000-4000-8000-000000000001" };
+      let checked = 0;
+      for (const status of PAYOUT_STATUSES) {
+        for (const errorCode of [null, "listing_unreadable", "transfer_unknown_after_retry", "processed_not_held", "duplicate_transfer"]) {
+          for (const hasTransfer of [true, false]) {
+            for (const attempts of [1, 2]) {
+              await prisma.creatorPayout.update({
+                where: { id: p.id },
+                data: { status, errorCode, attempts, razorpayTransferId: hasTransfer ? p.razorpayTransferId : null, transferRequestedAt: new Date(Date.now() - 2 * H), pausedAt: null, pausedReason: null },
+              });
+              const offered = actionsFor(row({ status, errorCode, hasTransfer, attempts, releaseAfter: iso(-2 * H) }), { releaseOn: true, now: NOW }).map((a) => a.key);
+              const r = await attestNoTransfer(p.id, { actor: staffActor, note: "looked in the dashboard" });
+              const where = `${status}/${errorCode}/${hasTransfer ? "transfer" : "none"}/${attempts}`;
+              if (offered.includes("attest_no_transfer")) expect(r, where).toMatchObject({ ok: true, outcome: "attested" });
+              if (offered.includes("attest_no_other")) expect(r, where).toMatchObject({ ok: true, outcome: "attested_no_other" });
+              if (r.outcome === "attested_no_other") expect(offered, where).toContain("attest_no_other");
+              checked++;
+            }
+          }
+        }
+      }
+      expect(checked).toBe(PAYOUT_STATUSES.length * 5 * 2 * 2);
+    });
+  });
+});
+
 // ── What pausing says ───────────────────────────────────────────────────────────────────────────
 
 describe("pausing one payout", () => {
@@ -361,19 +520,171 @@ describe("pausing one payout", () => {
     }
   });
 
-  it("warns, rather than reassures, once a release was requested or made", () => {
-    for (const status of ["released", "release_requested"]) {
+  it("warns, rather than reassures, once a release was requested or made, or its settlement failed (Razorpay may still settle it)", () => {
+    const SETTLING = ["released", "release_requested", "settlement_failed"];
+    for (const status of SETTLING) {
       const e = pauseEffect(status);
       expect(e.warn, status).toBe(true);
-      expect(e.text).toMatch(/Pausing does not stop that/);
+      expect(e.text, status).toMatch(/Pausing does not stop that/);
+      expect(e.text, status).toMatch(/Reverse/);
+      expect(e.text, status).not.toMatch(/Nothing is retried or paid out/);
     }
-    for (const status of PAYOUT_STATUSES.filter((s) => s !== "released" && s !== "release_requested")) expect(pauseEffect(status).warn, status).toBe(false);
+    for (const status of PAYOUT_STATUSES.filter((s) => !SETTLING.includes(s))) expect(pauseEffect(status).warn, status).toBe(false);
   });
 
   it("does not describe an unconfirmed outcome as safe, and says a planned transfer is not made", () => {
     for (const status of ["transfer_requested", "needs_attention"]) expect(pauseEffect(status).text).toMatch(/isn't confirmed/);
     expect(pauseEffect("planned").text).toMatch(/No transfer will be made/);
     for (const status of ["failed", "manual_required"]) expect(pauseEffect(status).text).toMatch(/Nothing is retried or paid out/);
+  });
+});
+
+// ── r2 #R10: a pause that stops nothing is never drawn as a hold ─────────────────────────────────
+
+describe("⚠️ r2 #R10: a pause on a released (or releasing, or failed-settlement) payout says it stops nothing", () => {
+  const paused = (status: string, pausedReason: string, extra: Partial<PayoutRow> = {}) => row({ status, pausedAt: iso(-H), pausedReason, releasedAt: iso(-2 * H), ...extra });
+
+  it("pauseHold: what the pause really does, for every status and every reason", () => {
+    const REASONS = ["dispute", "external_refund", "bank_change", "account_suspended", "creator_suspended", "staff"];
+    for (const status of PAYOUT_STATUSES) {
+      expect(pauseHold({ status, pausedAt: null, pausedReason: null }), `${status} unpaused`).toBeNull();
+      for (const reason of REASONS) {
+        const h = pauseHold({ status, pausedAt: iso(-H), pausedReason: reason });
+        if (["settled", "paid_manual", "void", "reversed"].includes(status)) expect(h, `${status}/${reason}`).toBeNull();
+        else if (status === "released") expect(h, `${status}/${reason}`).toBe(REHOLD_PAUSE_REASONS.includes(reason) ? "asks_rehold" : "none");
+        else if (status === "release_requested" || status === "settlement_failed") expect(h, `${status}/${reason}`).toBe("none");
+        else expect(h, `${status}/${reason}`).toBe("holds");
+      }
+    }
+  });
+
+  it("the hint of a suspended creator's released payout says pausing does not stop it, and to Reverse; a held one says it won't be released", () => {
+    for (const status of ["released", "release_requested", "settlement_failed"]) {
+      for (const reason of ["creator_suspended", "staff", "bank_change"]) {
+        const h = payoutHint(paused(status, reason), NOW);
+        expect(h, `${status}/${reason}`).toMatch(/Pausing does not stop this/);
+        expect(h, `${status}/${reason}`).toMatch(/use Reverse while the money is still in the creator's account/);
+        expect(h, `${status}/${reason}`).not.toMatch(/won't be released|Nothing here is released/);
+      }
+    }
+    // A dispute or an outside refund on a RELEASED payout makes the worker ask for the hold back: it says so, and that it may still settle meanwhile.
+    for (const reason of REHOLD_PAUSE_REASONS) {
+      const h = payoutHint(paused("released", reason), NOW);
+      expect(h, reason).toMatch(/asking Razorpay to put the hold back/);
+      expect(h, reason).toMatch(/may still settle/);
+      expect(h, reason).toMatch(/Reverse/);
+    }
+    // Unpaused, the same statuses say nothing about a pause; a paused HELD payout is a real hold.
+    for (const status of ["released", "release_requested", "settlement_failed"]) expect(payoutHint(row({ status, releasedAt: iso(-H) }), NOW), status).not.toMatch(/[Pp]aus/);
+    expect(payoutHint(paused("held", "creator_suspended", { releaseAfter: iso(-H) }), NOW)).toMatch(/won't be released until it is resumed/);
+  });
+
+  it("the chip reads 'Paused' only where the pause holds the money back; otherwise it says it doesn't stop it", () => {
+    expect(pausedChip(paused("held", "creator_suspended"))).toMatchObject({ label: "Paused", holds: true });
+    expect(pausedChip(paused("planned", "staff"))).toMatchObject({ label: "Paused", holds: true });
+    for (const status of ["released", "release_requested", "settlement_failed"]) {
+      const c = pausedChip(paused(status, "creator_suspended"))!;
+      expect(c.holds, status).toBe(false);
+      expect(c.label, status).not.toBe("Paused");
+      expect(c.label, status).toMatch(/doesn't stop it/);
+    }
+    expect(pausedChip(paused("released", "dispute"))).toMatchObject({ holds: false, label: expect.stringMatching(/putting the hold back/) });
+    // Not paused, or finished: no chip at all.
+    expect(pausedChip(row({ status: "held" }))).toBeNull();
+    for (const status of ["settled", "paid_manual", "void", "reversed"]) expect(pausedChip(paused(status, "staff")), status).toBeNull();
+  });
+
+  it("the Paused view, the release-switch banner and its dialog never claim that already-released money stops", () => {
+    const blurb = PAYOUT_CHIPS.find((c) => c.key === "paused")!.blurb;
+    expect(blurb).not.toMatch(/Nothing here is released\./);
+    expect(blurb).toMatch(/already released may still settle/);
+    expect(blurb).toMatch(/Reverse/);
+    expect(blurb).toMatch(/suspended creator/);
+    for (const text of [RELEASE_SWITCH_TEXT.banner, ...RELEASE_SWITCH_TEXT.pauseDialog, RELEASE_SWITCH_TEXT.pausedNotice]) {
+      expect(text).not.toMatch(/nobody is (being )?paid out/i);
+    }
+    expect(RELEASE_SWITCH_TEXT.banner).toMatch(/already released keep settling/);
+    expect(RELEASE_SWITCH_TEXT.banner).toMatch(/Reverse/);
+    expect(RELEASE_SWITCH_TEXT.pauseDialog.join(" ")).toMatch(/already released: they keep settling/);
+    expect(RELEASE_SWITCH_TEXT.pausedNotice).toMatch(/already released keep settling/);
+  });
+
+  describe("held against the engine, on a database", () => {
+    const fake = new FakeRazorpay();
+    beforeEach(async () => {
+      await prisma.systemSetting.deleteMany({ where: { key: "creatorPayouts.release" } });
+      await clearPayoutAlertMarkersForTests();
+      stubPayoutEnv();
+      fake.reset();
+      fake.install();
+      resetPayoutAlertsForTests();
+    });
+    afterEach(async () => {
+      await settlePayoutKicksForTests();
+      await settleCreatorRefundsForTests();
+      await flushPayoutAlertsForTests();
+      fake.restore();
+      vi.unstubAllEnvs();
+    });
+
+    it("the worker re-holds a paused released payout exactly for REHOLD_PAUSE_REASONS, and keeps polling the settlement of a paused one whatever the reason", async () => {
+      const REASONS = ["dispute", "external_refund", "bank_change", "account_suspended", "creator_suspended", "staff"];
+      const w = await mkWorld(fake, { pages: REASONS.map(() => ({})) });
+      expect((await capture(fake, w)).status).toBe(200);
+      for (const [i, reason] of REASONS.entries()) {
+        await prisma.creatorPayout.update({ where: { bookingItemId: w.creators[i].id }, data: { status: "released", releasedAt: new Date(), pausedAt: new Date(), pausedReason: reason, nextAttemptAt: null, lockedUntil: null, settlementStatus: null, recipientSettlementStatus: null } });
+      }
+      const due = await selectDuePayouts(new Date(), 200);
+      for (const [i, reason] of REASONS.entries()) {
+        const id = (await prisma.creatorPayout.findUniqueOrThrow({ where: { bookingItemId: w.creators[i].id }, select: { id: true } })).id;
+        const job = due.find((d) => d.id === id)?.job;
+        // The UI's "asks_rehold" is the engine's rehold job; every other pause leaves it to the settlement poll, which does not read the pause.
+        expect(job, reason).toBe(REHOLD_PAUSE_REASONS.includes(reason) ? "rehold_paused" : "poll_settlement");
+        expect(pauseHold({ status: "released", pausedAt: iso(-H), pausedReason: reason }), reason).toBe(job === "rehold_paused" ? "asks_rehold" : "none");
+      }
+      // A paused settlement_failed payout is polled too (the pause does not stop it settling), and a paused release_requested one is read back.
+      const [sf, rr] = [w.creators[0].id, w.creators[1].id];
+      await prisma.creatorPayout.update({ where: { bookingItemId: sf }, data: { status: "settlement_failed", pausedReason: "creator_suspended" } });
+      await prisma.creatorPayout.update({ where: { bookingItemId: rr }, data: { status: "release_requested", pausedReason: "creator_suspended" } });
+      const idOf = async (itemId: string) => (await prisma.creatorPayout.findUniqueOrThrow({ where: { bookingItemId: itemId }, select: { id: true } })).id;
+      const again = await selectDuePayouts(new Date(), 200);
+      const sfId = await idOf(sf);
+      const rrId = await idOf(rr);
+      expect(again.find((d) => d.id === sfId)?.job).toBe("poll_settlement");
+      expect(again.find((d) => d.id === rrId)?.job).toBe("resolve_release");
+      expect(pauseHold({ status: "settlement_failed", pausedAt: iso(-H), pausedReason: "creator_suspended" })).toBe("none");
+      expect(pauseHold({ status: "release_requested", pausedAt: iso(-H), pausedReason: "creator_suspended" })).toBe("none");
+    });
+  });
+});
+
+// ── r2 #R12: a verified post with no release scheduled is not "awaiting verification" ───────────
+
+describe("r2 #R12: the row's linkVerifiedAt is enough to know the post was verified", () => {
+  const verifiedRow = row({ status: "held", releaseAfter: null, linkVerifiedAt: iso(-H) });
+
+  it("the hint, the Release-now reason, the pill and the timeline never say 'verify' about it", () => {
+    const hint = payoutHint(verifiedRow, NOW);
+    expect(hint).toMatch(/The post is verified, but no release is scheduled/);
+    expect(hint).not.toMatch(/waits for staff to verify|hasn't been verified/);
+    const release = actionsFor(verifiedRow, { releaseOn: true, now: NOW }).find((a) => a.key === "release")!;
+    expect(release.enabled).toBe(false);
+    expect(release.why).toMatch(/The post is verified, but no release is scheduled/);
+    expect(release.why).not.toMatch(/hasn't been verified/);
+    expect(payoutStatusView(verifiedRow).label).toBe("Held · release not scheduled");
+    const held = buildTimeline({ ...verifiedRow }).find((s) => s.key === "held")!;
+    expect(held.detail).toMatch(/The post is verified/);
+    expect(held.detail).not.toMatch(/Waiting for the creator's post to be verified/);
+    // A verification is never undone: a page that says "not verified" (a stale offer) does not override the row.
+    expect(payoutHint(verifiedRow, NOW, { postVerified: false })).toMatch(/The post is verified/);
+  });
+
+  it("an unverified one still says it waits for verification, everywhere", () => {
+    const r = row({ status: "held", releaseAfter: null, linkVerifiedAt: null });
+    expect(payoutHint(r, NOW)).toMatch(/waits for staff to verify/);
+    expect(payoutStatusView(r).label).toBe("Held · awaiting verify");
+    expect(buildTimeline(r).find((s) => s.key === "held")!.detail).toMatch(/Waiting for the creator's post to be verified/);
+    expect(PAYOUT_CHIPS.find((c) => c.key === "held_awaiting_verify")!.blurb).toMatch(/or it was verified and the worker hasn't scheduled the release/);
   });
 });
 
@@ -627,8 +938,49 @@ describe("the API's plain-words table for a refusal", () => {
       "not_manual_required", "transfer_unchecked", "listing_unchecked", "transfer_active", "transfer_not_failed", "transfer_exists", "not_reversed", "item_refunded",
       "transfer_not_ours", "invalid_reference", "needs_human", "post_not_live", "no_transfer", "retry_disabled", "reversal_failed_state", "not_reversible",
     ];
-    const missing = [...RELEASE_REFUSALS, ...manualAndOrdering].filter((code) => !STAFF_REFUSAL_WORDS[code]);
+    // r2 #R11: what a reversal Razorpay refused rolls back to (decideReversalOutcome, rollbackReversal), a reversal with nothing to take back, what a
+    // "Make transfer now" / "Retry transfer" waits for (decideTransferCreation's wait reasons) or meets (Razorpay refusing the new transfer), and the
+    // two dashboard actions' refusals.
+    const reversal = ["reversal_refused", "reversal_refused_after_release", "transfer_not_processed", "nothing_to_reverse"];
+    const createWait = ["paused", "payment_not_captured", "booking_closed", "item_closed", "account_not_ready", "amount_too_small", "failed", "transfer_still_active", "disabled", "unread"];
+    const dashboard = ["transfer_not_found", "transfer_in_use", "attest_too_soon", "transfer_recorded", "not_applicable", "leased", "lost_claim"];
+    const missing = [...RELEASE_REFUSALS, ...manualAndOrdering, ...reversal, ...createWait, ...dashboard].filter((code) => !STAFF_REFUSAL_WORDS[code]);
     expect(missing, "reasons that would read 'not possible in its current state'").toEqual([]);
+  });
+
+  it("⚠️ r2 #R11: a refusal never says 'Nothing was changed' about a payout that changed: it says what it is now", () => {
+    const at = new Date("2026-10-18T09:00:00.000Z");
+    const snap = (o: Partial<{ status: string; pausedAt: Date | null; pausedReason: string | null; releaseAfter: Date | null }> = {}) => ({ status: "held", pausedAt: null, pausedReason: null, releaseAfter: at, ...o });
+    expect(changeSince(snap(), snap())).toBeNull();
+    expect(changeSince(null, snap())).toBeNull();
+    // A reversal Razorpay refused after the release parked it.
+    expect(changeSince(snap({ status: "released" }), snap({ status: "needs_attention" }))).toBe("Its status is now Needs attention: see its history.");
+    // A twin transfer found at release time parked it.
+    expect(changeSince(snap(), snap({ status: "needs_attention" }), "duplicate_transfer")).toMatch(/^Its status is now Needs attention/);
+    // A refund the release gate could not account for paused it, with the rest of the payment's payouts.
+    const refund = changeSince(snap(), snap({ pausedAt: at, pausedReason: "external_refund" }), "refund_at_razorpay")!;
+    expect(refund).toMatch(/^It is now paused, with every other payout of the same client payment/);
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "dispute" }))).toBe("It is now paused (a dispute on the client's payment): see its history.");
+    // "Release now" scheduled the release before the gate refused (the hold has not run out).
+    expect(changeSince(snap({ releaseAfter: null }), snap())).toBe("Its release is now scheduled: see its history.");
+    expect(changeSince(snap({ pausedAt: at }), snap())).toMatch(/no longer paused/);
+  });
+});
+
+describe("r2 #R15: a bank reference stays text in a spreadsheet", () => {
+  it("a reference of digits (and separators) is written as =\"…\", anything else as the ordinary formula-guarded cell", () => {
+    expect(referenceCsvCell("423611987654")).toBe('"=""423611987654"""');
+    expect(referenceCsvCell("00012345678901234567")).toBe('"=""00012345678901234567"""');
+    expect(referenceCsvCell("2026-10-18")).toBe('"=""2026-10-18"""');
+    expect(referenceCsvCell("12/10")).toBe('"=""12/10"""');
+    expect(referenceCsvCell("UTR0000123456")).toBe("UTR0000123456");
+    expect(referenceCsvCell("NEFT-98765")).toBe("NEFT-98765");
+    expect(referenceCsvCell(null)).toBe("");
+    expect(referenceCsvCell("")).toBe("");
+    // Nothing that is not reference-shaped gets the formula form: a hostile value stays guarded text.
+    expect(referenceCsvCell("=1+2")).toBe("'=1+2");
+    expect(referenceCsvCell('1"),HYPERLINK("x')).not.toMatch(/^"=/);
+    expect(referenceCsvCell("1+1")).not.toMatch(/^"=/);
   });
 
   it("never puts a Razorpay id or a long number (an account number) in those sentences", () => {

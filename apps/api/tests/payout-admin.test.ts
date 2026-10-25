@@ -125,6 +125,8 @@ describe("the gate: internal Admin / Super Admin only, for every route", () => {
     ["post", "/some-payout-id/release-now", {}],
     ["post", "/some-payout-id/require-manual", { reason: "x" }],
     ["post", "/some-payout-id/mark-manual-paid", { reference: "UTR12345" }],
+    ["post", "/some-payout-id/attest-no-transfer", { note: "looked in the dashboard" }],
+    ["post", "/some-payout-id/adopt-transfer", { transferId: "trf_SOMETRANSFER1" }],
   ];
   const call = (m: "get" | "post" | "put", path: string, body: object | undefined, token: string | null) => (m === "get" ? get(path, token) : m === "post" ? post(path, body, token) : put(path, body, token));
 
@@ -162,7 +164,7 @@ describe("the gate: internal Admin / Super Admin only, for every route", () => {
 describe("rows are an allow-list: ids, names, amounts in paise, statuses, times and the destination HINT; never bank data or a Razorpay body", () => {
   const ROW_KEYS = [
     "amountPaise", "amountReversedPaise", "attempts", "bookingId", "bookingItemId", "bookingName", "createdAt", "creatorId", "creatorName", "destinationHint", "errorCode",
-    "format", "grossPaise", "heldAt", "id", "itemPricePaise", "itemStatus", "lastEvent", "linkVerifiedAt", "manualPaidAt", "manualReference", "pageName", "pausedAt",
+    "format", "grossPaise", "hasTransfer", "heldAt", "id", "itemPricePaise", "itemStatus", "lastEvent", "linkVerifiedAt", "manualPaidAt", "manualReference", "pageName", "pausedAt",
     "pausedReason", "platform", "releaseAfter", "releasedAt", "reversedAt", "settledAt", "settlementUtr", "status", "tdsPaise", "updatedAt",
   ];
 
@@ -175,6 +177,8 @@ describe("rows are an allow-list: ids, names, amounts in paise, statuses, times 
     expect(res.headers["cache-control"]).toMatch(/no-store/);
     const row = res.body.data.rows[0];
     expect(Object.keys(row).sort()).toEqual(ROW_KEYS);
+    // Whether a transfer is recorded, never which one: the id stays in the detail.
+    expect(row.hasTransfer).toBe(true);
     expect(row.destinationHint).toBe("HDFC ••••1234");
     // The staff-recorded bank-transfer REFERENCE is the one thing of that group a finished payout's row now carries on purpose ("was creator X paid, and
     // under which reference?"): it is a reference, never an account detail (a PAN- or IFSC-shaped one is refused when it is recorded). Its note stays out.
@@ -409,6 +413,13 @@ describe("actions: one engine step run as the staff member, safe to repeat, a pl
     expect((await payoutOf(heldPayout.id)).status).toBe("held");
 
     const id = await idOf(failedPayout.id);
+    // ⚠️ r2 #R5: a failed payout's post never went live (an offer needs a held payout), so nothing is owed: a person cannot switch it to a bank transfer.
+    const notLive = await post(`/${id}/require-manual`, { reason: "Route cannot pay this creator" });
+    expect(notLive.status).toBe(409);
+    expect(notLive.body.error.message).toMatch(/\[post_not_live\]/);
+    expect((await payoutOf(failedPayout.id)).status).toBe("failed");
+    // A post that IS live and verified (made so here by hand) is owed, and then it can be.
+    await verifiedOffer(w, failedPayout.id);
     const required = await post(`/${id}/require-manual`, { reason: "Route cannot pay this creator" });
     expect(required.status).toBe(200);
     expect(required.body.data.payout.status).toBe("manual_required");
@@ -924,5 +935,242 @@ describe("⚠️ the CSV never looks complete when it is not", () => {
     }
     // The route is healthy again afterwards.
     expect((await get(".csv?filter=open")).status).toBe(200);
+  });
+});
+
+// ── After looking in the Razorpay dashboard: the human exits of a transfer nobody can see (re-review round 2, #R1) ──
+
+describe("r2 #R1: attest-no-transfer and adopt-transfer, the two things staff can say after looking in the Razorpay dashboard", () => {
+  /** A captured payout whose transfer the kick made, put back into a park with no transfer id recorded and the transfer list unreadable. */
+  async function parkedNoId(o: { attempts?: number; errorCode?: string; requestedAgoMin?: number; pages?: number } = {}) {
+    const w = await paid({ pages: Array.from({ length: o.pages ?? 1 }, () => ({})) });
+    const c = w.creators[0];
+    const pid = await idOf(c.id);
+    const transferId = (await payoutOf(c.id)).razorpayTransferId!;
+    await setPayout(c.id, {
+      status: "needs_attention",
+      errorCode: o.errorCode ?? "listing_unreadable",
+      lastError: "parked",
+      razorpayTransferId: null,
+      attempts: o.attempts ?? 1,
+      transferRequestedAt: new Date(Date.now() - (o.requestedAgoMin ?? 40) * MIN),
+      nextAttemptAt: null,
+    });
+    fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 1000 });
+    return { w, c, pid, transferId };
+  }
+
+  it("no transfer exists: refused until a person says so; then the attestation (with the staff id) lets the payout be paid by bank transfer and recorded", async () => {
+    const { w, c, pid, transferId } = await parkedNoId();
+    await verifiedOffer(w, c.id); // a live, verified post: the creator is owed (r2 #R5: only such a post is ever paid by hand)
+    fake.transfers.delete(transferId); // there really is none
+    const before = await post(`/${pid}/require-manual`, { reason: "Razorpay list unreadable" });
+    expect(before.status).toBe(409);
+    expect(before.body.error.message).toMatch(/\[listing_unchecked\]/);
+
+    const a = await post(`/${pid}/attest-no-transfer`, { note: "Checked the payment in the dashboard at 10:40: no transfer for this payout" });
+    expect(a.status).toBe(200);
+    expect(a.body.data.result).toMatchObject({ ok: true, outcome: "attested" });
+    expect(a.body.data.result.note).toMatch(/^Recorded: no transfer exists/);
+    expect(a.body.data.payout.status).toBe("needs_attention"); // recording a person's word moves nothing
+    const att = (await events(pid)).filter((e) => e.kind === "attest_no_transfer");
+    expect(att).toHaveLength(1);
+    expect(att[0]).toMatchObject({ actorType: "staff", actorId: staff.staffId });
+
+    const required = await post(`/${pid}/require-manual`, { reason: "Razorpay list unreadable" });
+    expect(required.status).toBe(200);
+    expect(required.body.data.payout.status).toBe("manual_required");
+    const paidRes = await post(`/${pid}/mark-manual-paid`, { reference: "UTR778899100" });
+    expect(paidRes.status).toBe(200);
+    expect(paidRes.body.data.payout.status).toBe("paid_manual");
+    expect(fake.calls.filter(is.v1Write)).toHaveLength(1); // only the kick's create: nothing was moved at Razorpay by any of this
+  });
+
+  it("⚠️ r2 #R5: the same park on a post that never went live: the payout can be STOPPED (after the attestation), but never recorded as paid by hand", async () => {
+    const { c, pid, transferId } = await parkedNoId();
+    fake.transfers.delete(transferId);
+    expect((await post(`/${pid}/attest-no-transfer`, { note: "Checked the payment in the dashboard: no transfer for this payout" })).status).toBe(200);
+    const stopped = await post(`/${pid}/require-manual`, { reason: "no transfer at Razorpay" });
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.data.payout.status).toBe("manual_required");
+    const paidRes = await post(`/${pid}/mark-manual-paid`, { reference: "UTR778899101" });
+    expect(paidRes.status).toBe(409);
+    expect(paidRes.body.error.message).toMatch(/nothing to pay the creator for.*\[post_not_live\]$/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "manual_required", manualReference: null, manualPaidAt: null });
+  });
+
+  it("attest-no-transfer is refused in plain words, recording nothing: a payout that records a transfer, one whose last request was minutes ago, an empty note, no such payout", async () => {
+    const w = await paid({ pages: [{}] });
+    const heldId = await idOf(w.creators[0].id);
+    const held = await post(`/${heldId}/attest-no-transfer`, { note: "x" });
+    expect(held.status).toBe(409);
+    expect(held.body.error.message).toMatch(/already records a transfer/);
+    expect(held.body.error.message).toMatch(/Nothing was changed\. \[transfer_recorded\]$/);
+
+    const { pid } = await parkedNoId({ requestedAgoMin: 2 });
+    const soon = await post(`/${pid}/attest-no-transfer`, { note: "x" });
+    expect(soon.status).toBe(409);
+    expect(soon.body.error.message).toMatch(/less than 10 minutes ago.*\[attest_too_soon\]/);
+    expect((await post(`/${pid}/attest-no-transfer`, { note: "" })).status).toBe(400);
+    expect((await post(`/${randomUUID()}/attest-no-transfer`, { note: "x" })).status).toBe(404);
+    expect(await prisma.creatorPayoutEvent.count({ where: { kind: { startsWith: "attest" } } })).toBe(0);
+  });
+
+  it("adopt-transfer: this payout's transfer is read and recorded (held); another payout's, an unknown id, or a malformed one is refused and changes nothing; a repeat is the same answer", async () => {
+    const { w, pid, transferId } = await parkedNoId({ pages: 2 });
+    const theirs = (await payoutOf(w.creators[1].id)).razorpayTransferId!;
+    const calls = fake.calls.length;
+    const malformed = await post(`/${pid}/adopt-transfer`, { transferId: "pay_NOTATRANSFER" });
+    expect(malformed.status).toBe(400);
+    expect(fake.calls.length).toBe(calls); // a 400 asks Razorpay nothing
+
+    const wrong = await post(`/${pid}/adopt-transfer`, { transferId: theirs });
+    expect(wrong.status).toBe(409);
+    expect(wrong.body.error.message).toMatch(/is not this payout's.*Nothing was changed\. \[transfer_not_ours\]$/);
+    const missing = await post(`/${pid}/adopt-transfer`, { transferId: "trf_DOESNOTEXIST1" });
+    expect(missing.status).toBe(409);
+    expect(missing.body.error.message).toMatch(/\[transfer_not_found\]$/);
+    expect(await payoutOf(w.creators[0].id)).toMatchObject({ status: "needs_attention", errorCode: "listing_unreadable", razorpayTransferId: null });
+
+    const ok = await post(`/${pid}/adopt-transfer`, { transferId: ` ${transferId} ` });
+    expect(ok.status).toBe(200);
+    expect(ok.body.data.result).toMatchObject({ ok: true, outcome: "held" });
+    expect(ok.body.data.result.note).toMatch(/confirmed held/);
+    expect(ok.body.data.payout.status).toBe("held");
+    expect(await payoutOf(w.creators[0].id)).toMatchObject({ status: "held", razorpayTransferId: transferId });
+    expect((await events(pid)).some((e) => e.actorType === "staff" && e.actorId === staff.staffId && /Staff found this payout's transfer/.test(e.note ?? ""))).toBe(true);
+
+    const again = await post(`/${pid}/adopt-transfer`, { transferId });
+    expect(again.status).toBe(200);
+    expect(again.body.data.result).toMatchObject({ ok: true, outcome: "already_adopted" });
+  });
+
+  it("a request sent twice: the adopted transfer waits for the check for a second one; while the list stays unreadable a person's 'no other transfer' finishes it as held", async () => {
+    const { w, pid, transferId } = await parkedNoId({ attempts: 2, errorCode: "transfer_unknown_after_retry" });
+    const adopt = await post(`/${pid}/adopt-transfer`, { transferId });
+    expect(adopt.status).toBe(200);
+    expect(adopt.body.data.result).toMatchObject({ ok: true, outcome: "audit_pending" });
+    expect(adopt.body.data.result.note).toMatch(/sent twice/);
+    expect(adopt.body.data.payout.status).toBe("transfer_requested");
+
+    // The worker cannot finish it on its own while the list is unreadable.
+    await runCreatorPayoutsTick({ now: new Date(Date.now() + 20 * MIN) });
+    expect((await payoutOf(w.creators[0].id)).status).toBe("transfer_requested");
+
+    const att = await post(`/${pid}/attest-no-transfer`, { note: "Only this one transfer carries the payout in the dashboard" });
+    expect(att.status).toBe(200);
+    expect(att.body.data.result).toMatchObject({ ok: true, outcome: "attested_no_other" });
+    expect(att.body.data.result.note).toMatch(/The transfer is confirmed held\.$/);
+    expect(att.body.data.payout.status).toBe("held");
+    const ev = (await events(pid)).filter((e) => e.kind === "attest_no_other_transfer");
+    expect(ev).toHaveLength(1);
+    expect(ev[0]).toMatchObject({ actorType: "staff", actorId: staff.staffId });
+  });
+});
+
+describe("r2 #R4: a reversal reason is scrubbed BEFORE it is cut to 40 characters", () => {
+  it("an account number at the cut never leaves its front digits in the audit trail", async () => {
+    const w = await paid({ pages: [{}] });
+    const pid = await idOf(w.creators[0].id);
+    const r = await post(`/${pid}/reverse`, { reason: `${"x".repeat(34)} 5010.0123.4567.8901` });
+    expect(r.status).toBe(200);
+    expect(r.body.data.payout.status).toBe("reversed");
+    for (const e of await events(pid)) expect(e.note ?? "").not.toMatch(/5010|0123|4567|8901/);
+  });
+});
+
+describe("⚠️ r2 #R11: a refusal never says 'Nothing was changed' when the step changed the payout: it says what the payout is now", () => {
+  async function releasable(pages = 1) {
+    const w = await paid({ pages: Array.from({ length: pages }, () => ({})) });
+    const c = w.creators[0];
+    await verifiedOffer(w, c.id);
+    await onCreatorLinkVerified(c.id, { type: "staff", id: staff.staffId });
+    return { w, c, id: await idOf(c.id) };
+  }
+
+  it("Release now on a refund Razorpay lists and our books lack: 409, and it says every payout of the payment is now paused", async () => {
+    const { w, c, id } = await releasable(2);
+    const pay = (await payoutOf(c.id)).razorpayPaymentId;
+    fake.payments.get(pay)!.refunds.push({ id: "rfnd_P4R11EXTERNAL", amount: 1_000, status: "processed" });
+    const res = await post(`/${id}/release-now`);
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/It is now paused, with every other payout of the same client payment that was still in flight/);
+    expect(res.body.error.message).not.toMatch(/Nothing was changed/);
+    expect(res.body.error.message).toMatch(/\[refund_at_razorpay\]$/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", pausedReason: "external_refund" });
+    expect((await payoutOf(w.creators[1].id)).pausedAt).not.toBeNull(); // the sibling of the same payment is paused too, as the sentence says
+    expect(fake.count((x) => is.setHold(x, false))).toBe(0);
+  });
+
+  it("Reverse that Razorpay refuses after the release: 409 naming the new status (Needs attention), never 'Nothing was changed'", async () => {
+    const { c, id } = await releasable();
+    expect((await post(`/${id}/release-now`)).status).toBe(200);
+    const released = await payoutOf(c.id);
+    expect(released.status).toBe("released");
+    fake.settleTransfer(released.razorpayTransferId!); // the money reached the bank: Razorpay has nothing to reverse against
+    const res = await post(`/${id}/reverse`, { reason: "creator suspended" });
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/refused to take back money that was already released/);
+    expect(res.body.error.message).toMatch(/Its status is now Needs attention: see its history\. \[reversal_refused_after_release\]$/);
+    expect(res.body.error.message).not.toMatch(/Nothing was changed|not possible in its current state/);
+    expect((await payoutOf(c.id)).status).toBe("needs_attention");
+  });
+
+  it("Reverse that Razorpay refuses on a held payout: it is held again, and the refusal says no money moved (not 'Nothing was changed')", async () => {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    const id = await idOf(c.id);
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    const res = await post(`/${id}/reverse`, { reason: "withdrawn" });
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/Razorpay refused to take the transfer back, so it is held again as it was/);
+    expect(res.body.error.message).toMatch(/No money moved; Razorpay's refusal is recorded in its history\. \[reversal_refused\]$/);
+    expect(res.body.error.message).not.toMatch(/Nothing was changed/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", errorCode: "reversal_refused" });
+  });
+
+  it("Release now that schedules the release first and is then refused (the hold has not run out) says the release is now scheduled", async () => {
+    vi.stubEnv("CREATOR_PAYOUT_HOLD_DAYS", "3");
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    await verifiedOffer(w, c.id); // verified, but the follow-up that schedules the release never ran
+    expect((await payoutOf(c.id)).releaseAfter).toBeNull();
+    const res = await post(`/${await idOf(c.id)}/release-now`);
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/Its release is now scheduled: see its history\. \[release_not_due\]$/);
+    expect((await payoutOf(c.id)).releaseAfter).not.toBeNull();
+  });
+
+  it("a refusal that changed nothing still says so", async () => {
+    const w = await paid({ pages: [{}] });
+    const id = await idOf(w.creators[0].id);
+    const before = await prisma.creatorPayout.findUniqueOrThrow({ where: { id }, select: { status: true, pausedAt: true, releaseAfter: true } });
+    const res = await post(`/${id}/release-now`); // the campaign is not approved and nothing was posted: refused before anything is written
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/Nothing was changed\. \[booking_not_releasable\]$/);
+    expect(await prisma.creatorPayout.findUniqueOrThrow({ where: { id }, select: { status: true, pausedAt: true, releaseAfter: true } })).toEqual(before);
+  });
+});
+
+describe("r2 #R15: the CSV keeps an all-digit bank reference as text, so a spreadsheet cannot turn it into 4.23612E+11", () => {
+  it("a 12-digit IMPS/UPI reference is written as =\"…\"; a reference with letters, and every other cell, is unchanged", async () => {
+    const w = await paid({ pages: [{}, {}] });
+    const [digits, letters] = w.creators;
+    await setPayout(digits.id, { status: "paid_manual", manualReference: "423611987654", manualPaidAt: new Date() });
+    await setPayout(letters.id, { status: "settled", settledAt: new Date(), settlementUtr: "UTR0000123456" });
+    const res = await get(".csv?filter=finished").buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (d: Buffer) => chunks.push(d));
+      r.on("end", () => cb(null, Buffer.concat(chunks).toString("utf8")));
+    });
+    expect(res.status).toBe(200);
+    const text = res.body as unknown as string;
+    expect(text).toContain('"=""423611987654"""');
+    const rows = parseCsv(text);
+    const col = (name: string) => PAYOUT_CSV_HEADERS.indexOf(name as never);
+    const row = (itemId: string) => rows.find((r) => r[3] === itemId)!;
+    expect(row(digits.id)[col("Paid: bank transfer reference")]).toBe('="423611987654"');
+    expect(row(letters.id)[col("Paid: settlement UTR")]).toBe("UTR0000123456");
+    for (const r of rows.slice(1)) expect(r).toHaveLength(PAYOUT_CSV_HEADERS.length);
   });
 });

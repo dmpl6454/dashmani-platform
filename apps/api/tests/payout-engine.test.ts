@@ -193,6 +193,9 @@ async function mkWorld(o: WorldOpts = {}) {
 }
 type World = Awaited<ReturnType<typeof mkWorld>>;
 
+/** The post a person may pay by hand for: live, with this creator's completed and verified offer (markManualPaid, requireManualPayment by staff). */
+const LIVE_POST = { itemStatus: "posted_manual", verified: true } as const;
+
 /** A payout that satisfies the whole release gate: held, its item live, its offer verified, release_after passed. */
 const releasable = (o: WorldOpts = {}) => mkWorld({ payoutStatus: "held", bookingStatus: "approved", itemStatus: "posted_manual", verified: true, ...o });
 
@@ -1322,7 +1325,7 @@ describe("reverseForRefund: the step before any refund of a creator item", () =>
 // ═══════════════════════════════════════════════════════════════════════════════
 describe("manual fallback", () => {
   it("(a) a payout that was never sent to Razorpay is paid by hand with no Razorpay call, and the reference is kept exactly", async () => {
-    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 0 });
+    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 0, ...LIVE_POST });
     const r = await markManualPaid(w.payout.id, { reference: "NEFT 482910-AB/77", note: "paid on 18 Oct", actor: { type: "staff", id: "staff-1" }, now: T(0) });
     expect(r).toMatchObject({ ok: true, outcome: "paid_manual", status: "paid_manual", reason: "no_transfer", calls: 0 });
     const p = await reload(w.payout.id);
@@ -1333,30 +1336,30 @@ describe("manual fallback", () => {
   });
 
   it("(a) a create call WAS sent: only a fresh listing showing no live transfer allows it", async () => {
-    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1 });
+    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1, ...LIVE_POST });
     expect(await markManualPaid(w.payout.id, { reference: "UTR778899001", now: T(0) })).toMatchObject({ ok: true, reason: "no_transfer" });
 
-    const x = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1 });
+    const x = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1, ...LIVE_POST });
     fake.seedTransfer({ source: x.pay, recipient: x.acc, amount: x.amount, notes: { payout_id: x.payout.id } }); // it landed unseen
     expect(await markManualPaid(x.payout.id, { reference: "UTR778899002", now: T(0) })).toMatchObject({ ok: false, outcome: "refused", reason: "transfer_active" });
 
-    const y = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1 });
+    const y = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1, ...LIVE_POST });
     fake.intercept({ match: is.listTransfers, mode: "reject", status: 500 });
     expect(await markManualPaid(y.payout.id, { reference: "UTR778899003", now: T(0) })).toMatchObject({ ok: false, reason: "listing_unchecked" });
     expect((await reload(y.payout.id)).status).toBe("manual_required");
   });
 
   it("(b) the transfer failed AND nothing else live carries the payout id", async () => {
-    const w = await mkWorld({ payoutStatus: "manual_required", transferStatus: "failed" });
+    const w = await mkWorld({ payoutStatus: "manual_required", transferStatus: "failed", ...LIVE_POST });
     expect(await markManualPaid(w.payout.id, { reference: "UTR778899004", now: T(0) })).toMatchObject({ ok: true, reason: "transfer_failed" });
 
-    const x = await mkWorld({ payoutStatus: "manual_required", transferStatus: "failed" });
+    const x = await mkWorld({ payoutStatus: "manual_required", transferStatus: "failed", ...LIVE_POST });
     fake.seedTransfer({ source: x.pay, recipient: x.acc, amount: x.amount, notes: { payout_id: x.payout.id } }); // another, live, one
     expect(await markManualPaid(x.payout.id, { reference: "UTR778899005", now: T(0) })).toMatchObject({ ok: false, reason: "transfer_active" });
   });
 
   it("(c) reversed: paid by hand only after the whole transfer is back", async () => {
-    const w = await mkWorld({ payoutStatus: "manual_required", transferStatus: "processed" });
+    const w = await mkWorld({ payoutStatus: "manual_required", transferStatus: "processed", ...LIVE_POST });
     await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { reversedAt: new Date() } });
     // The row says reversed, but Razorpay still shows a live transfer: refused.
     expect(await markManualPaid(w.payout.id, { reference: "UTR778899006", now: T(0) })).toMatchObject({ ok: false, reason: "transfer_not_failed" });
@@ -1367,13 +1370,13 @@ describe("manual fallback", () => {
   });
 
   it("never pays by hand while a transfer is alive and could still release", async () => {
-    const w = await mkWorld({ payoutStatus: "manual_required" }); // a processed, held transfer with the payout in manual_required
+    const w = await mkWorld({ payoutStatus: "manual_required", ...LIVE_POST }); // a processed, held transfer with the payout in manual_required
     expect(await markManualPaid(w.payout.id, { reference: "UTR778899007", now: T(0) })).toMatchObject({ ok: false, outcome: "refused", reason: "transfer_not_failed" });
     expect((await reload(w.payout.id)).status).toBe("manual_required");
   });
 
   it("an unreadable fresh read of the transfer refuses", async () => {
-    const w = await mkWorld({ payoutStatus: "manual_required", transferStatus: "failed" });
+    const w = await mkWorld({ payoutStatus: "manual_required", transferStatus: "failed", ...LIVE_POST });
     fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
     expect(await markManualPaid(w.payout.id, { reference: "UTR778899008", now: T(0) })).toMatchObject({ ok: false, reason: "transfer_unchecked" });
   });
@@ -1388,15 +1391,94 @@ describe("manual fallback", () => {
 
   it("requireManualPayment moves planned, failed, reversed or parked payouts there; a person only for a parked one", async () => {
     for (const status of ["planned", "failed", "reversed"]) {
-      const w = await mkWorld({ payoutStatus: status, transfer: false });
+      const w = await mkWorld({ payoutStatus: status, transfer: false, ...LIVE_POST });
       expect(await requireManualPayment(w.payout.id, { reason: "staff_decision", actor: { type: "staff", id: "s" } }), status).toMatchObject({ ok: true, status: "manual_required" });
     }
+    // The worker's own give-up on a payout that can never be created (planned, never sent) needs no post: it only stops blocking other refunds.
+    const giveUp = await mkWorld({ payoutStatus: "planned", transfer: false });
+    expect(await requireManualPayment(giveUp.payout.id, { reason: "transfer_never_created", actor: { type: "system" } })).toMatchObject({ ok: true, status: "manual_required" });
     // A parked payout is for a person; and it only moves when nothing could still release (a parked one with a live transfer is refused: see below).
     const parked = await mkWorld({ payoutStatus: "needs_attention", transferStatus: "failed" });
     expect(await requireManualPayment(parked.payout.id, { reason: "x" })).toMatchObject({ ok: false, outcome: "needs_human" });
     expect(await requireManualPayment(parked.payout.id, { reason: "x", actor: { type: "staff", id: "s" } })).toMatchObject({ ok: true });
     const held = await mkWorld({ payoutStatus: "held" });
     expect((await requireManualPayment(held.payout.id, { reason: "x", actor: { type: "staff", id: "s" } })).outcome).toBe("not_applicable");
+  });
+
+  // ── Re-review round 2, #R5: a hand payment is for a post that went live and was verified, never for one that did not ──
+  const PERSON = { type: "staff" as const, id: "staff-r5" };
+  const offerOfItem = (itemId: string) => prisma.creatorOffer.findUniqueOrThrow({ where: { bookingItemId: itemId } });
+
+  it("⚠️ #R5 markManualPaid refuses a payout whose post never went live (post_not_live), whoever asks, before any Razorpay call; refunding the post still voids it", async () => {
+    // Never held, so never offered: the post is pending and has no offer. The worker's give-up leaves exactly this.
+    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 0 });
+    const before = fake.calls.length;
+    for (const actor of [PERSON, { type: "system" as const }]) {
+      expect(await markManualPaid(w.payout.id, { reference: "UTR778899500", actor, now: T(0) }), actor.type).toMatchObject({ ok: false, outcome: "refused", reason: "post_not_live", calls: 0 });
+    }
+    expect(fake.calls.length).toBe(before);
+    expect(await reload(w.payout.id)).toMatchObject({ status: "manual_required", manualReference: null, manualPaidAt: null });
+    expect((await eventsOf(w.payout.id)).filter((e) => e.kind === "manual")).toHaveLength(0);
+    // The way out that works: the post is refunded, and its payout is voided (nothing was ever sent).
+    expect(await reverseForRefund(w.item.id, { reason: "item_refunded", now: T(1) })).toMatchObject({ refundable: true, state: "voided" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "void", voidReason: "item_refunded" });
+    // And a void payout is not paid by hand either.
+    expect(await markManualPaid(w.payout.id, { reference: "UTR778899500", actor: PERSON, now: T(2) })).toMatchObject({ ok: false, outcome: "not_manual_required" });
+  });
+
+  it("⚠️ #R5 markManualPaid needs EVERY fact of a delivered post: live, this creator's offer, completed, verified, and no refund of it on the ledger", async () => {
+    const cases: Array<[string, (w: World) => Promise<unknown>]> = [
+      ["item not live", (w) => prisma.campaignBookingItem.update({ where: { id: w.item.id }, data: { status: "manual_pending" } })],
+      ["item refunded", (w) => prisma.campaignBookingItem.update({ where: { id: w.item.id }, data: { status: "refunded" } })],
+      ["offer not verified", async (w) => prisma.creatorOffer.update({ where: { id: (await offerOfItem(w.item.id)).id }, data: { linkVerifiedAt: null } })],
+      ["offer not completed", async (w) => prisma.creatorOffer.update({ where: { id: (await offerOfItem(w.item.id)).id }, data: { status: "accepted" } })],
+      ["no offer", async (w) => prisma.creatorOffer.delete({ where: { id: (await offerOfItem(w.item.id)).id } })],
+      ["another creator's offer", async (w) => {
+        const other = await prisma.creator.create({ data: { email: `other${w.n}@p4.test`, passwordHash: "x", name: "Other", country: "IN", status: "approved", emailVerifiedAt: new Date() } });
+        return prisma.creatorOffer.update({ where: { id: (await offerOfItem(w.item.id)).id }, data: { creatorId: other.id } });
+      }],
+      ["a refund of the post on the ledger", async (w) => {
+        const pay = await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: w.booking.id } });
+        return prisma.campaignRefund.create({ data: { idempotencyKey: `rf-item-${w.item.id}`, paymentId: pay.id, razorpayPaymentId: w.pay, bookingId: w.booking.id, bookingItemId: w.item.id, amountPaise: w.price, status: "pending", origin: "ours", reason: "item_refunded" } });
+      }],
+    ];
+    for (const [name, spoil] of cases) {
+      const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 0, ...LIVE_POST });
+      await spoil(w);
+      expect(await markManualPaid(w.payout.id, { reference: "UTR778899501", actor: PERSON, now: T(0) }), name).toMatchObject({ ok: false, outcome: "refused", reason: "post_not_live", calls: 0 });
+      expect((await reload(w.payout.id)).status, name).toBe("manual_required");
+    }
+    // A FAILED refund attempt of the post is not a refund: the creator of a live, verified post is still owed.
+    const ok = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 0, ...LIVE_POST });
+    const pay = await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: ok.booking.id } });
+    await prisma.campaignRefund.create({ data: { idempotencyKey: `rf-item-${ok.item.id}`, paymentId: pay.id, razorpayPaymentId: ok.pay, bookingId: ok.booking.id, bookingItemId: ok.item.id, amountPaise: ok.price, status: "failed", origin: "ours", reason: "item_refunded" } });
+    expect(await markManualPaid(ok.payout.id, { reference: "UTR778899502", actor: PERSON, now: T(0) })).toMatchObject({ ok: true, status: "paid_manual" });
+  });
+
+  it("⚠️ #R5 a person cannot switch a planned, failed or reversed payout of a post that never went live to a bank transfer (post_not_live, no Razorpay call)", async () => {
+    const before = fake.calls.length;
+    const planned = await mkWorld({ transfer: false });
+    const failed = await mkWorld({ payoutStatus: "failed", transferStatus: "failed", attempts: 2 });
+    const reversed = await mkWorld({ payoutStatus: "reversed", transferStatus: "reversed", itemStatus: "posted_manual" }); // live, but no verified offer
+    for (const w of [planned, failed, reversed]) {
+      expect(await requireManualPayment(w.payout.id, { reason: "staff_decision", actor: PERSON }), w.payout.status).toMatchObject({ ok: false, outcome: "refused", reason: "post_not_live", calls: 0 });
+      expect((await reload(w.payout.id)).status).toBe(w.payout.status);
+    }
+    expect(fake.calls.length).toBe(before);
+    // Their way out is the post's refund, which voids them (failed: after the listing shows no live transfer).
+    expect(await reverseForRefund(planned.item.id, { reason: "item_refunded", now: T(0) })).toMatchObject({ refundable: true, state: "voided" });
+    expect(await reverseForRefund(failed.item.id, { reason: "item_refunded", now: T(0) })).toMatchObject({ refundable: true, state: "voided" });
+  });
+
+  it("⚠️ #R5 a PARKED payout of a post that never went live keeps its way out (stopped, once a fresh listing shows no money out), is never paid by hand, and is then refundable", async () => {
+    // A create call sent twice whose result never showed up: no transfer recorded, the post never offered.
+    const w = await mkWorld({ payoutStatus: "needs_attention", transfer: false, attempts: 2 });
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { errorCode: "transfer_unknown_after_retry" } });
+    expect(await requireManualPayment(w.payout.id, { reason: "no transfer at Razorpay", actor: PERSON })).toMatchObject({ ok: true, status: "manual_required" });
+    expect(await markManualPaid(w.payout.id, { reference: "UTR778899503", actor: PERSON, now: T(0) })).toMatchObject({ ok: false, outcome: "refused", reason: "post_not_live" });
+    expect(await reverseForRefund(w.item.id, { reason: "item_refunded", now: T(1) })).toMatchObject({ refundable: true, state: "voided" });
+    // Only the listings were read: nothing was created, reversed or refunded at Razorpay.
+    expect(fake.writes()).toHaveLength(0);
   });
 });
 
@@ -1780,7 +1862,7 @@ describe("review #1/#19: no payout is voided, and none is paid by hand, while a 
   });
 
   it("a listing that cannot be read blocks manual payment, until a person attests (after the last request) that no transfer exists", async () => {
-    const w = await mkWorld({ payoutStatus: "failed", transfer: false, attempts: 1 });
+    const w = await mkWorld({ payoutStatus: "failed", transfer: false, attempts: 1, ...LIVE_POST });
     fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 100 });
     expect(await requireManualPayment(w.payout.id, { reason: "x", actor: STAFF })).toMatchObject({ ok: false, reason: "listing_unchecked" });
     // A system actor can never attest; a person must have an id.
@@ -1807,7 +1889,7 @@ describe("review #1/#19: no payout is voided, and none is paid by hand, while a 
   });
 
   it("markManualPaid with an unreadable listing: refused, then allowed by an attestation", async () => {
-    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1 });
+    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1, ...LIVE_POST });
     fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 100 });
     expect(await markManualPaid(w.payout.id, { reference: "UTR778899100", actor: STAFF, now: T(0) })).toMatchObject({ ok: false, reason: "listing_unchecked" });
     await attestNoTransfer(w.payout.id, { note: "checked", actor: STAFF });
@@ -2134,7 +2216,7 @@ describe("review #31/#36: staff-typed text is scrubbed before it is stored, and 
   });
 
   it("the reason and the note staff type are scrubbed in the row and the audit trail; the reference is kept exactly", async () => {
-    const w = await mkWorld({ payoutStatus: "failed", transfer: false, attempts: 0 });
+    const w = await mkWorld({ payoutStatus: "failed", transfer: false, attempts: 0, ...LIVE_POST });
     const r = await requireManualPayment(w.payout.id, { reason: "pay to 5010.0123.4567.8901 please", actor: STAFF });
     expect(r.ok).toBe(true);
     const p = await reload(w.payout.id);
@@ -2148,7 +2230,7 @@ describe("review #31/#36: staff-typed text is scrubbed before it is stored, and 
   });
 
   it("the review's own example: an account number and an IFSC typed into the reason reach neither error_code nor any audit note", async () => {
-    const w = await mkWorld({ transfer: false }); // planned: nothing is read from Razorpay to move it
+    const w = await mkWorld({ transfer: false, ...LIVE_POST }); // planned: nothing is read from Razorpay to move it
     expect(await requireManualPayment(w.payout.id, { reason: "acct 50100123456789 HDFC0001234", actor: STAFF })).toMatchObject({ ok: true, status: "manual_required" });
     expect((await reload(w.payout.id)).errorCode ?? "").not.toMatch(/50100123456789|HDFC0001234|0001234/);
     for (const e of await eventsOf(w.payout.id)) expect(e.note ?? "").not.toMatch(/50100123456789|HDFC0001234|0001234/);
@@ -2174,5 +2256,153 @@ describe("review #32: gross, TDS and net differ, and the amount sent is always t
     const w = await releasable({ amount: 90_000, tds: 10_000, price: 250_000 });
     fake.transfers.get(w.transferId!)!.amount = 100_000;
     expect(await releasePayout(w.payout.id, { now: T(0) })).toMatchObject({ ok: false, reason: "transfer_mismatch" });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// The re-review of the fix round (round 2, findings #R1 to #R4). Each block names the finding it closes; every one fails without its fix.
+
+describe("r2 #R1: a payout parked as transfer_unknown_after_retry is listed again hourly, and a transfer that lands late is adopted", () => {
+  async function parkedAfterRetry() {
+    const w = await mkWorld();
+    fake.intercept({ match: is.createTransfer, mode: "drop", times: 2 });
+    await executePlannedPayout(w.payout.id, { now: T(0) });
+    await resolveUnknownTransfer(w.payout.id, { now: T(3) });
+    await resolveUnknownTransfer(w.payout.id, { now: T(15) }); // the repeat is dropped too
+    await resolveUnknownTransfer(w.payout.id, { now: T(30) });
+    expect(await resolveUnknownTransfer(w.payout.id, { now: T(45) })).toMatchObject({ outcome: "parked", status: "needs_attention", reason: "transfer_unknown_after_retry" });
+    return w;
+  }
+
+  it("nothing found: it stays parked, asks again an hour later, and never sends a third request", async () => {
+    const w = await parkedAfterRetry();
+    expect((await reload(w.payout.id)).nextAttemptAt?.getTime()).toBe(T(105).getTime());
+    expect((await selectDuePayouts(T(50))).some((d) => d.id === w.payout.id)).toBe(false);
+    expect((await selectDuePayouts(T(106))).find((d) => d.id === w.payout.id)?.job).toBe("resolve_unknown");
+    expect(await resolveUnknownTransfer(w.payout.id, { now: T(106) })).toMatchObject({ ok: false, outcome: "waiting", status: "needs_attention", reason: "transfer_unknown_after_retry" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "needs_attention", errorCode: "transfer_unknown_after_retry", razorpayTransferId: null });
+    expect((await reload(w.payout.id)).nextAttemptAt?.getTime()).toBe(T(166).getTime());
+    // An unreadable list changes nothing either: still parked, asked again hourly.
+    fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 1 });
+    expect(await resolveUnknownTransfer(w.payout.id, { now: T(167) })).toMatchObject({ ok: false, outcome: "unread", status: "needs_attention", reason: "transfer_unknown_after_retry" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "needs_attention", errorCode: "transfer_unknown_after_retry" });
+    expect(createCalls()).toHaveLength(2);
+  });
+
+  it("the FIRST request lands after the park: the hourly look adopts it, and the twin audit then confirms it held (exactly one transfer, no new request)", async () => {
+    const w = await parkedAfterRetry();
+    const late = fake.seedTransfer({ source: w.pay, recipient: w.acc, amount: w.amount, notes: { payout_id: w.payout.id, booking_item_id: w.item.id, attempt: requestKeyOf(1, T(0))! } });
+    expect(await resolveUnknownTransfer(w.payout.id, { now: T(106) })).toMatchObject({ ok: false, outcome: "audit_pending", status: "transfer_requested" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "transfer_requested", razorpayTransferId: late.id, attempts: 2 });
+    expect(await confirmHold(w.payout.id, { now: T(107) })).toMatchObject({ ok: true, status: "held" });
+    expect(createCalls()).toHaveLength(2);
+    expect((await eventsOf(w.payout.id)).some((e) => /showed up in Razorpay's list after the repeated request was parked/.test(e.note ?? ""))).toBe(true);
+  });
+
+  it("a late transfer for another amount is not adopted: it is parked as a mismatch, never held", async () => {
+    const w = await parkedAfterRetry();
+    fake.seedTransfer({ source: w.pay, recipient: w.acc, amount: w.amount + 1, notes: { payout_id: w.payout.id, attempt: requestKeyOf(1, T(0))! } });
+    expect(await resolveUnknownTransfer(w.payout.id, { now: T(106) })).toMatchObject({ ok: false, status: "needs_attention", reason: "transfer_mismatch" });
+    expect((await reload(w.payout.id)).razorpayTransferId).toBeNull();
+  });
+});
+
+describe("r2 #R1: a person's 'no OTHER transfer carries this payout' stands in for the twin audit's unreadable list, on the way to paying the creator only", () => {
+  it("the hold confirmation of a twice-sent payout: unread list → not held; too early or too old an attestation counts for nothing; a valid one → held", async () => {
+    const w = await mkWorld({ payoutStatus: "transfer_requested", transfer: true, attempts: 2 }); // last request at T(-10)
+    fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 100 });
+    expect(await confirmHold(w.payout.id, { now: T(1) })).toMatchObject({ ok: false, outcome: "unread", status: "transfer_requested" });
+    // Within ABSENT_CHECK_GAP_MS of the last request a person's look proves no more than a listing would: refused, nothing recorded.
+    expect(await attestNoTransfer(w.payout.id, { note: "looked", actor: STAFF, now: T(-5) })).toMatchObject({ ok: false, reason: "attest_too_soon" });
+    expect(await attestNoTransfer(w.payout.id, { note: "looked", actor: { type: "system" }, now: T(1) })).toMatchObject({ ok: false, outcome: "needs_human" });
+    // One made before the gap had passed (inserted by hand) is ignored.
+    await prisma.creatorPayoutEvent.create({ data: { payoutId: w.payout.id, bookingId: w.booking.id, kind: "attest_no_other_transfer", fromStatus: "transfer_requested", toStatus: "transfer_requested", actorType: "staff", actorId: "early", note: "early", createdAt: T(-9) } });
+    expect(await confirmHold(w.payout.id, { now: T(2) })).toMatchObject({ ok: false, outcome: "unread" });
+    expect(await attestNoTransfer(w.payout.id, { note: "only one transfer carries it in the dashboard", actor: STAFF, now: T(1) })).toMatchObject({ ok: true, outcome: "attested_no_other" });
+    expect(await confirmHold(w.payout.id, { now: T(3) })).toMatchObject({ ok: true, status: "held" });
+    const ev = (await eventsOf(w.payout.id)).filter((e) => e.kind === "attest_no_other_transfer" && e.actorId === STAFF.id);
+    expect(ev).toHaveLength(1);
+  });
+
+  it("the release of a twice-sent payout: refused while the list is unread, released once a person attested", async () => {
+    const w = await releasable({ attempts: 2 });
+    fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 100 });
+    expect(await releasePayout(w.payout.id, { now: T(0) })).toMatchObject({ ok: false, reason: "duplicate_unchecked" });
+    expect(holdCalls(false)).toHaveLength(0);
+    expect(await attestNoTransfer(w.payout.id, { note: "checked", actor: STAFF, now: T(0) })).toMatchObject({ ok: true, outcome: "attested_no_other" });
+    expect(await releasePayout(w.payout.id, { now: T(1) })).toMatchObject({ ok: true, status: "released" });
+    expect(holdCalls(false)).toHaveLength(1);
+  });
+
+  it("⚠️ never the reversal before a refund: a twice-sent payout with an unread list and an attestation is still not called reversed", async () => {
+    const w = await mkWorld({ payoutStatus: "held", attempts: 2 });
+    fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 100 });
+    expect((await attestNoTransfer(w.payout.id, { note: "checked", actor: STAFF, now: T(0) })).outcome).toBe("attested_no_other");
+    expect(await reversePayout(w.payout.id, { reason: "withdrawn", now: T(1) })).toMatchObject({ ok: false, outcome: "unknown", status: "reversal_requested" });
+    expect(fake.calls.filter(is.createReversal)).toHaveLength(0);
+    expect((await reverseForRefund(w.item.id, { reason: "withdrawn", now: T(10) })).refundable).toBe(false);
+  });
+
+  it("only a twice-sent payout waiting on a twin audit can be attested this way; any other payout that records a transfer is refused", async () => {
+    const once = await mkWorld({ payoutStatus: "held" });
+    expect(await attestNoTransfer(once.payout.id, { note: "x", actor: STAFF })).toMatchObject({ ok: false, reason: "transfer_exists" });
+    const dup = await mkWorld({ payoutStatus: "needs_attention", attempts: 2 });
+    await prisma.creatorPayout.update({ where: { id: dup.payout.id }, data: { errorCode: "duplicate_transfer" } });
+    expect(await attestNoTransfer(dup.payout.id, { note: "x", actor: STAFF })).toMatchObject({ ok: false, reason: "transfer_exists" });
+    const released = await mkWorld({ payoutStatus: "released", attempts: 2 });
+    expect(await attestNoTransfer(released.payout.id, { note: "x", actor: STAFF })).toMatchObject({ ok: false, reason: "transfer_exists" });
+    expect(await prisma.creatorPayoutEvent.count({ where: { payoutId: { in: [once.payout.id, dup.payout.id, released.payout.id] }, kind: { startsWith: "attest" } } })).toBe(0);
+  });
+
+  it("adopting a transfer by its id: a transfer recorded on another payout, or one Razorpay has no record of, is refused before the payout leaves its park", async () => {
+    const w = await mkWorld({ payoutStatus: "needs_attention", transfer: false, attempts: 1 });
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { errorCode: "listing_unreadable" } });
+    const t = fake.seedTransfer({ source: w.pay, recipient: w.acc, amount: w.amount, notes: { payout_id: w.payout.id } });
+    const other = await mkWorld({ payoutStatus: "void", transfer: false });
+    await prisma.creatorPayout.update({ where: { id: other.payout.id }, data: { razorpayTransferId: t.id } });
+    expect(await adoptTransferByStaff(w.payout.id, { transferId: t.id, actor: STAFF, now: T(0) })).toMatchObject({ ok: false, reason: "transfer_in_use" });
+    expect(await adoptTransferByStaff(w.payout.id, { transferId: "trf_DOESNOTEXIST1", actor: STAFF, now: T(0) })).toMatchObject({ ok: false, outcome: "refused", reason: "transfer_not_found" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "needs_attention", errorCode: "listing_unreadable", razorpayTransferId: null });
+  });
+});
+
+describe("r2 #R2: the void before a refund keeps the hold confirmation's rule: no listing younger than ABSENT_CHECK_GAP_MS after the last request decides 'no twin'", () => {
+  it("the automatic repeat is refused at once; an immediate refund must wait, and the FIRST request, landing late, is then found and tracked, never voided over", async () => {
+    const w = await mkWorld();
+    fake.intercept({ match: is.createTransfer, mode: "drop", times: 1 });
+    await executePlannedPayout(w.payout.id, { now: T(0) });
+    await resolveUnknownTransfer(w.payout.id, { now: T(3) });
+    fake.intercept({ match: is.createTransfer, mode: "reject", status: 400, times: 1 });
+    await resolveUnknownTransfer(w.payout.id, { now: T(15) }); // two empty listings: the repeat is sent, and refused outright
+    expect(await reload(w.payout.id)).toMatchObject({ status: "failed", attempts: 2 });
+
+    const early = await reverseForRefund(w.item.id, { reason: "withdrawn", now: T(16) });
+    expect(early).toMatchObject({ refundable: false, state: "reversal_pending", reason: "audit_wait", calls: 0 });
+    expect((await reload(w.payout.id)).status).toBe("failed");
+
+    const late = fake.seedTransfer({ source: w.pay, recipient: w.acc, amount: w.amount, notes: { payout_id: w.payout.id, booking_item_id: w.item.id, attempt: requestKeyOf(1, T(0))! } });
+    const after = await reverseForRefund(w.item.id, { reason: "withdrawn", now: T(26) });
+    expect(after).toMatchObject({ refundable: false, state: "reversal_pending", reason: "transfer_active" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "needs_attention", errorCode: "duplicate_transfer", razorpayTransferId: late.id });
+  });
+
+  it("a manual_required payout that was sent is held to the same rule", async () => {
+    const w = await mkWorld({ payoutStatus: "manual_required", transfer: false, attempts: 1 });
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { transferRequestedAt: T(0) } });
+    expect(await reverseForRefund(w.item.id, { reason: "withdrawn", now: T(5) })).toMatchObject({ refundable: false, reason: "audit_wait", calls: 0 });
+    expect(await reverseForRefund(w.item.id, { reason: "withdrawn", now: T(11) })).toMatchObject({ refundable: true, state: "voided" });
+  });
+});
+
+describe("r2 #R4: the pause and reversal reasons staff type are scrubbed like every other staff text", () => {
+  it("an account number typed with dots or slashes reaches no audit note", async () => {
+    const w = await mkWorld({ payoutStatus: "held" });
+    expect((await pausePayout(w.payout.id, { reason: "closed acct 5010.0123.4567.89", actor: STAFF })).ok).toBe(true);
+    expect(await reversePayout(w.payout.id, { reason: "acct 5010/0123/4567/89", actor: STAFF, now: T(0) })).toMatchObject({ ok: true, status: "reversed" });
+    const notes = (await eventsOf(w.payout.id)).map((e) => e.note ?? "");
+    expect(notes.some((n) => /^Paused \(/.test(n))).toBe(true);
+    expect(notes.some((n) => /Reversal requested/.test(n))).toBe(true);
+    for (const n of notes) expect(n).not.toMatch(/5010|0123|4567/);
+    expect(await scanDatabase(["5010.0123.4567.89", "5010/0123/4567/89"])).toEqual([]);
   });
 });

@@ -479,17 +479,25 @@ function reviewEmail(action: ReviewAction, name: string, note: string | null) {
   }
 }
 
+/**
+ * The payout statuses a pause does NOT stop: the release was requested or made (or its settlement failed and may be retried), and Razorpay
+ * settles it to the creator's bank whatever the pause says (the settlement poll and the release read-back do not read paused_at). Only a
+ * reversal, while the money is still in the creator's linked account, takes it back. The staff UI's pauseHold() says the same per row.
+ */
+const STILL_SETTLING_STATUSES = ["release_requested", "released", "settlement_failed"];
+
 export async function reviewCreator(id: string, action: ReviewAction, staffId: string, note?: string | null) {
   const { from, to } = TRANSITIONS[action];
   const now = new Date();
   const reviewNote = note?.trim() || null;
 
-  const { count, paused } = await prisma.$transaction(async (tx) => {
+  const { count, paused, settling } = await prisma.$transaction(async (tx) => {
     const res = await tx.creator.updateMany({
       where: { id, status: { in: from } },
       data: { status: to, reviewNote, reviewedById: staffId, reviewedAt: now },
     });
     let paused: Array<{ id: string; status: string }> = [];
+    let settling: Array<{ id: string; status: string }> = [];
     // A suspended creator's pages stop being offered at once; reinstating does NOT turn them
     // back on (staff re-enable each page deliberately).
     if (res.count === 1 && action === "suspend") {
@@ -511,22 +519,33 @@ export async function reviewCreator(id: string, action: ReviewAction, staffId: s
         note: action === "suspend" ? "Paused: staff suspended the creator." : "Paused: staff rejected the creator.",
         at: now,
       });
+      // ⚠️ The pause does not stop these (paused just now or earlier, for any reason): they are counted apart so staff are told to Reverse them.
+      settling = await tx.creatorPayout.findMany({ where: { creatorId: id, status: { in: STILL_SETTLING_STATUSES } }, select: { id: true, status: true }, orderBy: { id: "asc" } });
     }
-    return { count: res.count, paused };
+    return { count: res.count, paused, settling };
   });
 
-  if (count === 1 && paused.length > 0) {
+  if (count === 1 && (paused.length > 0 || settling.length > 0)) {
     // After the commit, never inside it. The pause itself is already written, so a held-back email loses nothing.
+    const verb = action === "suspend" ? "suspended" : "rejected";
+    const n = settling.length;
+    const them = n === 1 ? "it" : "them";
     alertStaffOncePerHour(
       `creator-suspended-payouts:${id}:${action}`,
-      `${paused.length} creator payout${paused.length === 1 ? "" : "s"} paused because the creator was ${action === "suspend" ? "suspended" : "rejected"}`,
+      n > 0
+        ? `A ${verb} creator has ${n} payout${n === 1 ? "" : "s"} already released: pausing does not stop ${them}, reverse ${them} now`
+        : `${paused.length} creator payout${paused.length === 1 ? "" : "s"} paused because the creator was ${verb}`,
       [
         { label: "Creator", value: id },
         { label: "Payouts paused", value: String(paused.length) },
+        ...(n > 0 ? [{ label: "Already released, still settling (a pause does not stop these)", value: String(n) }] : []),
         {
           label: "What to do",
           value:
-            "Nothing is paid out to this creator while they stay suspended. Open the payout queue (Paused): each payout stays paused after a reinstatement until you resume it. If the work is not to be paid, take the payout back there (Reverse) and refund the post from its campaign.",
+            (n > 0
+              ? `${n} of this creator's payouts ${n === 1 ? "was" : "were"} already released, or being released, when they were ${verb}. Pausing does not stop Razorpay settling ${n === 1 ? "it" : "those"} to the creator's bank. Open the payout queue now (Settlement pending, and Failed for a failed settlement) and take ${n === 1 ? "it" : "each"} back with Reverse while the money is still in the creator's linked account. `
+              : "") +
+            `Nothing more is released from this creator's other payouts while they stay paused (and nothing is released to a ${verb} creator). Each stays paused after a reinstatement until you resume it (Paused in the payout queue). If the work is not to be paid, take the payout back there (Reverse) and refund the post from its campaign.`,
         },
       ],
       "/campaigns/payouts",

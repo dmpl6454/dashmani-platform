@@ -3,7 +3,8 @@
  *
  * Every 5 minutes, each job bounded:
  *   (a) EXPIRE: an `offered` offer past its expiry is closed (expireOffer): its item goes refund_due, a planned payout is
- *       voided. Nothing is refunded: staff press Refund.
+ *       voided. This worker refunds nothing: the payout worker's job 10 takes the creator's share back and then refunds the
+ *       client (staff press Refund only while that worker or the refund sweep is switched off).
  *   (b) MISSED WINDOW: an `accepted` offer whose creator never sent a link by the END OF THE POSTING WINDOW + 24 HOURS is
  *       withdrawn the same way (post_missing_at is stamped first: it is the fact "the creator did not post"). An accepted
  *       offer WITH a link that nobody verified by then is NOT withdrawn (a person decides: the creator did something).
@@ -32,6 +33,7 @@
 import { prisma, type CreatorOffer } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import { creatorConfig } from "../services/creator/creator-config";
+import { refundSweepEnabled } from "../services/campaign/payment.service";
 import {
   ALERT_LOOKBACK_MS,
   GAP_MAX_EXTEND_MS,
@@ -318,12 +320,29 @@ const ALERT_SUBJECT: Record<StaffAlertKind, string> = {
   unverified: "A creator's link is waiting for a decision",
   undelivered: "A creator has not been emailed their offer",
 };
-const ALERT_TODO: Record<StaffAlertKind, string> = {
-  refund: "Open the campaign and press Refund on each of these posts. Nothing is refunded automatically.",
-  missed: "Open the campaign. A withdrawn post is marked refund due: press Refund on it. Nothing is refunded automatically.",
-  unverified: "The posting window is over. Open the campaign and either verify the creator's link, or withdraw the offer with the submitted link discarded.",
-  undelivered: "The offer email could not be delivered after several tries. Contact the creator directly, or withdraw the offer. The offer still expires on its own.",
-};
+/**
+ * Whether a refund-due creator post is refunded by itself: the payout worker's job 10 (reverse the creator's share, then refund the client) runs
+ * only while that worker AND the refund sweep are switched on. The digest says what is true now, so staff are never told to press Refund on a post
+ * the worker is already refunding (and never told it is automatic when it is not).
+ */
+const refundsAreAutomatic = () => creatorConfig.payoutCronEnabled() && refundSweepEnabled();
+
+const REFUND_TODO_AUTO =
+  "Nothing to press: the creator's payout is taken back first and the client is then refunded automatically. If a post still reads refund due after an hour, open the campaign: the post's own note says what stopped it (and never also refund it from the Razorpay dashboard).";
+const REFUND_TODO_MANUAL = "Automatic refunds are switched off right now (the payout worker or the refund sweep), so nothing is refunded by itself: open the campaign and press Refund on each of these posts.";
+
+function alertTodo(kind: StaffAlertKind): string {
+  switch (kind) {
+    case "refund":
+      return refundsAreAutomatic() ? REFUND_TODO_AUTO : REFUND_TODO_MANUAL;
+    case "missed":
+      return `A withdrawn post is marked refund due. ${refundsAreAutomatic() ? REFUND_TODO_AUTO : REFUND_TODO_MANUAL}`;
+    case "unverified":
+      return "The posting window is over. Open the campaign and either verify the creator's link, or withdraw the offer with the submitted link discarded.";
+    case "undelivered":
+      return "The offer email could not be delivered after several tries. Contact the creator directly, or withdraw the offer. The offer still expires on its own.";
+  }
+}
 
 /**
  * Send ONE email per (kind, booking) for everything in `pending` that has no marker yet, and write a marker per offer once the
@@ -351,7 +370,7 @@ async function sendAlertDigests(pending: Pending[]): Promise<number> {
       [
         { label: "Campaign", value: offer.bookingId },
         ...group.map((p) => ({ label: p.offer.pageName, value: p.text })),
-        { label: "What to do", value: ALERT_TODO[kind] },
+        { label: "What to do", value: alertTodo(kind) },
       ],
       `/campaigns/${offer.bookingId}`,
       {

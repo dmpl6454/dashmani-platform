@@ -39,17 +39,17 @@ export interface PayoutPanelProps {
 const shell = "mt-2.5 rounded-[10px] bg-ds-inset px-3 py-3 text-[12px]";
 
 /** The booking's own compact view of a payout: status, amount, the sentence and the bank references. No actions (they need the full row). */
-function SummaryView({ s, label, note, onRetry }: { s: PayoutSummary; label: string; note: string | null; onRetry?: () => void }) {
+function SummaryView({ s, label, note, onRetry, postVerified }: { s: PayoutSummary; label: string; note: string | null; onRetry?: () => void; postVerified: boolean }) {
   const reference = s.settlementUtr ?? s.manualReference;
   return (
     <div role="group" aria-label={label} className={shell}>
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
         <span className="text-[10.5px] uppercase tracking-[.1em] font-semibold text-ds-t3">Creator payout</span>
         <PayoutPill row={s} />
-        {s.pausedAt && !["settled", "paid_manual", "void", "reversed"].includes(s.status) && <PausedChip />}
+        <PausedChip row={s} />
         <strong className="ml-auto text-ds-text tabular-nums">{rupees(s.amountPaise)}</strong>
       </div>
-      <p className="mt-1.5 text-ds-t2">{payoutHint(s)}</p>
+      <p className="mt-1.5 text-ds-t2">{payoutHint(s, Date.now(), { postVerified })}</p>
       {reference && <p className="mt-1 text-ds-t3">Bank reference <span className="font-mono text-ds-t5">{reference}</span></p>}
       {note && (
         <div role="alert" className="mt-1.5 text-ds-gold">
@@ -67,7 +67,7 @@ export function PayoutPanel(p: PayoutPanelProps) {
 
   if (!p.row) {
     if (p.summary) {
-      return <SummaryView s={p.summary} label={label} note={p.failed ? "Couldn't load the actions and history for this payout: this is the booking's own summary. Nothing here means a payout is missing." : p.loading ? "Loading the actions and history…" : null} onRetry={p.failed ? p.onRetry : undefined} />;
+      return <SummaryView s={p.summary} label={label} postVerified={p.postVerified} note={p.failed ? "Couldn't load the actions and history for this payout: this is the booking's own summary. Nothing here means a payout is missing." : p.loading ? "Loading the actions and history…" : null} onRetry={p.failed ? p.onRetry : undefined} />;
     }
     if (p.loading) {
       return <div role="group" aria-label={label} className={`${shell} text-ds-t3`}>Loading the creator&apos;s payout…</div>;
@@ -94,7 +94,7 @@ export function PayoutPanel(p: PayoutPanelProps) {
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
         <span className="text-[10.5px] uppercase tracking-[.1em] font-semibold text-ds-t3">Creator payout</span>
         <PayoutPill row={r} />
-        {r.pausedAt && !["settled", "paid_manual", "void", "reversed"].includes(r.status) && <PausedChip />}
+        <PausedChip row={r} />
         <strong className="ml-auto text-ds-text tabular-nums">{rupees(r.amountPaise)}</strong>
       </div>
       <div className="mt-1.5"><PayoutHint row={r} postVerified={p.postVerified} releaseOn={p.releaseOn} /></div>

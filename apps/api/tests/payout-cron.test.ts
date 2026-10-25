@@ -624,7 +624,13 @@ describe("⚠️ a payout that can never be created does not hold every refund o
     expect(countOf(callLog(fake), "refund.create")).toBe(1);
     expect(countOf(callLog(fake), "transfer.create")).toBe(1); // only A's: B's was never made, and nothing else was
     await flushPayoutAlertsForTests();
-    expect(subjects().filter((s) => /could not be set aside and must be paid by hand/.test(s))).toHaveLength(1);
+    expect(subjects().filter((s) => /could not be set aside, so their post can't go ahead/.test(s))).toHaveLength(1);
+    // ⚠️ r2 #R5: its post was never offered to the creator, so nothing is owed: the alert says to refund the post, never to pay by hand.
+    const gaveUpAlert = vi.mocked(notifyAdminByEmail).mock.calls.find((c) => /could not be set aside/.test(String(c[0])))!;
+    const todo = (gaveUpAlert[1] as Array<{ label: string; value: string }>).find((d) => d.label === "What to do")!.value;
+    expect(todo).toMatch(/Nothing is owed to the creator/);
+    expect(todo).toMatch(/Refund this post from the campaign page/);
+    expect(todo).not.toMatch(/pay them by bank transfer|record the reference/);
     // A second pass gives up on nothing more and mails nothing more.
     expect((await runCreatorPayoutsTick({ now: after(26 * 60) })).gaveUp).toBe(0);
     await flushPayoutAlertsForTests();
@@ -652,8 +658,8 @@ describe("⚠️ a payout that can never be created does not hold every refund o
 });
 
 describe("⚠️ a post marked refunded with no refund behind it is found and re-opened (never refunded twice)", () => {
-  async function lost() {
-    const w = await paid({ pages: [{}] });
+  async function lost(spec: Parameters<typeof paid>[0] = { pages: [{}] }) {
+    const w = await paid(spec);
     const c = w.creators[0];
     await setPayout(c.id, { status: "reversed", reversedAt: new Date(), amountReversedPaise: c.payout });
     // The crash window of the old order: the post was flipped to refunded and no ledger row was ever written.
@@ -691,6 +697,38 @@ describe("⚠️ a post marked refunded with no refund behind it is found and re
     await runCreatorPayoutsTick({ now: after(2) });
     await flushPayoutAlertsForTests();
     expect(subjects().filter((s) => /reads refunded but no refund of it was found/.test(s))).toHaveLength(1);
+  });
+
+  it("⚠️ r2 #R6: a suspect it stood down for is left out for a while (the date its refund check rests on never moves), so the next one is reached and the stood-down one's refunds are not re-read every tick", async () => {
+    // The OLDER suspect was repaid from the Razorpay dashboard: stood down. The NEWER one was never repaid: it must still be re-opened.
+    // (A network post on the same payment keeps it captured after the dashboard refund: the suspect stays a suspect, as it would in production.)
+    const repaid = await lost({ pages: [{}], network: [300_000] });
+    await prisma.campaignBookingItem.update({ where: { id: repaid.c.id }, data: { updatedAt: new Date(Date.now() - 3 * HOUR) } });
+    fake.payments.get(repaid.w.payId)!.refunds.push({ id: "rfnd_dashboard02", amount: repaid.c.price, status: "processed" });
+    const owed = await lost();
+    const markedAt = (await itemOf(repaid.c.id)).updatedAt.getTime();
+    const readsOf = (payId: string) => fake.calls.filter((c) => c.method === "GET" && c.path.includes(payId) && /\/refunds/.test(c.path)).length;
+
+    const t1 = await runCreatorPayoutsTick({ now: after(1) }); // one suspect a tick, oldest first: the repaid one, stood down
+    expect(t1.reopened).toBe(0);
+    expect((await itemOf(repaid.c.id)).status).toBe("refunded");
+    const reads = readsOf(repaid.w.payId);
+    expect(reads).toBeGreaterThan(0);
+
+    const t2 = await runCreatorPayoutsTick({ now: after(6) }); // before: the same one, every tick; now the next suspect
+    expect(t2.reopened).toBe(1);
+    expect((await itemOf(owed.c.id)).status).toBe("refund_due");
+    for (const m of [11, 16, 21]) await runCreatorPayoutsTick({ now: after(m) });
+    expect((await itemOf(owed.c.id)).status).toBe("refunded"); // job 10 refunded it, once
+    expect(readsOf(repaid.w.payId)).toBe(reads); // the stood-down one's refund list is not read again meanwhile
+    expect((await itemOf(repaid.c.id)).updatedAt.getTime()).toBe(markedAt); // ⚠️ the external-refund check's baseline did not move
+
+    // After the wait it is looked at again, and is still left alone: the dashboard refund still came after it was marked refunded.
+    await runCreatorPayoutsTick({ now: after(7 * 60) });
+    expect(readsOf(repaid.w.payId)).toBeGreaterThan(reads);
+    expect((await itemOf(repaid.c.id)).status).toBe("refunded");
+    expect(fake.calls.filter((c) => is.refund(c) && c.path.includes(repaid.w.payId))).toHaveLength(0); // never refunded twice
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: owed.c.id, idempotencyKey: `rf-item-${owed.c.id}` } })).toBe(1);
   });
 
   it("is left alone when the post is refunded properly (a refund of it is on the ledger), when its payout is not out of the way, and for a network post", async () => {

@@ -2,6 +2,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { mutate } from "swr";
 import { apiFetch } from "@/lib/api";
 import { useClients, useInvoices } from "@/lib/hooks";
 import { errorSentence } from "@/lib/messages";
@@ -58,6 +59,12 @@ function RecordPayment() {
     setBusy(true);
     try {
       await apiFetch("/sales/payments", { method: "POST", body: JSON.stringify({ clientId, ...form, reference: form.reference || null, bankName: form.bankName || null, notes: form.notes || null, allocations: Object.entries(alloc).filter(([, a]) => a.amountPaise + a.tdsPaise > 0).map(([invoiceId, a]) => ({ invoiceId, ...a })) }) });
+      // The invoice view we return to holds this invoice in SWR's cache from before the payment;
+      // drop it (and the lists) so the page shows the settled balance, not the stale one.
+      await Promise.all([
+        presetInvoice ? mutate(`/sales/invoices/${presetInvoice}`) : Promise.resolve(),
+        mutate((key) => typeof key === "string" && (key.startsWith("/sales/invoices") || key.startsWith("/sales/payments") || key.startsWith("/sales/dashboard") || key.startsWith("/sales/clients")), undefined, { revalidate: true }),
+      ]);
       router.replace(presetInvoice ? `/invoices/view?id=${presetInvoice}` : "/payments");
     } catch (err) {
       setToast({ message: errorSentence(err), tone: "err" });

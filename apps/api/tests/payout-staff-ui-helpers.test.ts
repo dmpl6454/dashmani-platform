@@ -943,7 +943,7 @@ describe("the API's plain-words table for a refusal", () => {
     // two dashboard actions' refusals.
     const reversal = ["reversal_refused", "reversal_refused_after_release", "transfer_not_processed", "nothing_to_reverse"];
     const createWait = ["paused", "payment_not_captured", "booking_closed", "item_closed", "account_not_ready", "amount_too_small", "failed", "transfer_still_active", "disabled", "unread"];
-    const dashboard = ["transfer_not_found", "transfer_in_use", "attest_too_soon", "transfer_recorded", "not_applicable", "leased", "lost_claim"];
+    const dashboard = ["transfer_not_found", "transfer_in_use", "transfer_from_earlier_request", "attest_too_soon", "transfer_recorded", "not_applicable", "leased", "lost_claim"];
     const missing = [...RELEASE_REFUSALS, ...manualAndOrdering, ...reversal, ...createWait, ...dashboard].filter((code) => !STAFF_REFUSAL_WORDS[code]);
     expect(missing, "reasons that would read 'not possible in its current state'").toEqual([]);
   });
@@ -964,6 +964,29 @@ describe("the API's plain-words table for a refusal", () => {
     // "Release now" scheduled the release before the gate refused (the hold has not run out).
     expect(changeSince(snap({ releaseAfter: null }), snap())).toBe("Its release is now scheduled: see its history.");
     expect(changeSince(snap({ pausedAt: at }), snap())).toMatch(/no longer paused/);
+  });
+
+  it("⚠️ r3 #5/#6: a parked payout re-parked under a new problem, and a person's refused Reverse that paused it, are said; a held payout's code alone is not", () => {
+    const at = new Date("2026-10-18T09:00:00.000Z");
+    const snap = (o: Partial<{ status: string; pausedAt: Date | null; pausedReason: string | null; releaseAfter: Date | null; errorCode: string | null }> = {}) => ({ status: "held", pausedAt: null, pausedReason: null, releaseAfter: at, errorCode: null, ...o });
+    const parked = (errorCode: string) => snap({ status: "needs_attention", errorCode });
+    // A refused Reverse that re-parked a hold-put-back payout under the refusal (the same status: the old sentence said "Nothing was changed").
+    expect(changeSince(parked("processed_not_held"), parked("reversal_refused_after_release"), "reversal_refused_after_release")).toBe(
+      "Its recorded problem is now this refusal, in place of the one it was parked for, and staff are alerted by email: see its history.",
+    );
+    // A different new problem is named in the API's own words.
+    expect(changeSince(parked("processed_not_held"), parked("duplicate_transfer"), "extras_reversed")).toMatch(/^Its recorded problem is now this: a second transfer carries this payout's id, and staff are alerted/);
+    expect(changeSince(parked("processed_not_held"), parked("processed_not_held"), "reversal_refused_after_release")).toBeNull();
+    // A held payout whose code changed (a refusal that put it back where it was) is not "re-parked"; snapshots without a code compare as before.
+    expect(changeSince(snap({ errorCode: null, pausedAt: at, pausedReason: "staff" }), snap({ errorCode: "reversal_refused", pausedAt: at, pausedReason: "staff" }), "reversal_refused")).toBeNull();
+    expect(changeSince({ status: "needs_attention", pausedAt: null, pausedReason: null, releaseAfter: null }, { status: "needs_attention", pausedAt: null, pausedReason: null, releaseAfter: null }, "x")).toBeNull();
+    // A person's refused Reverse: back in held AND paused.
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "staff", errorCode: "reversal_refused" }), "reversal_refused")).toBe(
+      "No money moved; it is held again and paused, so it will not be released (resume it once the transfer is settled): see its history.",
+    );
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "staff" }), "transfer_not_processed")).toMatch(/^No money moved; it is held again and paused/);
+    // Any other pause reads as before.
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "staff" }), "release_not_due")).toBe("It is now paused (paused by staff): see its history.");
   });
 });
 

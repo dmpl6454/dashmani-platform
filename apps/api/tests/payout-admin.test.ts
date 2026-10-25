@@ -20,7 +20,7 @@ import { settlePayoutKicksForTests } from "../src/services/campaign/payment.serv
 import { settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
 import { onCreatorLinkVerified } from "../src/services/creator/payout-ledger";
 import { PAYOUT_CSV_HEADERS, PAYOUT_FILTERS } from "../src/services/creator/payout-staff.service";
-import { RELEASE_SWITCH_KEY } from "../src/services/creator/payout.service";
+import { RELEASE_SWITCH_KEY, confirmHold, resolveUnknownTransfer } from "../src/services/creator/payout.service";
 import { resetCreatorPayoutsCronForTests, runCreatorPayoutsTick } from "../src/cron/creator-payouts.cron";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
 import { generateClientToken, generateCreatorToken, generateHrToken, generateToken } from "./helpers";
@@ -1068,6 +1068,45 @@ describe("r2 #R1: attest-no-transfer and adopt-transfer, the two things staff ca
   });
 });
 
+describe("r3 #1: adopt-transfer refuses a transfer that an EARLIER request made and that failed: the payout stays parked and the current request's transfer is still the one to adopt", () => {
+  it("failed R1, Retry, R2's answer lost, the list unreadable for half an hour: R1's id is refused with plain words and nothing changes; R2's id is adopted", async () => {
+    fake.createStatus = "pending"; // R1 is accepted, then fails at Razorpay
+    const w = await paid({ pages: [{}] });
+    fake.createStatus = "processed";
+    const c = w.creators[0];
+    const pid = await idOf(c.id);
+    const r1 = (await payoutOf(c.id)).razorpayTransferId!;
+    expect((await payoutOf(c.id)).status).toBe("transfer_requested");
+    fake.failTransfer(r1);
+    expect(await confirmHold(pid)).toMatchObject({ status: "failed" });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "failed", razorpayTransferId: r1 });
+
+    // A request is named to the second (requestKeyOf): a Retry never comes in the same second as the request whose failure it answers.
+    await new Promise((r) => setTimeout(r, 1_100));
+    fake.intercept({ match: is.createTransfer, mode: "lose" }); // R2 lands, its answer is lost
+    const retry = await post(`/${pid}/retry-transfer`);
+    expect(retry.status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "transfer_requested", razorpayTransferId: null, attempts: 1 });
+    const r2 = [...fake.transfers.keys()].find((id) => id !== r1)!;
+    fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 1000 });
+    await resolveUnknownTransfer(pid, { now: new Date(Date.now() + 3 * MIN) });
+    expect(await resolveUnknownTransfer(pid, { now: new Date(Date.now() + 35 * MIN) })).toMatchObject({ outcome: "parked", reason: "listing_unreadable" });
+    const evBefore = (await events(pid)).length;
+
+    const refused = await post(`/${pid}/adopt-transfer`, { transferId: r1 });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toMatch(/^Not done: adopt this transfer\. That transfer was made by an earlier request for this payout and has failed or been taken back/);
+    expect(refused.body.error.message).toMatch(/Nothing was changed\. \[transfer_from_earlier_request\]$/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "listing_unreadable", razorpayTransferId: null, attempts: 1 });
+    expect((await events(pid)).length).toBe(evBefore);
+
+    const ok = await post(`/${pid}/adopt-transfer`, { transferId: r2 });
+    expect(ok.status).toBe(200);
+    expect(ok.body.data.payout.status).toBe("held");
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", razorpayTransferId: r2 });
+  });
+});
+
 describe("r2 #R4: a reversal reason is scrubbed BEFORE it is cut to 40 characters", () => {
   it("an account number at the cut never leaves its front digits in the audit trail", async () => {
     const w = await paid({ pages: [{}] });
@@ -1110,23 +1149,76 @@ describe("⚠️ r2 #R11: a refusal never says 'Nothing was changed' when the st
     fake.settleTransfer(released.razorpayTransferId!); // the money reached the bank: Razorpay has nothing to reverse against
     const res = await post(`/${id}/reverse`, { reason: "creator suspended" });
     expect(res.status).toBe(409);
-    expect(res.body.error.message).toMatch(/refused to take back money that was already released/);
+    expect(res.body.error.message).toMatch(/Razorpay refused to take the transfer back \(if it had been released, the money may already have settled/);
     expect(res.body.error.message).toMatch(/Its status is now Needs attention: see its history\. \[reversal_refused_after_release\]$/);
     expect(res.body.error.message).not.toMatch(/Nothing was changed|not possible in its current state/);
     expect((await payoutOf(c.id)).status).toBe("needs_attention");
   });
 
-  it("Reverse that Razorpay refuses on a held payout: it is held again, and the refusal says no money moved (not 'Nothing was changed')", async () => {
+  it("Reverse that Razorpay refuses on a held payout: it is held again AND paused (r3 #6), and the refusal says so (not 'Nothing was changed')", async () => {
     const w = await paid({ pages: [{}] });
     const c = w.creators[0];
     const id = await idOf(c.id);
     fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
     const res = await post(`/${id}/reverse`, { reason: "withdrawn" });
     expect(res.status).toBe(409);
-    expect(res.body.error.message).toMatch(/Razorpay refused to take the transfer back, so it is held again as it was/);
-    expect(res.body.error.message).toMatch(/No money moved; Razorpay's refusal is recorded in its history\. \[reversal_refused\]$/);
-    expect(res.body.error.message).not.toMatch(/Nothing was changed/);
-    expect(await payoutOf(c.id)).toMatchObject({ status: "held", errorCode: "reversal_refused" });
+    expect(res.body.error.message).toMatch(/Razorpay refused to take the transfer back, so the money is still on hold/);
+    expect(res.body.error.message).toMatch(/No money moved; it is held again and paused, so it will not be released \(resume it once the transfer is settled\): see its history\. \[reversal_refused\]$/);
+    expect(res.body.error.message).not.toMatch(/Nothing was changed|held again as it was/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedReason: "staff" });
+    expect((await payoutOf(c.id)).pausedAt).not.toBeNull();
+    expect((await events(id)).some((e) => e.actorType === "staff" && /held again and paused, so it will not be released/.test(e.note ?? ""))).toBe(true);
+  });
+
+  it("⚠️ r3 #6: a refused Reverse on a held payout whose release is DUE does not let the release go ahead: it is paused, and the worker releases nothing", async () => {
+    const { c, id } = await releasable();
+    const due = await payoutOf(c.id);
+    expect(due).toMatchObject({ status: "held", pausedAt: null });
+    expect(due.releaseAfter!.getTime()).toBeLessThanOrEqual(Date.now()); // the post is verified and its release is due now
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    const res = await post(`/${id}/reverse`, { reason: "duplicate booking" });
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/it is held again and paused, so it will not be released.*\[reversal_refused\]$/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", pausedReason: "staff" });
+
+    // Past the refusal's 5-minute backoff, and again an hour on: the worker's release pass does not release it.
+    await runCreatorPayoutsTick({ now: new Date(Date.now() + 10 * MIN) });
+    await runCreatorPayoutsTick({ now: new Date(Date.now() + HOUR) });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", pausedReason: "staff" });
+    expect(fake.count((x) => is.setHold(x, false))).toBe(0);
+    // Resuming is the person's call; the release then goes through the whole gate again.
+    expect((await post(`/${id}/resume`)).status).toBe(200);
+    expect((await payoutOf(c.id)).pausedAt).toBeNull();
+  });
+
+  it("r3 #6: a payout paused already keeps its pause (and its reason) when a Reverse is refused, and the refusal says it is not released", async () => {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    const id = await idOf(c.id);
+    expect((await post(`/${id}/pause`, { reason: "checking" })).status).toBe(200);
+    const pausedAt = (await payoutOf(c.id)).pausedAt;
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    const res = await post(`/${id}/reverse`, { reason: "withdrawn" });
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/No money moved; Razorpay's refusal is recorded in its history, and a payout put back in held this way is paused, so it will not be released\. \[reversal_refused\]$/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", pausedReason: "staff", pausedAt });
+  });
+
+  it("⚠️ r3 #5: Reverse on a parked payout (hold put back) that Razorpay refuses: it stays parked under the refusal, and the 409 says so and that staff were alerted, never 'Nothing was changed'", async () => {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    const id = await idOf(c.id);
+    await setPayout(c.id, { status: "needs_attention", errorCode: "processed_not_held", lastError: "parked" }); // its transfer is still on hold
+    vi.mocked(notifyAdminByEmail).mockClear();
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    const res = await post(`/${id}/reverse`, { reason: "creator suspended" });
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/Razorpay refused to take the transfer back \(if it had been released/);
+    expect(res.body.error.message).toMatch(/Its recorded problem is now this refusal, in place of the one it was parked for, and staff are alerted by email: see its history\. \[reversal_refused_after_release\]$/);
+    expect(res.body.error.message).not.toMatch(/Nothing was changed|money that was already released/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "reversal_refused_after_release", pausedAt: null });
+    await flushPayoutAlertsForTests();
+    expect(vi.mocked(notifyAdminByEmail).mock.calls.map((m) => String(m[0]))).toContain("Creator payout reversal FAILED");
   });
 
   it("Release now that schedules the release first and is then refused (the hold has not run out) says the release is now scheduled", async () => {

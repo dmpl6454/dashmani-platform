@@ -2406,3 +2406,105 @@ describe("r2 #R4: the pause and reversal reasons staff type are scrubbed like ev
     expect(await scanDatabase(["5010.0123.4567.89", "5010/0123/4567/89"])).toEqual([]);
   });
 });
+
+describe("r3 #1: a person adopting a transfer by its id is held to the listing's rule: a DEAD transfer counts only if the CURRENT request made it", () => {
+  it("failed R1, staff Retry, R2's answer lost, the listing unreadable: adopting R1 is refused, nothing moves, the refund still blocks, and R2 can be adopted", async () => {
+    const w = await mkWorld({ payoutStatus: "failed", transferStatus: "failed" }); // R1: failed, made by the first request
+    const r1 = w.transferId!;
+    fake.intercept({ match: is.createTransfer, mode: "lose" }); // R2 lands at Razorpay, its answer never comes back
+    expect((await retryFailedPayout(w.payout.id, { now: T(0), actor: STAFF })).status).toBe("transfer_requested");
+    const r2 = [...fake.transfers.keys()].find((id) => id !== r1)!;
+    expect(r2).toBeDefined();
+    fake.intercept({ match: is.listTransfers, mode: "reject", status: 500, times: 1000 });
+    await resolveUnknownTransfer(w.payout.id, { now: T(3) });
+    expect(await resolveUnknownTransfer(w.payout.id, { now: T(35) })).toMatchObject({ outcome: "parked", status: "needs_attention", reason: "listing_unreadable" });
+    const parked = await reload(w.payout.id);
+    expect(parked).toMatchObject({ status: "needs_attention", errorCode: "listing_unreadable", razorpayTransferId: null, attempts: 1 });
+    const evBefore = (await eventsOf(w.payout.id)).length;
+
+    // The person pastes R1's id: it IS this payout's (notes, account, payment, amount) and nobody records it, but it is a failed transfer of an EARLIER request.
+    expect(await adoptTransferByStaff(w.payout.id, { transferId: r1, actor: STAFF, now: T(36) })).toMatchObject({ ok: false, outcome: "refused", reason: "transfer_from_earlier_request", status: "needs_attention" });
+    const facts = (x: Awaited<ReturnType<typeof reload>>) => ({ status: x.status, errorCode: x.errorCode, lastError: x.lastError, razorpayTransferId: x.razorpayTransferId, attempts: x.attempts, transferRequestedAt: x.transferRequestedAt, nextAttemptAt: x.nextAttemptAt, pausedAt: x.pausedAt });
+    expect(facts(await reload(w.payout.id))).toEqual(facts(parked)); // nothing about the payout moved
+    expect((await eventsOf(w.payout.id)).length).toBe(evBefore);
+
+    // So the refund cannot void it on the strength of R1's failure: R2 is held in the linked account.
+    expect(await reverseForRefund(w.item.id, { reason: "withdrawn", now: T(40) })).toMatchObject({ refundable: false, state: "blocked" });
+    expect((await reload(w.payout.id)).status).toBe("needs_attention");
+
+    // The current request's own transfer is still adoptable, and it is what the payout records.
+    expect(await adoptTransferByStaff(w.payout.id, { transferId: r2, actor: STAFF, now: T(41) })).toMatchObject({ ok: true, status: "held" });
+    expect((await reload(w.payout.id)).razorpayTransferId).toBe(r2);
+    expect(createCalls()).toHaveLength(1); // the Retry's: R1 was seeded, and nothing was sent again
+  });
+
+  it("the rule over every kind of transfer: a dead one of an earlier request, or one without a key, is refused; a dead one of THIS request, or a live one of any request, is judged", async () => {
+    async function parkedWorld() {
+      const w = await mkWorld({ payoutStatus: "needs_attention", transfer: false, attempts: 1 }); // its current request: requestKeyOf(1, base - 10 min)
+      await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { errorCode: "listing_unreadable" } });
+      return w;
+    }
+    const seed = (w: World, o: { status?: string; amountReversed?: number; attempt?: string | null }) =>
+      fake.seedTransfer({ source: w.pay, recipient: w.acc, amount: w.amount, status: o.status, amountReversed: o.amountReversed, notes: { payout_id: w.payout.id, ...(o.attempt ? { attempt: o.attempt } : {}) } });
+
+    const earlierFailed = await parkedWorld();
+    const ef = seed(earlierFailed, { status: "failed", attempt: "1.12345" });
+    expect(await adoptTransferByStaff(earlierFailed.payout.id, { transferId: ef.id, actor: STAFF, now: T(0) })).toMatchObject({ ok: false, reason: "transfer_from_earlier_request" });
+
+    const earlierReversed = await parkedWorld();
+    const er = seed(earlierReversed, { status: "reversed", amountReversed: earlierReversed.amount, attempt: "1.12345" });
+    expect(await adoptTransferByStaff(earlierReversed.payout.id, { transferId: er.id, actor: STAFF, now: T(0) })).toMatchObject({ ok: false, reason: "transfer_from_earlier_request" });
+
+    const keyless = await parkedWorld();
+    const kl = seed(keyless, { status: "failed", attempt: null });
+    expect(await adoptTransferByStaff(keyless.payout.id, { transferId: kl.id, actor: STAFF, now: T(0) })).toMatchObject({ ok: false, reason: "transfer_from_earlier_request" });
+    for (const x of [earlierFailed, earlierReversed, keyless]) expect(await reload(x.payout.id)).toMatchObject({ status: "needs_attention", errorCode: "listing_unreadable", razorpayTransferId: null });
+
+    const ownFailed = await parkedWorld();
+    const of = seed(ownFailed, { status: "failed", attempt: ownFailed.requestKey! });
+    expect(await adoptTransferByStaff(ownFailed.payout.id, { transferId: of.id, actor: STAFF, now: T(0) })).toMatchObject({ status: "failed" });
+    expect((await reload(ownFailed.payout.id)).razorpayTransferId).toBe(of.id);
+
+    const liveEarlier = await parkedWorld();
+    const le = seed(liveEarlier, { attempt: "1.12345" }); // processed, on hold: money is out, whichever request made it
+    expect(await adoptTransferByStaff(liveEarlier.payout.id, { transferId: le.id, actor: STAFF, now: T(0) })).toMatchObject({ ok: true, status: "held" });
+  });
+});
+
+describe("r3 #6: a person's Reverse that Razorpay refuses back to held pauses the payout; a reversal before a refund keeps today's behaviour", () => {
+  it("staff + pauseIfRefused: held again AND paused (reason staff) in the same move, so the due release does not go ahead; the note says so", async () => {
+    const w = await releasable(); // due for release now
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    expect(await reversePayout(w.payout.id, { reason: "duplicate booking", actor: STAFF, pauseIfRefused: true, now: T(0) })).toMatchObject({ ok: false, outcome: "refused", status: "held", reason: "reversal_refused" });
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedReason: "staff" });
+    expect(p.pausedAt?.getTime()).toBe(T(0).getTime());
+    const back = (await eventsOf(w.payout.id)).find((e) => e.kind === "reversal" && e.toStatus === "held")!;
+    expect(back.note).toMatch(/held again and paused, so it will not be released/);
+    expect(back.actorType).toBe("staff");
+    // Past the backoff the worker's release is refused (paused): no PATCH.
+    expect((await selectDuePayouts(T(30))).some((d) => d.id === w.payout.id && d.job === "release")).toBe(false);
+    expect(await releasePayout(w.payout.id, { now: T(30) })).toMatchObject({ ok: false, reason: "payout_paused" });
+    expect(holdCalls(false)).toHaveLength(0);
+  });
+
+  it("an existing pause (a dispute) keeps its reason; a reversal that is not a person's, or one that does not ask, is put back unpaused as before", async () => {
+    const disputed = await releasable();
+    await prisma.creatorPayout.update({ where: { id: disputed.payout.id }, data: { pausedAt: T(-5), pausedReason: "dispute" } });
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400, times: 10 });
+    await reversePayout(disputed.payout.id, { reason: "staff", actor: STAFF, pauseIfRefused: true, now: T(0) });
+    expect(await reload(disputed.payout.id)).toMatchObject({ status: "held", pausedReason: "dispute" });
+    expect((await reload(disputed.payout.id)).pausedAt?.getTime()).toBe(T(-5).getTime());
+
+    // The worker (system actor) asking with the flag: not honoured. A staff actor without the flag (the refund path runs as the staff member
+    // who pressed Refund): not paused either. reverseForRefund itself: unchanged.
+    for (const [actor, flag] of [[{ type: "system" as const }, true], [STAFF, false]] as const) {
+      const w = await releasable();
+      await reversePayout(w.payout.id, { reason: "withdrawn", actor, pauseIfRefused: flag, now: T(0) });
+      expect(await reload(w.payout.id)).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedAt: null });
+    }
+    const r = await mkWorld({ payoutStatus: "held" });
+    expect(await reverseForRefund(r.item.id, { reason: "withdrawn", actor: STAFF, now: T(0) })).toMatchObject({ refundable: false });
+    expect(await reload(r.payout.id)).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedAt: null });
+  });
+});

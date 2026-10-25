@@ -334,7 +334,9 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
                 It does <strong className="text-ds-t5">not</strong> refund the client&apos;s {rupees(row.itemPricePaise)} for this post. A post that was withdrawn, declined, expired or rejected is refunded to the client automatically once its payout is taken back; for any other post, press Refund on the campaign page afterwards.
               </li>
               <li>To cancel a post whose offer is still open, use Withdraw offer or Refund this account on the campaign page instead: they end the offer, take this payout back and refund the client in the right order. Reversing from here leaves the offer open.</li>
-              <li>To pay a creator by bank transfer instead (their payout account was suspended, say) take it back first: the payout then appears under Owed after reversal, where Pay by bank transfer instead records the payment.</li>
+              <li>
+                To pay a creator by bank transfer instead (their payout account was suspended, say) take it back first: the payout then appears under Owed after reversal, where Pay by bank transfer instead records the payment. If the creator sent a link that isn&apos;t verified yet, verify it first (Verify link &amp; release on the campaign page): a payout taken back before its post is verified can never be paid by bank transfer.
+              </li>
               {moved && (
                 <li className="text-ds-gold">
                   The money has already been released to the creator&apos;s account. Razorpay can only take it back while it is still there, before it settles to their bank. If Razorpay refuses, the payout is parked as Needs attention for a person.
@@ -386,7 +388,9 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
             <>
               <p>{who(row)}&apos;s post never went live, so nothing is owed to them. This stops the payout: no transfer is made or retried for it. The system refuses it while Razorpay could still have money out for it.</p>
               {reverseFirst}
-              <p>It pays nobody, and it can&apos;t be recorded as paid. Refund the post from the campaign page afterwards (a post already waiting for its refund is refunded automatically once the payout is out of the way).</p>
+              <p>
+                It pays nobody, and it can&apos;t be recorded as paid. Refund the post from the campaign page afterwards (a post already waiting for its refund is refunded automatically). The refund goes out once Razorpay&apos;s records show no money is out for this payout: none was sent, its transfer failed, or it was taken back. While Razorpay&apos;s list of the payment&apos;s transfers can&apos;t be read the refund waits: a record that no transfer exists never counts for a refund.
+              </p>
             </>
           ),
           fields: [{ name: "reason", label: "Why", required: true, min: 3, max: 80, placeholder: "For example: no transfer exists at Razorpay" }],
@@ -447,6 +451,7 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
             <ul className="grid gap-1.5 list-disc pl-5">
               <li>The system reads that transfer at Razorpay and records it only if it is this payout&apos;s: it carries this payout&apos;s id, and the same linked account, payment and amount. Your word alone records nothing.</li>
               <li>It is then judged like any transfer the system finds: confirmed held, failed, or parked if something doesn&apos;t match. A payout whose request was sent twice also waits for the check that no second transfer carries its id.</li>
+              <li>A transfer that failed or was taken back is accepted only if this payout&apos;s latest request made it. After a Retry the old failed transfer is history: give the id of the newer one.</li>
               <li>It pays nothing and refunds nothing. It is recorded in the payout&apos;s history with your name.</li>
             </ul>
           </>
@@ -512,7 +517,10 @@ export function noticeFor(key: PayoutActionKey, d: PayoutDetail, values: Record<
       // A post that never went live is owed nothing: the payout is only stopped (the API refuses a hand payment for it).
       return isLiveItem(d.payout.itemStatus ?? d.item?.status)
         ? { tone: "ok", text: "Marked to be paid by bank transfer. Pay the creator, then press Mark paid manually and record the reference." }
-        : { tone: "ok", text: "The payout is stopped: no transfer is made for it. Nothing is owed to the creator, because the post never went live. Refund the post from the campaign page." };
+        : {
+            tone: "ok",
+            text: "The payout is stopped: no transfer is made for it. Nothing is owed to the creator, because the post never went live. Refund the post from the campaign page: the refund goes out once Razorpay's records show no money is out for it (it waits while Razorpay's list of the payment's transfers can't be read).",
+          };
     case "mark_paid":
       return { tone: "ok", text: `Recorded as paid by bank transfer (reference ${values.reference ?? ""}).` };
     // The engine's own words say what it decided (held, waiting for the twin check, failed, parked again): never a guess here.

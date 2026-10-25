@@ -515,15 +515,18 @@ const WHY: Record<string, string> = {
   // the two things a person can say after looking in the Razorpay dashboard (attest-no-transfer, adopt-transfer)
   transfer_not_found: "Razorpay has no transfer with that id (check it was copied whole, starting with trf_)",
   transfer_in_use: "that transfer is already recorded on another payout: look at both in the payout queue",
+  transfer_from_earlier_request:
+    "that transfer was made by an earlier request for this payout and has failed or been taken back, so it is not what the current request did (a Retry sends a new transfer, which is a different one): look in the Razorpay dashboard for a newer transfer carrying this payout's id and give that id, or wait for Razorpay's list of the payment's transfers, which is checked again every hour",
   attest_too_soon: "its last request to Razorpay was less than 10 minutes ago, and a request can still be on its way in: look in the dashboard again in a few minutes",
   transfer_recorded: "it already records a transfer at Razorpay, and only a payout whose request was sent twice and that is waiting on its check for a second transfer can be confirmed this way: take the recorded transfer back (Reverse), or wait for Razorpay's list of the payment's transfers",
   // resume
   dispute_open: "a dispute is still open on the brand's payment",
   not_paused: "it is not paused",
   // a reversal Razorpay refused (rollbackReversal), and one with nothing to take back
-  reversal_refused: "Razorpay refused to take the transfer back, so it is held again as it was: look at the transfer in the Razorpay dashboard",
+  reversal_refused: "Razorpay refused to take the transfer back, so the money is still on hold in the creator's linked account: look at the transfer in the Razorpay dashboard",
+  // A Reverse refused on a payout that was NOT released ends here too (a parked payout whose transfer is still on hold): never "already released".
   reversal_refused_after_release:
-    "Razorpay refused to take back money that was already released (it may have settled to the creator's bank, or the linked account no longer holds it): check the transfer and the linked account's balance in the Razorpay dashboard",
+    "Razorpay refused to take the transfer back (if it had been released, the money may already have settled to the creator's bank, or the linked account may no longer hold it): check the transfer and the linked account's balance in the Razorpay dashboard",
   nothing_to_reverse: "no transfer was ever made for it, so there is nothing to take back",
   // "Make transfer now" / "Retry transfer" waiting for something (decideTransferCreation), and Razorpay refusing the new transfer
   paused: "it is paused: resume it first",
@@ -540,7 +543,8 @@ const WHY: Record<string, string> = {
  * "Nothing was changed."). A refusal whose payout visibly moved says that instead (changeSince).
  */
 const ENDING: Record<string, string> = {
-  reversal_refused: "No money moved; Razorpay's refusal is recorded in its history.",
+  // A person's Reverse put back in held is paused in the same move (reversePayout pauseIfRefused); one paused already stays paused.
+  reversal_refused: "No money moved; Razorpay's refusal is recorded in its history, and a payout put back in held this way is paused, so it will not be released.",
   failed: "No money was set aside; Razorpay's refusal is recorded in its history.",
 };
 
@@ -551,9 +555,15 @@ function why(r: StepResult): string {
   return WHY[r.reason ?? ""] ?? WHY[r.outcome] ?? "it is not possible in its current state";
 }
 
-/** What the staff UI sees of a payout around a refused step: whether it moved, whether it got paused, whether its release got scheduled. */
-type Snapshot = { status: string; pausedAt: Date | null; pausedReason: string | null; releaseAfter: Date | null } | null;
-const SNAPSHOT_SELECT = { status: true, pausedAt: true, pausedReason: true, releaseAfter: true } satisfies Prisma.CreatorPayoutSelect;
+/**
+ * What the staff UI sees of a payout around a refused step: whether it moved, whether it got paused, whether its release got scheduled, and the
+ * problem a parked payout records (its error code: a refused step can re-park a parked payout under a new one, and alert staff about it).
+ */
+type Snapshot = { status: string; pausedAt: Date | null; pausedReason: string | null; releaseAfter: Date | null; errorCode?: string | null } | null;
+const SNAPSHOT_SELECT = { status: true, pausedAt: true, pausedReason: true, releaseAfter: true, errorCode: true } satisfies Prisma.CreatorPayoutSelect;
+
+/** The refusals of a person's Reverse that put the payout back in held (rollbackReversal): it is paused in the same move. */
+const REVERSAL_PUT_BACK_IN_HELD = ["reversal_refused", "transfer_not_processed"];
 const snapshot = (id: string): Promise<Snapshot> => prisma.creatorPayout.findUnique({ where: { id }, select: SNAPSHOT_SELECT });
 
 /**
@@ -570,10 +580,22 @@ export function changeSince(before: Snapshot, after: Snapshot, reason?: string):
     parts.push(
       reason === "refund_at_razorpay" && after.pausedReason === "external_refund"
         ? "it is now paused, with every other payout of the same client payment that was still in flight, until a person has looked at the payment's refunds"
-        : `it is now paused (${pauseText(after.pausedReason)})`,
+        : REVERSAL_PUT_BACK_IN_HELD.includes(reason ?? "") && after.status === "held" && after.pausedReason === "staff"
+          ? "no money moved; it is held again and paused, so it will not be released (resume it once the transfer is settled)"
+          : `it is now paused (${pauseText(after.pausedReason)})`,
     );
   } else if (!after.pausedAt && before.pausedAt) parts.push("it is no longer paused");
   if (after.releaseAfter && !before.releaseAfter) parts.push("its release is now scheduled");
+  // A parked payout that STAYS parked but records a different problem: a refused Reverse re-parks it under the refusal (rollbackReversal), a
+  // twin or a mismatch under that, and each alerts staff. Its old reason is gone (and with it any automatic re-check that reason had).
+  if (after.status === "needs_attention" && before.status === "needs_attention" && before.errorCode !== undefined && after.errorCode !== undefined && (after.errorCode ?? null) !== (before.errorCode ?? null)) {
+    const code = after.errorCode ?? null;
+    parts.push(
+      code !== null && code === reason
+        ? "its recorded problem is now this refusal, in place of the one it was parked for, and staff are alerted by email"
+        : `its recorded problem is now ${code === null ? "cleared" : WHY[code] ? `this: ${WHY[code]}` : `a new one (${code})`}, and staff are alerted by email`,
+    );
+  }
   if (parts.length === 0) return null;
   const s = parts.join(", and ");
   return `${s.charAt(0).toUpperCase()}${s.slice(1)}: see its history.`;
@@ -649,9 +671,11 @@ export async function staffReverse(id: string, staffId: string, reason?: string)
     refusal("take this payout back", { ok: false, outcome: "refused", payoutId: id, status: cur.status, calls: 0, reason: "no_transfer" });
   }
   // Scrubbed BEFORE it is cut: cutting first could leave the front of a long number (an account number typed into the reason) unmasked.
-  const r = await reversePayout(id, { actor: staffActor(staffId), reason: scrubStaffText(reason?.trim() || "staff").slice(0, 40) });
+  // pauseIfRefused: the person pressed Reverse so that the creator is not paid. If Razorpay refuses and the payout goes back to held, it is paused
+  // in the same move, so its scheduled release does not go ahead (a reversal before a refund does not ask for this).
+  const r = await reversePayout(id, { actor: staffActor(staffId), reason: scrubStaffText(reason?.trim() || "staff").slice(0, 40), pauseIfRefused: true });
   const pending = r.status === "reversal_requested" || r.outcome === "unknown" || r.outcome === "partial" || r.outcome === "waiting";
-  // A reversal Razorpay refused has already been rolled back (held again, or parked for a person, with an alert): the refusal says which.
+  // A reversal Razorpay refused has already been rolled back (held again and paused, or parked for a person, with an alert): the refusal says which.
   if (!r.ok && !pending) await refusalAfter("take this payout back", id, cur, r);
   return done(id, r, pending ? "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically." : undefined);
 }

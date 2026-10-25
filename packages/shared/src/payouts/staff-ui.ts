@@ -305,11 +305,11 @@ const ERROR_HINT: Record<string, string> = {
   duplicate_transfer: "More than one transfer was made for this payout. The extra ones are being reversed: check that exactly one live transfer remains.",
   transfer_mismatch: "The transfer at Razorpay doesn't match this payout. Check it in the Razorpay dashboard.",
   transfer_unknown_after_retry:
-    "The transfer was requested twice and no transfer ever showed up at Razorpay. It is looked for again every hour. Look in the Razorpay dashboard: if the transfer is there, press Adopt transfer and give its id; if there is none, press No transfer exists, then stop the payout (a live post's creator is then paid by bank transfer).",
+    "The transfer was requested twice and no transfer ever showed up at Razorpay. It is looked for again every hour. Look in the Razorpay dashboard: if the transfer is there, press Adopt transfer and give its id (a transfer that failed or was taken back counts only if the latest request made it); if there is none, press No transfer exists, then stop the payout (a live post's creator is then paid by bank transfer).",
   listing_unreadable:
-    "Razorpay's list of transfers couldn't be read for half an hour, so nobody can tell whether this payout's transfer exists. Nothing is repeated or refunded meanwhile, and it is re-checked every hour. Look in the Razorpay dashboard: if the transfer is there, press Adopt transfer and give its id; if there is none, press No transfer exists.",
+    "Razorpay's list of transfers couldn't be read for half an hour, so nobody can tell whether this payout's transfer exists. Nothing is repeated or refunded meanwhile, and it is re-checked every hour. Look in the Razorpay dashboard: if the transfer is there, press Adopt transfer and give its id (a transfer that failed or was taken back counts only if the latest request made it: after a Retry, look for the newer one); if there is none, press No transfer exists.",
   reversal_refused: "Razorpay refused to take the transfer back. Nothing changed: check Razorpay.",
-  reversal_refused_after_release: "Razorpay refused to take back money that was already released. Check Razorpay and the linked account's balance.",
+  reversal_refused_after_release: "Razorpay refused to take the transfer back (if it had been released, it may already have settled to the creator's bank, or the linked account may no longer hold it). Check Razorpay and the linked account's balance.",
   settled_while_held: "The transfer settled to the creator's bank although we still had it held. Check Razorpay before refunding or paying.",
   reversed_outside_flow: "The transfer was reversed outside our flow. Check Razorpay before refunding or paying.",
 };
@@ -419,7 +419,8 @@ export function payoutHint(p: HintInput, now: number = Date.now(), o: HintOption
       // ⚠️ Only a live, verified post is owed (the API refuses a hand payment for any other: post_not_live). A payout whose post never went live is
       // here only so it stops holding up refunds, or so it can be refunded: paying it would pay for nothing and make the refund impossible.
       if (isLiveItem(p.itemStatus)) return "Razorpay can't pay this creator. Pay them by bank transfer yourself, then record the reference.";
-      if (p.itemStatus) return "Nothing is owed to the creator: this post never went live. Refund this post from the campaign page (the campaign can't be approved with it). It can't be paid by bank transfer.";
+      if (p.itemStatus)
+        return "Nothing is owed to the creator: this post never went live. Refund this post from the campaign page (the campaign can't be approved with it): the refund goes out once Razorpay's records show no money is out for it (none was sent, its transfer failed, or it was taken back), and it waits while Razorpay's list of the payment's transfers can't be read. It can't be paid by bank transfer.";
       return "Razorpay can't pay this creator. If the post is live, pay them by bank transfer and record the reference; if it never went live, nothing is owed: refund the post from the campaign page instead.";
     case "paid_manual":
       return `Paid by bank transfer outside Razorpay (recorded by staff${p.manualPaidAt ? ` ${whenOf(p.manualPaidAt)}` : ""}).${p.manualReference ? ` Reference ${p.manualReference}.` : ""}`;

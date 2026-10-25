@@ -210,6 +210,11 @@ async function transition(a: {
   actor: PayoutActor;
   note: string;
   amountPaise?: number | null;
+  /**
+   * Also pause the payout, in the same transaction, unless it is paused already (an existing pause and its reason are kept). The status write
+   * locks the row first, so a pause landing meanwhile is either seen here (and kept) or waits for this one.
+   */
+  pause?: { at: Date; reason: string };
 }): Promise<boolean> {
   for (const f of a.from) if (!canMove(f, a.to)) throw new Error(`illegal payout move ${f} -> ${a.to}`);
   return prisma.$transaction(async (tx) => {
@@ -217,6 +222,7 @@ async function transition(a: {
     if (!cur || !a.from.includes(cur.status as PayoutStatus)) return false;
     const r = await tx.creatorPayout.updateMany({ where: { ...a.where, id: a.id, status: cur.status }, data: { ...a.data, status: a.to } });
     if (r.count !== 1) return false;
+    if (a.pause) await tx.creatorPayout.updateMany({ where: { id: a.id, pausedAt: null }, data: { pausedAt: a.pause.at, pausedReason: a.pause.reason } });
     await tx.creatorPayoutEvent.create({
       data: {
         payoutId: a.id,
@@ -327,7 +333,7 @@ const REASON_TEXT: Record<string, string> = {
   duplicate_transfer: "More than one transfer was made for this payout. The extra ones are being reversed; confirm one live transfer remains.",
   transfer_unknown_after_retry: "The transfer request was repeated once and no transfer ever showed up in Razorpay. It is looked for again every hour, and adopted if it appears. A person must check Razorpay: if the transfer is there, give its id in the payout queue; if there is none, record that there, then stop the payout. A post that never went live is owed nothing: refund it from the campaign page once the payout is stopped (only a live, verified post is paid by bank transfer).",
   reversal_refused: "Razorpay refused to take the transfer back. Nothing changed; check Razorpay.",
-  reversal_refused_after_release: "Razorpay refused to take back money that was already released. Check Razorpay and the linked account's balance.",
+  reversal_refused_after_release: "Razorpay refused to take the transfer back (if it had been released, it may already have settled to the creator's bank, or the linked account may no longer hold it). Check Razorpay and the linked account's balance.",
   reversal_failed_state: "The transfer could not be reversed in its current state. Check Razorpay.",
   transfer_failed: "Razorpay reports the transfer failed.",
   listing_unreadable: "Razorpay's list of this payment's transfers could not be read for half an hour, so nobody can tell whether this payout's transfer exists. Nothing is repeated or refunded meanwhile, and it is re-checked every hour. Look in the Razorpay dashboard: if the transfer is there, give its id in the payout queue; if there is none, record that in the payout queue.",
@@ -1550,6 +1556,12 @@ async function priorStatusOfReversal(p: PayoutRow): Promise<string> {
 export interface ReverseOptions extends StepOptions {
   /** Why (a short code: withdrawn, declined, expired, missed_window, rejected, item_refunded, dispute, account_suspended, staff). */
   reason: string;
+  /**
+   * A PERSON pressed Reverse because the creator must not be paid (the staff wrapper sets it; a reversal before a refund does not): a definite
+   * refusal that puts the payout back in `held` also PAUSES it (reason staff), in the same move, so its scheduled release does not go ahead
+   * minutes later against what was asked. Honoured only for a staff actor. A person resumes it once the transfer is settled.
+   */
+  pauseIfRefused?: boolean;
 }
 
 /**
@@ -1562,7 +1574,8 @@ export interface ReverseOptions extends StepOptions {
  *    included [R14].
  *  • IDEMPOTENT: a transfer already fully reversed is success, and a repeated call never reverses twice.
  *  • A DEFINITE refusal puts the payout back where it was and alerts staff (held → held; anything released →
- *    needs_attention, because Razorpay only reverses already-settled money against a floating balance).
+ *    needs_attention, because Razorpay only reverses already-settled money against a floating balance). A person's Reverse
+ *    (pauseIfRefused) that lands back in held also pauses it, so the release it was meant to stop does not go ahead.
  *  • An UNKNOWN answer keeps reversal_requested and is read back (resolveReversal); it is never "held" and
  *    never "reversed" until Razorpay says so.
  */
@@ -1572,6 +1585,7 @@ export async function reversePayout(payoutId: string, opts: ReverseOptions): Pro
   const ctx = newCtx(payoutId);
   // ⚠️ A person may have typed the reason: it is stored in the audit notes, so it is scrubbed the way every staff-typed text is (scrubStaffText).
   const why = scrubStaffText(opts.reason);
+  const pauseOnRefusal = opts.pauseIfRefused === true && actor.type === "staff";
   const p0 = await loadPayout(payoutId);
   if (!p0) return result(ctx, null, false, "not_found");
   if (p0.status === "reversed") return result(ctx, "reversed", true, "already_reversed");
@@ -1581,7 +1595,7 @@ export async function reversePayout(payoutId: string, opts: ReverseOptions): Pro
     const lease = await takeLease(payoutId, ["reversal_requested"], now);
     if (!lease) return result(ctx, p0.status, false, "leased");
     try {
-      return await runReversal(ctx, (await loadPayout(payoutId))!, await priorStatusOfReversal(p0), now, actor, why);
+      return await runReversal(ctx, (await loadPayout(payoutId))!, await priorStatusOfReversal(p0), now, actor, why, pauseOnRefusal);
     } finally {
       await dropLease(payoutId, lease);
     }
@@ -1602,14 +1616,18 @@ export async function reversePayout(payoutId: string, opts: ReverseOptions): Pro
   });
   if (!claimed) return result(ctx, (await loadPayout(payoutId))?.status ?? null, false, "lost_claim");
   try {
-    return await runReversal(ctx, (await loadPayout(payoutId))!, p0.status, now, actor, why);
+    return await runReversal(ctx, (await loadPayout(payoutId))!, p0.status, now, actor, why, pauseOnRefusal);
   } finally {
     await dropLease(payoutId, lease);
   }
 }
 
-/** Put a reversal claim back (or park it) after a definite refusal. */
-async function rollbackReversal(ctx: Ctx, p: PayoutRow, to: PayoutStatus, reasonCode: string, now: Date, actor: PayoutActor, err?: unknown): Promise<StepResult> {
+/**
+ * Put a reversal claim back (or park it) after a definite refusal. `pauseOnRefusal` (a person's Reverse, see ReverseOptions): one put back in
+ * `held` is paused in the same move, so the release the person meant to stop does not go ahead.
+ */
+async function rollbackReversal(ctx: Ctx, p: PayoutRow, to: PayoutStatus, reasonCode: string, now: Date, actor: PayoutActor, err?: unknown, pauseOnRefusal = false): Promise<StepResult> {
+  const pause = pauseOnRefusal && to === "held";
   const moved = await transition({
     id: p.id,
     from: ["reversal_requested"],
@@ -1622,13 +1640,19 @@ async function rollbackReversal(ctx: Ctx, p: PayoutRow, to: PayoutStatus, reason
     },
     kind: "reversal",
     actor,
-    note: to === "held" ? `The reversal was refused (${reasonCode}); the payout is held again.` : `The reversal was refused (${reasonCode}); a person must look.`,
+    ...(pause ? { pause: { at: now, reason: "staff" } } : {}),
+    note:
+      to === "held"
+        ? pause
+          ? `The reversal was refused (${reasonCode}); the payout is held again and paused, so it will not be released: resume it once the transfer is settled.`
+          : `The reversal was refused (${reasonCode}); the payout is held again.`
+        : `The reversal was refused (${reasonCode}); a person must look.`,
   });
   if (moved) alertPayout(p, "reversal_failed", to, reasonCode);
   return result(ctx, moved ? to : (await loadPayout(p.id))?.status ?? null, false, "refused", reasonCode);
 }
 
-async function runReversal(ctx: Ctx, p: PayoutRow, prior: string, now: Date, actor: PayoutActor, why: string): Promise<StepResult> {
+async function runReversal(ctx: Ctx, p: PayoutRow, prior: string, now: Date, actor: PayoutActor, why: string, pauseOnRefusal = false): Promise<StepResult> {
   if (!p.razorpayTransferId) {
     return rollbackReversal(ctx, p, "needs_attention", "reversal_failed_state", now, actor);
   }
@@ -1671,7 +1695,7 @@ async function runReversal(ctx: Ctx, p: PayoutRow, prior: string, now: Date, act
   if (decision.action === "already_reversed") return finishReversal(ctx, p, fresh.amount, null, now, actor, "Razorpay shows the whole transfer already reversed.", fresh);
   if (decision.action === "refuse") {
     // A transfer that is not processed yet is simply not reversible YET: back to where it was.
-    if (decision.reason === "transfer_not_processed") return rollbackReversal(ctx, p, prior === "held" ? "held" : "needs_attention", "transfer_not_processed", now, actor);
+    if (decision.reason === "transfer_not_processed") return rollbackReversal(ctx, p, prior === "held" ? "held" : "needs_attention", "transfer_not_processed", now, actor, undefined, pauseOnRefusal);
     return rollbackReversal(ctx, p, "needs_attention", "reversal_failed_state", now, actor);
   }
 
@@ -1697,7 +1721,7 @@ async function runReversal(ctx: Ctx, p: PayoutRow, prior: string, now: Date, act
       await recordEvent(p, "reversal", "reversal_requested", `The reversal request got no readable answer (${errCode(err)}); reconciling.`, actor);
       return result(ctx, "reversal_requested", false, "unknown", errCode(err));
     }
-    return rollbackReversal(ctx, p, out.to, out.reason, now, actor, err);
+    return rollbackReversal(ctx, p, out.to, out.reason, now, actor, err, pauseOnRefusal);
   }
 
   const total = fresh.amount_reversed + reversal.amount;
@@ -2150,7 +2174,8 @@ export async function attestNoTransfer(payoutId: string, opts: StepOptions & { n
  * engine reads THAT transfer and adopts it only if it is this payout's: carrying this payout's id in its notes, the same linked account,
  * the same payment, the same amount. Never a transfer on the staff member's word alone. Works for a payout parked as listing_unreadable
  * (or any parked payout that has no transfer id yet); it goes back to transfer_requested with the id recorded and is judged like any
- * transfer found by a listing (held, a twin audit for a repeated request, a mismatch parked).
+ * transfer found by a listing (held, a twin audit for a repeated request, a mismatch parked). Like a listing, it never takes a transfer that
+ * failed or was fully taken back unless the CURRENT request made it (refused: transfer_from_earlier_request, the payout stays parked).
  */
 export async function adoptTransferByStaff(payoutId: string, opts: StepOptions & { transferId: string; actor: PayoutActor }): Promise<StepResult> {
   const now = opts.now ?? new Date();
@@ -2171,6 +2196,17 @@ export async function adoptTransferByStaff(payoutId: string, opts: StepOptions &
       return isDefinitelyRejected(err) ? result(ctx, p0.status, false, "refused", "transfer_not_found") : result(ctx, p0.status, false, "unread", errCode(err));
     }
     if (t.notes.payout_id !== p0.id || !transferMatches(p0, t) || t.source === null) return result(ctx, p0.status, false, "refused", "transfer_not_ours");
+    // ⚠️ decideTransferRetry's own rule, before anything moves: a LIVE transfer counts whichever request made it, but a DEAD one (failed, or
+    // fully reversed) counts only when the CURRENT request made it (its notes.attempt is this payout's request key, as read under the claim).
+    // A failed transfer left over from an earlier request (before a staff Retry, say) is history: adopting it would call the payout failed, the
+    // refund would then void it, and the current request's transfer would sit held in the linked account with nothing tracking it. A dead
+    // transfer that carries no key at all is never trusted.
+    const cur = (await loadPayout(payoutId)) ?? p0;
+    const requestKey = requestKeyOf(cur.attempts, cur.transferRequestedAt);
+    const carrier = carrierOf(t);
+    if ((carrier.status === "failed" || isFullyReversed(carrier)) && (requestKey === null || carrier.generation !== requestKey)) {
+      return result(ctx, cur.status, false, "refused", "transfer_from_earlier_request");
+    }
     // Recorded on another payout already (it would fail the unique id AFTER the payout had left its park): refused before anything moves.
     if ((await prisma.creatorPayout.count({ where: { razorpayTransferId: t.id, id: { not: p0.id } } })) > 0) return result(ctx, p0.status, false, "refused", "transfer_in_use");
     const back = await transition({

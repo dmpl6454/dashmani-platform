@@ -357,9 +357,8 @@ export interface PayoutRefundFacts {
  *   released, settlement_failed, settled, paid_manual
  *                                             → 409 PAYOUT_PAID_OUT: the money has left (or is leaving) for the creator's bank.
  *                                               A person reverses it from the payout queue first, then refunds.
- *   needs_attention, manual_required with a recorded transfer that was never reversed
- *                                             → 409 PAYOUT_NEEDS_ATTENTION: the facts and our row disagree; a person decides.
- *   (manual_required with NO transfer recorded goes ahead, whatever its attempts: the engine proves it from a fresh listing after the claim.)
+ *   needs_attention                           → 409 PAYOUT_NEEDS_ATTENTION: the facts and our row disagree; a person decides.
+ *   (manual_required goes ahead, whatever it records: the engine proves it from fresh reads after the claim, see below.)
  */
 export function payoutRefundGuard(p: PayoutRefundFacts | null | undefined): AppError | null {
   if (!p) return null;
@@ -373,14 +372,16 @@ export function payoutRefundGuard(p: PayoutRefundFacts | null | undefined): AppE
     case "transfer_requested":
       return null;
     case "manual_required":
-      // Through to the engine's own proof (reverseForRefund → voidAfterAudit) whenever it CAN be proven from Razorpay: reversed, or no transfer id
-      // recorded. A create call that was sent (attempts > 0) with no id recorded is judged AFTER the claim by a fresh listing taken long enough
-      // after the last request: a live transfer carrying the payout's id parks it (tracked again and taken back), an unread list waits, and only a
-      // list showing none voids it. Refusing it here would strand the brand's refund for good (no staff action voids a manual_required payout).
-      // A recorded transfer that was never reversed stays a person's decision.
-      return p.reversedAt !== null || p.razorpayTransferId === null
-        ? null
-        : new AppError(409, "PAYOUT_NEEDS_ATTENTION", "This creator's payout is waiting to be paid by hand and may already have money out, so it can't be refunded from here. Check it in the payout queue first. Nothing has been changed.");
+      // ⚠️ Always through to the engine's own proof (reverseForRefund → voidAfterAudit), which decides AFTER the claim from fresh reads and never
+      // on this row alone: it fetches the payout's own transfer and lists the payment's transfers (a listing taken at least ABSENT_CHECK_GAP_MS
+      // after the last request; a person's attestation never counts there), and voids only when decideManualFallback says no money is out: no
+      // create call was ever sent, the listing shows none, the recorded transfer FAILED, or it was fully taken back (reversed_at set). A live
+      // transfer carrying the payout's id parks the payout (tracked again and taken back, staff alerted); an unread transfer or list makes the
+      // item wait as refund_due (job 10 asks again); anything else is blocked as manual_required_unproven with an alert. Nothing is refunded
+      // before that proof. Every way INTO manual_required with a transfer recorded already needed the same proof (requireManualPayment:
+      // failed or fully reversed, no live carrier), so refusing here could only strand a refund the engine would prove: "Stop this payout" on
+      // a park whose transfer failed lands exactly there, and no staff action voids a manual_required payout.
+      return null;
     case "release_requested":
       return new AppError(409, "PAYOUT_BUSY", "This creator's payout is being released right now. Wait a few minutes and try again. Nothing has been changed.");
     case "released":

@@ -256,7 +256,9 @@ const istDay = (d: Date) => new Date(d.getTime() + 5.5 * HOUR_MS).toISOString().
 
 /**
  * Razorpay suspended a creator's linked account while payouts of theirs hold money. Nothing is released to a suspended account (the
- * release gate refuses it), but the money is stuck there: staff must reverse it first, then pay the creator by hand. One alert per
+ * release gate refuses it), but the money is stuck there. What staff do depends on the post: a link sent but not verified is verified FIRST
+ * (verifying needs a held payout, and a payout taken back before that can never be paid by hand), a live verified post is reversed and then
+ * paid by bank transfer ("Owed after reversal"), and a post never sent owes nothing (withdraw the offer: the client is refunded). One alert per
  * account per IST DAY, and really per day: the marker is in system_settings (alertStaffDurably), so neither the hourly in-memory quiet
  * period nor a restart (every deploy) sends it again. Names the count and the total, never a bank detail. Returns how many accounts were found.
  */
@@ -280,7 +282,10 @@ export async function alertSuspendedHolding(now: Date): Promise<number> {
         {
           label: "What to do",
           value:
-            "Nothing is released to a suspended account. Look at the account in the Razorpay dashboard. If it is not reinstated, take each payout back first (Reverse in the payout queue). Each one then shows under \"Taken back, unpaid\": press \"Pay by bank transfer instead\" on it, pay the creator by bank transfer, and record the reference.",
+            "Nothing is released to a suspended account. Look at the account in the Razorpay dashboard. If it is not reinstated, act on each of the creator's posts by its state. " +
+            "(1) The creator sent their link and it is not verified yet: verify it FIRST, while the payout is still held (\"Verify link & release\" on the campaign page; nothing is released to a suspended account). A payout taken back before its post is verified can never be paid by bank transfer. Then do as in (2). " +
+            "(2) The post is live and verified: press \"Reverse\" on its payout in the payout queue. It then shows under \"Owed after reversal\": press \"Pay by bank transfer instead\", pay the creator by bank transfer, then \"Mark paid manually\" with the reference. " +
+            "(3) The creator has not sent a link: nothing is owed. Press \"Withdraw offer\" on the campaign page, and the client is refunded automatically (a payout under \"Needs attention\" must be dealt with first: \"Reverse\" it, or \"Stop this payout\").",
         },
       ],
       "/campaigns/payouts",

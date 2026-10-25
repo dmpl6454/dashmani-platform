@@ -25,6 +25,7 @@ import { settleCreatorRefundsForTests } from "../src/services/creator/creator-re
 import { withdrawOffer } from "../src/services/creator/creator-offer.service";
 import { JOB_COST, REFUND_RESERVE, TICK_CALL_BUDGET, alertSuspendedHolding, findStuckPayouts, resetCreatorPayoutsCronForTests, runCreatorPayoutsTick } from "../src/cron/creator-payouts.cron";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
+import { PAYOUT_CHIPS, actionsFor } from "@dashmani/shared/src/payouts/staff-ui";
 import { DAY, HOUR, MIN, callLog, capture, countOf, itemOf, mkWorld, openOffer, payoutOf, stubPayoutEnv, verifiedOffer, mkStaff, type World } from "./payout-fixtures";
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
@@ -375,6 +376,27 @@ describe("alerts", () => {
     // Never a bank detail or a Razorpay body in it.
     const mail = JSON.stringify(vi.mocked(notifyAdminByEmail).mock.calls.find((c) => c[0] === SUBJECT));
     expect(mail).not.toMatch(/acc_|account_number|ifsc|HDFC/i);
+    // r3 #3: "What to do" names the queue's REAL views and buttons, and splits by the post's state: a link that is not verified yet is verified
+    // FIRST (a payout taken back before that can never be paid by hand), a live verified post is reversed then paid by bank transfer from
+    // "Owed after reversal", and a post never sent is withdrawn (the client is refunded). No view called "Taken back, unpaid" exists.
+    // (The alert HTML-escapes its fields: read them back as plain text.)
+    const unescape = (v: string) => v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+    const todo = unescape((vi.mocked(notifyAdminByEmail).mock.calls.find((c) => c[0] === SUBJECT)![1] as Array<{ label: string; value: string }>).find((d) => d.label === "What to do")!.value);
+    expect(todo).not.toMatch(/Taken back, unpaid/);
+    expect(todo).toMatch(/not verified yet: verify it FIRST, while the payout is still held \("Verify link & release"/);
+    expect(todo).toMatch(/live and verified: press "Reverse".*under "Owed after reversal": press "Pay by bank transfer instead"/);
+    expect(todo).toMatch(/not sent a link: nothing is owed\. Press "Withdraw offer".*refunded automatically/);
+    expect(todo.indexOf("verify it FIRST")).toBeLessThan(todo.indexOf('press "Reverse"'));
+    // Every label the email names is one the staff pages really show.
+    for (const label of ["Owed after reversal", "Needs attention"]) expect(PAYOUT_CHIPS.map((ch) => ch.label)).toContain(label);
+    const reversedLive = actionsFor({ status: "reversed", pausedAt: null, releaseAfter: null, itemStatus: "posted_manual" }, { releaseOn: true, now: Date.now() }).map((a) => a.label);
+    const heldLabels = actionsFor({ status: "held", pausedAt: null, releaseAfter: null }, { releaseOn: true, now: Date.now() }).map((a) => a.label);
+    const manualLive = actionsFor({ status: "manual_required", pausedAt: null, releaseAfter: null, itemStatus: "posted_manual" }, { releaseOn: true, now: Date.now() }).map((a) => a.label);
+    const parkedNotLive = actionsFor({ status: "needs_attention", pausedAt: null, releaseAfter: null, itemStatus: "awaiting_creator", hasTransfer: true, errorCode: "failed_while_held" }, { releaseOn: true, now: Date.now() }).map((a) => a.label);
+    expect(reversedLive).toContain("Pay by bank transfer instead");
+    expect(heldLabels).toContain("Reverse");
+    expect(manualLive).toContain("Mark paid manually");
+    expect(parkedNotLive).toEqual(expect.arrayContaining(["Reverse", "Stop this payout"]));
     // The next IST day it is a new alert.
     expect(await alertSuspendedHolding(new Date(Date.now() + 2 * DAY))).toBe(1);
     await flushPayoutAlertsForTests();

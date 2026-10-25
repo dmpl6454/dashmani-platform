@@ -28,6 +28,7 @@ import overviewRoutes from "./overview.routes";
 import pipelineRoutes from "./pipeline.routes";
 import campaignClientRoutes from "./campaign-client.routes";
 import campaignAdminRoutes from "./campaign-admin.routes";
+import salesRoutes from "./sales.routes";
 import creatorAuthRoutes from "./creator-auth.routes";
 import creatorRoutes from "./creator.routes";
 import creatorMetaRoutes from "./creator-meta.routes";
@@ -67,6 +68,8 @@ router.use(channelRoutes);
 router.use(overviewRoutes);
 // Campaign review queue + rate cards (/admin/campaigns*, /admin/campaign-rate-cards).
 router.use(campaignAdminRoutes);
+// Sales portal (sales.digitalsukoon.com): /sales/* — staff only, gated on the `sales` permission.
+router.use(salesRoutes);
 // Creator portal (creators.digitalsukoon.com): /creator/* (own auth, dark unless CREATORS_ENABLED=1),
 // the staff review queue /admin/creators* (before any parameterised /admin/:x router), and Meta's
 // app-wide deauthorize / data-deletion callbacks.

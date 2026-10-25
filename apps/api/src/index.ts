@@ -17,6 +17,7 @@ import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeli
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
 import { schedulePipelineMaintenance } from "./services/pipeline/jobs";
+import { scheduleApiUsageRollup } from "./services/api-usage-rollup.service";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
 // The 2026-07-08 outage was an unhandled promise rejection (a P2024 pool timeout in an
@@ -57,6 +58,11 @@ app.listen(PORT, () => {
   // Pipeline notification trim + 30-day soft-delete purge (spec §7.12): scheduled by WALL
   // CLOCK for the next 04:00 IST — never at boot — and once per IST day (marker).
   schedulePipelineMaintenance();
+
+  // api_usage rollup (2026-10-25, the day the prod disk filled): days older than 90 days are
+  // folded into one row per Cost Sheet group — exact for every reader — at 04:20 IST, never
+  // at boot, once per IST day (marker). See api-usage-rollup.service.ts.
+  scheduleApiUsageRollup();
 
   // Pipeline hourly `[pipeline] stats` line (spec §12 step 8): counters only, no DB.
   startPipelineStatsLog(Number(process.env.PIPELINE_STATS_INTERVAL_MS) || 60 * 60 * 1000);

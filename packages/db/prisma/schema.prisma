@@ -1450,18 +1450,20 @@ model LinkMetric {
   link     ReportLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
   employee User        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  @@index([employeeId, reportDate])
-  @@index([urlNormalized])
+  // ⚠️ ONE index, on purpose (2026-10-25). Every portal read of engagement moved to
+  // link_metrics_latest on 2026-09-18; the only live queries left on this table look up
+  // rows by link_id — the cron's duplicate check (DISTINCT ON (link_id)), the re-heal
+  // UPDATE (link_id IS NULL), the SetNull FK on every HR resubmit, and the UI-less
+  // GET /admin/reports/links/:linkId/metrics. On prod the four other indexes this model
+  // used to declare — (employeeId, reportDate), (urlNormalized), (platform, fetchedAt)
+  // and (employeeId, urlNormalized, fetchedAt DESC) — held 4.2 GB of a 49 GB disk and
+  // showed ZERO scans, while the table is 14.7M rows and the disk filled on 2026-10-25.
+  // They were dropped there with DROP INDEX CONCURRENTLY. Do not re-add one without a
+  // reader that needs it. The hand-built partial covering index
+  // link_metrics_emp_url_fetched_ok_v2_idx still exists on prod only (the one known
+  // schema/prod difference, see the pipeline DDL runbook); it is unused by reads too
+  // and may be dropped the same way once the backfill script that can use it is retired.
   @@index([linkId])
-  @@index([platform, fetchedAt])
-  // Plain (employeeId, urlNormalized, fetchedAt DESC) index for the leaderboard/insights
-  // latest-per-(employee,url) DISTINCT ON lookup. Prisma's schema DSL cannot express a
-  // partial (WHERE status='ok') or covering (INCLUDE views/likes/comments/reportDate)
-  // index, so this plain version is what a fresh/local database gets. The TUNED
-  // partial+covering index (prod-measured 2790ms → 763ms) is built manually on
-  // production via raw SQL (CREATE INDEX CONCURRENTLY ... INCLUDE (...) WHERE
-  // status='ok') in a later task. Do NOT drop this entry.
-  @@index([employeeId, urlNormalized, fetchedAt(sort: Desc)])
   @@map("link_metrics")
 }
 

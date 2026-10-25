@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useAuth } from "@/lib/auth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useOverview, useTopPosts } from "./_hooks";
@@ -12,6 +13,18 @@ import {
 import { Sparkline, AreaLineChart, CumulativeBars, Donut, IndexedLines, IndiaMap } from "./_charts";
 import { Card, Chip, ViewAll, CardActions, ExpandBtn, ExpandModal, Menu, MenuItem, Trend, Avatar, Empty, Skeleton, StateMessage, Drawer, type DrawerSpec, type ExpandSpec } from "./_widgets";
 import "./overview.css";
+
+// Account Growth opened IN PLACE (owner: clicking through from a card must not leave the
+// overview). Loaded only when first opened, so its boards' code stays off this page's
+// first load; a failed chunk load (page left open across a deploy) falls back to the page.
+const GrowthOverlay = dynamic(
+  () => import("./_growth-overlay").then((m) => m.GrowthOverlay).catch(() => GrowthOverlayUnavailable),
+  { ssr: false },
+);
+function GrowthOverlayUnavailable(_props: { onClose: () => void }) {
+  useEffect(() => { window.location.href = "/accounts/growth"; }, []);
+  return null;
+}
 
 // ⚠️ The overview is its OWN plane. This rail used to carry nine cross-links into
 // the classic portal (Channels, Content, Accounts, Employees, Clients, Projects,
@@ -235,6 +248,7 @@ export default function OverviewPage() {
   const [tracDays, setTracDays] = useState<WidgetPeriod>(0);
   const [pop, setPop] = useState<Pop>(null);
   const [drawer, setDrawer] = useState<DrawerSpec | null>(null);
+  const [growthOpen, setGrowthOpen] = useState(false);
   const [expand, setExpand] = useState<ExpandSpec | null>(null);
   // True when this drawer was opened FROM an expanded table, so it must render above the
   // modal and hand the reader back to that table when it closes.
@@ -310,6 +324,7 @@ export default function OverviewPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (growthOpen) return; // the Account Growth panel handles its own Escape
       // Innermost first, one per press. Re-subscribing when a layer changes is cheap and
       // keeps this readable — the alternative (nested state updaters) runs during the
       // render phase and is exactly the kind of thing that breaks quietly later.
@@ -320,7 +335,7 @@ export default function OverviewPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pop, menuOpen, drawer, expand]);
+  }, [pop, menuOpen, drawer, expand, growthOpen]);
   // Keyboard selection must follow the highlight — the list scrolls, focus stays in
   // the input, and a browser only auto-scrolls for a focused element, so nothing would
   // move the viewport on its own.
@@ -441,7 +456,6 @@ export default function OverviewPage() {
           { label: "Followers on those channels", value: fmtCompact(k.followers.followersWithHistory) },
           { label: "Growth % measured over", value: `${k.followers.channelsWithHistory} channels — not all ${o.channels.total}` },
         ],
-        href: "/accounts/growth",
       },
       {
         id: "views", label: "Total Views", value: fmtCompact(k.views.value), accent: T.blue, icon: ICONS.views, spark: k.views.spark,
@@ -452,7 +466,6 @@ export default function OverviewPage() {
           ...coverageRow,
           { label: "Period", value: `${fmtDay(o.period.start)} – ${fmtDay(o.period.end)}` },
         ],
-        href: "/accounts/growth",
       },
       {
         id: "reach", label: "Total Reach", value: fmtCompact(k.reach.value), accent: T.purple, icon: ICONS.reach, spark: [],
@@ -484,7 +497,6 @@ export default function OverviewPage() {
               { label: "Why we don't add it up", value: "Reach counts people, not events — summing days would double-count anyone who came back" },
               { label: "To see reach", value: "Switch the period to 7 or 30 days" },
             ],
-        href: "/accounts/growth",
       },
       {
         id: "revenue", label: "Total Revenue", value: fmtUsd(k.revenue.value), accent: T.green, icon: ICONS.revenue, spark: k.revenue.spark,
@@ -505,7 +517,6 @@ export default function OverviewPage() {
           ...coverageRow,
           { label: "Currency", value: "USD, as paid by Meta. Instagram publishes no earnings metric, so revenue is Facebook-only" },
         ],
-        href: "/accounts/growth",
       },
       {
         id: "engagements", label: "Engagements", value: fmtCompact(k.engagements.value), accent: T.gold, icon: ICONS.engagements, spark: k.engagements.spark,
@@ -515,7 +526,6 @@ export default function OverviewPage() {
           { label: "Channels reporting", value: `${k.engagements.contributing} of ${o.channels.total}` },
           ...coverageRow,
         ],
-        href: "/accounts/growth",
       },
     ];
   }, [o]);
@@ -616,7 +626,7 @@ export default function OverviewPage() {
         { label: `Revenue · last ${o?.period.days ?? 7} days`, value: fmtUsd(c.earningsCents) },
         { label: "Follower change", value: c.followerDeltaDays ? `${fmtSigned(c.followerDelta)} · ${c.followerDeltaDays}d` : "—" },
       ],
-      href: url ? { label: "Open on Meta ↗", url, external: true } : { label: "Open in Account Growth", url: "/accounts/growth" },
+      href: url ? { label: "Open on Meta ↗", url, external: true } : { label: "Open in Account Growth", onClick: openGrowth },
     });
     setPop(null);
   }
@@ -947,15 +957,17 @@ export default function OverviewPage() {
     });
   }
 
-  function openKpi(k: (typeof kpis)[number]) {
-    setDrawerStacked(false);
-    setDrawer({
-      kind: "KPI detail", accent: k.accent, title: k.label, sub: `Period · last ${o?.period.days ?? days} closed days`,
-      hero: { label: k.label, value: k.value, trend: <Trend pct={k.trend} reliable={k.reliable} />, note: k.note },
-      rows: [...k.rows, { label: "Data through", value: o?.period.dataThroughDay ? fmtDayYear(o.period.dataThroughDay) : "—" }],
-      href: { label: "Open Account Growth", url: k.href },
-    });
+  /** Account Growth over the overview. Every other layer closes first so the panel is the
+   *  only thing on screen and Escape/close returns straight to the overview. */
+  function openGrowth() {
+    setPop(null);
+    setMenuOpen(false);
+    closeDrawer();
+    setExpand(null);
+    setGrowthOpen(true);
   }
+
+
 
   const empty = o && o.channels.total === 0;
   const pendingCount = o?.pending ? o.pending.approvals + o.pending.employees : 0;
@@ -1195,15 +1207,17 @@ export default function OverviewPage() {
           <StateMessage tone="error" title="Couldn’t load the overview" body={String((error as Error).message ?? "The analytics service returned an error.")} cta="Retry" onCta={() => mutate()} />
         )}
         {o && empty && (
-          <StateMessage tone="empty" title="No connected channels yet" body="Connect a Meta account in Account Growth and the overview fills itself from real channel data." cta="Open Account Growth" onCta={() => router.push("/accounts/growth")} />
+          <StateMessage tone="empty" title="No connected channels yet" body="Connect a Meta account in Account Growth and the overview fills itself from real channel data." cta="Open Account Growth" onCta={openGrowth} />
         )}
 
         {o && !empty && (
           <div className="ov-grid" style={{ opacity: isLoading ? 0.75 : 1 }}>
             {/* KPI strip */}
             <section className="ov-row ov-row-kpi" aria-label="Key metrics">
+              {/* Owner decision: a KPI card opens Account Growth straight away, over the overview —
+                  no intermediate detail drawer and no navigation away. */}
               {kpis.map((k) => (
-                <button key={k.id} type="button" className="ov-kpi" onClick={() => openKpi(k)}>
+                <button key={k.id} type="button" className="ov-kpi" onClick={openGrowth} title={`${k.label} — open Account Growth`}>
                   <span className="ov-kpi-tile" style={{ background: `${k.accent}22`, color: k.accent, boxShadow: `0 0 16px ${k.accent}33` }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={k.icon} /></svg>
                   </span>
@@ -1319,7 +1333,7 @@ export default function OverviewPage() {
             {/* Operations row */}
             <section className="ov-row ov-row-ops" aria-label="Operations">
               <Card title="Top Channels" right={
-                <CardActions><ExpandBtn label="Expand Top Channels" onClick={openExpandTopChannels} /><ViewAll href="/accounts/growth" /></CardActions>
+                <CardActions><ExpandBtn label="Expand Top Channels" onClick={openExpandTopChannels} /><ViewAll onClick={openGrowth} /></CardActions>
               }>
                 {/* ⚠️ The tablist goes in the BODY, not the header. `.ov-card-h` is a
                     flex row whose h2 is its only shrinkable item, so a third child
@@ -1374,7 +1388,7 @@ export default function OverviewPage() {
                   than streaming. */}
               <Card
                 title={<>Latest Posts <span className="ov-live-pill"><span />SYNCED</span></>}
-                right={<CardActions><ExpandBtn label="Expand Latest Posts" onClick={openExpandPosts} /><ViewAll href="/accounts/growth" /></CardActions>}
+                right={<CardActions><ExpandBtn label="Expand Latest Posts" onClick={openExpandPosts} /><ViewAll onClick={openGrowth} /></CardActions>}
               >
                 <div className="ov-feed">
                   {o.latestPosts.length === 0 && <Empty>No posts synced yet.</Empty>}
@@ -1401,7 +1415,7 @@ export default function OverviewPage() {
               </Card>
 
               <Card title="Revenue by Channel" right={
-                <CardActions><ExpandBtn label="Expand Revenue by Channel" onClick={openExpandRevenue} /><ViewAll href="/accounts/growth" /></CardActions>
+                <CardActions><ExpandBtn label="Expand Revenue by Channel" onClick={openExpandRevenue} /><ViewAll onClick={openGrowth} /></CardActions>
               }>
                 <div className="ov-table">
                   {/* The period lives on the column, not in the card header: a third
@@ -1656,6 +1670,7 @@ export default function OverviewPage() {
 
         {expand && <ExpandModal spec={expand} onClose={() => setExpand(null)} />}
         {drawer && <Drawer spec={drawer} stacked={drawerStacked} onClose={closeDrawer} />}
+        {growthOpen && <GrowthOverlay onClose={() => setGrowthOpen(false)} />}
       </main>
     </div>
   );

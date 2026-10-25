@@ -177,6 +177,15 @@ input, textarea, select {
 .auth-field-wrap.is-focused .auth-field-icon { color:#5D5FEF; }
 .auth-field-wrap.error      .auth-field-icon { color:#B83728; }
 
+/* ── Sign in with Google (components/google-signin.tsx) ── */
+.auth-google { margin-top:18px; }
+.auth-or { position:relative; display:flex; align-items:center; gap:12px; margin:0 0 14px; font:700 10.5px/1 "Plus Jakarta Sans",sans-serif; letter-spacing:.16em; text-transform:uppercase; color:#9C947C; }
+.auth-or::before, .auth-or::after { content:""; flex:1; height:1.5px; background:rgba(26,26,26,0.09); }
+/* Google renders its button in an iframe sized by its own `width`; the slot centres it and
+   reserves its height so the card does not jump when the script arrives. */
+.auth-google-slot { display:flex; justify-content:center; min-height:44px; }
+.auth-google-slot > div { max-width:100%; }
+
 /* ── Auth segmented tabs ── */
 .auth-seg { position:relative; display:flex; background:#F3EED8; border:1.5px solid rgba(26,26,26,0.09); border-radius:999px; padding:4px; }
 .auth-seg-btn { flex:1; padding:10px 14px; font-weight:700; font-size:13.5px; color:#3A3A3A; border-radius:999px; cursor:pointer; position:relative; z-index:2; transition:color .2s; background:none; border:none; }

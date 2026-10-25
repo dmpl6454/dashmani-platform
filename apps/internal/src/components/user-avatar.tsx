@@ -2,12 +2,12 @@
 import { API_BASE } from "@/lib/api";
 
 const GRADIENTS = [
-  "linear-gradient(135deg, #667eea, #764ba2)",
-  "linear-gradient(135deg, #f093fb, #f5576c)",
-  "linear-gradient(135deg, #4facfe, #00f2fe)",
-  "linear-gradient(135deg, #43e97b, #38f9d7)",
-  "linear-gradient(135deg, #fa709a, #fee140)",
-  "linear-gradient(135deg, #a18cd1, #fbc2eb)",
+  "linear-gradient(135deg, var(--hx-667EEA), var(--hx-764BA2))",
+  "linear-gradient(135deg, var(--hx-F093FB), var(--hx-F5576C))",
+  "linear-gradient(135deg, var(--hx-4FACFE), var(--hx-00F2FE))",
+  "linear-gradient(135deg, var(--hx-43E97B), var(--hx-38F9D7))",
+  "linear-gradient(135deg, var(--hx-FA709A), var(--hx-FEE140))",
+  "linear-gradient(135deg, var(--hx-A18CD1), var(--hx-FBC2EB))",
 ];
 
 function gradientFor(name: string) {

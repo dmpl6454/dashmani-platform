@@ -140,7 +140,7 @@ export function TrueLinksPanel({
     : null;
 
   return (
-    <div className="flex flex-col rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)] min-w-0">
+    <div className="flex flex-col rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)] min-w-0">
       {/* Header / collapsed summary */}
       <div className="px-6 py-5 flex flex-wrap items-center gap-x-5 gap-y-4">
         <div className="h-11 w-11 rounded-[12px] bg-[rgba(0,215,160,.12)] flex items-center justify-center shrink-0">
@@ -168,7 +168,7 @@ export function TrueLinksPanel({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="inline-flex items-center gap-2 h-[38px] px-4 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[13px] font-semibold whitespace-nowrap hover:text-ds-text hover:border-[#2A4658]"
+            className="inline-flex items-center gap-2 h-[38px] px-4 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[13px] font-semibold whitespace-nowrap hover:text-ds-text hover:border-[color:var(--hx-2A4658)]"
           >
             {expanded ? "Hide breakdown" : "By employee"}
             {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
@@ -214,8 +214,8 @@ export function TrueLinksPanel({
                   return (
                     <tr
                       key={r.id}
-                      className={`border-b border-[#132430] last:border-b-0 ${
-                        isSelected ? "bg-[rgba(233,189,98,.06)]" : "hover:bg-[#0A1620]"
+                      className={`border-b border-[color:var(--hx-132430)] last:border-b-0 ${
+                        isSelected ? "bg-[rgba(233,189,98,.06)]" : "hover:bg-[color:var(--hx-0A1620)]"
                       }`}
                     >
                       <td className="px-6 h-[52px] font-semibold text-ds-text whitespace-nowrap">
@@ -230,7 +230,7 @@ export function TrueLinksPanel({
                             {nf.format(r.sharedDupLinks)}
                           </span>
                         ) : (
-                          <span className="text-[#4A6275] font-semibold">0</span>
+                          <span className="text-[color:var(--hx-4A6275)] font-semibold">0</span>
                         )}
                       </td>
                       <td className="px-6 text-right font-semibold text-ds-text">{nf.format(r.trueUniqueLinks)}</td>

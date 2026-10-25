@@ -20,7 +20,7 @@ const SubmissionGapsPanel = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="mt-4 rounded-[16px] border border-[#2A4658] bg-ds-card px-6 py-5 text-[12.5px] text-ds-t3">Loading submission gaps…</div>
+      <div className="mt-4 rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card px-6 py-5 text-[12.5px] text-ds-t3">Loading submission gaps…</div>
     ),
   },
 );
@@ -43,21 +43,21 @@ function fmtDate(d: string) {
 }
 
 const PLATFORM_COLOR: Record<string, string> = {
-  facebook: "#2F86F0", instagram: "#DD3FAF", youtube: "#E52D47", snapchat: "#E9BD62",
-  twitter: "#A7B3C2", linkedin: "#238BFF", tiktok: "#00D7A0",
+  facebook: "var(--hx-2F86F0)", instagram: "var(--hx-DD3FAF)", youtube: "var(--hx-E52D47)", snapchat: "var(--hx-E9BD62)",
+  twitter: "var(--hx-A7B3C2)", linkedin: "var(--hx-238BFF)", tiktok: "var(--hx-00D7A0)",
 };
 const PLATFORM_NAME: Record<string, string> = {
   facebook: "Facebook", instagram: "Instagram", youtube: "YouTube", snapchat: "Snapchat",
   twitter: "Twitter", linkedin: "LinkedIn", tiktok: "TikTok",
 };
 const platName = (p: string) => PLATFORM_NAME[p?.toLowerCase()] ?? (p ? p.charAt(0).toUpperCase() + p.slice(1) : "—");
-const platColor = (p: string) => PLATFORM_COLOR[p?.toLowerCase()] ?? "#738395";
+const platColor = (p: string) => PLATFORM_COLOR[p?.toLowerCase()] ?? "var(--hx-738395)";
 
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const hueOf = (name: string) => {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
@@ -67,10 +67,10 @@ const initials = (name: string) => (name || "?").split(/\s+/).filter(Boolean).ma
 
 /** Rank badge colours: gold / silver / bronze, then neutral. */
 function rankStyle(i: number): React.CSSProperties {
-  if (i === 0) return { background: "rgba(233,189,98,.16)", color: "#E9BD62" };
-  if (i === 1) return { background: "rgba(212,219,228,.12)", color: "#D4DBE4" };
-  if (i === 2) return { background: "rgba(240,128,60,.14)", color: "#F0A070" };
-  return { background: "#132430", color: "#738395" };
+  if (i === 0) return { background: "rgba(233,189,98,.16)", color: "var(--hx-E9BD62)" };
+  if (i === 1) return { background: "rgba(212,219,228,.12)", color: "var(--hx-D4DBE4)" };
+  if (i === 2) return { background: "rgba(240,128,60,.14)", color: "var(--hx-F0A070)" };
+  return { background: "var(--hx-132430)", color: "var(--hx-738395)" };
 }
 
 /** A round axis maximum (1, 2, 2.5, 5 × 10^n) at or above the data's peak. */
@@ -82,11 +82,11 @@ function niceMax(v: number): number {
 }
 
 /* ── Building blocks ── */
-const CARD = "flex flex-col rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)] min-w-0";
+const CARD = "flex flex-col rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)] min-w-0";
 
 function CardHead({ title, icon, right }: { title: string; icon?: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-x-4 gap-y-2 min-h-[62px] px-5 sm:px-6 py-3 border-b border-[#182C39] flex-wrap">
+    <div className="flex items-center justify-between gap-x-4 gap-y-2 min-h-[62px] px-5 sm:px-6 py-3 border-b border-[color:var(--hx-182C39)] flex-wrap">
       <span className="flex items-center gap-2.5 text-[15px] font-semibold tracking-[-.01em] text-ds-text whitespace-nowrap">
         {icon}
         {title}
@@ -110,12 +110,12 @@ function Loading() {
 
 function StatCard({ icon, color, value, label, valueColor }: { icon: React.ReactNode; color: string; value: string; label: string; valueColor?: string }) {
   return (
-    <div className="flex flex-col gap-4 px-5 sm:px-[22px] py-5 rounded-[16px] bg-ds-card border border-[#2A4658] min-w-0">
+    <div className="flex flex-col gap-4 px-5 sm:px-[22px] py-5 rounded-[16px] bg-ds-card border border-[color:var(--hx-2A4658)] min-w-0">
       <span className="h-[34px] w-[34px] rounded-[10px] grid place-items-center" style={{ background: rgba(color, 0.14), color }}>
         {icon}
       </span>
       <span className="leading-[1.2] min-w-0">
-        <span className="block text-[26px] sm:text-[30px] font-bold tracking-[-.04em] tabular-nums whitespace-nowrap truncate" style={{ color: valueColor ?? "#F4F6F8" }}>
+        <span className="block text-[26px] sm:text-[30px] font-bold tracking-[-.04em] tabular-nums whitespace-nowrap truncate" style={{ color: valueColor ?? "var(--hx-F4F6F8)" }}>
           {value}
         </span>
         <span className="text-[12.5px] text-ds-t3">{label}</span>
@@ -156,17 +156,17 @@ function DailyChart({ points }: { points: { date: string; links: number; reports
         </div>
         <div ref={plotRef} className="relative h-[240px]" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
           <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
-            {ticks.map((_, i) => <span key={i} className="h-0 border-t border-dashed border-[#182C39]" />)}
+            {ticks.map((_, i) => <span key={i} className="h-0 border-t border-dashed border-[color:var(--hx-182C39)]" />)}
           </div>
           <svg viewBox="0 0 1000 240" preserveAspectRatio="none" className="absolute inset-0 w-full h-full overflow-visible" aria-hidden="true">
             <defs>
               <linearGradient id="la-daily" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#E9BD62" stopOpacity=".3" />
-                <stop offset="1" stopColor="#E9BD62" stopOpacity="0" />
+                <stop offset="0" stopColor="var(--hx-E9BD62)" stopOpacity=".3" />
+                <stop offset="1" stopColor="var(--hx-E9BD62)" stopOpacity="0" />
               </linearGradient>
             </defs>
             <path d={area} fill="url(#la-daily)" />
-            <path d={line} fill="none" stroke="#E9BD62" strokeWidth="2.2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+            <path d={line} fill="none" stroke="var(--hx-E9BD62)" strokeWidth="2.2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
           </svg>
           {h && hover != null && (
             <>
@@ -176,7 +176,7 @@ function DailyChart({ points }: { points: { date: string; links: number; reports
                 style={{ left: `${x(hover) / 10}%`, top: `${(y(h.links) / 240) * 100}%` }}
               />
               <div
-                className="absolute top-1 z-10 px-3 py-2 rounded-[10px] bg-[#0B1720] border border-ds-line2 shadow-[0_12px_28px_rgba(0,0,0,.55)] pointer-events-none whitespace-nowrap"
+                className="absolute top-1 z-10 px-3 py-2 rounded-[10px] bg-[color:var(--hx-0B1720)] border border-ds-line2 shadow-[0_12px_28px_rgba(0,0,0,.55)] pointer-events-none whitespace-nowrap"
                 style={hover > n / 2 ? { right: `calc(${100 - x(hover) / 10}% + 12px)` } : { left: `calc(${x(hover) / 10}% + 12px)` }}
               >
                 <p className="text-[11px] text-ds-t3">{h.date}</p>
@@ -221,7 +221,7 @@ function RangeBar({ startDate, endDate, onChange }: { startDate: string; endDate
               aria-pressed={on}
               onClick={() => onChange(presetStart(p.days), todayISO())}
               className={`h-9 min-w-[46px] px-[13px] rounded-full border text-[12.5px] font-semibold whitespace-nowrap shrink-0 transition-colors ${
-                on ? "border-ds-gold bg-ds-gold text-[#060D14]" : "border-ds-line2 bg-ds-inset text-ds-t2 hover:text-ds-text"
+                on ? "border-ds-gold bg-ds-gold text-[color:var(--hx-060D14)]" : "border-ds-line2 bg-ds-inset text-ds-t2 hover:text-ds-text"
               }`}
             >
               {p.label}
@@ -242,7 +242,7 @@ function RangeBar({ startDate, endDate, onChange }: { startDate: string; endDate
         <button
           type="button"
           onClick={() => onChange(presetStart(30), todayISO())}
-          className="h-9 inline-flex items-center gap-1 rounded-full border border-ds-line2 px-3 text-[12px] text-ds-t2 hover:text-[#FB7185] shrink-0"
+          className="h-9 inline-flex items-center gap-1 rounded-full border border-ds-line2 px-3 text-[12px] text-ds-t2 hover:text-[color:var(--hx-FB7185)] shrink-0"
           title="Reset to last 30 days"
         >
           <X className="h-3 w-3" /> Reset
@@ -338,7 +338,7 @@ export default function LinksAnalyticsPage() {
             aria-controls={`links-panel-${id}`}
             onClick={() => setTab(id)}
             className={`h-[38px] px-5 rounded-full text-[13px] font-bold whitespace-nowrap transition-colors ${
-              tab === id ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+              tab === id ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"
             }`}
           >
             {label}
@@ -356,16 +356,16 @@ export default function LinksAnalyticsPage() {
         <div role="tabpanel" id="links-panel-overview" aria-labelledby="links-tab-overview">
           {/* Stats */}
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mt-5">
-            <StatCard icon={<Link2 className="h-4 w-4" />} color="#E9BD62" value={isLoading || !d ? "—" : nf(d.totalLinks ?? 0)} label="Total Links" />
-            <StatCard icon={<TrendingUp className="h-4 w-4" />} color="#6EB2FF" value={isLoading || !d ? "—" : nf(d.avgLinksPerDay ?? 0)} label="Avg Links/Day" />
+            <StatCard icon={<Link2 className="h-4 w-4" />} color="var(--hx-E9BD62)" value={isLoading || !d ? "—" : nf(d.totalLinks ?? 0)} label="Total Links" />
+            <StatCard icon={<TrendingUp className="h-4 w-4" />} color="var(--hx-6EB2FF)" value={isLoading || !d ? "—" : nf(d.avgLinksPerDay ?? 0)} label="Avg Links/Day" />
             <StatCard
               icon={isPositiveGrowth ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-              color={isPositiveGrowth ? "#00D7A0" : "#FB7185"}
-              valueColor={isLoading || growthRate === null ? undefined : isPositiveGrowth ? "#00D7A0" : "#FB7185"}
+              color={isPositiveGrowth ? "var(--hx-00D7A0)" : "var(--hx-FB7185)"}
+              valueColor={isLoading || growthRate === null ? undefined : isPositiveGrowth ? "var(--hx-00D7A0)" : "var(--hx-FB7185)"}
               value={isLoading ? "—" : growthRate === null ? "—" : `${isPositiveGrowth ? "+" : ""}${growthRate}%`}
               label="Growth vs Previous Period"
             />
-            <StatCard icon={<AlertCircle className="h-4 w-4" />} color="#FB7185" value={isLoading || !d ? "—" : nf(nonSubmitters.length)} label="Non-Submitters" />
+            <StatCard icon={<AlertCircle className="h-4 w-4" />} color="var(--hx-FB7185)" value={isLoading || !d ? "—" : nf(nonSubmitters.length)} label="Non-Submitters" />
           </section>
 
           {/* Daily trend */}
@@ -388,7 +388,7 @@ export default function LinksAnalyticsPage() {
                       <span className="text-[11px] font-semibold text-ds-t5 tabular-nums">{fmtCompact(w.links)}</span>
                       <span
                         className="w-full max-w-[40px] rounded-t-[6px] rounded-b-[2px] transition-opacity group-hover:opacity-80"
-                        style={{ height: `${Math.max(2, (w.links / weeklyMax) * 100) * 0.72}%`, background: "linear-gradient(180deg,#E9BD62,rgba(233,189,98,.4))" }}
+                        style={{ height: `${Math.max(2, (w.links / weeklyMax) * 100) * 0.72}%`, background: "linear-gradient(180deg,var(--hx-E9BD62),rgba(233,189,98,.4))" }}
                       />
                       <span className="text-[10.5px] text-ds-t3 whitespace-nowrap">{w.week}</span>
                     </div>
@@ -403,7 +403,7 @@ export default function LinksAnalyticsPage() {
                 right={
                   <span className="flex gap-3.5 text-[12px] text-ds-t3">
                     {d?.bestChannel && <span>Best: <b className="font-semibold text-ds-teal">{platName(d.bestChannel.platform)}</b></span>}
-                    {d?.worstChannel && <span>Least: <b className="font-semibold text-[#FB7185]">{platName(d.worstChannel.platform)}</b></span>}
+                    {d?.worstChannel && <span>Least: <b className="font-semibold text-[color:var(--hx-FB7185)]">{platName(d.worstChannel.platform)}</b></span>}
                   </span>
                 }
               />
@@ -418,7 +418,7 @@ export default function LinksAnalyticsPage() {
                         </span>
                         <span className="text-[12px] text-ds-t3 tabular-nums"><b className="font-semibold text-ds-t5">{nf(p.count)}</b> · {p.pct}%</span>
                       </div>
-                      <span className="h-2 rounded-[4px] bg-[#132430] overflow-hidden">
+                      <span className="h-2 rounded-[4px] bg-[color:var(--hx-132430)] overflow-hidden">
                         <span className="block h-full rounded-[4px] transition-all duration-500" style={{ width: `${(p.pct / platMax) * 100}%`, background: platColor(p.platform) }} />
                       </span>
                     </div>
@@ -435,7 +435,7 @@ export default function LinksAnalyticsPage() {
               {isLoading ? <Loading /> : teamRanks.length === 0 ? <Empty>No team data in range</Empty> : (
                 <div>
                   {teamRanks.map((t, i) => (
-                    <div key={t.teamId} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3.5 min-h-[62px] px-5 sm:px-6 py-2 border-b border-[#132430] last:border-b-0">
+                    <div key={t.teamId} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3.5 min-h-[62px] px-5 sm:px-6 py-2 border-b border-[color:var(--hx-132430)] last:border-b-0">
                       <span className="h-7 w-7 rounded-full grid place-items-center text-[11.5px] font-bold" style={rankStyle(i)}>{i + 1}</span>
                       <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
                         <span className="text-[14px] font-semibold text-ds-text truncate">{t.teamName}</span>
@@ -449,17 +449,17 @@ export default function LinksAnalyticsPage() {
             </div>
 
             <div className={CARD}>
-              <CardHead title="Top Submitters" icon={<Users className="h-4 w-4 text-[#6EB2FF]" strokeWidth={1.8} />} right={<span className="text-[12px] text-ds-t3">Total links</span>} />
+              <CardHead title="Top Submitters" icon={<Users className="h-4 w-4 text-[color:var(--hx-6EB2FF)]" strokeWidth={1.8} />} right={<span className="text-[12px] text-ds-t3">Total links</span>} />
               {isLoading ? <Loading /> : topSubmitters.length === 0 ? <Empty>No submissions in range</Empty> : (
                 <div>
                   {topSubmitters.map((emp, i) => (
-                    <div key={emp.employeeId} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3.5 min-h-[62px] px-5 sm:px-6 py-2 border-b border-[#132430] last:border-b-0">
+                    <div key={emp.employeeId} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3.5 min-h-[62px] px-5 sm:px-6 py-2 border-b border-[color:var(--hx-132430)] last:border-b-0">
                       <span className="h-7 w-7 rounded-full grid place-items-center text-[11.5px] font-bold" style={rankStyle(i)}>{i + 1}</span>
                       <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
                         <Link href={`/reports/${emp.employeeId}`} className="text-[14px] font-semibold text-ds-text hover:text-ds-gold transition-colors truncate">{emp.name}</Link>
                         <span className="text-[11.5px] text-ds-t3 truncate">{nf(emp.reportCount)} reports</span>
                       </span>
-                      <span className="text-[16px] font-bold text-[#6EB2FF] tabular-nums">{nf(emp.totalLinks)}</span>
+                      <span className="text-[16px] font-bold text-[color:var(--hx-6EB2FF)] tabular-nums">{nf(emp.totalLinks)}</span>
                     </div>
                   ))}
                 </div>
@@ -472,15 +472,15 @@ export default function LinksAnalyticsPage() {
             <section className={`${CARD} mt-4`}>
               <CardHead
                 title="No Submissions in Range"
-                icon={<AlertCircle className="h-4 w-4 text-[#FB7185]" strokeWidth={1.8} />}
-                right={<span className="text-[12px] font-semibold text-[#FB7185]">{nonSubmitters.length} employee{nonSubmitters.length !== 1 ? "s" : ""}</span>}
+                icon={<AlertCircle className="h-4 w-4 text-[color:var(--hx-FB7185)]" strokeWidth={1.8} />}
+                right={<span className="text-[12px] font-semibold text-[color:var(--hx-FB7185)]">{nonSubmitters.length} employee{nonSubmitters.length !== 1 ? "s" : ""}</span>}
               />
               <div className="flex flex-wrap gap-2 px-5 sm:px-6 py-5">
                 {nonSubmitters.map((emp) => (
                   <Link
                     key={emp.employeeId}
                     href={`/employees/${emp.employeeId}`}
-                    className="inline-flex items-center gap-2 h-[34px] pl-[5px] pr-3.5 rounded-full border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] text-[12.5px] font-semibold text-[#FDA4AF] whitespace-nowrap transition-colors hover:bg-[rgba(251,113,133,.14)] hover:text-[#FECDD3]"
+                    className="inline-flex items-center gap-2 h-[34px] pl-[5px] pr-3.5 rounded-full border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] text-[12.5px] font-semibold text-[color:var(--hx-FDA4AF)] whitespace-nowrap transition-colors hover:bg-[rgba(251,113,133,.14)] hover:text-[color:var(--hx-FECDD3)]"
                   >
                     <span className="h-6 w-6 rounded-full grid place-items-center bg-[rgba(251,113,133,.16)] text-[10px] font-bold">{initials(emp.name)}</span>
                     {emp.name}
@@ -494,7 +494,7 @@ export default function LinksAnalyticsPage() {
           <section className={`${CARD} mt-4`}>
             <CardHead
               title="By Account"
-              icon={<BarChart2 className="h-4 w-4 text-[#6EB2FF]" strokeWidth={1.8} />}
+              icon={<BarChart2 className="h-4 w-4 text-[color:var(--hx-6EB2FF)]" strokeWidth={1.8} />}
               right={<span className="text-[12px] text-ds-t3">{allAccounts.length} channel{allAccounts.length !== 1 ? "s" : ""} active in range</span>}
             />
             {accountsLoading ? <Loading /> : allAccounts.length === 0 ? <Empty>No account-linked submissions in this range</Empty> : (
@@ -503,12 +503,12 @@ export default function LinksAnalyticsPage() {
                   const isExpanded = expandedAccount === account.accountId;
                   const pc = platColor(account.platform);
                   return (
-                    <div key={account.accountId} className="border-b border-[#132430] last:border-b-0">
+                    <div key={account.accountId} className="border-b border-[color:var(--hx-132430)] last:border-b-0">
                       <button
                         type="button"
                         onClick={() => setExpandedAccount(isExpanded ? null : account.accountId)}
                         aria-expanded={isExpanded}
-                        className={`w-full grid grid-cols-[22px_minmax(0,1fr)_auto_16px] sm:grid-cols-[28px_minmax(0,1fr)_auto_20px] items-center gap-3 sm:gap-3.5 min-h-[72px] px-4 sm:px-6 py-3 text-left transition-colors hover:bg-[#0A1620] ${isExpanded ? "bg-[#0A1620]" : ""}`}
+                        className={`w-full grid grid-cols-[22px_minmax(0,1fr)_auto_16px] sm:grid-cols-[28px_minmax(0,1fr)_auto_20px] items-center gap-3 sm:gap-3.5 min-h-[72px] px-4 sm:px-6 py-3 text-left transition-colors hover:bg-[color:var(--hx-0A1620)] ${isExpanded ? "bg-[color:var(--hx-0A1620)]" : ""}`}
                       >
                         <span className="text-[12px] font-bold text-ds-t3 text-right tabular-nums">{i + 1}</span>
                         <span className="flex flex-col gap-1 min-w-0">
@@ -532,7 +532,7 @@ export default function LinksAnalyticsPage() {
                       </button>
 
                       {isExpanded && (
-                        <div className="flex flex-col gap-3 px-4 sm:pl-[66px] sm:pr-6 pt-4 pb-[18px] bg-ds-inset border-t border-[#132430]">
+                        <div className="flex flex-col gap-3 px-4 sm:pl-[66px] sm:pr-6 pt-4 pb-[18px] bg-ds-inset border-t border-[color:var(--hx-132430)]">
                           {account.employees.map((emp: any) => {
                             const hue = hueOf(emp.name ?? "");
                             return (
@@ -543,17 +543,17 @@ export default function LinksAnalyticsPage() {
                                 <Link href={`/reports/${emp.employeeId}`} className="text-[12.5px] font-semibold text-ds-t5 hover:text-ds-gold transition-colors truncate">
                                   {emp.name}
                                 </Link>
-                                <span className="hidden sm:block h-1.5 rounded-[3px] bg-[#132430] overflow-hidden">
-                                  <span className="block h-full rounded-[3px] bg-[#6EB2FF] transition-all duration-500" style={{ width: `${emp.pct}%` }} />
+                                <span className="hidden sm:block h-1.5 rounded-[3px] bg-[color:var(--hx-132430)] overflow-hidden">
+                                  <span className="block h-full rounded-[3px] bg-[color:var(--hx-6EB2FF)] transition-all duration-500" style={{ width: `${emp.pct}%` }} />
                                 </span>
                                 <span className="text-[11.5px] text-ds-t3 text-right tabular-nums">{emp.pct}%</span>
                                 <span className="text-[12.5px] font-semibold text-ds-text text-right tabular-nums">{nf(emp.totalLinks)}</span>
                               </div>
                             );
                           })}
-                          <div className="flex justify-between gap-4 pt-3 border-t border-[#182C39] text-[11.5px] text-ds-t3 whitespace-nowrap">
+                          <div className="flex justify-between gap-4 pt-3 border-t border-[color:var(--hx-182C39)] text-[11.5px] text-ds-t3 whitespace-nowrap">
                             <span>Total for this channel</span>
-                            <Link href={`/accounts/${account.accountId}`} className="font-semibold text-ds-gold hover:text-[#F4D58C]">
+                            <Link href={`/accounts/${account.accountId}`} className="font-semibold text-ds-gold hover:text-[color:var(--hx-F4D58C)]">
                               View account →
                             </Link>
                           </div>
@@ -569,9 +569,9 @@ export default function LinksAnalyticsPage() {
           {/* Top YouTube Links */}
           {(topYouTubeLoading || topLinks.length > 0) && (
             <section className={`${CARD} mt-4`}>
-              <div className="flex items-center justify-between gap-x-4 gap-y-2 min-h-[62px] px-5 sm:px-6 py-3 border-b border-[#182C39] flex-wrap">
+              <div className="flex items-center justify-between gap-x-4 gap-y-2 min-h-[62px] px-5 sm:px-6 py-3 border-b border-[color:var(--hx-182C39)] flex-wrap">
                 <span className="flex items-center gap-3 flex-wrap">
-                  <span className="h-8 w-8 rounded-[9px] grid place-items-center bg-[rgba(251,113,133,.12)] text-[#FB7185]">
+                  <span className="h-8 w-8 rounded-[9px] grid place-items-center bg-[rgba(251,113,133,.12)] text-[color:var(--hx-FB7185)]">
                     <Eye className="h-[15px] w-[15px]" strokeWidth={1.8} />
                   </span>
                   <span className="text-[15px] font-semibold tracking-[-.01em] text-ds-text whitespace-nowrap">Top YouTube Links</span>
@@ -586,7 +586,7 @@ export default function LinksAnalyticsPage() {
                         aria-pressed={ytAllTime === m.allTime}
                         onClick={() => setYtAllTime(m.allTime)}
                         className={`h-[26px] px-3 rounded-full text-[11.5px] font-semibold whitespace-nowrap transition-colors ${
-                          ytAllTime === m.allTime ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+                          ytAllTime === m.allTime ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"
                         }`}
                       >
                         {m.label}
@@ -606,13 +606,13 @@ export default function LinksAnalyticsPage() {
                     {topLinks.map((link: any, i: number) => (
                       <div
                         key={`${link.linkId ?? link.url}-${i}`}
-                        className="grid grid-cols-[28px_minmax(0,1fr)_minmax(0,160px)_76px_70px_84px] gap-x-3.5 items-center h-[54px] px-6 border-b border-[#132430] last:border-b-0 text-[13px] tabular-nums transition-colors hover:bg-[#0A1620]"
+                        className="grid grid-cols-[28px_minmax(0,1fr)_minmax(0,160px)_76px_70px_84px] gap-x-3.5 items-center h-[54px] px-6 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] tabular-nums transition-colors hover:bg-[color:var(--hx-0A1620)]"
                       >
                         <span className="text-[12px] font-bold text-ds-t3">{i + 1}</span>
                         <a href={link.url} target="_blank" rel="noopener noreferrer" title={link.url} className="min-w-0 truncate text-ds-t5 hover:text-ds-gold transition-colors">{link.url}</a>
                         <span className="text-ds-t2 truncate">{link.employeeName}</span>
-                        <span className="flex items-center justify-end gap-[5px] font-semibold whitespace-nowrap text-[#FDA4AF]"><Eye className="h-3 w-3 shrink-0" />{fmtCompact(link.views)}</span>
-                        <span className="flex items-center justify-end gap-[5px] font-semibold whitespace-nowrap text-[#F9A8D4]"><Heart className="h-3 w-3 shrink-0" />{fmtCompact(link.likes)}</span>
+                        <span className="flex items-center justify-end gap-[5px] font-semibold whitespace-nowrap text-[color:var(--hx-FDA4AF)]"><Eye className="h-3 w-3 shrink-0" />{fmtCompact(link.views)}</span>
+                        <span className="flex items-center justify-end gap-[5px] font-semibold whitespace-nowrap text-[color:var(--hx-F9A8D4)]"><Heart className="h-3 w-3 shrink-0" />{fmtCompact(link.likes)}</span>
                         <span className="flex items-center justify-end gap-[5px] font-semibold whitespace-nowrap text-ds-t2"><MessageCircle className="h-3 w-3 shrink-0" />{fmtCompact(link.comments)}</span>
                       </div>
                     ))}

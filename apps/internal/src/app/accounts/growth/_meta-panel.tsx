@@ -59,14 +59,14 @@ function StatusChip({ status, daysLeft }: { status: string; daysLeft: number | n
   const map: Record<string, { cls: string; label: string; title: string }> = {
     ACTIVE: { cls: "text-ds-teal border-ds-teal/30 bg-ds-teal/[.1]", label: "Connected",
       title: "Reading live data through your Meta authorisation." },
-    PARTIAL_SCOPE: { cls: "text-[#FBBF24] border-[#FBBF24]/30 bg-[#FBBF24]/[.08]", label: "Partial permissions",
+    PARTIAL_SCOPE: { cls: "text-[color:var(--hx-FBBF24)] border-[var(--hx-FBBF24)]/30 bg-[var(--hx-FBBF24)]/[.08]", label: "Partial permissions",
       title: "A required permission was declined. Reconnect to grant it." },
-    NEEDS_REAUTH_SOON: { cls: "text-[#FBBF24] border-[#FBBF24]/30 bg-[#FBBF24]/[.08]",
+    NEEDS_REAUTH_SOON: { cls: "text-[color:var(--hx-FBBF24)] border-[var(--hx-FBBF24)]/30 bg-[var(--hx-FBBF24)]/[.08]",
       label: daysLeft != null ? `Expires in ${daysLeft}d` : "Expiring soon",
       title: "Meta data access lapses ~90 days after authorising. Reconnect to extend." },
     NEEDS_REAUTH: { cls: "text-ds-redsoft border-ds-red/35 bg-ds-red/[.08]", label: "Reconnect needed",
       title: "The grant is no longer valid — reconnect to resume." },
-    RATE_LIMITED: { cls: "text-[#FBBF24] border-[#FBBF24]/30 bg-[#FBBF24]/[.08]", label: "Rate limited",
+    RATE_LIMITED: { cls: "text-[color:var(--hx-FBBF24)] border-[var(--hx-FBBF24)]/30 bg-[var(--hx-FBBF24)]/[.08]", label: "Rate limited",
       title: "Meta is throttling us; this clears itself on the next run." },
     REVOKED: { cls: "text-ds-t2 border-ds-line2 bg-ds-hover", label: "Disconnected", title: "Revoked." },
   };
@@ -114,7 +114,7 @@ function ChannelAudience({ assetId }: { assetId: string }) {
   const available = Object.keys(data.audiences);
 
   return (
-    <div className="px-6 py-3 bg-[#0A1620] border-t border-ds-line">
+    <div className="px-6 py-3 bg-[color:var(--hx-0A1620)] border-t border-ds-line">
       <div className="flex flex-wrap items-center gap-1.5 mb-2">
         <span className="text-[10px] text-ds-t3 mr-0.5">Audience</span>
         {available.map((a) => (
@@ -151,7 +151,7 @@ function ChannelAudience({ assetId }: { assetId: string }) {
                       {Math.round((r.value / total) * 100)}%
                     </span>
                   </div>
-                  <div className="h-1 rounded-full bg-[#132430] overflow-hidden">
+                  <div className="h-1 rounded-full bg-[color:var(--hx-132430)] overflow-hidden">
                     <div
                       className="h-full rounded-full bg-ds-blue"
                       style={{ width: `${Math.max(2, Math.round((r.value / total) * 100))}%` }}
@@ -185,7 +185,7 @@ function ChannelExtras({ c, sfx }: { c: MetaChannel; sfx: string }) {
       : [{ label: `Watch time · ${sfx}`, value: fmtWatchTime(c.videoViewTimeMs) }]),
   ];
   return (
-    <div className="px-6 py-3 bg-[#0A1620]">
+    <div className="px-6 py-3 bg-[color:var(--hx-0A1620)]">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {stats.map((s) => (
           <div key={s.label} className="min-w-0">
@@ -220,7 +220,7 @@ function ConnectionRow({
   run: (key: string, fn: () => Promise<unknown>) => Promise<void>;
 }) {
   return (
-    <div className="px-6 py-3 border-t border-b border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-x-3 gap-y-1.5">
+    <div className="px-6 py-3 border-t border-b border-ds-line bg-[color:var(--hx-0A1620)] flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <div className="min-w-0 flex items-center gap-3">
               <span aria-hidden="true" className="h-[26px] w-[26px] rounded-full bg-ds-chip border border-ds-line3 grid place-items-center text-[9.5px] font-bold text-ds-text shrink-0">
                 {(c.metaUserName ?? "M").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
@@ -234,7 +234,7 @@ function ConnectionRow({
               {c.discoveryState !== "done" && <span className="italic">finding channels…</span>}
               <span>{c.assetCount ?? 0} channels</span>
               <button onClick={() => run(`disc-${c.id}`, () => triggerMetaDiscovery(c.id))}
-                disabled={busy !== null} className="text-[#6EB2FF] underline underline-offset-[3px] hover:text-[#9CCBFF] disabled:opacity-50">
+                disabled={busy !== null} className="text-[color:var(--hx-6EB2FF)] underline underline-offset-[3px] hover:text-[color:var(--hx-9CCBFF)] disabled:opacity-50">
                 {busy === `disc-${c.id}` ? "refreshing…" : "refresh channels"}
               </button>
               <button
@@ -243,12 +243,12 @@ function ConnectionRow({
                     void run(`del-${c.id}`, () => disconnectMeta(c.id));
                 }}
                 disabled={busy !== null}
-                className="inline-flex items-center gap-1 text-ds-redsoft underline underline-offset-[3px] hover:text-[#FDA4AF] disabled:opacity-50">
+                className="inline-flex items-center gap-1 text-ds-redsoft underline underline-offset-[3px] hover:text-[color:var(--hx-FDA4AF)] disabled:opacity-50">
                 <Unlink className="h-3 w-3" />disconnect
               </button>
             </div>
             {c.missingScopes.length > 0 && (
-              <p className="basis-full text-[11px] text-[#FBBF24]">
+              <p className="basis-full text-[11px] text-[color:var(--hx-FBBF24)]">
                 Declined permissions: {c.missingScopes.join(", ")} — reconnect to grant them.
               </p>
             )}
@@ -265,7 +265,7 @@ function ChannelPosts({ assetId }: { assetId: string }) {
   if (items.length === 0)
     return <p className="px-6 py-3 text-[11px] text-ds-t3">No posts stored for this channel yet.</p>;
   return (
-    <div className="px-6 py-2 bg-[#0A1620]">
+    <div className="px-6 py-2 bg-[color:var(--hx-0A1620)]">
       <table className="w-full">
         <thead>
           <tr className="text-[10px] text-ds-t3">
@@ -691,8 +691,8 @@ export function MetaPanel() {
 
   if (!connLoading && !configured) {
     return (
-      <section className="relative bg-ds-card rounded-[12px] border border-[#1D3444] overflow-hidden px-6 py-5 space-y-2">
-        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+      <section className="relative bg-ds-card rounded-[12px] border border-[color:var(--hx-1D3444)] overflow-hidden px-6 py-5 space-y-2">
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
         <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">Facebook &amp; Instagram</h2>
         <p className="text-[12.5px] text-ds-t2">
           Meta connection isn&apos;t configured on the server, so no Facebook or Instagram data can be shown.
@@ -708,8 +708,8 @@ export function MetaPanel() {
   const contrib = ch?.contributing;
 
   return (
-    <section className="relative bg-ds-card rounded-[12px] border border-[#1D3444] overflow-hidden">
-      <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+    <section className="relative bg-ds-card rounded-[12px] border border-[color:var(--hx-1D3444)] overflow-hidden">
+      <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
       <div className="px-6 py-5 flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="min-w-0">
           <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">Connected channels</h2>
@@ -720,14 +720,14 @@ export function MetaPanel() {
         <div className="flex items-center gap-2 sm:ml-auto">
           {live.length > 0 && (
             <button onClick={() => run("sync", () => triggerMetaSync())} disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-blue/50 hover:text-[#6EB2FF] disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-blue/50 hover:text-[color:var(--hx-6EB2FF)] disabled:opacity-50">
               {busy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Refresh
             </button>
           )}
           <button onClick={() => connect(live.length > 0 ? "reconnect" : "connect", live[0]?.id)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-full bg-ds-blue text-white text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-[#3B98FF] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-full bg-ds-blue text-white text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-[color:var(--hx-3B98FF)] disabled:opacity-50">
             <Link2 className="h-3.5 w-3.5" />
             {live.length > 0 ? "Reconnect" : "Connect with Facebook"}
           </button>
@@ -760,7 +760,7 @@ export function MetaPanel() {
       {primaryConn && <ConnectionRow c={primaryConn} busy={busy} run={run} />}
 
       {backupConns.length > 0 && (
-        <div className="px-5 py-2 border-b border-[#101E29]">
+        <div className="px-5 py-2 border-b border-[color:var(--hx-101E29)]">
           <button
             onClick={() => setShowBackups((v) => !v)}
             aria-expanded={showBackups}
@@ -889,7 +889,7 @@ export function MetaPanel() {
       {live.length > 0 && t && <FollowerTrend win={win} range={range} />}
 
       {live.length > 0 && (
-        <div className="px-6 py-3.5 border-t border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-1.5">
+        <div className="px-6 py-3.5 border-t border-ds-line bg-[color:var(--hx-0A1620)] flex flex-wrap items-center gap-1.5">
           <div
             className="flex flex-wrap items-center gap-1.5 mr-1"
             role="group"
@@ -1027,7 +1027,7 @@ export function MetaPanel() {
       )}
 
       {live.length > 0 && customOpen && (
-        <div className="px-5 py-2 border-b border-[#101E29] flex flex-wrap items-center gap-2 text-[11px]">
+        <div className="px-5 py-2 border-b border-[color:var(--hx-101E29)] flex flex-wrap items-center gap-2 text-[11px]">
           <span className="text-ds-t2">From</span>
           {/* `max` is the last day the estate is complete through when the server has
               said so, falling back to the clock's yesterday before the first payload —
@@ -1074,24 +1074,24 @@ export function MetaPanel() {
       )}
 
       {live.length > 0 && isRangeMode && (
-        <div className="px-5 py-2 border-b border-[#101E29] text-[10px] text-ds-t2 leading-snug">
+        <div className="px-5 py-2 border-b border-[color:var(--hx-101E29)] text-[10px] text-ds-t2 leading-snug">
           Exact sums of stored daily history for <strong className="font-medium">{sfx}</strong>
           {throughDay && <> · data through {throughDay}</>}.
           {/* ⚠️ Disclose a clamp rather than silently summing fewer days than were asked
               for. The server shortens a range whose end Meta has not closed yet — the
               measured 7.2% understatement — and echoes the day it stopped at. */}
           {ch?.range?.clampedTo && (
-            <> <span className="text-[#FBBF24]">Range shortened to {customLabel(ch.range.clampedTo, ch.range.clampedTo).split(" – ")[0]}</span> — Meta has not published a complete day after that, so the unclosed day is left out instead of being counted as a full one.</>
+            <> <span className="text-[color:var(--hx-FBBF24)]">Range shortened to {customLabel(ch.range.clampedTo, ch.range.clampedTo).split(" – ")[0]}</span> — Meta has not published a complete day after that, so the unclosed day is left out instead of being counted as a full one.</>
           )}
           Reach shows a dash here: it counts unique people, days cannot be added without
           double-counting, and Meta publishes no unique-people figure for a custom span.
-          A <span className="text-[#FBBF24]">n/Nd</span> chip beside a channel means its stored
+          A <span className="text-[color:var(--hx-FBBF24)]">n/Nd</span> chip beside a channel means its stored
           history covers only part of the range — its sums cover those days only.
         </div>
       )}
 
       {live.length > 0 && manageMode && (
-        <div className="px-5 py-2 border-b border-ds-line bg-[#FBBF24]/[.08] flex flex-wrap items-center gap-2 text-[11px]">
+        <div className="px-5 py-2 border-b border-ds-line bg-[var(--hx-FBBF24)]/[.08] flex flex-wrap items-center gap-2 text-[11px]">
           <span className="text-ds-t2">{checkedIds.size} selected</span>
           <button
             disabled={checkedIds.size === 0 || busy !== null}
@@ -1110,7 +1110,7 @@ export function MetaPanel() {
       )}
 
       {live.length > 0 && showRemoved && (
-        <div className="px-5 py-3 border-b border-ds-line bg-[#0A1620]">
+        <div className="px-5 py-3 border-b border-ds-line bg-[color:var(--hx-0A1620)]">
           <div className="flex items-center justify-between mb-1.5">
             <p className="text-xs font-medium text-ds-text">
               Removed channels{hiddenCh ? ` (${hiddenCh.channelCount})` : ""}
@@ -1167,7 +1167,7 @@ export function MetaPanel() {
                 {/* ⚠️ Column COUNT is dynamic (the Manage checkbox column), so the
                     expanded row's colSpan below must track it — a stale colSpan
                     silently misaligns every cell (the documented drill-down trap). */}
-                <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]">
+                <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]">
                   {manageMode && (
                     <th className="pl-5 pr-1 py-[11px] text-left">
                       <input
@@ -1175,7 +1175,7 @@ export function MetaPanel() {
                         aria-label="Select all listed channels"
                         checked={sortedChannels.length > 0 && sortedChannels.every((c) => checkedIds.has(c.id))}
                         onChange={(e) => setCheckedIds(e.target.checked ? new Set(sortedChannels.map((c) => c.id)) : new Set())}
-                        className="h-3.5 w-3.5 accent-[#E9BD62]"
+                        className="h-3.5 w-3.5 accent-[color:var(--hx-E9BD62)]"
                       />
                     </th>
                   )}
@@ -1207,7 +1207,7 @@ export function MetaPanel() {
                   return (
                     <Fragment key={c.id}>
                       <tr onClick={() => setExpanded(open ? null : c.id)}
-                        className={`border-b border-[#101E29] hover:bg-[#0B1824] cursor-pointer text-[12.5px] ${open ? "bg-[#0A1620]" : ""}`}>
+                        className={`border-b border-[color:var(--hx-101E29)] hover:bg-[color:var(--hx-0B1824)] cursor-pointer text-[12.5px] ${open ? "bg-[color:var(--hx-0A1620)]" : ""}`}>
                         {manageMode && (
                           <td className="pl-5 pr-1 py-[11px]" onClick={(e) => e.stopPropagation()}>
                             <input
@@ -1219,7 +1219,7 @@ export function MetaPanel() {
                                 if (e.target.checked) next.add(c.id); else next.delete(c.id);
                                 return next;
                               })}
-                              className="h-3.5 w-3.5 accent-[#E9BD62]"
+                              className="h-3.5 w-3.5 accent-[color:var(--hx-E9BD62)]"
                             />
                           </td>
                         )}
@@ -1262,7 +1262,7 @@ export function MetaPanel() {
                             {isRangeMode && c.rangeDays != null && (c.coveredDays ?? 0) < c.rangeDays && (
                               <span
                                 title={`Stored history covers ${c.coveredDays ?? 0} of the ${c.rangeDays} days in this range. The missing days predate this channel's daily history, so its figures here are sums over the covered days only.`}
-                                className="text-[9px] text-[#FBBF24] border border-[#FBBF24]/30 bg-[#FBBF24]/[.08] rounded-full px-1.5 py-px shrink-0"
+                                className="text-[9px] text-[color:var(--hx-FBBF24)] border border-[var(--hx-FBBF24)]/30 bg-[var(--hx-FBBF24)]/[.08] rounded-full px-1.5 py-px shrink-0"
                               >
                                 {c.coveredDays ?? 0}/{c.rangeDays}d
                               </span>
@@ -1284,7 +1284,7 @@ export function MetaPanel() {
                                 that has never once succeeded — hence "any figures shown". */}
                             {c.metricsError && (
                               <span title={`This channel's most recent ${sfx} refresh failed, so any figures shown are from the last successful sync. The next sync re-attempts it (roughly every 3 hours); if the mark persists across syncs, the connected Meta account has most likely lost admin access to this channel and someone needs to restore it. Meta's reply: ${c.metricsError}`}>
-                                <AlertTriangle className="h-3 w-3 text-[#FBBF24] shrink-0" />
+                                <AlertTriangle className="h-3 w-3 text-[color:var(--hx-FBBF24)] shrink-0" />
                               </span>
                             )}
                           </div>
@@ -1348,7 +1348,7 @@ export function MetaPanel() {
       )}
 
       {live.length > 0 && (
-        <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[#0A1620] [text-wrap:pretty]">
+        <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[color:var(--hx-0A1620)] [text-wrap:pretty]">
           Figures cover the selected period and come straight from Meta — every channel here
           is one the connected account administers, so nothing on this tab is scraped or
           hand-entered. Views and reach use Meta&apos;s current metrics, which replaced

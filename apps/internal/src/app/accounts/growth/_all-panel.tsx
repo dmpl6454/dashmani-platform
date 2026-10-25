@@ -85,14 +85,14 @@ import {
 /** The tabs this one can send a reader to. */
 type SiblingTab = "meta" | "youtube" | "snapchat";
 
-const CARD = "relative bg-ds-card rounded-[12px] border border-[#1D3444] overflow-hidden";
+const CARD = "relative bg-ds-card rounded-[12px] border border-[color:var(--hx-1D3444)] overflow-hidden";
 
 /** Soft platform pills — the same palette the reports pages and link previews use. */
 const PLATFORM_PILL: Record<GrowthPlatform, string> = {
-  facebook: "bg-[#238BFF]/[.12] text-[#238BFF] border-[#238BFF]/30",
-  instagram: "bg-[#EC42B7]/[.12] text-[#EC42B7] border-[#EC42B7]/30",
-  youtube: "bg-[#FF5A5F]/[.12] text-[#FF5A5F] border-[#FF5A5F]/30",
-  snapchat: "bg-[#E9D23A]/[.12] text-[#E9D23A] border-[#E9D23A]/30",
+  facebook: "bg-[var(--hx-238BFF)]/[.12] text-[color:var(--hx-238BFF)] border-[var(--hx-238BFF)]/30",
+  instagram: "bg-[var(--hx-EC42B7)]/[.12] text-[color:var(--hx-EC42B7)] border-[var(--hx-EC42B7)]/30",
+  youtube: "bg-[var(--hx-FF5A5F)]/[.12] text-[color:var(--hx-FF5A5F)] border-[var(--hx-FF5A5F)]/30",
+  snapchat: "bg-[var(--hx-E9D23A)]/[.12] text-[color:var(--hx-E9D23A)] border-[var(--hx-E9D23A)]/30",
 };
 
 /** Where each platform's figures come from — said on every row, not only in a footnote. */
@@ -159,7 +159,7 @@ function PlatformPill({ platform }: { platform: GrowthPlatform }) {
 function RefreshMark({ message, platform }: { message: string; platform: GrowthPlatform }) {
   return (
     <span title={growthRefreshFailureText(message, platform)}>
-      <AlertTriangle className="h-3 w-3 text-[#FBBF24] shrink-0" />
+      <AlertTriangle className="h-3 w-3 text-[color:var(--hx-FBBF24)] shrink-0" />
     </span>
   );
 }
@@ -252,7 +252,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
   if (allForbidden) {
     return (
       <section className={`${CARD} p-5 space-y-2`}>
-        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
         <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">All platforms</h2>
         <p className="text-sm text-ds-t2">Only administrators can see Account Growth.</p>
         <p className="text-[11px] text-ds-t3">Ask a Super Admin or Admin if you need these figures.</p>
@@ -263,7 +263,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
   return (
     <div className="space-y-6">
       <section className={CARD}>
-        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
         <div className="px-6 py-5 border-b border-ds-line">
           <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">All platforms</h2>
           <p className="text-xs text-ds-t2 mt-0.5">
@@ -281,7 +281,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           </p>
         </div>
 
-        <div className="px-6 py-3.5 border-b border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-1.5">
+        <div className="px-6 py-3.5 border-b border-ds-line bg-[color:var(--hx-0A1620)] flex flex-wrap items-center gap-1.5">
           <div className="flex flex-wrap items-center gap-1.5 mr-1" role="group" aria-label="Reporting period">
             <span className="text-[10px] tracking-[.14em] uppercase text-ds-t3 font-semibold mr-1">Period</span>
             {GROWTH_ALL_PERIODS.map((d) => (
@@ -319,7 +319,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px]">
             <thead>
-              <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]">
+              <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]">
                 <PlainTh label="Platform" align="left" pad="px-5" />
                 <PlainTh label="Channels" />
                 <PlainTh
@@ -352,7 +352,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           </table>
         </div>
 
-        <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[#0A1620] [text-wrap:pretty]">
+        <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[color:var(--hx-0A1620)] [text-wrap:pretty]">
           <strong className="font-medium text-ds-t2">Whose day each date is.</strong>{" "}
           <strong className="font-medium text-ds-t2">Facebook</strong>&apos;s views are Meta&apos;s own
           rolling {periodDays}-day window on Pacific days — Facebook&apos;s day ends at Pacific
@@ -390,7 +390,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
       </section>
 
       <section className={CARD}>
-        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
         <div className="px-6 py-5 border-b border-ds-line">
           <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">All channels</h2>
           <p className="text-xs text-ds-t2 mt-0.5">
@@ -398,7 +398,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           </p>
         </div>
 
-        <div className="px-6 py-3.5 border-b border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-1.5">
+        <div className="px-6 py-3.5 border-b border-ds-line bg-[color:var(--hx-0A1620)] flex flex-wrap items-center gap-1.5">
           <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Platform">
             {(["all", ...GROWTH_PLATFORMS] as const).map((p) => (
               <button
@@ -459,7 +459,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
             the channel&apos;s history doesn&apos;t cover the period yet, its movement is finer than the
             platform&apos;s rounding, or the platform publishes no such figure (Snapchat publishes no
             period view count). A{" "}
-            <span className="line-through decoration-[#FBBF24]">struck-through</span> change jumped
+            <span className="line-through decoration-[color:var(--hx-FBBF24)]">struck-through</span> change jumped
             between two different channels and is left out of every total and of the Change sort.
           </p>
         )}
@@ -700,7 +700,7 @@ function SourceStatus({ combo, refreshFailed, onRetry }: {
         </p>
       ))}
       {stale.map((s) => (
-        <p key={s} className="text-[#FBBF24]">
+        <p key={s} className="text-[color:var(--hx-FBBF24)]">
           Couldn&apos;t refresh {growthListNames(platformsOf(s))} just now, so the figures shown are the ones
           loaded earlier.{" "}
           <button onClick={() => onRetry(s)} className="underline hover:text-ds-text">Retry</button>
@@ -729,7 +729,7 @@ function DatesList({ combo, currentYear }: { combo: GrowthCombination; currentYe
               <strong className="font-medium text-ds-t5">{GROWTH_PLATFORM_LABEL[p]}</strong>{" "}
               — change {t.change ?? t.changeWhy ?? "—"} · views {t.views ?? t.viewsWhy ?? "—"}
               <span className="text-ds-t3"> ({t.calendar})</span>
-              {t.windowsNote && <span className="text-[#FBBF24]"> · {t.windowsNote}</span>}
+              {t.windowsNote && <span className="text-[color:var(--hx-FBBF24)]"> · {t.windowsNote}</span>}
             </li>
           );
         })}
@@ -748,7 +748,7 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
     <td className="px-6 py-[11px] align-top">
       <PlatformPill platform={a.platform} />
       {a.state === "ready" && refreshFailed && (
-        <span className="block mt-1 text-[10px] text-[#FBBF24] leading-tight">couldn&apos;t refresh — see above</span>
+        <span className="block mt-1 text-[10px] text-[color:var(--hx-FBBF24)] leading-tight">couldn&apos;t refresh — see above</span>
       )}
     </td>
   );
@@ -757,7 +757,7 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
   // A sentence here runs past a phone's edge inside the 860px scroller.
   if (a.state === "loading") {
     return (
-      <tr className="border-b border-[#101E29]">
+      <tr className="border-b border-[color:var(--hx-101E29)]">
         {platformCell}
         <td colSpan={6} className="px-2 py-2 text-xs text-ds-t3">Loading…</td>
       </tr>
@@ -765,7 +765,7 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
   }
   if (a.state === "error") {
     return (
-      <tr className="border-b border-[#101E29]">
+      <tr className="border-b border-[color:var(--hx-101E29)]">
         {platformCell}
         <td colSpan={6} className="px-2 py-2 text-xs text-ds-redsoft">
           {a.errorKind === "forbidden" ? "administrators only" : "couldn't load — see the note above"}
@@ -824,7 +824,7 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
   const pt = growthPeriodText(a, currentYear);
 
   return (
-    <tr className="border-b border-[#101E29] hover:bg-[#0B1824] align-top">
+    <tr className="border-b border-[color:var(--hx-101E29)] hover:bg-[color:var(--hx-0B1824)] align-top">
       {platformCell}
       <td className="px-2 py-2 text-right text-xs text-ds-text">
         {fmtExact(a.channels)}
@@ -890,10 +890,10 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
           </>
         )}
         <span className={SUB}>{pt.calendar}</span>
-        {pt.windowsNote && <span className="block text-[10px] text-[#FBBF24] leading-tight">{pt.windowsNote}</span>}
+        {pt.windowsNote && <span className="block text-[10px] text-[color:var(--hx-FBBF24)] leading-tight">{pt.windowsNote}</span>}
         {(a.staleChannels ?? 0) > 0 && (
           <span
-            className="block text-[10px] text-[#FBBF24] leading-tight"
+            className="block text-[10px] text-[color:var(--hx-FBBF24)] leading-tight"
             title={`These channels' latest refresh failed, so their figures are from an earlier window than the dates shown. The ${GROWTH_PLATFORM_TAB[a.platform]} tab marks each one.`}
           >
             {a.staleChannels} channel{a.staleChannels === 1 ? "" : "s"} couldn&apos;t refresh — older figures
@@ -925,7 +925,7 @@ function TotalRow({ c }: { c: GrowthCombined }) {
   // The ± is named by its source, so it can be traced to the rows that carry it.
   const pm = c.uncertainty > 0 ? `±${fmtMetric(c.uncertainty)} from ${possessives(c.uncertaintyPlatforms)} rounded counts` : null;
   return (
-    <tr className="border-t border-ds-line bg-[#0A1620] align-top">
+    <tr className="border-t border-ds-line bg-[color:var(--hx-0A1620)] align-top">
       <td className="px-6 py-[11px] text-[12.5px] font-semibold text-ds-text">
         Total
         {excluding && <span className="block text-[10px] font-normal text-ds-redsoft leading-tight">{excluding}</span>}
@@ -992,7 +992,7 @@ const ChannelsTable = memo(function ChannelsTable({ combo, rows, platformFilter,
     // the page itself never overflows at 375px.
     <table className="w-full min-w-[720px]">
       <thead>
-        <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]">
+        <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]">
           <SortTh label="Channel" colKey="name" sort={sort} onSort={onSort} align="left" pad="px-5" />
           <SortTh label="Platform" colKey="platform" sort={sort} onSort={onSort} align="left" />
           <SortTh
@@ -1012,7 +1012,7 @@ const ChannelsTable = memo(function ChannelsTable({ combo, rows, platformFilter,
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.key} className="border-b border-[#101E29] hover:bg-[#0B1824]">
+          <tr key={r.key} className="border-b border-[color:var(--hx-101E29)] hover:bg-[color:var(--hx-0B1824)]">
             <td className="px-6 py-[11px]">
               {/* min-w-0 on the flex child AND truncate on the name: the parent can only
                   clip what its children are willing to shrink. */}
@@ -1083,7 +1083,7 @@ function RowChange({ r, periodDays }: { r: GrowthChannelRow; periodDays: number 
     // channels, not growth; hiding it would hide the evidence the handle needs fixing.
     return (
       <span
-        className="text-ds-t3 line-through decoration-[#FBBF24]"
+        className="text-ds-t3 line-through decoration-[color:var(--hx-FBBF24)]"
         title={`This change (${fmtDelta(v)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this channel spans two different channels. It is excluded from every total and from the Change sort; the ${GROWTH_PLATFORM_TAB[r.platform]} tab is where the handle gets fixed.`}
       >
         {fmtDelta(v)}

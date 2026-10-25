@@ -8,9 +8,9 @@ import { useAnnouncements } from "@/lib/hooks/use-announcements";
 import { ModalPortal } from "@/components/modal-portal";
 
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const hash = (s: string) => {
@@ -45,9 +45,9 @@ const FIELD =
 const GRID =
   "grid gap-x-[14px] items-center [grid-template-columns:minmax(160px,22fr)_minmax(180px,30fr)_minmax(130px,15fr)_minmax(104px,12fr)_minmax(76px,8fr)_minmax(96px,11fr)]";
 const GHOST_BTN =
-  "h-[42px] px-5 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold whitespace-nowrap hover:text-ds-text hover:border-[#2A4658] disabled:opacity-60";
+  "h-[42px] px-5 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold whitespace-nowrap hover:text-ds-text hover:border-[color:var(--hx-2A4658)] disabled:opacity-60";
 const GOLD_BTN =
-  "inline-flex items-center gap-2 h-[42px] px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-60";
+  "inline-flex items-center gap-2 h-[42px] px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60";
 
 function AnnouncementModal({
   onClose,
@@ -121,8 +121,8 @@ function AnnouncementModal({
             aria-label={confirming ? "Confirm broadcast" : "New Announcement"}
             className="relative w-full max-w-[540px] max-h-[90vh] flex flex-col bg-ds-card border border-ds-line2 rounded-[18px] shadow-[0_24px_60px_rgba(0,0,0,.6)] overflow-hidden"
           >
-            <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
-            <div className="flex items-center justify-between px-6 py-[18px] border-b border-[#1A2C38]">
+            <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
+            <div className="flex items-center justify-between px-6 py-[18px] border-b border-[color:var(--hx-1A2C38)]">
               <span className="flex items-center gap-2.5 text-[16px] font-semibold text-ds-text">
                 <span className="text-ds-gold flex"><Icon d={MEGA} className="h-[17px] w-[17px]" sw={1.9} /></span>
                 {confirming ? "Confirm broadcast" : "New Announcement"}
@@ -132,7 +132,7 @@ function AnnouncementModal({
                 onClick={onClose}
                 disabled={sending}
                 aria-label="Close"
-                className="h-[30px] w-[30px] rounded-[8px] grid place-items-center text-ds-t3 hover:bg-[#132430] hover:text-ds-text disabled:opacity-50"
+                className="h-[30px] w-[30px] rounded-[8px] grid place-items-center text-ds-t3 hover:bg-[color:var(--hx-132430)] hover:text-ds-text disabled:opacity-50"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -143,17 +143,17 @@ function AnnouncementModal({
                 <p className="text-[13.5px] leading-[1.55] text-ds-t2">
                   This will notify <b className="text-ds-text font-semibold">{audienceLabel}</b> via portal and email. You can&apos;t undo this.
                 </p>
-                <div className="p-[18px] rounded-[14px] bg-ds-inset border border-[#1A2C38] flex flex-col gap-2">
+                <div className="p-[18px] rounded-[14px] bg-ds-inset border border-[color:var(--hx-1A2C38)] flex flex-col gap-2">
                   <span className={LABEL}>Preview</span>
                   <span className="text-[15px] font-semibold text-ds-text [overflow-wrap:anywhere]">{title}</span>
                   <span className="text-[13px] leading-[1.6] text-ds-t2 whitespace-pre-wrap [overflow-wrap:anywhere]">{message}</span>
-                  <span className="flex items-center gap-1.5 mt-1 pt-2.5 border-t border-[#1A2C38] text-[12px] text-ds-t3">
+                  <span className="flex items-center gap-1.5 mt-1 pt-2.5 border-t border-[color:var(--hx-1A2C38)] text-[12px] text-ds-t3">
                     <Icon d={orgUnitId ? BLDG : GLOBE} className="h-3 w-3" />
                     {audienceLabel}
                   </span>
                 </div>
                 {error && (
-                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]">{error}</div>
+                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px]">{error}</div>
                 )}
                 <div className="flex justify-end gap-2.5 flex-wrap">
                   <button type="button" onClick={() => setConfirming(false)} disabled={sending} className={GHOST_BTN}>
@@ -213,7 +213,7 @@ function AnnouncementModal({
                 </label>
 
                 {error && (
-                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]">{error}</div>
+                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px]">{error}</div>
                 )}
 
                 <div className="flex items-center gap-2.5 flex-wrap">
@@ -275,7 +275,7 @@ export default function AnnouncementsPage() {
         <button
           type="button"
           onClick={() => setModalOpen(true)}
-          className="inline-flex items-center gap-2 h-[46px] px-[22px] rounded-full bg-ds-gold text-[#060D14] text-[14px] font-bold whitespace-nowrap hover:bg-[#F4D58C]"
+          className="inline-flex items-center gap-2 h-[46px] px-[22px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[14px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)]"
         >
           <Icon d="M12 5v14M5 12h14" className="h-[15px] w-[15px]" sw={2.4} />
           New Announcement
@@ -283,7 +283,7 @@ export default function AnnouncementsPage() {
       </section>
 
       {/* Table */}
-      <section className="rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
+      <section className="rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
         <div className="overflow-x-auto [color-scheme:dark]">
           <div className="min-w-[820px]">
             <div className={`${GRID} h-[52px] px-5 bg-ds-inset border-b border-ds-line2 text-[11px] font-semibold tracking-[.08em] uppercase text-ds-t3 whitespace-nowrap`}>
@@ -291,7 +291,7 @@ export default function AnnouncementsPage() {
             </div>
             {isLoading ? (
               Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className={`${GRID} h-[84px] px-5 border-b border-[#132430]`}>
+                <div key={i} className={`${GRID} h-[84px] px-5 border-b border-[color:var(--hx-132430)]`}>
                   {Array.from({ length: 6 }).map((__, j) => (
                     <div key={j} className="h-3.5 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
                   ))}
@@ -308,11 +308,11 @@ export default function AnnouncementsPage() {
             ) : (
               announcements.map((a: any) => {
                 const by: string | null = a.sentBy?.name ?? null;
-                const hue = by ? HUES[hash(by) % HUES.length] : "#738395";
+                const hue = by ? HUES[hash(by) % HUES.length] : "var(--hx-738395)";
                 const team = !!a.orgUnit;
-                const auColor = team ? "#9B7EDE" : "#A7B3C2";
+                const auColor = team ? "var(--hx-9B7EDE)" : "var(--hx-A7B3C2)";
                 return (
-                  <div key={a.id} className={`${GRID} min-h-[84px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13.5px] hover:bg-[#0A1620] transition-colors`}>
+                  <div key={a.id} className={`${GRID} min-h-[84px] py-3 px-5 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13.5px] hover:bg-[color:var(--hx-0A1620)] transition-colors`}>
                     <span title={a.title} className="font-semibold text-ds-text leading-[1.4] line-clamp-2 [overflow-wrap:anywhere]">
                       {a.title}
                     </span>
@@ -328,10 +328,10 @@ export default function AnnouncementsPage() {
                           >
                             {initials(by)}
                           </span>
-                          <span className="text-[#E3E8EE] leading-[1.3] min-w-0 truncate">{by}</span>
+                          <span className="text-[color:var(--hx-E3E8EE)] leading-[1.3] min-w-0 truncate">{by}</span>
                         </>
                       ) : (
-                        <span className="text-[#4A6275]">—</span>
+                        <span className="text-[color:var(--hx-4A6275)]">—</span>
                       )}
                     </span>
                     <span className="flex items-center min-w-0">
@@ -340,7 +340,7 @@ export default function AnnouncementsPage() {
                         style={
                           team
                             ? { background: rgba(auColor, 0.12), borderColor: rgba(auColor, 0.35), color: auColor }
-                            : { background: "#0F1F2B", borderColor: "#223543", color: auColor }
+                            : { background: "var(--hx-0F1F2B)", borderColor: "var(--hx-223543)", color: auColor }
                         }
                         title={team ? a.orgUnit.name : "Everyone"}
                       >

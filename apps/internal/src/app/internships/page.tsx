@@ -9,18 +9,18 @@ import { ModalPortal } from "@/components/modal-portal";
 const STATUSES = ["RECEIVED", "REVIEWING", "SHORTLISTED", "INTERVIEW", "OFFERED", "ACCEPTED", "REJECTED"];
 
 const STATUS_COLOR: Record<string, string> = {
-  RECEIVED: "#A7B3C2",
-  REVIEWING: "#6EB2FF",
-  SHORTLISTED: "#9B7EDE",
-  INTERVIEW: "#E9BD62",
-  OFFERED: "#00D7A0",
-  ACCEPTED: "#34D399",
-  REJECTED: "#FB7185",
+  RECEIVED: "var(--hx-A7B3C2)",
+  REVIEWING: "var(--hx-6EB2FF)",
+  SHORTLISTED: "var(--hx-9B7EDE)",
+  INTERVIEW: "var(--hx-E9BD62)",
+  OFFERED: "var(--hx-00D7A0)",
+  ACCEPTED: "var(--hx-34D399)",
+  REJECTED: "var(--hx-FB7185)",
 };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const hash = (s: string) => {
@@ -35,7 +35,7 @@ const fdY = (v: string) => {
   if (Number.isNaN(d.getTime())) return "—";
   return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 };
-const statusColor = (s: string) => STATUS_COLOR[s] ?? "#A7B3C2";
+const statusColor = (s: string) => STATUS_COLOR[s] ?? "var(--hx-A7B3C2)";
 
 const GRAD = "M22 10L12 5 2 10l10 5 10-5zM6 12v5c3 2 9 2 12 0v-5";
 const LINKEDIN = "M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2zM4 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z";
@@ -148,7 +148,7 @@ export default function InternshipsPage() {
               aria-selected={on}
               onClick={() => setFilter(c.key)}
               className={`inline-flex items-center gap-2 h-[38px] px-4 rounded-full border text-[12.5px] font-bold whitespace-nowrap shrink-0 transition-colors ${
-                on ? "bg-ds-gold border-ds-gold text-[#060D14]" : "bg-transparent border-ds-line2 text-ds-t2 hover:text-ds-text"
+                on ? "bg-ds-gold border-ds-gold text-[color:var(--hx-060D14)]" : "bg-transparent border-ds-line2 text-ds-t2 hover:text-ds-text"
               }`}
             >
               {c.label}
@@ -159,10 +159,10 @@ export default function InternshipsPage() {
       </section>
 
       {/* List */}
-      <section className="rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] overflow-hidden mb-8">
+      <section className="rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] overflow-hidden mb-8">
         {!data && !error ? (
           Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="grid [grid-template-columns:46px_minmax(0,1fr)_auto] gap-4 items-center px-4 sm:px-6 py-[18px] border-b border-[#132430] last:border-b-0">
+            <div key={i} className="grid [grid-template-columns:46px_minmax(0,1fr)_auto] gap-4 items-center px-4 sm:px-6 py-[18px] border-b border-[color:var(--hx-132430)] last:border-b-0">
               <div className="h-[46px] w-[46px] rounded-full bg-ds-hover motion-safe:animate-pulse" />
               <div className="flex flex-col gap-2">
                 <div className="h-3.5 w-48 max-w-full rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
@@ -186,7 +186,7 @@ export default function InternshipsPage() {
                 key={app.id}
                 type="button"
                 onClick={() => openApp(app)}
-                className="w-full grid [grid-template-columns:46px_minmax(0,1fr)] sm:[grid-template-columns:46px_minmax(0,1fr)_auto] gap-x-4 gap-y-2 items-center px-4 sm:px-6 py-[18px] border-b border-[#132430] last:border-b-0 bg-transparent text-left hover:bg-[#0A1620] transition-colors"
+                className="w-full grid [grid-template-columns:46px_minmax(0,1fr)] sm:[grid-template-columns:46px_minmax(0,1fr)_auto] gap-x-4 gap-y-2 items-center px-4 sm:px-6 py-[18px] border-b border-[color:var(--hx-132430)] last:border-b-0 bg-transparent text-left hover:bg-[color:var(--hx-0A1620)] transition-colors"
               >
                 <span
                   className="h-[46px] w-[46px] rounded-full grid place-items-center text-[14px] font-extrabold"
@@ -208,7 +208,7 @@ export default function InternshipsPage() {
                   </span>
                   <span className="flex items-center gap-2 flex-wrap">
                     {app.duration && (
-                      <span className="h-[22px] px-[9px] rounded-[7px] bg-[#0F1F2B] border border-[#1F3442] text-ds-t5 text-[11px] font-semibold inline-flex items-center">
+                      <span className="h-[22px] px-[9px] rounded-[7px] bg-[color:var(--hx-0F1F2B)] border border-[color:var(--hx-1F3442)] text-ds-t5 text-[11px] font-semibold inline-flex items-center">
                         {app.duration}
                       </span>
                     )}
@@ -217,7 +217,7 @@ export default function InternshipsPage() {
                         {app.department}
                       </span>
                     )}
-                    <span className="text-[11px] text-[#4A6275]">Applied {app.createdAt ? fdY(app.createdAt) : "—"}</span>
+                    <span className="text-[11px] text-[color:var(--hx-4A6275)]">Applied {app.createdAt ? fdY(app.createdAt) : "—"}</span>
                     <span className="sm:hidden"><StatusChip status={app.status} small /></span>
                   </span>
                 </span>
@@ -234,7 +234,7 @@ export default function InternshipsPage() {
       {selected && (() => {
         const hue = hueOf(selected);
         const facts: [string, React.ReactNode][] = [
-          ["Email", selected.email ? <a href={`mailto:${selected.email}`} className="text-[#6EB2FF] hover:underline">{selected.email}</a> : "—"],
+          ["Email", selected.email ? <a href={`mailto:${selected.email}`} className="text-[color:var(--hx-6EB2FF)] hover:underline">{selected.email}</a> : "—"],
           ...(selected.phone ? [["Phone", selected.phone] as [string, React.ReactNode]] : []),
           ...(selected.college ? [["College", selected.college] as [string, React.ReactNode]] : []),
           ...(selected.course ? [["Course", selected.course] as [string, React.ReactNode]] : []),
@@ -245,11 +245,11 @@ export default function InternshipsPage() {
         ];
         const skills = skillsOf(selected.skills);
         const links = [
-          selected.linkedin && { label: "LinkedIn", fg: "#6EB2FF", d: LINKEDIN, href: selected.linkedin },
-          selected.portfolio && { label: "Portfolio", fg: "#9B7EDE", d: EXTERNAL, href: selected.portfolio },
+          selected.linkedin && { label: "LinkedIn", fg: "var(--hx-6EB2FF)", d: LINKEDIN, href: selected.linkedin },
+          selected.portfolio && { label: "Portfolio", fg: "var(--hx-9B7EDE)", d: EXTERNAL, href: selected.portfolio },
           selected.resumeUrl && {
             label: "Resume",
-            fg: "#FB7185",
+            fg: "var(--hx-FB7185)",
             d: FILE,
             href: selected.resumeUrl.startsWith("http") ? selected.resumeUrl : `${API_BASE}${selected.resumeUrl}`,
           },
@@ -265,7 +265,7 @@ export default function InternshipsPage() {
                   aria-label={selected.name}
                   className="w-full max-w-[540px] h-full flex flex-col bg-ds-card border-l border-ds-line2 shadow-[-24px_0_60px_rgba(0,0,0,.5)]"
                 >
-                  <div className="px-5 sm:px-7 pt-[26px] pb-5 border-b border-[#1A2C38] flex items-start justify-between gap-3">
+                  <div className="px-5 sm:px-7 pt-[26px] pb-5 border-b border-[color:var(--hx-1A2C38)] flex items-start justify-between gap-3">
                     <div className="flex items-center gap-4 min-w-0">
                       <span
                         className="h-[58px] w-[58px] rounded-full grid place-items-center text-[19px] font-extrabold shrink-0"
@@ -292,7 +292,7 @@ export default function InternshipsPage() {
                   <div className="flex-1 overflow-y-auto px-5 sm:px-7 py-[22px] flex flex-col gap-5">
                     <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-2.5">
                       {facts.map(([k, v]) => (
-                        <div key={k} className="px-3.5 py-3 rounded-[12px] bg-ds-inset border border-[#1A2C38] min-w-0">
+                        <div key={k} className="px-3.5 py-3 rounded-[12px] bg-ds-inset border border-[color:var(--hx-1A2C38)] min-w-0">
                           <div className={SECTION_LABEL}>{k}</div>
                           <div className="mt-[5px] text-[13px] font-semibold text-ds-text [overflow-wrap:anywhere]">{v}</div>
                         </div>
@@ -315,7 +315,7 @@ export default function InternshipsPage() {
                     {selected.coverLetter && (
                       <div>
                         <div className={`${SECTION_LABEL} mb-2.5`}>Cover Letter</div>
-                        <div className="px-[18px] py-4 rounded-[14px] bg-ds-inset border border-[#1A2C38] text-[13.5px] leading-[1.65] text-[#C9D2DC] whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        <div className="px-[18px] py-4 rounded-[14px] bg-ds-inset border border-[color:var(--hx-1A2C38)] text-[13.5px] leading-[1.65] text-[color:var(--hx-C9D2DC)] whitespace-pre-wrap [overflow-wrap:anywhere]">
                           {selected.coverLetter}
                         </div>
                       </div>
@@ -351,9 +351,9 @@ export default function InternshipsPage() {
                     </label>
                   </div>
 
-                  <div className="px-5 sm:px-7 pt-4 pb-[22px] border-t border-[#1A2C38] bg-[#0A1620]">
+                  <div className="px-5 sm:px-7 pt-4 pb-[22px] border-t border-[color:var(--hx-1A2C38)] bg-[color:var(--hx-0A1620)]">
                     {updateError && (
-                      <div role="alert" className="mb-3 px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]">
+                      <div role="alert" className="mb-3 px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px]">
                         {updateError}
                       </div>
                     )}

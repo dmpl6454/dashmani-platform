@@ -1,8 +1,13 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Input, Card, CardHeader, CardTitle, CardContent } from "@dashmani/ui";
+import { ChevronDown } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+
+const inputCls = "w-full h-[38px] px-3 rounded-[6px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[12.5px] tracking-normal normal-case font-normal placeholder:text-ds-t4 outline-none transition-colors focus:border-ds-gold [color-scheme:dark]";
+const labelCls = "flex flex-col gap-[7px] text-[10.5px] text-ds-t3 font-semibold tracking-[.1em] uppercase";
+const ghostBtn = "h-9 px-3.5 rounded-[6px] border border-ds-line2 bg-transparent text-ds-t2 text-[12px] font-semibold transition-colors hover:border-ds-line4 hover:text-ds-text disabled:opacity-50";
+const goldBtn = "h-9 px-[18px] rounded-[6px] bg-ds-gold text-ds-bg text-[12px] font-bold inline-flex items-center gap-1.5 transition-colors hover:bg-ds-gold2 disabled:opacity-50";
 
 interface AccountFormProps {
   account?: any;
@@ -48,40 +53,58 @@ export function AccountForm({ account }: AccountFormProps) {
     }
   }
 
+  const fields = [
+    { key: "handle", label: "Handle", placeholder: "@username", required: true },
+    { key: "displayName", label: "Display Name", placeholder: "", required: true },
+    { key: "clientName", label: "Client Name", placeholder: "Optional", required: false },
+    { key: "profileUrl", label: "Profile URL", placeholder: "https://...", required: false },
+  ] as const;
+
   return (
-    <Card className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
-      <CardHeader>
-        <CardTitle className="font-serif text-[#1A1A1A]">{isEdit ? "Edit Account" : "Add Social Account"}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
-          {error && <p className="text-sm text-red-500">{error}</p>}
+    <div className="rounded-[10px] border border-ds-line bg-ds-card overflow-hidden">
+      <div className="px-[22px] py-4 border-b border-ds-line">
+        <h2 className="text-[14px] font-semibold text-ds-text">{isEdit ? "Edit Account" : "Add Social Account"}</h2>
+      </div>
+      <div className="p-[22px]">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-w-lg">
+          {error && <p role="alert" className="text-[12px] text-ds-redsoft">{error}</p>}
           {!isEdit && (
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-[#1A1A1A]">Platform</label>
-              <select
-                className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
-                value={form.platformId}
-                onChange={(e) => setForm({ ...form, platformId: e.target.value })}
-                required
-              >
-                <option value="">Select platform</option>
-                {platforms.map((p: any) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
+            <label className={labelCls}>
+              Platform
+              <span className="relative">
+                <select
+                  className={`${inputCls} appearance-none pr-8 cursor-pointer`}
+                  value={form.platformId}
+                  onChange={(e) => setForm({ ...form, platformId: e.target.value })}
+                  required
+                >
+                  <option value="">Select platform</option>
+                  {platforms.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ds-t3 pointer-events-none" />
+              </span>
+            </label>
           )}
-          <Input label="Handle" value={form.handle} onChange={(e) => setForm({ ...form, handle: e.target.value })} placeholder="@username" required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
-          <Input label="Display Name" value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
-          <Input label="Client Name" value={form.clientName} onChange={(e) => setForm({ ...form, clientName: e.target.value })} placeholder="Optional" className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
-          <Input label="Profile URL" value={form.profileUrl} onChange={(e) => setForm({ ...form, profileUrl: e.target.value })} placeholder="https://..." className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
-          <div className="flex gap-3">
-            <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">{loading ? "Saving..." : isEdit ? "Update" : "Add Account"}</Button>
-            <Button type="button" variant="outline" onClick={() => router.back()} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7]">Cancel</Button>
+          {fields.map((f) => (
+            <label key={f.key} className={labelCls}>
+              {f.label}
+              <input
+                value={form[f.key]}
+                onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                placeholder={f.placeholder || undefined}
+                required={f.required}
+                className={inputCls}
+              />
+            </label>
+          ))}
+          <div className="flex gap-2 pt-1">
+            <button type="submit" disabled={loading} className={goldBtn}>{loading ? "Saving..." : isEdit ? "Update" : "Add Account"}</button>
+            <button type="button" onClick={() => router.back()} className={ghostBtn}>Cancel</button>
           </div>
         </form>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

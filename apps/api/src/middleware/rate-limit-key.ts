@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { verifyAccessToken, verifyAccessTokenSignature } from "../utils/jwt";
+import { verifyCreatorAccessToken } from "../services/creator/creator-jwt";
 
 // ── Rate-limit keying ───────────────────────────────────────────────────────────
 //
@@ -19,6 +20,9 @@ import { verifyAccessToken, verifyAccessTokenSignature } from "../utils/jwt";
 //      (`u:<type>:<userId>`). Verified, not just decoded — a forged token cannot mint
 //      itself a fresh bucket; it falls through to the IP key like any anonymous call.
 //      This is the bulk of traffic and the part that caused the storm.
+//      Creator-portal tokens are signed with their OWN secret (creator-jwt.ts), so they
+//      fail the staff check and are tried against the creator secret next:
+//      `u:creator:<creatorId>` — also verified, never merely decoded.
 //   2. Everything else is keyed by `req.ip` — still the edge IP under `trust proxy 1`.
 //      Anonymous traffic (login, forgot-password, public jobs, bots) is small, and the
 //      login endpoints have their own per-(ip, account) limiter below, so one edge's
@@ -38,7 +42,13 @@ export function rateLimitKey(req: Request): string {
         return `u:${payload.type ?? "x"}:${payload.userId}`;
       }
     } catch {
-      // invalid/expired token → anonymous keying below
+      // not a staff/HR/client token → maybe a creator token, below
+    }
+    try {
+      const creator = verifyCreatorAccessToken(auth.slice(7));
+      if (creator.creatorId) return `u:creator:${creator.creatorId}`;
+    } catch {
+      // invalid/expired (or creator secrets missing in production) → anonymous keying below
     }
   }
   return `ip:${req.ip ?? "unknown"}`;
@@ -52,11 +62,64 @@ export function rateLimitKey(req: Request): string {
 // The identifier is normalised the same way the auth services normalise it (trim +
 // lowercase) so `Foo@x.com` and `foo@x.com` share a bucket. Requires express.json()
 // to have run — app.ts mounts this limiter AFTER the body parser for that reason.
+//
+// Sign in with Google (POST /v1/{client,hr,}/auth/google) sends only `credential`, a Google
+// ID token, so without the branch below every Google sign-in behind one Cloudflare edge
+// shared ONE ip-only bucket across all three portals — and a new client's sign-up spends two
+// tries (needsProfile, then create). The account half is therefore `google:<sub>` (else
+// `google:<email>`), read from the token's payload DECODED BUT NOT VERIFIED: it only picks a
+// bucket and grants nothing — the service still verifies the token with Google, exactly as
+// an unknown email in the password body only picks a bucket. An undecodable credential falls
+// back to the ip-only key it had before.
+// ⚠️ The `credential` branch applies ONLY on a `/auth/google` path and ONLY when the body
+// names no email/identifier. This one limiter also guards password login and signup, whose
+// schemas strip unknown fields — reading `credential` there would let a brute-forcer attach a
+// fresh fake `sub` to every guess and land each one in a new bucket, defeating the
+// 20-per-15-min per-account cap. A fresh `sub` per request on the Google paths themselves is
+// bounded by the separate per-IP `googleIpLimiter` in app.ts.
 export function loginRateLimitKey(req: Request): string {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const raw = typeof body.email === "string" ? body.email : typeof body.identifier === "string" ? body.identifier : "";
   const account = raw.trim().toLowerCase().slice(0, 200);
+  if (!account && isGoogleSignInPath(req) && typeof body.credential === "string") {
+    const google = googleAccountOf(body.credential);
+    if (google) return `login:${req.ip ?? "unknown"}:google:${google}`;
+  }
   return `login:${req.ip ?? "unknown"}:${account}`;
+}
+
+/** POST /v1/{client,hr,creator,}/auth/google — the full path, case-insensitive, query string ignored. */
+export function isGoogleSignInPath(req: Pick<Request, "originalUrl">): boolean {
+  const path = (req.originalUrl ?? "").split("?")[0].toLowerCase().replace(/\/+$/, "");
+  return path.endsWith("/auth/google");
+}
+
+/** Per-IP ceiling for the Google sign-in POSTs (each one costs an outbound call to Google). */
+export function googleIpRateLimitKey(req: Request): string {
+  return `gip:${req.ip ?? "unknown"}`;
+}
+
+/** A real Google ID token is ~1–1.5 KB; anything far larger is not decoded at all. */
+const MAX_CREDENTIAL_LEN = 8192;
+
+/**
+ * The `sub` (else the lowercased `email`) of a JWT's payload, WITHOUT checking its signature —
+ * bucketing only, never identity. Null when the input is not a decodable three-part JWT.
+ */
+export function googleAccountOf(credential: string): string | null {
+  if (credential.length > MAX_CREDENTIAL_LEN) return null;
+  const parts = credential.split(".");
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") return null;
+    const sub = typeof payload.sub === "string" ? payload.sub.trim() : "";
+    if (sub) return sub.slice(0, 200);
+    const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+    return email ? email.slice(0, 200) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

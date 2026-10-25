@@ -11,6 +11,8 @@ import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
 import { startPostingWatchCron } from "./cron/posting-watch.cron";
+import { startCampaignCrons } from "./cron/campaign.cron";
+import { startCreatorCrons } from "./cron/creator.cron";
 import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
@@ -234,4 +236,12 @@ app.listen(PORT, () => {
   // window returns before touching the DB. Kill switches: POSTING_WATCH_ENABLED=0, or
   // system_settings postingWatch.mode=off (no restart).
   startPostingWatchCron();
+
+  // Campaign booking: render worker (30 s, one file per tick, low priority) + retention (6 h).
+  startCampaignCrons();
+
+  // Creator portal: daily token health (emails at 14 and 3 days left), page stats within
+  // CREATOR_METRICS_CALL_BUDGET, and oauth-state pruning. First run +25 min. Dark unless
+  // CREATORS_ENABLED=1; kill switch CREATOR_CRONS_ENABLED=0.
+  startCreatorCrons();
 });

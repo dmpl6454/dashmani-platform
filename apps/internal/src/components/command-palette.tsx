@@ -160,7 +160,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     >
                       <div className={cn(
                         "h-8 w-8 rounded-xl grid place-items-center flex-shrink-0 transition-colors",
-                        dark ? (isHighlighted ? "bg-ds-gold text-[#060D14]" : "bg-ds-inset border border-ds-line2 text-ds-t2") : (isHighlighted ? "bg-indigo text-white" : "bg-muted text-ink-3")
+                        dark ? (isHighlighted ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "bg-ds-inset border border-ds-line2 text-ds-t2") : (isHighlighted ? "bg-indigo text-white" : "bg-muted text-ink-3")
                       )}>
                         <Icon className="h-4 w-4" strokeWidth={2} />
                       </div>

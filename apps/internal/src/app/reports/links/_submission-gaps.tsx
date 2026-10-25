@@ -96,7 +96,7 @@ function MetricLabel({ children }: { children: React.ReactNode }) {
 }
 
 const chipBase = "inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold tabular-nums";
-const tealChip = `${chipBase} border-[rgba(0,215,160,.25)] bg-[rgba(0,215,160,.12)] text-[#5EEAC4]`;
+const tealChip = `${chipBase} border-[rgba(0,215,160,.25)] bg-[rgba(0,215,160,.12)] text-[color:var(--hx-5EEAC4)]`;
 const goldChip = `${chipBase} border-[rgba(233,189,98,.28)] bg-[rgba(233,189,98,.10)] text-ds-gold`;
 
 function TodayChip({ status, links, of }: { status: GapPairRow["todayStatus"] | GapEmployeeRow["todayStatus"]; links: number; of?: string }) {
@@ -124,10 +124,10 @@ function TodayChip({ status, links, of }: { status: GapPairRow["todayStatus"] | 
 
 function GapValue({ days, open, counted }: { days: number; open: boolean; counted: number }) {
   if (counted === 0) return <span className="text-[13px] text-ds-t3">—</span>;
-  if (days === 0) return <span className="text-[13px] font-medium text-[#00D7A0]">None</span>;
+  if (days === 0) return <span className="text-[13px] font-medium text-[color:var(--hx-00D7A0)]">None</span>;
   return (
     <span
-      className="text-[13px] font-semibold tabular-nums text-[#FB7185]"
+      className="text-[13px] font-semibold tabular-nums text-[color:var(--hx-FB7185)]"
       title={open ? "The gap runs back past the start of this window — it may be longer. Widen the range to see where it began." : undefined}
     >
       {open ? "≥ " : ""}{plural(days, "day")}
@@ -155,7 +155,7 @@ function MissedRanges({ ranges, total, truncated, year }: { ranges: GapRange[]; 
   return (
     <div className="flex flex-wrap items-center gap-1.5 pt-2">
       <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[.08em] text-ds-t3">
-        <i aria-hidden className="h-2.5 w-2.5 rounded-[3px] bg-[#FB7185]" />
+        <i aria-hidden className="h-2.5 w-2.5 rounded-[3px] bg-[color:var(--hx-FB7185)]" />
         Missed
       </span>
       {hidden > 0 && (
@@ -166,7 +166,7 @@ function MissedRanges({ ranges, total, truncated, year }: { ranges: GapRange[]; 
       {shown.map((r) => (
         <span
           key={r[0]}
-          className="rounded-[6px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.12)] px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[#FDA4AF]"
+          className="rounded-[6px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.12)] px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[color:var(--hx-FDA4AF)]"
         >
           {fmtRange(r, year)}
           {r[0] !== r[1] ? ` (${rangeDays(r)}d)` : ""}
@@ -179,10 +179,10 @@ function MissedRanges({ ranges, total, truncated, year }: { ranges: GapRange[]; 
 /** Decorative initials circle (aria-hidden; the name beside it is the accessible text). */
 const AVATAR_TINTS = [
   "border-[rgba(233,189,98,.35)] bg-[rgba(233,189,98,.12)] text-ds-gold",
-  "border-[rgba(0,215,160,.35)] bg-[rgba(0,215,160,.12)] text-[#5EEAC4]",
-  "border-[rgba(110,178,255,.35)] bg-[rgba(110,178,255,.12)] text-[#6EB2FF]",
-  "border-[rgba(155,126,222,.35)] bg-[rgba(155,126,222,.12)] text-[#B9A3EC]",
-  "border-[rgba(251,113,133,.35)] bg-[rgba(251,113,133,.12)] text-[#FDA4AF]",
+  "border-[rgba(0,215,160,.35)] bg-[rgba(0,215,160,.12)] text-[color:var(--hx-5EEAC4)]",
+  "border-[rgba(110,178,255,.35)] bg-[rgba(110,178,255,.12)] text-[color:var(--hx-6EB2FF)]",
+  "border-[rgba(155,126,222,.35)] bg-[rgba(155,126,222,.12)] text-[color:var(--hx-B9A3EC)]",
+  "border-[rgba(251,113,133,.35)] bg-[rgba(251,113,133,.12)] text-[color:var(--hx-FDA4AF)]",
 ];
 
 function Avatar({ name, seed }: { name: string; seed: string }) {
@@ -216,7 +216,7 @@ function ExpandButton({ open, onClick }: { open: boolean; onClick: () => void })
       className={`inline-flex h-8 min-w-[32px] items-center justify-center gap-1 rounded-full border px-2.5 text-[12px] font-semibold transition-colors ${
         open
           ? "border-[rgba(233,189,98,.45)] bg-[rgba(233,189,98,.10)] text-ds-gold"
-          : "border-ds-line2 bg-ds-inset text-ds-t5 hover:border-[#2A4658] hover:text-ds-text"
+          : "border-ds-line2 bg-ds-inset text-ds-t5 hover:border-[color:var(--hx-2A4658)] hover:text-ds-text"
       }`}
     >
       <span className="xl:hidden">Days</span>
@@ -229,13 +229,13 @@ const GRID =
   "grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1.5fr)_4.5rem_5.5rem_6rem_7rem_6.5rem_2.5rem] xl:items-center";
 
 const toolbarBtn =
-  "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full border border-ds-line2 bg-ds-inset px-4 text-[12.5px] font-semibold text-ds-t5 transition-colors hover:border-[#2A4658] hover:text-ds-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-ds-line2 disabled:hover:text-ds-t5";
+  "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full border border-ds-line2 bg-ds-inset px-4 text-[12.5px] font-semibold text-ds-t5 transition-colors hover:border-[color:var(--hx-2A4658)] hover:text-ds-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-ds-line2 disabled:hover:text-ds-t5";
 
 /** The dark design system's card surface. */
-const CARD = "rounded-[16px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.35)]";
+const CARD = "rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.35)]";
 
 /** Rose / gold tinted notices. */
-const roseNotice = "rounded-[12px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] text-[#FDA4AF]";
+const roseNotice = "rounded-[12px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] text-[color:var(--hx-FDA4AF)]";
 const goldNotice = "rounded-[12px] border border-[rgba(233,189,98,.28)] bg-[rgba(233,189,98,.07)] text-ds-t5";
 
 export function SubmissionGapsPanel({
@@ -480,14 +480,14 @@ export function SubmissionGapsPanel({
       label: "Channel assignments",
       value: d ? nf.format(d.totals.assignments) : "—",
       sub: d ? plural(d.totals.employees, "person", "people") : rangeShort.toLowerCase(),
-      icon: <Users className="h-4 w-4 text-[#6EB2FF]" aria-hidden />,
+      icon: <Users className="h-4 w-4 text-[color:var(--hx-6EB2FF)]" aria-hidden />,
       tone: "border-[rgba(110,178,255,.25)] bg-[rgba(110,178,255,.12)]",
     },
     {
       label: "Missed channel-days",
       value: !d || nothingCounted ? "—" : nf.format(d.totals.missedDays),
       sub: !d ? "every calendar day counts" : nothingCounted ? "nothing counted yet" : `of ${nf.format(d.totals.countedDays)} counted`,
-      icon: <CalendarX2 className="h-4 w-4 text-[#FB7185]" aria-hidden />,
+      icon: <CalendarX2 className="h-4 w-4 text-[color:var(--hx-FB7185)]" aria-hidden />,
       tone: "border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.12)]",
     },
     {
@@ -498,7 +498,7 @@ export function SubmissionGapsPanel({
         : nothingCounted
           ? "nothing counted yet"
           : `no link on any channel on ${fmtDay(d.range.countedThrough, year)}`,
-      icon: <Hourglass className="h-4 w-4 text-[#9B7EDE]" aria-hidden />,
+      icon: <Hourglass className="h-4 w-4 text-[color:var(--hx-9B7EDE)]" aria-hidden />,
       tone: "border-[rgba(155,126,222,.28)] bg-[rgba(155,126,222,.12)]",
     },
     {
@@ -515,13 +515,13 @@ export function SubmissionGapsPanel({
   ];
 
   const inputCls =
-    "h-9 w-full min-w-0 rounded-full border border-ds-line2 bg-ds-inset px-3 text-base text-ds-text placeholder:text-ds-t3 [color-scheme:dark] transition-colors hover:border-[#2A4658] focus:border-[rgba(233,189,98,.55)] focus:outline-none sm:text-[12.5px]";
+    "h-9 w-full min-w-0 rounded-full border border-ds-line2 bg-ds-inset px-3 text-base text-ds-text placeholder:text-ds-t3 [color-scheme:dark] transition-colors hover:border-[color:var(--hx-2A4658)] focus:border-[rgba(233,189,98,.55)] focus:outline-none sm:text-[12.5px]";
   const rangeText = custom ? `${rangeShort} (this tab's own dates)` : windowLabel;
 
   return (
     <div className="space-y-4">
       <div className={`${CARD} overflow-hidden`}>
-        <div className="flex min-h-[62px] flex-wrap items-center justify-between gap-3 border-b border-[#182C39] px-4 py-3 sm:px-6">
+        <div className="flex min-h-[62px] flex-wrap items-center justify-between gap-3 border-b border-[color:var(--hx-182C39)] px-4 py-3 sm:px-6">
           <div className="min-w-0">
             <p className="text-[15px] font-semibold tracking-[-.01em] text-ds-text">Submission gaps</p>
             <p className="mt-[3px] break-words text-[12px] text-ds-t3">
@@ -537,7 +537,7 @@ export function SubmissionGapsPanel({
                   aria-pressed={view === v}
                   onClick={() => { setView(v); resetList(); }}
                   className={`h-[28px] whitespace-nowrap rounded-full px-3.5 text-[12px] font-semibold transition-colors ${
-                    view === v ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+                    view === v ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"
                   }`}
                 >
                   {v === "channels" ? "By channel" : "By person"}
@@ -669,7 +669,7 @@ export function SubmissionGapsPanel({
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 border-t border-[#182C39] pt-3 sm:grid-cols-[10.5rem_10.5rem_minmax(0,1fr)] sm:items-end">
+        <div className="grid grid-cols-2 gap-2 border-t border-[color:var(--hx-182C39)] pt-3 sm:grid-cols-[10.5rem_10.5rem_minmax(0,1fr)] sm:items-end">
           <p className="col-span-2 min-w-0 break-words text-[12px] text-ds-t3 sm:col-span-3">
             <span className="font-semibold text-ds-t5">Dates for this tab:</span>{" "}
             {custom
@@ -699,7 +699,7 @@ export function SubmissionGapsPanel({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-[#182C39] pt-3 text-[12px] text-ds-t3">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[color:var(--hx-182C39)] pt-3 text-[12px] text-ds-t3">
           <label className="inline-flex flex-wrap items-center gap-2">
             <span>Only rows with at least</span>
             <input
@@ -725,7 +725,7 @@ export function SubmissionGapsPanel({
       {/* States: invalid window → loading → failed → only-today note → empty → list. */}
       {problem && (
         <div className={`flex items-center gap-3 p-4 text-[13px] sm:p-5 ${roseNotice}`}>
-          <AlertCircle className="h-4 w-4 flex-none text-[#FB7185]" aria-hidden />
+          <AlertCircle className="h-4 w-4 flex-none text-[color:var(--hx-FB7185)]" aria-hidden />
           <span className="min-w-0 break-words">{problem}</span>
         </div>
       )}
@@ -733,7 +733,7 @@ export function SubmissionGapsPanel({
       {!problem && !d && isLoading && (
         <div className={`${CARD} space-y-3 p-4 sm:p-5`} aria-busy="true">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-14 rounded-[12px] border border-[#132430] bg-ds-inset motion-safe:animate-pulse" />
+            <div key={i} className="h-14 rounded-[12px] border border-[color:var(--hx-132430)] bg-ds-inset motion-safe:animate-pulse" />
           ))}
           <p className="text-xs text-ds-t3">Loading submission gaps…</p>
         </div>
@@ -741,8 +741,8 @@ export function SubmissionGapsPanel({
 
       {!problem && !d && !isLoading && error && (
         <div className={`flex flex-wrap items-center gap-3 p-4 sm:p-5 ${roseNotice}`}>
-          <AlertCircle className="h-4 w-4 flex-none text-[#FB7185]" aria-hidden />
-          <p className="min-w-0 flex-1 break-words text-[13px] text-[#FDA4AF]">
+          <AlertCircle className="h-4 w-4 flex-none text-[color:var(--hx-FB7185)]" aria-hidden />
+          <p className="min-w-0 flex-1 break-words text-[13px] text-[color:var(--hx-FDA4AF)]">
             Couldn&apos;t load submission gaps. <span className="text-ds-t2">{(error as Error).message}</span>
           </p>
           <button
@@ -802,13 +802,13 @@ export function SubmissionGapsPanel({
             <span>Today</span>
             <span className="sr-only">Details</span>
           </div>
-          <ul className="divide-y divide-[#132430]">
+          <ul className="divide-y divide-[color:var(--hx-132430)]">
             {view === "channels"
               ? pairs.slice(0, limit).map((r) => {
                   const key = `${r.employee.id}:${r.account.id}`;
                   const open = expanded === key;
                   return (
-                    <li key={key} className={`px-4 py-3.5 transition-colors sm:px-6 ${open ? "bg-[#0A1620]" : "hover:bg-[#0A1620]"}`}>
+                    <li key={key} className={`px-4 py-3.5 transition-colors sm:px-6 ${open ? "bg-[color:var(--hx-0A1620)]" : "hover:bg-[color:var(--hx-0A1620)]"}`}>
                       <div className={GRID}>
                         <div className="col-span-2 flex min-w-0 items-center gap-3 sm:col-span-3 xl:col-span-1">
                           <Avatar name={r.employee.name} seed={r.employee.id} />
@@ -820,7 +820,7 @@ export function SubmissionGapsPanel({
                           </div>
                         </div>
                         <div className="col-span-2 min-w-0 sm:col-span-3 xl:col-span-1">
-                          <Link href={`/accounts/${r.account.id}`} className="block truncate text-[13px] font-medium text-ds-t5 hover:text-[#6EB2FF]">
+                          <Link href={`/accounts/${r.account.id}`} className="block truncate text-[13px] font-medium text-ds-t5 hover:text-[color:var(--hx-6EB2FF)]">
                             {r.account.displayName}
                           </Link>
                           <p className="truncate text-[11.5px] text-ds-t3">
@@ -832,7 +832,7 @@ export function SubmissionGapsPanel({
                           {r.countedDays === 0 ? (
                             <span className="text-[13px] text-ds-t3" title="No countable days yet in this window">—</span>
                           ) : (
-                            <span className={`font-num text-lg font-bold leading-none tabular-nums ${r.missedDays > 0 ? "text-[#FB7185]" : "text-[#00D7A0]"}`}>
+                            <span className={`font-num text-lg font-bold leading-none tabular-nums ${r.missedDays > 0 ? "text-[color:var(--hx-FB7185)]" : "text-[color:var(--hx-00D7A0)]"}`}>
                               {nf.format(r.missedDays)}
                             </span>
                           )}
@@ -869,7 +869,7 @@ export function SubmissionGapsPanel({
                   const key = `p:${r.employee.id}`;
                   const open = expanded === key;
                   return (
-                    <li key={key} className={`px-4 py-3.5 transition-colors sm:px-6 ${open ? "bg-[#0A1620]" : "hover:bg-[#0A1620]"}`}>
+                    <li key={key} className={`px-4 py-3.5 transition-colors sm:px-6 ${open ? "bg-[color:var(--hx-0A1620)]" : "hover:bg-[color:var(--hx-0A1620)]"}`}>
                       <div className={GRID}>
                         <div className="col-span-2 flex min-w-0 items-center gap-3 sm:col-span-3 xl:col-span-1">
                           <Avatar name={r.employee.name} seed={r.employee.id} />
@@ -884,7 +884,7 @@ export function SubmissionGapsPanel({
                           <p className="truncate text-[13px] font-medium text-ds-t5">
                             {filters.accountId ? channelLabel || plural(r.accountCount, "channel") : plural(r.accountCount, "channel")}
                           </p>
-                          <p className={`truncate text-[11.5px] ${r.missedChannelDays > 0 ? "text-[#FDA4AF]" : "text-ds-t3"}`}>
+                          <p className={`truncate text-[11.5px] ${r.missedChannelDays > 0 ? "text-[color:var(--hx-FDA4AF)]" : "text-ds-t3"}`}>
                             {r.missedChannelDays > 0 ? `${plural(r.missedChannelDays, "missed channel-day")}` : "no missed channel-days"}
                           </p>
                         </div>
@@ -894,7 +894,7 @@ export function SubmissionGapsPanel({
                             <span className="text-[13px] text-ds-t3" title="No countable days yet in this window">—</span>
                           ) : (
                             <span
-                              className={`font-num text-lg font-bold leading-none tabular-nums ${r.missedDays > 0 ? "text-[#FB7185]" : "text-[#00D7A0]"}`}
+                              className={`font-num text-lg font-bold leading-none tabular-nums ${r.missedDays > 0 ? "text-[color:var(--hx-FB7185)]" : "text-[color:var(--hx-00D7A0)]"}`}
                               title={filters.accountId ? "Days with no link on the selected channel" : "Days with no link on ANY assigned channel"}
                             >
                               {nf.format(r.missedDays)}
@@ -946,7 +946,7 @@ export function SubmissionGapsPanel({
                 })}
           </ul>
           {list.length > limit && (
-            <div className="border-t border-[#132430] px-4 py-4 text-center">
+            <div className="border-t border-[color:var(--hx-132430)] px-4 py-4 text-center">
               <button
                 type="button"
                 onClick={() => setLimit((l) => l + PAGE)}

@@ -467,9 +467,11 @@ model Client {
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  projects      Project[]
-  refreshTokens ClientRefreshToken[]
-  otpTokens     OtpToken[]
+  projects         Project[]
+  refreshTokens    ClientRefreshToken[]
+  otpTokens        OtpToken[]
+  campaignBookings CampaignBooking[]
+  campaignMedia    CampaignMedia[]
 
   @@map("clients")
 }
@@ -2255,4 +2257,453 @@ model PipelineEmailOutbox {
   @@index([status, sendAfter])
   @@index([projectId])
   @@map("pipeline_email_outbox")
+}
+
+// ============ CAMPAIGN BOOKING (self-serve "Start a campaign", client portal) ============
+//
+// A client books paid posts on our network: uploads a creative, picks accounts priced by a
+// staff-set rate card, pays through Razorpay, staff review, then the posts go live (Phase 1:
+// staff post and record the link; Phase 2: Meta API publishing). DDL: scripts/campaign-booking-ddl.sql
+// (applied to production BY HAND before the merge, rehearsed in CI). Services:
+// apps/api/src/services/campaign/*.
+//
+// ⚠️ Statuses are VARCHAR validated in code (packages/shared/src/validators/campaign.ts), NOT
+// Postgres enums: an enum value can never be removed, and adding one needs an ALTER TYPE on
+// production. Money is integer PAISE, never floats.
+// ⚠️ target_id / meta_asset_id are plain ids with NO foreign key to meta_assets or
+// social_accounts: a FK would take a lock on those hot tables at DDL time, and a rate card must
+// survive an asset being disconnected (the catalogue hides it instead).
+
+/// Staff-set price for posting ONE format on ONE account. The catalogue shows only accounts with
+/// at least one active card. targetType "meta_asset" → meta_assets.id (FB Page / IG account);
+/// "social_account" → social_accounts.id (YouTube, posted by staff until Phase 3).
+model CampaignRateCard {
+  id          String   @id @default(uuid())
+  targetType  String   @map("target_type") @db.VarChar(16)
+  targetId    String   @map("target_id")
+  platform    String   @db.VarChar(16) // instagram | facebook | youtube
+  format      String   @db.VarChar(16) // reel | story | post | carousel
+  /// Brand campaign price (the "Brand Cost" column of the rate sheet).
+  pricePaise  Int      @map("price_paise")
+  /// Entertainment (film / OTT / music promo) price. null = not offered for entertainment.
+  entertainmentPricePaise Int? @map("entertainment_price_paise")
+  /// Song audio integration on a reel, charged on top of the post price. null = not offered.
+  audioAddonPaise         Int? @map("audio_addon_paise")
+  active      Boolean  @default(true)
+  /// Shown to clients ("Bollywood news", "Lifestyle"…). Staff-entered: Instagram exposes none.
+  category    String?  @db.VarChar(60)
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([targetType, targetId, format])
+  @@index([active, platform])
+  @@map("campaign_rate_cards")
+}
+
+model CampaignBooking {
+  id              String    @id @default(uuid())
+  clientId        String    @map("client_id")
+  name            String    @db.VarChar(200)
+  brand           String    @db.VarChar(200)
+  objective       String?   @db.Text
+  /// brand | entertainment — decides which rate-card price applies. Staff check it at review.
+  campaignType    String    @default("brand") @map("campaign_type") @db.VarChar(16)
+  /// Reel only: integrate the client's song audio (priced per account as an add-on).
+  audioIntegration Boolean  @default(false) @map("audio_integration")
+  /// The song to integrate: a title or a link the client gives us.
+  audioTrack      String?   @map("audio_track") @db.VarChar(300)
+  /// IST calendar days (YYYY-MM-DD semantics; stored as DATE).
+  launchFrom      DateTime? @map("launch_from") @db.Date
+  launchTo        DateTime? @map("launch_to") @db.Date
+  format          String?   @db.VarChar(16) // reel | story | post | carousel
+  caption         String?   @db.Text
+  hashtags        String[]  @default([])
+  /// IG handles to tag (no "@").
+  userTags        String[]  @default([]) @map("user_tags")
+  /// IG collaborators (max 3, no "@").
+  collaborators   String[]  @default([])
+  /// Overlay text WE burn into the media (ffmpeg / sharp). Style is a preset key, never raw params.
+  superText       String?   @map("super_text") @db.VarChar(200)
+  superTextStyle  String?   @map("super_text_style") @db.VarChar(24)
+  status          String    @default("draft") @db.VarChar(24)
+  totalPaise      Int?      @map("total_paise")
+  /// The rate cards as they were when the order was created (prices are frozen per item too).
+  pricingSnapshot Json?     @map("pricing_snapshot")
+  reviewNote      String?   @map("review_note") @db.Text
+  reviewedById    String?   @map("reviewed_by_id")
+  submittedAt     DateTime? @map("submitted_at")
+  paidAt          DateTime? @map("paid_at")
+  approvedAt      DateTime? @map("approved_at")
+  /// Set when the delivery email (every item live / settled) has been sent — sent once.
+  deliveredAt     DateTime? @map("delivered_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  client   Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  media    CampaignMedia[]
+  renders  CampaignMediaRender[]
+  items    CampaignBookingItem[]
+  payments CampaignPayment[]
+  events   CampaignBookingEvent[]
+
+  @@index([clientId, createdAt])
+  @@index([status, updatedAt])
+  @@map("campaign_bookings")
+}
+
+/// One uploaded file. Lives on disk under CAMPAIGN_MEDIA_DIR (never under /uploads).
+model CampaignMedia {
+  id                String    @id @default(uuid())
+  clientId          String    @map("client_id")
+  bookingId         String?   @map("booking_id")
+  position          Int       @default(0)
+  kind              String    @db.VarChar(8) // video | image
+  /// creative = the post itself; thumbnail = the client's own cover image for a video (one per booking).
+  role              String    @default("creative") @db.VarChar(16)
+  originalName      String    @map("original_name") @db.VarChar(255)
+  /// Sniffed from magic bytes on complete (the client-declared type is ignored).
+  mime              String?   @db.VarChar(64)
+  bytes             BigInt
+  durationMs        Int?      @map("duration_ms")
+  width             Int?
+  height            Int?
+  /// 43-char random base64url (256 bits). The public media URL is keyed on this.
+  storageKey        String    @unique @map("storage_key") @db.VarChar(64)
+  ext               String    @db.VarChar(8)
+  uploadStatus      String    @default("uploading") @map("upload_status") @db.VarChar(16) // uploading | complete | rejected
+  chunkSize         Int       @map("chunk_size")
+  totalChunks       Int       @map("total_chunks")
+  rejectReason      String?   @map("reject_reason") @db.VarChar(300)
+  renderKey         String?   @unique @map("render_key") @db.VarChar(64)
+  renderStatus      String    @default("none") @map("render_status") @db.VarChar(16) // none | queued | rendering | done | failed
+  renderError       String?   @map("render_error") @db.VarChar(500)
+  renderLockedUntil DateTime? @map("render_locked_until")
+  purgedAt          DateTime? @map("purged_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  client  Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  booking CampaignBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  renders CampaignMediaRender[]
+
+  @@index([clientId, uploadStatus])
+  @@index([bookingId, position])
+  @@index([renderStatus])
+  @@map("campaign_media")
+}
+/// A render of one media file with an overlay that differs from the booking's default — one
+/// per (file, overlay text + style). Items that customise their super text point at these; the
+/// default overlay stays on campaign_media.render_*. Files live beside the default renders.
+model CampaignMediaRender {
+  id           String    @id @default(uuid())
+  mediaId      String    @map("media_id")
+  bookingId    String    @map("booking_id")
+  /// sha1 of format|style|text — the identity of the variant.
+  overlayKey   String    @map("overlay_key") @db.VarChar(64)
+  overlayText  String?   @map("overlay_text") @db.VarChar(200)
+  overlayStyle String?   @map("overlay_style") @db.VarChar(24)
+  renderKey    String?   @unique @map("render_key") @db.VarChar(64)
+  status       String    @default("queued") @db.VarChar(16) // queued | rendering | done | failed
+  error        String?   @db.VarChar(500)
+  lockedUntil  DateTime? @map("locked_until")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  media   CampaignMedia   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  booking CampaignBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([mediaId, overlayKey])
+  @@index([status])
+  @@index([bookingId])
+  @@map("campaign_media_renders")
+}
+
+/// One (account, format) the client paid for. Price frozen at checkout. Carries its own posting
+/// state so a partly-delivered campaign is visible per account.
+model CampaignBookingItem {
+  id            String    @id @default(uuid())
+  bookingId     String    @map("booking_id")
+  rateCardId    String    @map("rate_card_id")
+  targetType    String    @map("target_type") @db.VarChar(16)
+  targetId      String    @map("target_id")
+  platform      String    @db.VarChar(16)
+  format        String    @db.VarChar(16)
+  /// Snapshot of the account as the client saw it (the asset may later be renamed / removed).
+  accountName   String    @map("account_name") @db.VarChar(200)
+  accountHandle String?   @map("account_handle") @db.VarChar(100)
+  /// Total for this account: base price + audio add-on (both frozen at checkout).
+  pricePaise    Int       @map("price_paise")
+  /// The audio add-on part of pricePaise (0 when not booked).
+  audioAddonPaise Int     @default(0) @map("audio_addon_paise")
+  /// Per-account text. null = the booking's caption / hashtags / overlay; a value replaces it for
+  /// THIS account only. superTextOverride "" = no overlay on this account.
+  captionOverride        String?  @map("caption_override") @db.Text
+  hashtagsOverride       String[] @default([]) @map("hashtags_override")
+  superTextOverride      String?  @map("super_text_override") @db.VarChar(200)
+  superTextStyleOverride String?  @map("super_text_style_override") @db.VarChar(24)
+  status        String    @default("pending") @db.VarChar(24)
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  lockedUntil   DateTime? @map("locked_until")
+  containerId   String?   @map("container_id")
+  remotePostId  String?   @map("remote_post_id")
+  permalink     String?   @db.VarChar(500)
+  postedAt      DateTime? @map("posted_at")
+  postedById    String?   @map("posted_by_id")
+  lastError     String?   @map("last_error") @db.VarChar(500)
+  /// When the client was emailed that THIS post is live (per-item "your post is live" mail).
+  notifiedAt    DateTime? @map("notified_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  booking CampaignBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, targetType, targetId, format])
+  @@index([status, nextAttemptAt])
+  @@map("campaign_booking_items")
+}
+
+model CampaignPayment {
+  id                String   @id @default(uuid())
+  bookingId         String   @map("booking_id")
+  razorpayOrderId   String   @unique @map("razorpay_order_id") @db.VarChar(64)
+  razorpayPaymentId String?  @unique @map("razorpay_payment_id") @db.VarChar(64)
+  amountPaise       Int      @map("amount_paise")
+  currency          String   @default("INR") @db.VarChar(3)
+  status            String   @default("created") @db.VarChar(24) // created | captured | failed | refund_pending | refunded | refund_failed
+  refundId          String?  @map("refund_id") @db.VarChar(64)
+  refundedPaise     Int      @default(0) @map("refunded_paise")
+  lastEvent         String?  @map("last_event") @db.VarChar(64)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  booking CampaignBooking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId])
+  @@map("campaign_payments")
+}
+
+/// Razorpay webhook idempotency ledger: a redelivered event (same x-razorpay-event-id) is a no-op.
+model RazorpayWebhookEvent {
+  id          String    @id @default(uuid())
+  eventId     String    @unique @map("event_id") @db.VarChar(100)
+  event       String    @db.VarChar(64)
+  receivedAt  DateTime  @default(now()) @map("received_at")
+  processedAt DateTime? @map("processed_at")
+
+  @@map("razorpay_webhook_events")
+}
+
+/// Append-only audit of every booking status change and staff action.
+model CampaignBookingEvent {
+  id         String   @id @default(uuid())
+  bookingId  String   @map("booking_id")
+  actorType  String   @map("actor_type") @db.VarChar(8) // client | staff | system
+  actorId    String?  @map("actor_id")
+  fromStatus String?  @map("from_status") @db.VarChar(24)
+  toStatus   String?  @map("to_status") @db.VarChar(24)
+  note       String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  booking CampaignBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+  @@map("campaign_booking_events")
+}
+
+// ─── Creators: creators.digitalsukoon.com (Phase A, 2026-10-12) ─────────────────────────────
+// Creators and publishers anywhere sign up, connect their Facebook Pages / Instagram professional
+// accounts, and (Phase B) accept bookings that are published on their own pages.
+// ⚠️ Creator pages live in THESE tables, never in meta_connections / meta_assets: every analytics
+// surface (overview, Account Growth, the channel/posts/demographics syncs and their budgets,
+// posting-watch, duplicate resolution, the campaign catalogue) reads meta_assets with no owner
+// filter, so a creator row there would leak into all of them. Statuses are VARCHAR validated in
+// code (an enum value can never be removed). No foreign key to users: staff ids are plain ids.
+
+/// A creator / publisher account (its own login, separate from clients and staff).
+model Creator {
+  id                String    @id @default(uuid())
+  /// Stored lowercase; looked up case-insensitively.
+  email             String    @unique
+  passwordHash      String    @map("password_hash")
+  name              String    @db.VarChar(120)
+  /// ISO 3166-1 alpha-2.
+  country           String?   @db.Char(2)
+  phone             String?   @db.VarChar(32)
+  /// draft | in_review | approved | rejected | suspended | closed
+  status            String    @default("draft") @db.VarChar(16)
+  emailVerifiedAt   DateTime? @map("email_verified_at")
+  termsVersion      String?   @map("terms_version") @db.VarChar(16)
+  termsAcceptedAt   DateTime? @map("terms_accepted_at")
+  adultConfirmedAt  DateTime? @map("adult_confirmed_at")
+  /// Payouts (Phase C). ISO 4217; details encrypted, hint = e.g. "UPI ••••42".
+  payoutCurrency    String?   @map("payout_currency") @db.Char(3)
+  payoutMethod      String?   @map("payout_method") @db.VarChar(16)
+  payoutDetailsEnc  String?   @map("payout_details_enc")
+  payoutDetailsHint String?   @map("payout_details_hint") @db.VarChar(80)
+  submittedAt       DateTime? @map("submitted_at")
+  reviewNote        String?   @map("review_note")
+  reviewedById      String?   @map("reviewed_by_id")
+  reviewedAt        DateTime? @map("reviewed_at")
+  closedAt          DateTime? @map("closed_at")
+  /// Bumped to end EVERY session at once (password reset/change, a Google claim of an
+  /// unverified account): tokens carry it as `sv` and are refused when it no longer matches.
+  sessionVersion    Int       @default(0) @map("session_version")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  refreshTokens CreatorRefreshToken[]
+  tokens        CreatorToken[]
+  oauthStates   CreatorOauthState[]
+  connections   CreatorConnection[]
+  assets        CreatorAsset[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("creators")
+}
+
+/// One row per issued refresh token (SHA-256), consumed once on refresh.
+model CreatorRefreshToken {
+  id        String   @id @default(uuid())
+  creatorId String   @map("creator_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId])
+  @@map("creator_refresh_tokens")
+}
+
+/// Single-use email tokens (SHA-256 of the emailed value): verify_email | reset_password.
+model CreatorToken {
+  id        String    @id @default(uuid())
+  creatorId String    @map("creator_id")
+  purpose   String    @db.VarChar(16)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, purpose])
+  @@map("creator_tokens")
+}
+
+/// OAuth `state` for a creator's Facebook Login (consumed once, 60-minute TTL).
+model CreatorOauthState {
+  state     String    @id
+  creatorId String    @map("creator_id")
+  mode      String    @default("connect") @db.VarChar(16)
+  usedAt    DateTime? @map("used_at")
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("creator_oauth_states")
+}
+
+/// A creator's Facebook Login grant. One Facebook identity belongs to at most one creator.
+model CreatorConnection {
+  id                  String    @id @default(uuid())
+  creatorId           String    @map("creator_id")
+  metaUserId          String    @unique @map("meta_user_id")
+  metaUserName        String?   @map("meta_user_name")
+  /// enc:v1 (utils/token-crypto); null once revoked.
+  userTokenEnc        String?   @map("user_token_enc")
+  grantedScopes       String    @default("") @map("granted_scopes")
+  granularScopes      Json?     @map("granular_scopes")
+  tokenExpiresAt      DateTime? @map("token_expires_at")
+  dataAccessExpiresAt DateTime? @map("data_access_expires_at")
+  graphVersion        String    @default("v21.0") @map("graph_version") @db.VarChar(16)
+  /// ACTIVE | PARTIAL_SCOPE | NEEDS_REAUTH_SOON | NEEDS_REAUTH | REVOKED
+  status              String    @default("ACTIVE") @db.VarChar(20)
+  /// pending | running | done | failed
+  discoveryState      String    @default("pending") @map("discovery_state") @db.VarChar(16)
+  lastVerifiedAt      DateTime? @map("last_verified_at")
+  lastError           String?   @map("last_error") @db.VarChar(500)
+  revokedAt           DateTime? @map("revoked_at")
+  /// The lowest expiry reminder already emailed (14, then 3); null after a (re)connect. Makes
+  /// the daily reminder idempotent across API restarts.
+  expiryWarnedDays    Int?      @map("expiry_warned_days") @db.SmallInt
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  creator Creator        @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  assets  CreatorAsset[]
+
+  @@index([creatorId])
+  @@index([status])
+  @@map("creator_connections")
+}
+
+/// A Facebook Page or Instagram professional account a creator connected. One claim per page.
+model CreatorAsset {
+  id                 String    @id @default(uuid())
+  creatorId          String    @map("creator_id")
+  connectionId       String    @map("connection_id")
+  /// facebook_page | instagram_account
+  kind               String    @db.VarChar(20)
+  metaId             String    @map("meta_id")
+  name               String
+  username           String?
+  /// Instagram: the Facebook Page it is linked to (its token publishes when needed).
+  parentPageId       String?   @map("parent_page_id")
+  /// Facebook Pages only (enc:v1).
+  pageTokenEnc       String?   @map("page_token_enc")
+  tasks              String[]  @default([])
+  /// Our probe says the API can publish here (CREATE_CONTENT task / content_publishing_limit).
+  canPublish         Boolean   @default(false) @map("can_publish")
+  publishProbeError  String?   @map("publish_probe_error") @db.VarChar(300)
+  followerCount      Int?      @map("follower_count")
+  mediaCount         Int?      @map("media_count")
+  pictureUrl         String?   @map("picture_url")
+  views28d           BigInt?   @map("views_28d")
+  engagements28d     BigInt?   @map("engagements_28d")
+  reach28d           BigInt?   @map("reach_28d")
+  metricsFetchedAt   DateTime? @map("metrics_fetched_at")
+  metricsError       String?   @map("metrics_error") @db.VarChar(300)
+  /// A meta_assets.id when this page is already on OUR network (never bookable as a creator page).
+  networkDuplicateOf String?   @map("network_duplicate_of")
+  /// Staff switch: offered for booking (Phase B). Off until staff turn it on.
+  enabled            Boolean   @default(false)
+  enabledById        String?   @map("enabled_by_id")
+  enabledAt          DateTime? @map("enabled_at")
+  disconnectedAt     DateTime? @map("disconnected_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  creator    Creator           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  connection CreatorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([kind, metaId])
+  @@index([creatorId])
+  @@index([connectionId])
+  @@map("creator_assets")
+}
+
+/// Meta "deauthorize" and "data deletion" callbacks (app-wide: they also arrive for people who
+/// never used our creator flow). Only a SHA-256 of the app-scoped user id is kept.
+model MetaDeletionRequest {
+  id               String    @id @default(uuid())
+  confirmationCode String    @unique @map("confirmation_code") @db.VarChar(16)
+  userHash         String    @map("user_hash") @db.Char(64)
+  /// deauthorize | deletion
+  kind             String    @db.VarChar(16)
+  /// creator | staff_grant | none
+  matched          String    @db.VarChar(24)
+  /// received | completed | no_data
+  status           String    @db.VarChar(16)
+  note             String?   @db.VarChar(500)
+  receivedAt       DateTime  @default(now()) @map("received_at")
+  completedAt      DateTime? @map("completed_at")
+
+  @@index([userHash])
+  @@map("meta_deletion_requests")
 }

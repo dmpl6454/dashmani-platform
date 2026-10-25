@@ -9,14 +9,14 @@ import { ModalPortal } from "@/components/modal-portal";
 
 // Mockup palette.
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  ACTIVE:    { label: "Active",    color: "#00D7A0" },
-  PAUSED:    { label: "Paused",    color: "#FBBF24" },
-  COMPLETED: { label: "Completed", color: "#6EB2FF" },
-  ARCHIVED:  { label: "Archived",  color: "#738395" },
+  ACTIVE:    { label: "Active",    color: "var(--hx-00D7A0)" },
+  PAUSED:    { label: "Paused",    color: "var(--hx-FBBF24)" },
+  COMPLETED: { label: "Completed", color: "var(--hx-6EB2FF)" },
+  ARCHIVED:  { label: "Archived",  color: "var(--hx-738395)" },
 };
 const STATUS_OPTIONS = ["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 
@@ -94,7 +94,7 @@ function ProjectsInner() {
         <button
           type="button"
           onClick={() => { setForm(EMPTY_FORM); setFormError(""); setNewOpen(true); }}
-          className="inline-flex items-center gap-[7px] h-10 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold whitespace-nowrap hover:bg-[#F4D58C]"
+          className="inline-flex items-center gap-[7px] h-10 px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)]"
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={2.4} /> New Project
         </button>
@@ -126,7 +126,7 @@ function ProjectsInner() {
       </section>
 
       {/* Project table */}
-      <section className="mt-5 rounded-[12px] border border-[#1D3444] bg-ds-card overflow-hidden shadow-[inset_0_1px_0_rgba(233,189,98,.06),0_12px_32px_rgba(0,0,0,.35)]">
+      <section className="mt-5 rounded-[12px] border border-[color:var(--hx-1D3444)] bg-ds-card overflow-hidden shadow-[inset_0_1px_0_rgba(233,189,98,.06),0_12px_32px_rgba(0,0,0,.35)]">
         <div className="overflow-x-auto">
           <div className="min-w-[640px]">
             <div className={`${GRID} h-12 px-6 bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3`}>
@@ -134,7 +134,7 @@ function ProjectsInner() {
             </div>
             {isLoading && !data ? (
               Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className={`${GRID} h-[64px] px-6 border-b border-[#132430]`}>
+                <div key={i} className={`${GRID} h-[64px] px-6 border-b border-[color:var(--hx-132430)]`}>
                   <div className="flex items-center gap-3.5">
                     <div className="h-10 w-10 rounded-full bg-ds-hover motion-safe:animate-pulse" />
                     <div className="h-3.5 w-40 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
@@ -154,7 +154,7 @@ function ProjectsInner() {
                 const cfg = STATUS_CONFIG[p.status] || STATUS_CONFIG.ARCHIVED;
                 const n = p._count?.tasks || 0;
                 return (
-                  <div key={p.id} className={`${GRID} h-[64px] px-6 border-b border-[#132430] last:border-b-0 hover:bg-[#0A1620] transition-colors`}>
+                  <div key={p.id} className={`${GRID} h-[64px] px-6 border-b border-[color:var(--hx-132430)] last:border-b-0 hover:bg-[color:var(--hx-0A1620)] transition-colors`}>
                     <Link href={`/projects/${p.id}`} className="group flex items-center gap-3.5 min-w-0 text-ds-text">
                       <span className="h-10 w-10 rounded-full bg-[rgba(233,189,98,.12)] border border-[rgba(233,189,98,.35)] text-ds-gold grid place-items-center shrink-0">
                         <FolderOpen className="h-[17px] w-[17px]" strokeWidth={1.8} />
@@ -201,7 +201,7 @@ function ProjectsInner() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-[22px] flex flex-col gap-4">
                   {formError && (
-                    <div className="px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">{formError}</div>
+                    <div className="px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{formError}</div>
                   )}
                   <label className={LABEL}>
                     <span>Project Name<span className="text-ds-gold ml-[3px]">*</span></span>
@@ -247,7 +247,7 @@ function ProjectsInner() {
                 </div>
                 <div className="flex justify-end gap-2 px-[22px] py-4 border-t border-ds-line shrink-0">
                   <button type="button" onClick={() => setNewOpen(false)} disabled={creating} className="h-9 px-3.5 rounded-[6px] border border-ds-line2 text-ds-t2 text-[12px] font-semibold hover:text-ds-text disabled:opacity-50">Cancel</button>
-                  <button type="submit" disabled={creating} className="h-9 px-[18px] rounded-[6px] bg-ds-gold text-[#060D14] text-[12px] font-bold hover:bg-[#F4D58C] disabled:opacity-60">
+                  <button type="submit" disabled={creating} className="h-9 px-[18px] rounded-[6px] bg-ds-gold text-[color:var(--hx-060D14)] text-[12px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60">
                     {creating ? "Creating..." : "Create Project"}
                   </button>
                 </div>

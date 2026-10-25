@@ -3,7 +3,6 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAccount, useAccountLinkStats } from "@/lib/hooks/use-accounts";
 import { useAccountGrowth } from "@/lib/hooks/use-growth";
-import { Button } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
 import { Pencil, Trash2, Search, BarChart2, ChevronDown, X, Users, Link2, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
@@ -31,8 +30,8 @@ function fmtDate(d: string) {
 function BarTip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
-      <p className="font-semibold mb-0.5">{label}</p>
+    <div className="bg-ds-inset border border-ds-line2 text-ds-t5 text-[11px] rounded-[6px] px-3 py-2 shadow-[0_10px_30px_rgba(0,0,0,.5)]">
+      <p className="font-semibold text-ds-text mb-0.5">{label}</p>
       <p>{payload[0].value} links</p>
     </div>
   );
@@ -41,8 +40,8 @@ function BarTip({ active, payload, label }: any) {
 function FollowerTip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
-      <p className="font-semibold mb-0.5">{label}</p>
+    <div className="bg-ds-inset border border-ds-line2 text-ds-t5 text-[11px] rounded-[6px] px-3 py-2 shadow-[0_10px_30px_rgba(0,0,0,.5)]">
+      <p className="font-semibold text-ds-text mb-0.5">{label}</p>
       <p>{Number(payload[0].value).toLocaleString()} followers</p>
     </div>
   );
@@ -115,15 +114,15 @@ export default function AccountDetailPage() {
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><BoxesLoader /></div>;
   const account = (data as any)?.data;
-  if (!account) return <div className="text-[#7A7A7A] text-center py-8">Account not found</div>;
+  if (!account) return <div className="text-[12.5px] text-ds-t3 text-center py-12">Account not found</div>;
 
   const activeAssignments = account.assignments?.filter((a: any) => !a.unassignedAt) || [];
   const pastAssignments = account.assignments?.filter((a: any) => a.unassignedAt) || [];
 
   const statusBadge: Record<string, string> = {
-    ACTIVE: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-    PAUSED: "bg-[#FFF3C4] text-[#1A1A1A]",
-    ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
+    ACTIVE: "bg-ds-teal/10 border-ds-teal/30 text-ds-teal",
+    PAUSED: "bg-ds-gold/10 border-ds-gold/30 text-ds-gold",
+    ARCHIVED: "bg-ds-t3/10 border-ds-t3/30 text-ds-t3",
   };
 
   async function handleAssign() {
@@ -162,68 +161,65 @@ export default function AccountDetailPage() {
   }
 
   return (
-    <div className="max-w-3xl space-y-6 crx-animate-fade">
+    <div className="max-w-3xl space-y-3.5 pb-6 crx-animate-fade">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">{account.displayName}</h1>
-          <p className="text-[#7A7A7A] mt-1">{account.handle} on {account.platform?.name}</p>
+      <section className="flex items-start justify-between gap-4 flex-wrap pt-[26px] pb-1.5">
+        <div className="min-w-0">
+          <h1 className="m-0 text-[26px] font-semibold tracking-[-.02em] text-ds-text">{account.displayName}</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2">{account.handle} on {account.platform?.name}</p>
           <div className="flex gap-2 mt-3">
-            <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[account.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>{account.status}</span>
-            <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">{account.followerCount?.toLocaleString()} followers</span>
+            <span className={`inline-flex items-center h-[22px] px-2.5 rounded-[11px] border text-[10.5px] font-semibold ${statusBadge[account.status] || "bg-ds-t3/10 border-ds-t3/30 text-ds-t3"}`}>{account.status}</span>
+            <span className="inline-flex items-center h-[22px] px-2.5 rounded-[11px] border text-[10.5px] font-semibold bg-ds-blue/10 border-ds-blue/30 text-ds-blue">{account.followerCount?.toLocaleString()} followers</span>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => router.push(`/accounts/${id}/edit`)}
-            className="flex items-center gap-1.5 border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#F0EEFF] hover:border-[#5B4BF5]/30 hover:text-[#5B4BF5] px-4 py-2 text-sm font-medium transition-colors"
+            className="h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition-colors hover:border-ds-gold/55 hover:text-ds-gold"
           >
-            <Pencil className="h-4 w-4" /> Edit
+            <Pencil className="h-3.5 w-3.5" /> Edit
           </button>
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="flex items-center gap-1.5 border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-red-50 hover:border-red-200 hover:text-red-600 px-4 py-2 text-sm font-medium transition-colors"
+            className="h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition-colors hover:border-ds-red/50 hover:text-ds-redsoft"
           >
-            <Trash2 className="h-4 w-4" /> Delete
+            <Trash2 className="h-3.5 w-3.5" /> Delete
           </button>
-          <Button variant="outline" onClick={() => router.push("/accounts")} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Back</Button>
+          <button onClick={() => router.push("/accounts")} className="h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition-colors hover:border-ds-line4 hover:text-ds-text">Back</button>
         </div>
-      </div>
+      </section>
 
       {account.clientName && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-6 crx-animate-slide crx-delay-1">
-          <span className="text-sm text-[#7A7A7A]">Client:</span>{" "}
-          <span className="font-medium text-[#1A1A1A]">{account.clientName}</span>
+        <div className="rounded-[10px] bg-ds-card border border-ds-line px-5 py-4 crx-animate-slide crx-delay-1">
+          <span className="text-[12.5px] text-ds-t3">Client:</span>{" "}
+          <span className="text-[12.5px] font-semibold text-ds-text">{account.clientName}</span>
         </div>
       )}
 
       {/* Active assignments */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-2">
-        <div className="px-6 py-4 border-b border-[#F0EAD8]">
-          <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Active Assignments ({activeAssignments.length})</h3>
+      <div className="rounded-[10px] bg-ds-card border border-ds-line crx-animate-slide crx-delay-2">
+        <div className="px-5 py-3.5 border-b border-ds-line">
+          <h3 className="text-[14px] font-semibold text-ds-text">Active Assignments ({activeAssignments.length})</h3>
         </div>
-        <div className="p-6 space-y-3">
+        <div className="px-5 py-4 space-y-3">
           {activeAssignments.map((a: any) => (
-            <div key={a.id} className="flex items-center justify-between border-b border-[#F0EAD8] pb-2 last:border-0">
+            <div key={a.id} className="flex items-center justify-between gap-3 border-b border-ds-grid pb-3 last:border-0">
               <div className="flex items-center gap-3">
-                <div
-                  className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0"
-                  style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
-                >
+                <div className="h-8 w-8 rounded-full border border-ds-line2 bg-[color:var(--hx-10222E)] text-ds-blue grid place-items-center text-[12px] font-bold shrink-0">
                   {a.employee?.name?.[0]?.toUpperCase()}
                 </div>
                 <div>
-                  <span className="font-medium text-sm text-[#1A1A1A]">{a.employee?.name}</span>
-                  <span className="text-xs text-[#B0B0B0] ml-2">since {new Date(a.assignedAt).toLocaleDateString()}</span>
-                  {a.reason && <p className="text-xs text-[#7A7A7A]">{a.reason}</p>}
+                  <span className="font-semibold text-[12.5px] text-ds-text">{a.employee?.name}</span>
+                  <span className="text-[11px] text-ds-t3 ml-2">since {new Date(a.assignedAt).toLocaleDateString()}</span>
+                  {a.reason && <p className="text-[11.5px] text-ds-t2">{a.reason}</p>}
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => handleUnassign(a.employee.id)} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Remove</Button>
+              <button onClick={() => handleUnassign(a.employee.id)} className="h-[26px] px-2.5 rounded-[6px] bg-ds-hover border border-ds-line2 text-ds-t5 text-[11px] font-semibold transition-colors hover:border-ds-red/50 hover:text-ds-redsoft shrink-0">Remove</button>
             </div>
           ))}
           <div className="flex gap-2 pt-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#B0B0B0] pointer-events-none" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ds-t3 pointer-events-none" />
               <input
                 type="text"
                 value={empOpen ? empSearch : (employees.find((e: any) => e.id === selectedEmployee)?.name || empSearch)}
@@ -231,7 +227,7 @@ export default function AccountDetailPage() {
                 onFocus={() => { setEmpOpen(true); setEmpSearch(""); }}
                 onBlur={() => setTimeout(() => setEmpOpen(false), 150)}
                 placeholder={`Search ${employees.length} employees…`}
-                className="w-full h-10 rounded-lg border border-[#E8E0D0] bg-white pl-9 pr-3 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+                className="w-full h-9 rounded-[6px] border border-ds-line2 bg-ds-inset pl-9 pr-3 text-ds-text text-[16px] sm:text-[12.5px] placeholder:text-ds-t4 outline-none transition-colors focus:border-ds-gold"
                 autoComplete="off"
               />
               {empOpen && (() => {
@@ -239,19 +235,19 @@ export default function AccountDetailPage() {
                 const q = empSearch.trim().toLowerCase();
                 const filtered = q ? available.filter((e: any) => (e.name || "").toLowerCase().includes(q) || (e.email || "").toLowerCase().includes(q)) : available;
                 return (
-                  <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-white border border-[#E8E0D0] rounded-lg shadow-lg">
+                  <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-ds-card border border-ds-line2 rounded-[8px] shadow-[0_14px_36px_rgba(0,0,0,.5)]">
                     {filtered.length === 0 ? (
-                      <div className="px-4 py-3 text-sm text-[#7A7A7A]">{q ? `No employees match "${empSearch}"` : "All employees are already assigned"}</div>
+                      <div className="px-4 py-3 text-[12.5px] text-ds-t3">{q ? `No employees match "${empSearch}"` : "All employees are already assigned"}</div>
                     ) : (
                       filtered.map((e: any) => (
                         <button
                           key={e.id}
                           type="button"
                           onMouseDown={(ev) => { ev.preventDefault(); setSelectedEmployee(e.id); setEmpSearch(""); setEmpOpen(false); }}
-                          className={`w-full text-left px-4 py-2 text-sm hover:bg-[rgba(255,248,225,0.5)] transition-colors flex items-center justify-between ${selectedEmployee === e.id ? "bg-[#FFF3C4]" : ""}`}
+                          className={`w-full text-left px-4 py-2 text-[12.5px] hover:bg-ds-hover transition-colors flex items-center justify-between ${selectedEmployee === e.id ? "bg-ds-gold/[.14]" : ""}`}
                         >
-                          <span className="text-[#1A1A1A]">{e.name}</span>
-                          {e.email && <span className="text-xs text-[#B0B0B0] ml-2 truncate">{e.email}</span>}
+                          <span className="text-ds-text">{e.name}</span>
+                          {e.email && <span className="text-[11px] text-ds-t3 ml-2 truncate">{e.email}</span>}
                         </button>
                       ))
                     )}
@@ -259,24 +255,24 @@ export default function AccountDetailPage() {
                 );
               })()}
             </div>
-            <Button onClick={handleAssign} disabled={!selectedEmployee || assigning} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
+            <button onClick={handleAssign} disabled={!selectedEmployee || assigning} className="h-9 px-[18px] rounded-[6px] bg-ds-gold text-ds-bg text-[12px] font-bold inline-flex items-center gap-1.5 transition-colors hover:bg-ds-gold2 disabled:opacity-50">
               {assigning ? "..." : "Assign"}
-            </Button>
+            </button>
           </div>
         </div>
       </div>
 
       {/* ── Link Statistics ─────────────────────────────────────────────────── */}
-      <div className="v3-card p-5 space-y-4">
+      <div className="rounded-[10px] bg-ds-card border border-ds-line p-5 space-y-4">
         {/* Section header + date range controls */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
-            <BarChart2 className="h-4 w-4 text-indigo" />
-            <p className="font-semibold text-ink">Link Statistics</p>
+            <BarChart2 className="h-4 w-4 text-ds-gold" />
+            <p className="text-[14px] font-semibold text-ds-text">Link Statistics</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Preset chips */}
-            <div className="flex items-center gap-1 bg-ink/5 rounded-xl p-1">
+            <div className="flex gap-0.5 p-0.5 rounded-[15px] bg-ds-inset border border-ds-line">
               {DATE_PRESETS.map((p) => (
                 <button
                   key={p.label}
@@ -284,10 +280,10 @@ export default function AccountDetailPage() {
                     setStatsStartDate(new Date(today.getTime() - p.days * 86400000).toISOString().slice(0, 10));
                     setStatsEndDate(todayStr);
                   }}
-                  className={`h-6 px-2.5 rounded-lg text-xs font-medium transition-colors ${
+                  className={`h-[26px] px-3 rounded-[13px] text-[11px] font-semibold whitespace-nowrap transition-colors ${
                     activePreset === p.label
-                      ? "bg-surface text-ink shadow-sm"
-                      : "text-ink-4 hover:text-ink"
+                      ? "bg-ds-blue text-white"
+                      : "text-ds-t2 hover:text-ds-text"
                   }`}
                 >
                   {p.label}
@@ -298,71 +294,71 @@ export default function AccountDetailPage() {
               type="date"
               value={statsStartDate}
               onChange={(e) => setStatsStartDate(e.target.value)}
-              className="h-8 rounded-xl border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo"
+              className="h-[30px] rounded-[6px] border border-ds-line2 bg-ds-inset text-ds-text text-[12px] px-2 outline-none transition-colors focus:border-ds-gold [color-scheme:dark]"
             />
-            <span className="text-xs text-ink-4">→</span>
+            <span className="text-[12px] text-ds-t3">→</span>
             <input
               type="date"
               value={statsEndDate}
               onChange={(e) => setStatsEndDate(e.target.value)}
-              className="h-8 rounded-xl border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo"
+              className="h-[30px] rounded-[6px] border border-ds-line2 bg-ds-inset text-ds-text text-[12px] px-2 outline-none transition-colors focus:border-ds-gold [color-scheme:dark]"
             />
           </div>
         </div>
 
         {statsLoading ? (
-          <p className="text-xs text-ink-4 py-4 text-center">Loading…</p>
+          <p className="text-xs text-ds-t3 py-4 text-center">Loading…</p>
         ) : !stats || stats.totalLinks === 0 ? (
           <div className="text-center py-6 space-y-1">
-            <p className="text-sm text-ink-4">No links submitted for this account in the selected range</p>
-            <p className="text-xs text-ink-4">Try a wider date range</p>
+            <p className="text-sm text-ds-t3">No links submitted for this account in the selected range</p>
+            <p className="text-xs text-ds-t3">Try a wider date range</p>
           </div>
         ) : (
           <>
             {/* KPI strip */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div className="v3-card-sm p-3 space-y-0.5">
-                <div className="h-6 w-6 rounded-lg bg-terra-soft flex items-center justify-center mb-1">
-                  <Link2 className="h-3 w-3 text-terra" />
+              <div className="rounded-[8px] bg-ds-inset border border-ds-line p-3 space-y-0.5">
+                <div className="h-6 w-6 rounded-[6px] bg-ds-gold/[.13] flex items-center justify-center mb-1">
+                  <Link2 className="h-3 w-3 text-ds-gold" />
                 </div>
-                <p className="font-num text-xl font-semibold text-ink leading-none">{stats.totalLinks}</p>
-                <p className="text-[10px] text-ink-4">Total Links</p>
+                <p className="text-xl font-semibold text-ds-text leading-none">{stats.totalLinks}</p>
+                <p className="text-[10px] text-ds-t3">Total Links</p>
               </div>
-              <div className="v3-card-sm p-3 space-y-0.5">
-                <div className="h-6 w-6 rounded-lg bg-indigo-soft flex items-center justify-center mb-1">
-                  <Users className="h-3 w-3 text-indigo" />
+              <div className="rounded-[8px] bg-ds-inset border border-ds-line p-3 space-y-0.5">
+                <div className="h-6 w-6 rounded-[6px] bg-ds-blue/[.13] flex items-center justify-center mb-1">
+                  <Users className="h-3 w-3 text-ds-blue" />
                 </div>
-                <p className="font-num text-xl font-semibold text-ink leading-none">{employeeBreakdown.length}</p>
-                <p className="text-[10px] text-ink-4">Contributors</p>
+                <p className="text-xl font-semibold text-ds-text leading-none">{employeeBreakdown.length}</p>
+                <p className="text-[10px] text-ds-t3">Contributors</p>
               </div>
-              <div className="v3-card-sm p-3 space-y-0.5">
-                <div className="h-6 w-6 rounded-lg bg-sage-soft flex items-center justify-center mb-1">
-                  <BarChart2 className="h-3 w-3 text-sage" />
+              <div className="rounded-[8px] bg-ds-inset border border-ds-line p-3 space-y-0.5">
+                <div className="h-6 w-6 rounded-[6px] bg-ds-teal/[.13] flex items-center justify-center mb-1">
+                  <BarChart2 className="h-3 w-3 text-ds-teal" />
                 </div>
-                <p className="font-num text-xl font-semibold text-ink leading-none">
+                <p className="text-xl font-semibold text-ds-text leading-none">
                   {dailyTrend.filter((d: any) => d.links > 0).length}
                 </p>
-                <p className="text-[10px] text-ink-4">Active Days</p>
+                <p className="text-[10px] text-ds-t3">Active Days</p>
               </div>
             </div>
 
             {/* Daily trend chart */}
             <div>
-              <p className="text-xs font-medium text-ink-4 mb-2">Daily submission trend</p>
+              <p className="text-xs font-medium text-ds-t3 mb-2">Daily submission trend</p>
               <div className="h-36">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={dailyTrend} barSize={Math.max(4, Math.floor(320 / dailyTrend.length) - 2)} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--hx-14273A)" vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }}
+                      tick={{ fontSize: 9, fill: "var(--hx-738395)" }}
                       axisLine={false}
                       tickLine={false}
                       interval={Math.floor(dailyTrend.length / 6)}
                     />
-                    <YAxis tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip content={<BarTip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                    <Bar dataKey="links" fill="var(--color-terra,#c97c3a)" radius={[3, 3, 0, 0]} />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--hx-738395)" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip content={<BarTip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                    <Bar dataKey="links" fill="var(--hx-238BFF)" radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -370,33 +366,30 @@ export default function AccountDetailPage() {
 
             {/* Per-employee breakdown */}
             <div>
-              <p className="text-xs font-medium text-ink-4 mb-2">Submitted by employee</p>
+              <p className="text-xs font-medium text-ds-t3 mb-2">Submitted by employee</p>
               <div className="space-y-2.5">
                 {employeeBreakdown.map((emp: any) => (
                   <div key={emp.employeeId} className="flex items-center gap-3">
-                    <div
-                      className="h-7 w-7 rounded-full flex items-center justify-center text-white text-[10px] font-semibold shrink-0"
-                      style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
-                    >
+                    <div className="h-7 w-7 rounded-full border border-ds-line2 bg-[color:var(--hx-10222E)] text-ds-blue grid place-items-center text-[10px] font-bold shrink-0">
                       {emp.name?.[0]?.toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-0.5">
                         <Link
                           href={`/reports/${emp.employeeId}`}
-                          className="text-xs font-medium text-ink hover:text-indigo transition-colors truncate"
+                          className="text-[12px] font-semibold text-ds-text hover:text-ds-gold transition-colors truncate"
                         >
                           {emp.name}
                         </Link>
                         <div className="flex items-center gap-2 shrink-0 ml-2">
-                          <span className="text-[10px] text-ink-4">{emp.reportCount} day{emp.reportCount !== 1 ? "s" : ""}</span>
-                          <span className="text-xs font-semibold text-ink">{emp.totalLinks}</span>
-                          <span className="text-[10px] text-ink-4 w-8 text-right">{emp.pct}%</span>
+                          <span className="text-[10px] text-ds-t3">{emp.reportCount} day{emp.reportCount !== 1 ? "s" : ""}</span>
+                          <span className="text-[12px] font-semibold text-ds-text">{emp.totalLinks}</span>
+                          <span className="text-[10px] text-ds-t3 w-8 text-right">{emp.pct}%</span>
                         </div>
                       </div>
-                      <div className="h-1.5 rounded-full bg-ink/8 overflow-hidden">
+                      <div className="h-1.5 rounded-full bg-ds-hover overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-indigo transition-all duration-500"
+                          className="h-full rounded-full bg-ds-blue transition-all duration-500"
                           style={{ width: `${emp.pct}%` }}
                         />
                       </div>
@@ -410,22 +403,22 @@ export default function AccountDetailPage() {
       </div>
 
       {/* ── Follower Growth ─────────────────────────────────────────────────── */}
-      <div className="v3-card p-5 space-y-4">
+      <div className="rounded-[10px] bg-ds-card border border-ds-line p-5 space-y-4">
         {/* Section header + window pills */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-indigo" />
-            <p className="font-semibold text-ink">Follower Growth</p>
+            <TrendingUp className="h-4 w-4 text-ds-gold" />
+            <p className="text-[14px] font-semibold text-ds-text">Follower Growth</p>
           </div>
           <div className="flex items-center gap-1.5">
             {GROWTH_WINDOWS.map((w) => (
               <button
                 key={w}
                 onClick={() => setGrowthDays(w)}
-                className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${
+                className={`h-[26px] px-[11px] rounded-[13px] border text-[11px] font-semibold whitespace-nowrap transition-colors ${
                   growthDays === w
-                    ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                    : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"
+                    ? "border-ds-gold/55 bg-ds-gold/[.14] text-ds-text"
+                    : "border-ds-line2 bg-ds-inset text-ds-t2 hover:text-ds-text"
                 }`}
               >
                 {w}d
@@ -435,25 +428,25 @@ export default function AccountDetailPage() {
         </div>
 
         {growthLoading ? (
-          <p className="text-xs text-ink-4 py-4 text-center">Loading…</p>
+          <p className="text-xs text-ds-t3 py-4 text-center">Loading…</p>
         ) : growthSnapshots.length < 2 ? (
           <div className="text-center py-6 space-y-1">
-            <p className="text-sm text-ink-4">Not enough data yet — growth appears after a couple of daily syncs.</p>
+            <p className="text-sm text-ds-t3">Not enough data yet — growth appears after a couple of daily syncs.</p>
           </div>
         ) : (
           <>
             {/* Current count + window delta */}
             <div className="flex items-end gap-4 flex-wrap">
               <div>
-                <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(growthLast)}</p>
-                <p className="text-[10px] text-ink-4 mt-1">current followers</p>
+                <p className="text-[26px] font-semibold tracking-[-.02em] text-ds-text leading-none">{fmtCompact(growthLast)}</p>
+                <p className="text-[10px] text-ds-t3 mt-1">current followers</p>
               </div>
-              <span className={`inline-flex items-center gap-1 text-sm font-semibold pb-0.5 ${growthUp ? "text-[#3E9B4F]" : growthDown ? "text-[#D14343]" : "text-ink-4"}`}>
+              <span className={`inline-flex items-center gap-1 text-sm font-semibold pb-0.5 ${growthUp ? "text-ds-teal" : growthDown ? "text-ds-redsoft" : "text-ds-t3"}`}>
                 {growthUp && <TrendingUp className="h-4 w-4 shrink-0" />}
                 {growthDown && <TrendingDown className="h-4 w-4 shrink-0" />}
                 {(growthDelta ?? 0) > 0 ? "+" : ""}{fmtCompact(growthDelta)}
                 {growthPct != null && (
-                  <span className="text-ink-4 font-normal">({(growthDelta ?? 0) > 0 ? "+" : ""}{growthPct}%) · {growthDays}d</span>
+                  <span className="text-ds-t3 font-normal">({(growthDelta ?? 0) > 0 ? "+" : ""}{growthPct}%) · {growthDays}d</span>
                 )}
               </span>
             </div>
@@ -464,21 +457,21 @@ export default function AccountDetailPage() {
                 <AreaChart data={growthChart} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
                   <defs>
                     <linearGradient id="followerGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--color-indigo, #5b4bf5)" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="var(--color-indigo, #5b4bf5)" stopOpacity={0} />
+                      <stop offset="5%" stopColor="var(--hx-E9BD62)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="var(--hx-E9BD62)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--hx-14273A)" vertical={false} />
                   <XAxis
                     dataKey="date"
-                    tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }}
+                    tick={{ fontSize: 9, fill: "var(--hx-738395)" }}
                     axisLine={false}
                     tickLine={false}
                     interval={Math.max(0, Math.ceil(growthChart.length / 8) - 1)}
                   />
-                  <YAxis tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }} axisLine={false} tickLine={false} allowDecimals={false} domain={["auto", "auto"]} />
-                  <Tooltip content={<FollowerTip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                  <Area type="monotone" dataKey="followers" name="Followers" stroke="var(--color-indigo,#5b4bf5)" fill="url(#followerGrad)" strokeWidth={2} dot={false} />
+                  <YAxis tick={{ fontSize: 9, fill: "var(--hx-738395)" }} axisLine={false} tickLine={false} allowDecimals={false} domain={["auto", "auto"]} />
+                  <Tooltip content={<FollowerTip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                  <Area type="monotone" dataKey="followers" name="Followers" stroke="var(--hx-E9BD62)" fill="url(#followerGrad)" strokeWidth={2} dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -488,33 +481,33 @@ export default function AccountDetailPage() {
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !deleting && setShowDeleteConfirm(false)}>
-          <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_8px_40px_rgba(0,0,0,0.12)] w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-5">
-              <div className="flex items-start gap-4">
-                <div className="h-10 w-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
-                  <Trash2 className="h-5 w-5 text-red-600" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-medium text-[#1A1A1A]">Delete account?</h3>
-                  <p className="text-sm text-[#7A7A7A] mt-1">
-                    This will permanently delete <strong>{account.displayName}</strong> ({account.handle}). If the account has tasks, posts, or report links, you'll need to archive it instead.
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[rgba(2,6,10,.7)]" onClick={() => !deleting && setShowDeleteConfirm(false)}>
+          <div role="dialog" aria-modal="true" aria-label="Delete account" className="w-full max-w-[400px] rounded-[10px] border border-ds-line2 bg-ds-card p-[22px] shadow-[0_20px_50px_rgba(0,0,0,.6)]" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <div className="flex items-start gap-3.5">
+                <span className="h-10 w-10 rounded-[10px] grid place-items-center shrink-0 bg-ds-red/[.14] text-ds-redsoft">
+                  <Trash2 className="h-[18px] w-[18px]" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold text-ds-text">Delete account?</p>
+                  <p className="text-[12px] text-ds-t2 mt-1.5 leading-relaxed">
+                    This will permanently delete <strong className="text-ds-text">{account.displayName}</strong> ({account.handle}). If the account has tasks, posts, or report links, you'll need to archive it instead.
                   </p>
                 </div>
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-[#F0EAD8] flex items-center justify-end gap-2">
+            <div className="flex justify-end gap-2 mt-5">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
                 disabled={deleting}
-                className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors disabled:opacity-50"
+                className="h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-transparent text-ds-t2 text-[12px] font-semibold transition-colors hover:border-ds-line4 hover:text-ds-text disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleDelete}
                 disabled={deleting}
-                className="px-4 py-2 bg-red-600 text-white rounded-full text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
+                className="h-[34px] px-4 rounded-[6px] bg-ds-red text-white text-[12px] font-bold transition-colors hover:bg-ds-red/90 disabled:opacity-50"
               >
                 {deleting ? "Deleting..." : "Delete"}
               </button>
@@ -525,18 +518,18 @@ export default function AccountDetailPage() {
 
       {/* Past assignments */}
       {pastAssignments.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-3">
-          <div className="px-6 py-4 border-b border-[#F0EAD8]">
-            <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Assignment History</h3>
+        <div className="rounded-[10px] bg-ds-card border border-ds-line crx-animate-slide crx-delay-3">
+          <div className="px-5 py-3.5 border-b border-ds-line">
+            <h3 className="text-[14px] font-semibold text-ds-text">Assignment History</h3>
           </div>
-          <div className="p-6">
+          <div className="px-5 py-4">
             {pastAssignments.map((a: any) => (
-              <div key={a.id} className="text-sm border-b border-[#F0EAD8] pb-2 mb-2 last:border-0">
-                <span className="font-medium text-[#1A1A1A]">{a.employee?.name}</span>
-                <span className="text-[#7A7A7A] ml-2">
+              <div key={a.id} className="text-[12.5px] border-b border-ds-grid pb-2 mb-2 last:border-0 last:mb-0 last:pb-0">
+                <span className="font-semibold text-ds-text">{a.employee?.name}</span>
+                <span className="text-ds-t2 ml-2">
                   {new Date(a.assignedAt).toLocaleDateString()} &mdash; {new Date(a.unassignedAt).toLocaleDateString()}
                 </span>
-                {a.assigner && <span className="text-xs text-[#B0B0B0] ml-2">by {a.assigner.name}</span>}
+                {a.assigner && <span className="text-[11px] text-ds-t3 ml-2">by {a.assigner.name}</span>}
               </div>
             ))}
           </div>

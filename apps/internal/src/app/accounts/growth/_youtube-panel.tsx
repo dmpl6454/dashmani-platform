@@ -51,7 +51,7 @@ function DeltaLine({ value, days, absentTitle, unreliable }: {
     // that never happened. So it is shown, struck through, and explained.
     return (
       <span
-        className="text-ds-t3 line-through decoration-[#FBBF24]"
+        className="text-ds-t3 line-through decoration-[color:var(--hx-FBBF24)]"
         title={`This change (${fmtDelta(value)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this channel jumps between two different channels that share a name. It is excluded from the totals above and needs the channel's handle corrected here. The current subscriber figure itself is fine.`}
       >
         {fmtDelta(value)}
@@ -182,7 +182,7 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
         {/* ⚠️ The column COUNT is dynamic (Manage adds a Remove column), so header and
             body must gate that cell on the same flag — a mismatch shifts every cell in
             the row one column across. */}
-        <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]">
+        <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]">
           <SortTh label="Channel" colKey="name" sort={sort} onSort={onSort} align="left" pad="px-5" />
           <SortTh
             colKey="subs" sort={sort} onSort={onSort}
@@ -208,7 +208,7 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
       </thead>
       <tbody>
         {sorted.map((c) => (
-          <tr key={c.id} className="border-b border-[#101E29] hover:bg-[#0B1824]">
+          <tr key={c.id} className="border-b border-[color:var(--hx-101E29)] hover:bg-[color:var(--hx-0B1824)]">
             <td className="px-6 py-[11px]">
               {/* min-w-0 on the flex child AND truncate on the name: the parent can only
                   clip what its children are willing to shrink. */}

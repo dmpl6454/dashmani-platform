@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
+import { requireInternalUser } from "../middleware/require-internal-user";
 import { requirePermission } from "../middleware/rbac";
 import { success } from "../utils/response";
 import { hashPassword } from "../utils/password";
@@ -808,7 +809,9 @@ router.post("/admin/ai/salary-slip/preview", authenticate, requirePermission("em
   } catch (err) { next(err); }
 });
 
-router.post("/admin/ai/assist", authenticate, async (req: Request, res: Response, next: NextFunction) => {
+// Internal staff only: `authenticate` checks the signature alone, and every portal signs with
+// the same secret — without this, client and HR logins could spend our AI budget.
+router.post("/admin/ai/assist", authenticate, requireInternalUser, async (req: Request, res: Response, next: NextFunction) => {
   try { return success(res, await aiService.aiAssist(req.body)); } catch (err) { next(err); }
 });
 

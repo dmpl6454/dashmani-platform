@@ -108,7 +108,7 @@ export default function ContentPage() {
           <div className="v3-card overflow-hidden fade-up d2">
             <div
               className="tbl-head row-content items-center gap-3 px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3"
-              style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+              style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}
             >
               <span></span><span>Post</span><span>Project</span><span>Scheduled</span><span className="text-right">Status</span>
             </div>
@@ -118,7 +118,7 @@ export default function ContentPage() {
             )}
 
             {isLoading && [...Array(4)].map((_, i) => (
-              <div key={i} className="row-content items-center gap-3 px-5 h-row" style={{ borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+              <div key={i} className="row-content items-center gap-3 px-5 h-row" style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
                 <Skeleton className="h-7 w-7" />
                 <Skeleton className="h-3.5 w-2/3" />
                 <Skeleton className="h-3 w-16" />
@@ -160,7 +160,7 @@ function ContentRow({ post: p, divider, onOpen, delay }: { post: any; divider: b
     <div
       onClick={onOpen}
       className={`group row-content items-center gap-3 px-5 h-row v3-row cursor-pointer fade-up ${delay}`}
-      style={divider ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : undefined}
+      style={divider ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : undefined}
     >
       <AspectThumb aspect={p.aspectRatio || "1:1"} format={p.format} />
       <div className="min-w-0 flex items-center gap-2">

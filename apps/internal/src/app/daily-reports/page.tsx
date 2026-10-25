@@ -33,8 +33,8 @@ function fmtTime(v: string | null | undefined): string {
 }
 
 // Initials avatar, same palette as the Employees page.
-const AV_BG = ["#10222E", "#0E2A22", "#1B1630", "#2A2410", "#2A1116"];
-const AV_FG = ["#238BFF", "#34D399", "#9B7EDE", "#E9BD62", "#FB7185"];
+const AV_BG = ["var(--hx-10222E)", "var(--hx-0E2A22)", "var(--hx-1B1630)", "var(--hx-2A2410)", "var(--hx-2A1116)"];
+const AV_FG = ["var(--hx-238BFF)", "var(--hx-34D399)", "var(--hx-9B7EDE)", "var(--hx-E9BD62)", "var(--hx-FB7185)"];
 const hash = (s: string) => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
@@ -138,7 +138,7 @@ export default function DailyReportsPage() {
               disabled={isToday}
               title="Next day"
               aria-label="Next day"
-              className="w-[34px] h-full grid place-items-center text-ds-t2 hover:text-ds-gold disabled:text-[#33506A] disabled:hover:text-[#33506A] disabled:cursor-default"
+              className="w-[34px] h-full grid place-items-center text-ds-t2 hover:text-ds-gold disabled:text-[color:var(--hx-33506A)] disabled:hover:text-[color:var(--hx-33506A)] disabled:cursor-default"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -173,11 +173,11 @@ export default function DailyReportsPage() {
 
       {/* Submission status (only meaningful for the "all employees" view) */}
       {!employeeId && status && (
-        <section className="relative rounded-[12px] bg-[linear-gradient(180deg,#0B1A27_0%,#08131C_75%)] border border-[#1D3444] overflow-hidden">
+        <section className="relative rounded-[12px] bg-[linear-gradient(180deg,var(--hx-0B1A27)_0%,var(--hx-08131C)_75%)] border border-[color:var(--hx-1D3444)] overflow-hidden">
           <span
             aria-hidden="true"
             className="absolute left-0 right-0 top-0 h-px"
-            style={{ background: `linear-gradient(90deg,transparent,${allIn ? "#00D7A0" : "#E9BD62"} 30%,${allIn ? "#00D7A0" : "#E9BD62"} 70%,transparent)` }}
+            style={{ background: `linear-gradient(90deg,transparent,${allIn ? "var(--hx-00D7A0)" : "var(--hx-E9BD62)"} 30%,${allIn ? "var(--hx-00D7A0)" : "var(--hx-E9BD62)"} 70%,transparent)` }}
           />
           <div className="flex flex-wrap gap-x-10 gap-y-6 px-7 py-[26px] items-center">
             <div className="flex-none">
@@ -187,9 +187,9 @@ export default function DailyReportsPage() {
                 <span className="text-[24px] font-light text-ds-t3 tracking-[-.02em]">/ {totalEmployees}</span>
               </div>
               <div className="flex items-center gap-2.5 mt-3.5 w-[240px] max-w-full">
-                <div className="flex-1 h-1 rounded-[2px] bg-[#132430] overflow-hidden">
+                <div className="flex-1 h-1 rounded-[2px] bg-[color:var(--hx-132430)] overflow-hidden">
                   <div
-                    className="h-full bg-[linear-gradient(90deg,#B8913F,#E9BD62)] transition-[width] duration-500"
+                    className="h-full bg-[linear-gradient(90deg,var(--hx-B8913F),var(--hx-E9BD62))] transition-[width] duration-500"
                     style={{ width: `${pct ?? 0}%` }}
                   />
                 </div>
@@ -197,8 +197,8 @@ export default function DailyReportsPage() {
               </div>
             </div>
 
-            <div className="flex-[1_1_360px] min-w-0 sm:pl-7 sm:border-l border-[#1D3444]">
-              <div className={`flex items-center gap-2 text-[13.5px] font-semibold ${allIn ? "text-ds-teal" : "text-[#FBBF24]"}`}>
+            <div className="flex-[1_1_360px] min-w-0 sm:pl-7 sm:border-l border-[color:var(--hx-1D3444)]">
+              <div className={`flex items-center gap-2 text-[13.5px] font-semibold ${allIn ? "text-ds-teal" : "text-[color:var(--hx-FBBF24)]"}`}>
                 {allIn ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
                 <span>
                   {allIn
@@ -213,10 +213,10 @@ export default function DailyReportsPage() {
           </div>
 
           {!allIn && (
-            <div className="border-t border-ds-line bg-[rgba(5,10,16,.35)] px-7 pt-4 pb-5">
+            <div className="border-t border-ds-line bg-[color-mix(in_srgb,var(--hx-060F16)_35%,transparent)] px-7 pt-4 pb-5">
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="whitespace-nowrap text-[10px] tracking-[.18em] uppercase text-[#FBBF24] font-bold">Not yet submitted</span>
-                <span className="h-5 px-2 rounded-full bg-[rgba(251,191,36,.12)] text-[#FBBF24] text-[10.5px] font-bold inline-flex items-center whitespace-nowrap">
+                <span className="whitespace-nowrap text-[10px] tracking-[.18em] uppercase text-[color:var(--hx-FBBF24)] font-bold">Not yet submitted</span>
+                <span className="h-5 px-2 rounded-full bg-[rgba(251,191,36,.12)] text-[color:var(--hx-FBBF24)] text-[10.5px] font-bold inline-flex items-center whitespace-nowrap">
                   {nonSubmitters.length} pending
                 </span>
                 <label className="sm:ml-auto flex items-center gap-[7px] h-7 px-[11px] rounded-full bg-ds-inset border border-ds-line2 text-ds-t3 w-[220px] max-w-full">
@@ -237,7 +237,7 @@ export default function DailyReportsPage() {
                     type="button"
                     onClick={() => setEmployeeId(e.id)}
                     title={`View ${e.name}`}
-                    className="inline-flex items-center gap-[7px] h-7 pl-[3px] pr-[11px] rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[11.5px] font-medium whitespace-nowrap max-w-full hover:border-[rgba(251,191,36,.55)] hover:text-[#F4D58C]"
+                    className="inline-flex items-center gap-[7px] h-7 pl-[3px] pr-[11px] rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[11.5px] font-medium whitespace-nowrap max-w-full hover:border-[rgba(251,191,36,.55)] hover:text-[color:var(--hx-F4D58C)]"
                   >
                     <Mono name={e.name} size={22} />
                     <span className="truncate">{e.name}</span>
@@ -250,7 +250,7 @@ export default function DailyReportsPage() {
                   <button
                     type="button"
                     onClick={() => setShowAllMissing((v) => !v)}
-                    className="h-7 px-[13px] rounded-full border border-dashed border-[#33506A] text-ds-gold text-[11.5px] font-semibold whitespace-nowrap hover:border-ds-gold"
+                    className="h-7 px-[13px] rounded-full border border-dashed border-[color:var(--hx-33506A)] text-ds-gold text-[11.5px] font-semibold whitespace-nowrap hover:border-ds-gold"
                   >
                     {showAllMissing ? "Show fewer" : `Show all ${nonSubmitters.length}`}
                   </button>
@@ -297,8 +297,8 @@ export default function DailyReportsPage() {
             const name = r.employee?.name ?? "Unknown";
             const time = fmtTime(r.updatedAt);
             return (
-              <article key={r.id} className="relative flex flex-col bg-ds-card border border-ds-line rounded-[10px] overflow-hidden hover:border-[#2A4658] transition-colors">
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-[#101E29]">
+              <article key={r.id} className="relative flex flex-col bg-ds-card border border-ds-line rounded-[10px] overflow-hidden hover:border-[color:var(--hx-2A4658)] transition-colors">
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-[color:var(--hx-101E29)]">
                   <span className="rounded-full border border-ds-line2 shrink-0">
                     <Mono name={name} size={38} />
                   </span>
@@ -322,14 +322,14 @@ export default function DailyReportsPage() {
 
                   {r.tomorrowPlan && (
                     <div className="pt-3.5 border-t border-dashed border-ds-line">
-                      <div className="text-[10px] tracking-[.18em] uppercase text-[#6EB2FF] font-bold">Tomorrow&apos;s plan</div>
+                      <div className="text-[10px] tracking-[.18em] uppercase text-[color:var(--hx-6EB2FF)] font-bold">Tomorrow&apos;s plan</div>
                       <p className="mt-[7px] text-[12.5px] leading-[1.6] text-ds-t5 whitespace-pre-wrap break-words [text-wrap:pretty]">{r.tomorrowPlan}</p>
                     </div>
                   )}
 
                   {r.blockers && (
                     <div className="px-3.5 py-3 rounded-[8px] bg-[rgba(251,191,36,.05)] border border-[rgba(251,191,36,.18)]">
-                      <div className="text-[10px] tracking-[.18em] uppercase text-[#FBBF24] font-bold">Notes</div>
+                      <div className="text-[10px] tracking-[.18em] uppercase text-[color:var(--hx-FBBF24)] font-bold">Notes</div>
                       <p className="mt-1.5 text-[12.5px] leading-[1.55] text-ds-t5 italic whitespace-pre-wrap break-words [text-wrap:pretty]">{r.blockers}</p>
                     </div>
                   )}

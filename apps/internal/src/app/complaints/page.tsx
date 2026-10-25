@@ -8,8 +8,8 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUSES = ["", "OPEN", "IN_REVIEW", "RESOLVED", "CLOSED"];
 // Mockup palette.
-const STATUS_COLOR: Record<string, string> = { OPEN: "#E9BD62", IN_REVIEW: "#6EB2FF", RESOLVED: "#00D7A0", CLOSED: "#738395" };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const STATUS_COLOR: Record<string, string> = { OPEN: "var(--hx-E9BD62)", IN_REVIEW: "var(--hx-6EB2FF)", RESOLVED: "var(--hx-00D7A0)", CLOSED: "var(--hx-738395)" };
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const hash = (s: string) => {
   let h = 0;
@@ -17,7 +17,7 @@ const hash = (s: string) => {
   return Math.abs(h);
 };
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const initials = (name?: string) =>
@@ -25,7 +25,7 @@ const initials = (name?: string) =>
 const fdY = (v: string) => { const d = new Date(v); return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
 const FIELD =
   "h-[42px] px-3 rounded-[10px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13px] outline-none focus:border-ds-gold placeholder:text-ds-t4 [color-scheme:dark]";
-const Dot = () => <span aria-hidden="true" className="h-[3px] w-[3px] rounded-full bg-[#4A6275] shrink-0" />;
+const Dot = () => <span aria-hidden="true" className="h-[3px] w-[3px] rounded-full bg-[color:var(--hx-4A6275)] shrink-0" />;
 
 export default function AdminComplaintsPage() {
   usePageTitle("Complaints");
@@ -85,7 +85,7 @@ export default function AdminComplaintsPage() {
                 role="tab"
                 aria-selected={on}
                 onClick={() => { setFilter(s); setResponding(null); }}
-                className={`inline-flex items-center gap-2 h-9 px-4 rounded-full text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors ${on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+                className={`inline-flex items-center gap-2 h-9 px-4 rounded-full text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors ${on ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"}`}
               >
                 {s ? formatStatus(s) : "All"}
                 {data && <span className={`text-[11px] font-semibold ${on ? "text-[rgba(6,13,20,.6)]" : "text-ds-t3"}`}>{count(s)}</span>}
@@ -101,7 +101,7 @@ export default function AdminComplaintsPage() {
       </section>
 
       {actionError && (
-        <div className="mt-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+        <div className="mt-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px] flex items-center justify-between gap-3">
           <span>{actionError}</span>
           <button type="button" onClick={() => setActionError("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </div>
@@ -111,11 +111,11 @@ export default function AdminComplaintsPage() {
         {isLoading && !data ? (
           Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-[150px] rounded-[16px] bg-ds-card border border-ds-line motion-safe:animate-pulse" />)
         ) : error ? (
-          <div className="rounded-[16px] border border-[#2A4658] bg-ds-card py-14 px-5 text-center text-[13px] text-ds-t3">
+          <div className="rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card py-14 px-5 text-center text-[13px] text-ds-t3">
             Complaints couldn&apos;t be loaded just now. Refresh to try again.
           </div>
         ) : complaints.length === 0 ? (
-          <div className="rounded-[16px] border border-[#2A4658] bg-ds-card py-14 px-5 flex flex-col items-center gap-3 text-[13px] text-ds-t3">
+          <div className="rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card py-14 px-5 flex flex-col items-center gap-3 text-[13px] text-ds-t3">
             <MessageSquare className="h-9 w-9" strokeWidth={1.5} />
             No complaints found
           </div>
@@ -123,10 +123,10 @@ export default function AdminComplaintsPage() {
           complaints.map((c: any) => {
             const name = c.employee?.name || "—";
             const hue = HUES[hash(name) % HUES.length];
-            const sc = STATUS_COLOR[c.status] ?? "#738395";
+            const sc = STATUS_COLOR[c.status] ?? "var(--hx-738395)";
             const editing = responding === c.id;
             return (
-              <article key={c.id} className="rounded-[16px] border border-[#2A4658] bg-ds-card px-6 py-[22px] flex flex-col gap-3.5 overflow-hidden">
+              <article key={c.id} className="rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card px-6 py-[22px] flex flex-col gap-3.5 overflow-hidden">
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-3 min-w-0 flex-[1_1_320px]">
                     <span
@@ -144,7 +144,7 @@ export default function AdminComplaintsPage() {
                         {c.category && (
                           <>
                             <Dot />
-                            <span className="inline-flex items-center h-[22px] px-[9px] rounded-full bg-[#0F1F2B] border border-ds-line2 text-ds-t2 text-[11px] font-semibold whitespace-nowrap">
+                            <span className="inline-flex items-center h-[22px] px-[9px] rounded-full bg-[color:var(--hx-0F1F2B)] border border-ds-line2 text-ds-t2 text-[11px] font-semibold whitespace-nowrap">
                               {c.category}
                             </span>
                           </>
@@ -168,12 +168,12 @@ export default function AdminComplaintsPage() {
                 {c.adminResponse && (
                   <div className="sm:ml-[52px] px-3.5 py-3 rounded-[12px] bg-ds-inset border border-ds-line2">
                     <div className="text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-gold">Your Response</div>
-                    <p className="mt-1.5 text-[13px] leading-[1.55] text-[#E3E8EE] whitespace-pre-wrap break-words">{c.adminResponse}</p>
+                    <p className="mt-1.5 text-[13px] leading-[1.55] text-[color:var(--hx-E3E8EE)] whitespace-pre-wrap break-words">{c.adminResponse}</p>
                   </div>
                 )}
 
                 {editing ? (
-                  <div className="sm:ml-[52px] pt-3.5 border-t border-[#132430] flex flex-col gap-2.5">
+                  <div className="sm:ml-[52px] pt-3.5 border-t border-[color:var(--hx-132430)] flex flex-col gap-2.5">
                     <textarea
                       placeholder="Type your response..."
                       value={response}
@@ -192,7 +192,7 @@ export default function AdminComplaintsPage() {
                         type="button"
                         onClick={() => handleRespond(c.id)}
                         disabled={submitting}
-                        className="inline-flex items-center gap-2 h-10 px-[18px] rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold hover:bg-[#F4D58C] disabled:opacity-50"
+                        className="inline-flex items-center gap-2 h-10 px-[18px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-50"
                       >
                         <Send className="h-3.5 w-3.5" /> {submitting ? "Sending..." : "Send Response"}
                       </button>
@@ -206,7 +206,7 @@ export default function AdminComplaintsPage() {
                     <button
                       type="button"
                       onClick={() => { setResponding(c.id); setActionError(""); }}
-                      className="inline-flex items-center gap-[7px] h-[34px] px-3.5 rounded-full border border-[rgba(110,178,255,.35)] text-[#6EB2FF] text-[12.5px] font-semibold hover:bg-[rgba(110,178,255,.1)]"
+                      className="inline-flex items-center gap-[7px] h-[34px] px-3.5 rounded-full border border-[rgba(110,178,255,.35)] text-[color:var(--hx-6EB2FF)] text-[12.5px] font-semibold hover:bg-[rgba(110,178,255,.1)]"
                     >
                       <MessageSquare className="h-[13px] w-[13px]" />
                       {c.adminResponse ? "Update Response" : "Respond"}

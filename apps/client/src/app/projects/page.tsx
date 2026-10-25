@@ -104,7 +104,7 @@ export default function ProjectsPage() {
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
               className="h-8 sm:h-9 pl-2.5 sm:pl-3 pr-7 bg-surface rounded-lg sm:rounded-xl text-[12px] sm:text-[12.5px] text-ink font-semibold appearance-none cursor-pointer"
-              style={{ border: "2px solid rgba(26,26,26,0.2)" }}
+              style={{ border: "2px solid rgba(255,255,255,0.25)" }}
             >
               <option value="due">Due date</option>
               <option value="name">Name</option>
@@ -117,7 +117,7 @@ export default function ProjectsPage() {
         <div className="v3-card overflow-hidden fade-up d2">
           <div
             className="tbl-head row-projects items-center gap-3 px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3"
-            style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+            style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}
           >
             <span>Project</span>
             <span>Status</span>
@@ -133,7 +133,7 @@ export default function ProjectsPage() {
           )}
 
           {isLoading && [...Array(4)].map((_, i) => (
-            <div key={i} className="row-projects items-center gap-3 px-5 h-row" style={{ borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+            <div key={i} className="row-projects items-center gap-3 px-5 h-row" style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
               <Skeleton className="h-3.5 w-2/3" />
               <Skeleton className="h-5 w-16" />
               <Skeleton className="h-5 w-14" />
@@ -187,7 +187,7 @@ function ProjectRow({ project: p, divider, pending, delay, onOpen }: {
     <div
       onClick={onOpen}
       className={`group row-projects items-center gap-3 px-5 h-row v3-row cursor-pointer transition-colors fade-up ${delay}`}
-      style={divider ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : undefined}
+      style={divider ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : undefined}
     >
       <div className="min-w-0 flex items-center gap-2">
         <span className="text-[13.5px] font-semibold text-ink truncate">{p.name}</span>
@@ -211,7 +211,7 @@ function ProjectRow({ project: p, divider, pending, delay, onOpen }: {
         <ColLabel>Health</ColLabel>
         {health != null ? (
           <>
-            <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden" style={{ border: "1px solid rgba(26,26,26,0.08)" }}>
+            <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.10)" }}>
               <div className={`h-full ${hColor} rounded-full transition-all duration-500`} style={{ width: `${health}%` }} />
             </div>
             <span className="text-[11.5px] tabular-nums text-ink-2 w-6 text-right font-bold">{health}</span>

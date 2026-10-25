@@ -63,6 +63,30 @@ export const clientRegisterSchema = z.object({
   contactName: z.string().min(2).max(200).optional(),
 });
 
+/**
+ * Public self-signup from the website's "Start a campaign" button (owner decision 2026-10-10).
+ * Free-text fields go through safeString; the email is normalised so the account can never
+ * be locked out by casing (see CLAUDE.md "Email-case lockouts").
+ */
+export const clientSignupSchema = z.object({
+  companyName: safeString.pipe(z.string().min(2, "Company or brand name must be at least 2 characters").max(200)),
+  contactName: safeString.pipe(z.string().min(2, "Your name must be at least 2 characters").max(200)),
+  email: z.string().max(254, "Email is too long").pipe(normalizedEmail),
+  password: z.string().min(8, "Password must be at least 8 characters").max(200),
+  phone: safeString.pipe(z.string().max(20)).optional().or(z.literal("").transform(() => undefined)),
+});
+
+/**
+ * "Sign in with Google" (client portal). `credential` is the Google Identity Services ID token;
+ * the API verifies it with Google before trusting a byte of it. `companyName` is sent only on
+ * the second round-trip of a FIRST sign-in, when the portal has asked the new client to name
+ * their company (the token carries a person's name and email, not a business).
+ */
+export const clientGoogleSchema = z.object({
+  credential: z.string().min(20).max(4096),
+  companyName: safeString.pipe(z.string().min(2, "Company or brand name must be at least 2 characters").max(200)).optional(),
+});
+
 export const createInviteSchema = z.object({
   email: normalizedEmail,
 });

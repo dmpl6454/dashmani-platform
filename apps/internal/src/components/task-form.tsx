@@ -1,8 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Input, Card, CardHeader, CardTitle, CardContent } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
+
+const LABEL = "text-[10.5px] text-ds-t3 font-semibold tracking-[.1em] uppercase";
+const FIELD =
+  "w-full h-[46px] px-4 rounded-[12px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13.5px] outline-none focus:border-[rgba(233,189,98,.6)] placeholder:text-ds-t4 [color-scheme:dark] min-w-0";
+const GHOST_BTN =
+  "h-[42px] px-5 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold whitespace-nowrap hover:text-ds-text hover:border-[color:var(--hx-2A4658)] disabled:opacity-60";
+const GOLD_BTN =
+  "inline-flex items-center gap-2 h-[42px] px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60";
 
 interface TaskFormProps {
   task?: any;
@@ -64,89 +71,101 @@ export function TaskForm({ task }: TaskFormProps) {
   }
 
   return (
-    <Card className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
-      <CardHeader>
-        <CardTitle className="font-serif text-[#1A1A1A]">{isEdit ? "Edit Task" : "Create New Task"}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
-          {error && <p className="text-sm text-red-500">{error}</p>}
-          <div>
-            <Input
-              label="Title"
-              value={form.title}
-              onChange={(e) => { setForm({ ...form, title: e.target.value }); if (titleError) setTitleError(""); }}
-              className={`border rounded-lg focus:ring-2 focus:border-[#F5D547] ${titleError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
-            />
-            {titleError && (
-              <p role="alert" className="mt-1.5 text-xs text-red-500 font-semibold flex items-center gap-1">
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                {titleError}
-              </p>
-            )}
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Description</label>
-            <textarea
-              className="flex w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm min-h-[80px] focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-[#1A1A1A]">Priority</label>
-              <select
-                className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
-                value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: e.target.value })}
-              >
-                <option value="LOW">Low</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="HIGH">High</option>
-                <option value="CRITICAL">Critical</option>
-              </select>
-            </div>
-            <div>
-              <Input label="Due Date" type="date" value={form.dueDate} onChange={(e) => { setForm({ ...form, dueDate: e.target.value }); if (dueDateError) setDueDateError(""); }} className={`border rounded-lg focus:ring-2 focus:border-[#F5D547] ${dueDateError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`} />
-              {dueDateError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{dueDateError}</p>}
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Assign To</label>
+    <section className="relative mt-[26px] rounded-[16px] border border-ds-line3 bg-ds-card shadow-[0_14px_36px_rgba(0,0,0,.32)] overflow-hidden">
+      <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px opacity-60 bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
+      <div className="px-6 pt-[22px] pb-[18px] border-b border-ds-line">
+        <p className="text-[10px] tracking-[.2em] uppercase text-ds-gold font-semibold">Work</p>
+        <h1 className="mt-2 mb-0 text-[22px] font-semibold tracking-[-.02em] text-ds-text">{isEdit ? "Edit Task" : "Create New Task"}</h1>
+      </div>
+      <form onSubmit={handleSubmit} className="px-6 py-[22px] flex flex-col gap-[18px] max-w-[560px]">
+        {error && (
+          <div role="alert" className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px]">{error}</div>
+        )}
+        <div className="flex flex-col gap-[7px]">
+          <label htmlFor="task-title" className={LABEL}>Title<span className="text-ds-gold ml-[3px]">*</span></label>
+          <input
+            id="task-title"
+            type="text"
+            value={form.title}
+            onChange={(e) => { setForm({ ...form, title: e.target.value }); if (titleError) setTitleError(""); }}
+            className={`${FIELD} ${titleError ? "!border-[rgba(251,113,133,.6)]" : ""}`}
+          />
+          {titleError && (
+            <p role="alert" className="text-[12px] text-[color:var(--hx-FB7185)] font-semibold flex items-center gap-1">
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              {titleError}
+            </p>
+          )}
+        </div>
+        <label className="flex flex-col gap-[7px]">
+          <span className={LABEL}>Description</span>
+          <textarea
+            className={`${FIELD} h-auto min-h-[80px] py-3.5 leading-[1.55] resize-y`}
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+          />
+        </label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <label className="flex flex-col gap-[7px]">
+            <span className={LABEL}>Priority</span>
             <select
-              className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
-              value={form.assigneeId}
-              onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
+              className={`${FIELD} cursor-pointer`}
+              value={form.priority}
+              onChange={(e) => setForm({ ...form, priority: e.target.value })}
             >
-              <option value="">Unassigned</option>
-              {employees.map((emp: any) => (
-                <option key={emp.id} value={emp.id}>{emp.name}</option>
-              ))}
+              <option value="LOW" className="bg-ds-card">Low</option>
+              <option value="MEDIUM" className="bg-ds-card">Medium</option>
+              <option value="HIGH" className="bg-ds-card">High</option>
+              <option value="CRITICAL" className="bg-ds-card">Critical</option>
             </select>
+          </label>
+          <div className="flex flex-col gap-[7px]">
+            <label htmlFor="task-due" className={LABEL}>Due Date{!isEdit && <span className="text-ds-gold ml-[3px]">*</span>}</label>
+            <input
+              id="task-due"
+              type="date"
+              value={form.dueDate}
+              onChange={(e) => { setForm({ ...form, dueDate: e.target.value }); if (dueDateError) setDueDateError(""); }}
+              className={`${FIELD} ${dueDateError ? "!border-[rgba(251,113,133,.6)]" : ""}`}
+            />
+            {dueDateError && <p role="alert" className="text-[12px] text-[color:var(--hx-FB7185)] font-semibold">{dueDateError}</p>}
           </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Linked Account{!isEdit && <span className="text-red-500 ml-0.5">*</span>}</label>
-            <select
-              className={`flex h-10 w-full rounded-lg border bg-white px-3 py-2 text-sm focus:ring-2 focus:border-[#F5D547] outline-none ${accountError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
-              value={form.accountId}
-              onChange={(e) => { setForm({ ...form, accountId: e.target.value }); if (accountError) setAccountError(""); }}
-            >
-              <option value="">Select account...</option>
-              {accounts.map((acc: any) => (
-                <option key={acc.id} value={acc.id}>{acc.platform?.name}: {acc.handle}</option>
-              ))}
-            </select>
-            {accountError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{accountError}</p>}
-          </div>
-          <div className="flex gap-3">
-            <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
-              {loading ? "Saving..." : isEdit ? "Update Task" : "Create Task"}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => router.back()} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7]">Cancel</Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+        </div>
+        <label className="flex flex-col gap-[7px]">
+          <span className={LABEL}>Assign To</span>
+          <select
+            className={`${FIELD} cursor-pointer`}
+            value={form.assigneeId}
+            onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
+          >
+            <option value="" className="bg-ds-card">Unassigned</option>
+            {employees.map((emp: any) => (
+              <option key={emp.id} value={emp.id} className="bg-ds-card">{emp.name}</option>
+            ))}
+          </select>
+        </label>
+        <div className="flex flex-col gap-[7px]">
+          <label htmlFor="task-account" className={LABEL}>Linked Account{!isEdit && <span className="text-ds-gold ml-[3px]">*</span>}</label>
+          <select
+            id="task-account"
+            className={`${FIELD} cursor-pointer ${accountError ? "!border-[rgba(251,113,133,.6)]" : ""}`}
+            value={form.accountId}
+            onChange={(e) => { setForm({ ...form, accountId: e.target.value }); if (accountError) setAccountError(""); }}
+          >
+            <option value="" className="bg-ds-card">Select account...</option>
+            {accounts.map((acc: any) => (
+              <option key={acc.id} value={acc.id} className="bg-ds-card">{acc.platform?.name}: {acc.handle}</option>
+            ))}
+          </select>
+          {accountError && <p role="alert" className="text-[12px] text-[color:var(--hx-FB7185)] font-semibold">{accountError}</p>}
+        </div>
+        <div className="flex gap-2.5 flex-wrap pt-1">
+          <button type="submit" disabled={loading} className={GOLD_BTN}>
+            {loading ? "Saving..." : isEdit ? "Update Task" : "Create Task"}
+          </button>
+          <button type="button" onClick={() => router.back()} className={GHOST_BTN}>Cancel</button>
+        </div>
+      </form>
+    </section>
   );
 }

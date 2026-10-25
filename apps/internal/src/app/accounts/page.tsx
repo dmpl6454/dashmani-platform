@@ -47,27 +47,27 @@ function safeProfileHref(
 
 /* ── Design tokens from the mockup ── */
 const PLATFORM_STYLE: Record<string, { abbr: string; color: string; sync: string }> = {
-  instagram: { abbr: "IG", color: "#EC42B7", sync: "Auto-sync" },
-  facebook:  { abbr: "FB", color: "#238BFF", sync: "Auto-sync" },
-  youtube:   { abbr: "YT", color: "#FF5A5F", sync: "Auto-sync" },
-  snapchat:  { abbr: "SC", color: "#E9D23A", sync: "Auto-sync" },
-  x:         { abbr: "X",  color: "#A7B3C2", sync: "Auto-sync" },
-  twitter:   { abbr: "X",  color: "#A7B3C2", sync: "Auto-sync" },
+  instagram: { abbr: "IG", color: "var(--hx-EC42B7)", sync: "Auto-sync" },
+  facebook:  { abbr: "FB", color: "var(--hx-238BFF)", sync: "Auto-sync" },
+  youtube:   { abbr: "YT", color: "var(--hx-FF5A5F)", sync: "Auto-sync" },
+  snapchat:  { abbr: "SC", color: "var(--hx-E9D23A)", sync: "Auto-sync" },
+  x:         { abbr: "X",  color: "var(--hx-A7B3C2)", sync: "Auto-sync" },
+  twitter:   { abbr: "X",  color: "var(--hx-A7B3C2)", sync: "Auto-sync" },
 };
 function platStyle(p?: { slug?: string; name?: string }) {
   const s = PLATFORM_STYLE[(p?.slug ?? "").toLowerCase()];
   if (s) return s;
-  return { abbr: (p?.name ?? "?").slice(0, 2).toUpperCase(), color: "#A7B3C2", sync: "Manual entry" };
+  return { abbr: (p?.name ?? "?").slice(0, 2).toUpperCase(), color: "var(--hx-A7B3C2)", sync: "Manual entry" };
 }
 const STATUS: Record<string, { label: string; color: string }> = {
-  ACTIVE:   { label: "Active",   color: "#00D7A0" },
-  PAUSED:   { label: "Paused",   color: "#FBBF24" },
-  ARCHIVED: { label: "Archived", color: "#738395" },
+  ACTIVE:   { label: "Active",   color: "var(--hx-00D7A0)" },
+  PAUSED:   { label: "Paused",   color: "var(--hx-FBBF24)" },
+  ARCHIVED: { label: "Archived", color: "var(--hx-738395)" },
 };
-const AV_BG = ["#10222E", "#0E2A22", "#1B1630", "#2A2410", "#2A1116"];
-const AV_FG = ["#238BFF", "#34D399", "#9B7EDE", "#E9BD62", "#FB7185"];
+const AV_BG = ["var(--hx-10222E)", "var(--hx-0E2A22)", "var(--hx-1B1630)", "var(--hx-2A2410)", "var(--hx-2A1116)"];
+const AV_FG = ["var(--hx-238BFF)", "var(--hx-34D399)", "var(--hx-9B7EDE)", "var(--hx-E9BD62)", "var(--hx-FB7185)"];
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h); return Math.abs(h); };
-const rgba = (hex: string, a: number) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+const rgba = (hex: string, a: number) => { if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
 const avatar = (name: string) => { const h = hash(name || "?"); return { bg: AV_BG[h % 5], fg: AV_FG[h % 5] }; };
 
 function fmtK(n: number | null | undefined): string {
@@ -470,7 +470,7 @@ function FollowerCountModal({ target, onCancel, onSave }: {
         {error && <p role="alert" className="text-[12px] text-ds-redsoft mt-2">{error}</p>}
         <div className="flex justify-end gap-2 mt-5">
           <button type="button" onClick={onCancel} disabled={saving} className={`${ghostBtn} h-[34px]`}>Cancel</button>
-          <button type="submit" disabled={saving} className="h-[34px] px-4 rounded-[6px] bg-ds-gold text-[#060D14] text-[12px] font-bold transition-colors hover:bg-[#F4D58C] disabled:opacity-50">
+          <button type="submit" disabled={saving} className="h-[34px] px-4 rounded-[6px] bg-ds-gold text-[color:var(--hx-060D14)] text-[12px] font-bold transition-colors hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-50">
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
@@ -682,10 +682,10 @@ function AccountsPageInner() {
   const platformCount = new Set(allAccounts.map((a) => a.platform?.id).filter(Boolean)).size;
 
   const kpis = [
-    { label: "Total Accounts",  value: allAccounts.length,      color: "#238BFF", icon: Globe,       note: `${activeCount} active` },
-    { label: "Total Followers", value: fmtK(totalFollowers),    color: "#E9BD62", icon: Users,       note: "across all channels" },
-    { label: "Unassigned",      value: unassignedCount,         color: "#FB7185", icon: AlertCircle, note: "need an owner" },
-    { label: "Stale Sync",      value: staleCount,              color: "#FBBF24", icon: Clock,       note: "older than 5 days" },
+    { label: "Total Accounts",  value: allAccounts.length,      color: "var(--hx-238BFF)", icon: Globe,       note: `${activeCount} active` },
+    { label: "Total Followers", value: fmtK(totalFollowers),    color: "var(--hx-E9BD62)", icon: Users,       note: "across all channels" },
+    { label: "Unassigned",      value: unassignedCount,         color: "var(--hx-FB7185)", icon: AlertCircle, note: "need an owner" },
+    { label: "Stale Sync",      value: staleCount,              color: "var(--hx-FBBF24)", icon: Clock,       note: "older than 5 days" },
   ];
 
   const tabs: { id: Tab; label: string; icon: any; count: number | null }[] = [
@@ -757,7 +757,7 @@ function AccountsPageInner() {
             onClick={handleSyncFollowers}
             disabled={syncing}
             title="Re-fetch follower counts for Instagram, YouTube and Facebook accounts (other platforms must be entered manually)"
-            className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-blue/50 hover:text-[#6EB2FF] disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-blue/50 hover:text-[color:var(--hx-6EB2FF)] disabled:opacity-60"
           >
             <RefreshCw className={`h-[13px] w-[13px] ${syncing ? "animate-spin" : ""}`} strokeWidth={1.8} />
             {syncing
@@ -784,12 +784,12 @@ function AccountsPageInner() {
       {/* Sync status banner */}
       {syncToast && (
         <section className="flex items-center gap-3.5 mb-3.5 px-4 py-3 rounded-[8px] border border-ds-blue/35 bg-ds-blue/[.07]" role="status" aria-live="polite">
-          <RefreshCw className={`h-4 w-4 text-[#6EB2FF] shrink-0 ${syncing ? "animate-spin" : ""}`} strokeWidth={1.8} />
+          <RefreshCw className={`h-4 w-4 text-[color:var(--hx-6EB2FF)] shrink-0 ${syncing ? "animate-spin" : ""}`} strokeWidth={1.8} />
           <div className="flex-1 min-w-0">
             <p className="text-[12.5px] font-semibold text-ds-text">{syncToast}</p>
             {syncProgress && (
               <div className="flex items-center gap-2.5 mt-2 flex-wrap">
-                <div className="flex-1 min-w-[120px] max-w-[360px] h-1 rounded-[2px] bg-[#132430] overflow-hidden">
+                <div className="flex-1 min-w-[120px] max-w-[360px] h-1 rounded-[2px] bg-[color:var(--hx-132430)] overflow-hidden">
                   <div className="h-full bg-ds-blue transition-[width] duration-300" style={{ width: `${syncPct}%` }} />
                 </div>
                 {syncProgress.total > 0 && (
@@ -836,7 +836,7 @@ function AccountsPageInner() {
               aria-selected={sel}
               onClick={() => setTab(id)}
               className={`inline-flex items-center gap-[7px] h-10 px-4 text-[12.5px] font-semibold whitespace-nowrap transition-colors ${sel ? "text-ds-text" : "text-ds-t2 hover:text-ds-text"}`}
-              style={{ boxShadow: `inset 0 -2px 0 ${sel ? "#E9BD62" : "transparent"}` }}
+              style={{ boxShadow: `inset 0 -2px 0 ${sel ? "var(--hx-E9BD62)" : "transparent"}` }}
             >
               <Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
               {label}
@@ -865,7 +865,7 @@ function AccountsPageInner() {
               )}
             </label>
             <div className="flex flex-wrap gap-1.5" role="group" aria-label="Platform">
-              {[{ id: "", name: "All Platforms", color: "#E9BD62" }, ...platforms.map((p: any) => ({ id: p.id, name: p.name, color: platStyle(p).color }))].map((p) => {
+              {[{ id: "", name: "All Platforms", color: "var(--hx-E9BD62)" }, ...platforms.map((p: any) => ({ id: p.id, name: p.name, color: platStyle(p).color }))].map((p) => {
                 const sel = platformFilter === p.id;
                 return (
                   <button
@@ -896,7 +896,7 @@ function AccountsPageInner() {
           <section className="mt-3 rounded-[8px] bg-ds-card border border-ds-line overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[980px]" role="table" aria-label="Social accounts">
-                <div role="row" className={`${GRID} h-10 px-6 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]`}>
+                <div role="row" className={`${GRID} h-10 px-6 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]`}>
                   <span role="columnheader">Account</span>
                   <span role="columnheader" className="text-center">Platform</span>
                   <span role="columnheader" className="text-center">Client</span>
@@ -914,13 +914,13 @@ function AccountsPageInner() {
                 ) : (
                   accounts.map((acc: any) => {
                     const ps = platStyle(acc.platform);
-                    const st = STATUS[acc.status] ?? { label: formatStatus(acc.status ?? ""), color: "#738395" };
+                    const st = STATUS[acc.status] ?? { label: formatStatus(acc.status ?? ""), color: "var(--hx-738395)" };
                     const sync = syncAge(acc.lastSyncedAt);
                     const asg: any[] = acc.assignments ?? [];
                     const first = asg[0]?.employee?.name ? toTitleCase(asg[0].employee.name).split(" ")[0] : "";
                     const href = safeProfileHref(acc.profileUrl, acc.platform, acc.handle);
                     return (
-                      <div key={acc.id} role="row" className={`${GRID} group h-[60px] px-6 border-b border-[#101E29] last:border-b-0 text-[12.5px] transition-colors hover:bg-[#0B1824]`}>
+                      <div key={acc.id} role="row" className={`${GRID} group h-[60px] px-6 border-b border-[color:var(--hx-101E29)] last:border-b-0 text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
                         <span role="cell" className="flex items-center gap-3 min-w-0">
                           <PlatformTile platform={acc.platform} />
                           <span className="min-w-0 leading-[1.3]">
@@ -992,7 +992,7 @@ function AccountsPageInner() {
                           </button>
                           <span title={acc.followerCount != null ? acc.followerCount.toLocaleString() : undefined}>{fmtK(acc.followerCount)}</span>
                         </span>
-                        <span role="cell" className={`text-center text-[11.5px] whitespace-nowrap ${sync.never ? "text-ds-t4" : sync.stale ? "text-[#FBBF24]" : "text-ds-t2"}`}>
+                        <span role="cell" className={`text-center text-[11.5px] whitespace-nowrap ${sync.never ? "text-ds-t4" : sync.stale ? "text-[color:var(--hx-FBBF24)]" : "text-ds-t2"}`}>
                           {sync.label}
                         </span>
                         <span role="cell" className="flex justify-center">
@@ -1086,7 +1086,7 @@ function AccountsPageInner() {
                     {empAccounts.length > 0 ? (
                       <div className="flex flex-col gap-1.5">
                         {empAccounts.map((a: any) => (
-                          <div key={a.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-[6px] bg-ds-inset border border-[#101E29]">
+                          <div key={a.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-[6px] bg-ds-inset border border-[color:var(--hx-101E29)]">
                             <PlatformTile platform={a.platform} size={24} />
                             <span className="flex-1 min-w-0 text-[11.5px] font-semibold text-ds-text truncate" title={`${a.platform?.name ?? ""} · ${a.handle}`}>
                               {a.displayName || fmtHandle(a.handle)}
@@ -1166,7 +1166,7 @@ function AccountsPageInner() {
                     </span>
                   </span>
                   <span className="flex items-center gap-2">
-                    <span className="flex-1 h-1 rounded-[2px] bg-[#132430] overflow-hidden">
+                    <span className="flex-1 h-1 rounded-[2px] bg-[color:var(--hx-132430)] overflow-hidden">
                       <span className="block h-full" style={{ width: `${pct}%`, background: s.color }} />
                     </span>
                     <span className="text-[10.5px] text-ds-t2 whitespace-nowrap">{assigned}/{pAccounts.length} assigned</span>

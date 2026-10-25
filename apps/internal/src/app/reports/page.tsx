@@ -14,28 +14,28 @@ import { TrueLinksPanel } from "./_true-links";
 
 // Mockup palette.
 const PLATFORM_COLOR: Record<string, string> = {
-  instagram: "#F472B6",
-  facebook: "#6EB2FF",
-  youtube: "#FB7185",
-  snapchat: "#FACC15",
-  twitter: "#38BDF8",
-  linkedin: "#4AA3DF",
-  tiktok: "#A7B3C2",
+  instagram: "var(--hx-F472B6)",
+  facebook: "var(--hx-6EB2FF)",
+  youtube: "var(--hx-FB7185)",
+  snapchat: "var(--hx-FACC15)",
+  twitter: "var(--hx-38BDF8)",
+  linkedin: "var(--hx-4AA3DF)",
+  tiktok: "var(--hx-A7B3C2)",
 };
-const platformColor = (p?: string) => PLATFORM_COLOR[(p ?? "").toLowerCase()] ?? "#E9BD62";
+const platformColor = (p?: string) => PLATFORM_COLOR[(p ?? "").toLowerCase()] ?? "var(--hx-E9BD62)";
 const PLATFORM_NAME: Record<string, string> = { youtube: "YouTube", tiktok: "TikTok", linkedin: "LinkedIn" };
 const platformName = (p?: string) => {
   const k = (p ?? "").toLowerCase();
   return PLATFORM_NAME[k] ?? (k ? k.charAt(0).toUpperCase() + k.slice(1) : "—");
 };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const hash = (s: string) => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
   return Math.abs(h);
 };
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const initials = (name?: string) =>
@@ -67,9 +67,9 @@ function PlatformBadge({ platform }: { platform?: string }) {
   );
 }
 
-const CARD = "flex flex-col min-w-0 rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]";
+const CARD = "flex flex-col min-w-0 rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]";
 const HEAD_ROW = "bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.08em] uppercase text-ds-t3 whitespace-nowrap";
-const BTN = "inline-flex items-center gap-2 h-[42px] px-4 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[13px] font-semibold whitespace-nowrap hover:border-[#2A4658] hover:text-ds-text";
+const BTN = "inline-flex items-center gap-2 h-[42px] px-4 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[13px] font-semibold whitespace-nowrap hover:border-[color:var(--hx-2A4658)] hover:text-ds-text";
 
 type SortKey = "name" | "email" | "reportCount" | "totalLinks" | "linksToday" | "avgLinksPerDay" | "currentStreak" | "lastSubmittedAt";
 type SortDir = "asc" | "desc";
@@ -116,14 +116,14 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenToday
   const today = emp.linksToday ?? 0;
   const streak = emp.currentStreak ?? 0;
   return (
-    <div className={`${SUMMARY_GRID} min-h-[64px] py-2.5 px-6 border-b border-[#132430] last:border-b-0 text-[13px] tabular-nums hover:bg-[#0A1620] transition-colors`}>
+    <div className={`${SUMMARY_GRID} min-h-[64px] py-2.5 px-6 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] tabular-nums hover:bg-[color:var(--hx-0A1620)] transition-colors`}>
       <span className="flex items-center gap-3 min-w-0">
         <Mono name={emp.name} />
         <span className="text-[14px] font-semibold text-ds-text truncate" title={emp.name}>{emp.name}</span>
       </span>
       <span className="text-ds-t2 truncate" title={emp.email}>{emp.email}</span>
       <span className="text-right">
-        <span className="inline-flex items-center justify-center min-w-[32px] h-[26px] px-2 rounded-[8px] bg-[rgba(155,126,222,.14)] text-[#B8A3EC] font-bold">
+        <span className="inline-flex items-center justify-center min-w-[32px] h-[26px] px-2 rounded-[8px] bg-[rgba(155,126,222,.14)] text-[color:var(--hx-B8A3EC)] font-bold">
           {emp.reportCount}
         </span>
       </span>
@@ -143,19 +143,19 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenToday
           type="button"
           onClick={() => onOpenTodayModal(emp)}
           title="View today's per-platform breakdown (always today, ignores the date filter)"
-          className={`inline-flex items-center gap-1.5 h-7 px-2 rounded-[8px] font-semibold ${today > 0 ? "text-ds-teal hover:bg-[rgba(0,215,160,.1)]" : "text-[#4A6275] hover:bg-ds-hover"}`}
+          className={`inline-flex items-center gap-1.5 h-7 px-2 rounded-[8px] font-semibold ${today > 0 ? "text-ds-teal hover:bg-[rgba(0,215,160,.1)]" : "text-[color:var(--hx-4A6275)] hover:bg-ds-hover"}`}
         >
           {today > 0 ? nf.format(today) : "—"}
           <BarChart2 className="h-3 w-3 opacity-60" />
         </button>
       </span>
       <span className="text-right text-ds-t5">{emp.avgLinksPerDay ?? "—"}</span>
-      <span className={`text-right font-bold ${streak ? "text-[#F59E66]" : "text-ds-t3"}`}>{streak} 🔥</span>
+      <span className={`text-right font-bold ${streak ? "text-[color:var(--hx-F59E66)]" : "text-ds-t3"}`}>{streak} 🔥</span>
       <span className="text-ds-t2 whitespace-nowrap">
         {emp.lastSubmittedAt ? new Date(emp.lastSubmittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—"}
       </span>
       <span className="text-right">
-        <Link href={`/reports/${emp.id}`} className="text-[12.5px] font-semibold text-ds-gold hover:text-[#F4D58C] whitespace-nowrap">
+        <Link href={`/reports/${emp.id}`} className="text-[12.5px] font-semibold text-ds-gold hover:text-[color:var(--hx-F4D58C)] whitespace-nowrap">
           View Details →
         </Link>
       </span>
@@ -182,14 +182,14 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, open, onToggle, d
     : null;
   return (
     <div
-      className={`rounded-[16px] border bg-ds-card overflow-hidden transition-colors ${open ? "border-[#2A4658]" : "border-ds-line"}`}
+      className={`rounded-[16px] border bg-ds-card overflow-hidden transition-colors ${open ? "border-[color:var(--hx-2A4658)]" : "border-ds-line"}`}
       style={{ contentVisibility: "auto", containIntrinsicSize: open ? "420px" : "80px" } as any}
     >
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="w-full flex items-center gap-3.5 flex-wrap min-h-[72px] px-[22px] py-3.5 text-left hover:bg-[#0A1620] transition-colors"
+        className="w-full flex items-center gap-3.5 flex-wrap min-h-[72px] px-[22px] py-3.5 text-left hover:bg-[color:var(--hx-0A1620)] transition-colors"
       >
         <Mono name={report.employee?.name} size={40} />
         <span className="flex-[1_1_200px] min-w-0 leading-[1.3]">
@@ -219,7 +219,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, open, onToggle, d
                below. Only the URL and account shrink, so nothing paints over anything. */
             <div
               key={link.id ?? i}
-              className="group/link flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 min-h-[42px] py-1.5 px-[22px] sm:pl-[76px] text-[12.5px] hover:bg-[#0A1620]"
+              className="group/link flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 min-h-[42px] py-1.5 px-[22px] sm:pl-[76px] text-[12.5px] hover:bg-[color:var(--hx-0A1620)]"
             >
               <PlatformBadge platform={link.platform} />
               {link.accountName && (
@@ -247,7 +247,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, open, onToggle, d
                   disabled={deletingLinkId === link.id}
                   title="Delete this link"
                   aria-label="Delete this link"
-                  className="h-6 w-6 rounded-[6px] grid place-items-center text-ds-t3 hover:text-[#FB7185] hover:bg-[rgba(229,72,77,.1)] shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/link:opacity-100 focus-visible:opacity-100 disabled:opacity-50"
+                  className="h-6 w-6 rounded-[6px] grid place-items-center text-ds-t3 hover:text-[color:var(--hx-FB7185)] hover:bg-[rgba(229,72,77,.1)] shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/link:opacity-100 focus-visible:opacity-100 disabled:opacity-50"
                 >
                   {deletingLinkId === link.id ? (
                     <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -263,7 +263,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, open, onToggle, d
             <button
               type="button"
               onClick={() => setShowAllLinks((v) => !v)}
-              className="mx-[22px] sm:ml-[76px] mt-1 mb-1.5 text-[12px] font-semibold text-ds-gold hover:text-[#F4D58C]"
+              className="mx-[22px] sm:ml-[76px] mt-1 mb-1.5 text-[12px] font-semibold text-ds-gold hover:text-[color:var(--hx-F4D58C)]"
             >
               {showAllLinks ? "Show fewer" : `Show all ${allLinks.length} links`}
             </button>
@@ -326,7 +326,7 @@ function ShareList({ rows, total, barColor, empty }: { rows: { platform: string;
                 {nf.format(count)} <span className="text-[11.5px] font-normal text-ds-t3">({pct}%)</span>
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-[#132430] overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-[color:var(--hx-132430)] overflow-hidden">
               <div className="h-full rounded-full" style={{ width: `${pct}%`, background: c }} />
             </div>
           </div>
@@ -522,15 +522,15 @@ export default function ReportsPage() {
     // First card: team mode shows "Employees Reporting"; single-employee mode shows that
     // employee's current streak instead (more useful than a count of 1).
     isEmployeeView
-      ? { title: "Current Streak", value: `${selectedEmployee?.currentStreak ?? 0} 🔥`, color: "#F59E66", icon: <Users className={ICON} />, sub: selectedEmployeeName }
-      : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, color: "#6EB2FF", icon: <Users className={ICON} />, sub: "submitted reports" },
-    { title: "Total Reports", value: nf.format(viewTotalReports), color: "#B8A3EC", icon: <FileText className={ICON} />, sub: windowLabel },
-    { title: "Total Links", value: nf.format(viewTotalLinks), color: "#00D7A0", icon: <Link2 className={ICON} />, sub: windowLabel },
-    { title: "Avg Links/Day", value: avgLinksInWindow, color: "#E9BD62", icon: <TrendingUp className={ICON} />, sub: windowLabel, clickable: true },
+      ? { title: "Current Streak", value: `${selectedEmployee?.currentStreak ?? 0} 🔥`, color: "var(--hx-F59E66)", icon: <Users className={ICON} />, sub: selectedEmployeeName }
+      : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, color: "var(--hx-6EB2FF)", icon: <Users className={ICON} />, sub: "submitted reports" },
+    { title: "Total Reports", value: nf.format(viewTotalReports), color: "var(--hx-B8A3EC)", icon: <FileText className={ICON} />, sub: windowLabel },
+    { title: "Total Links", value: nf.format(viewTotalLinks), color: "var(--hx-00D7A0)", icon: <Link2 className={ICON} />, sub: windowLabel },
+    { title: "Avg Links/Day", value: avgLinksInWindow, color: "var(--hx-E9BD62)", icon: <TrendingUp className={ICON} />, sub: windowLabel, clickable: true },
     {
       title: "YouTube Views",
       value: insightsLoading ? "—" : hasInsights ? fmtCompact(engagementViews) : "—",
-      color: "#FB7185",
+      color: "var(--hx-FB7185)",
       icon: <Eye className={ICON} />,
       sub: hasInsights ? `${fmtCompact(engagementLikes)} likes · ${fmtCompact(engagementComments)} comments` : "No YouTube views in this window",
     },
@@ -585,10 +585,10 @@ export default function ReportsPage() {
           <ExportButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="ds" />
           <AllLinksCsvButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="ds" />
           <Link href="/reports/links" className={BTN}>
-            <TrendingUp className="h-[15px] w-[15px] text-[#6EB2FF]" />
+            <TrendingUp className="h-[15px] w-[15px] text-[color:var(--hx-6EB2FF)]" />
             Links Analytics
           </Link>
-          <Link href="/reports/leaderboard" className="inline-flex items-center gap-2 h-[42px] px-4 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold whitespace-nowrap hover:bg-[#F4D58C]">
+          <Link href="/reports/leaderboard" className="inline-flex items-center gap-2 h-[42px] px-4 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)]">
             <Trophy className="h-[15px] w-[15px]" />
             Leaderboard
           </Link>
@@ -596,7 +596,7 @@ export default function ReportsPage() {
       </section>
 
       {/* Filters — above the cards so you choose the window/employee first, then read the numbers */}
-      <section className="flex items-end gap-x-5 gap-y-4 flex-wrap px-[22px] py-[18px] rounded-[16px] border border-[#2A4658] bg-ds-card">
+      <section className="flex items-end gap-x-5 gap-y-4 flex-wrap px-[22px] py-[18px] rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card">
         <DsRangeFilters startDate={startDate} endDate={endDate} onChange={(s, e) => { setStartDate(s); setEndDate(e); }} />
         <label className="flex flex-col gap-2 min-w-[200px] flex-[0_1_240px]">
           <span className="text-[10.5px] font-semibold tracking-[.12em] uppercase text-ds-t3">Employee</span>
@@ -639,7 +639,7 @@ export default function ReportsPage() {
               </span>
             </>
           );
-          const cls = "flex flex-col gap-3.5 px-5 py-[18px] rounded-[16px] bg-ds-card border border-[#2A4658] min-w-0 text-left";
+          const cls = "flex flex-col gap-3.5 px-5 py-[18px] rounded-[16px] bg-ds-card border border-[color:var(--hx-2A4658)] min-w-0 text-left";
           return isClickable ? (
             <button
               key={card.title}
@@ -672,7 +672,7 @@ export default function ReportsPage() {
                 type="button"
                 onClick={() => setPlatformModal({ platform, count, dailyBreakdown })}
                 title="View the daily breakdown"
-                className="relative flex flex-col gap-3 px-5 py-[18px] rounded-[16px] bg-ds-card border border-ds-line min-w-0 overflow-hidden text-left hover:border-[#2A4658] transition-colors"
+                className="relative flex flex-col gap-3 px-5 py-[18px] rounded-[16px] bg-ds-card border border-ds-line min-w-0 overflow-hidden text-left hover:border-[color:var(--hx-2A4658)] transition-colors"
               >
                 <span aria-hidden="true" className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: c }} />
                 <div className="flex items-center justify-between gap-2">
@@ -686,7 +686,7 @@ export default function ReportsPage() {
                   <span className="block text-[26px] font-bold tracking-[-.04em] tabular-nums text-ds-text">{nf.format(count)}</span>
                   <span className="text-[11.5px] text-ds-t3">links · {windowLabel.toLowerCase()}</span>
                 </span>
-                <span className="h-[5px] rounded-[3px] bg-[#132430] overflow-hidden">
+                <span className="h-[5px] rounded-[3px] bg-[color:var(--hx-132430)] overflow-hidden">
                   <span className="block h-full rounded-[3px]" style={{ width: `${Math.max(share, 0.8)}%`, background: c }} />
                 </span>
               </button>
@@ -719,7 +719,7 @@ export default function ReportsPage() {
                       role="tab"
                       aria-selected={on}
                       onClick={() => setTopTab(p.key)}
-                      className={`inline-flex items-center gap-[7px] h-[30px] px-[13px] rounded-full text-[12.5px] font-semibold whitespace-nowrap shrink-0 ${on ? "bg-[#132430] text-ds-text" : "text-ds-t2 hover:text-ds-text"}`}
+                      className={`inline-flex items-center gap-[7px] h-[30px] px-[13px] rounded-full text-[12.5px] font-semibold whitespace-nowrap shrink-0 ${on ? "bg-[color:var(--hx-132430)] text-ds-text" : "text-ds-t2 hover:text-ds-text"}`}
                     >
                       <i className="h-[7px] w-[7px] rounded-full" style={{ background: platformColor(p.key) }} />
                       {p.label}
@@ -734,7 +734,7 @@ export default function ReportsPage() {
                     type="button"
                     aria-pressed={ytAllTime === m.v}
                     onClick={() => setYtAllTime(m.v)}
-                    className={`h-[26px] px-[11px] rounded-full text-[11.5px] font-semibold whitespace-nowrap ${ytAllTime === m.v ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+                    className={`h-[26px] px-[11px] rounded-full text-[11.5px] font-semibold whitespace-nowrap ${ytAllTime === m.v ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"}`}
                   >
                     {m.label}
                   </button>
@@ -774,7 +774,7 @@ export default function ReportsPage() {
                   return (
                     <div
                       key={`${link.linkId ?? link.url}-${i}`}
-                      className="grid gap-x-3.5 items-center min-h-[54px] py-2 px-6 border-b border-[#132430] last:border-b-0 text-[13px] tabular-nums hover:bg-[#0A1620] [grid-template-columns:28px_minmax(0,1fr)_minmax(0,170px)_84px_84px_92px]"
+                      className="grid gap-x-3.5 items-center min-h-[54px] py-2 px-6 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] tabular-nums hover:bg-[color:var(--hx-0A1620)] [grid-template-columns:28px_minmax(0,1fr)_minmax(0,170px)_84px_84px_92px]"
                     >
                       <span className="text-[12px] font-bold text-ds-t3">{i + 1}</span>
                       {/* The URL and the staleness chip share ONE grid cell, so the column
@@ -793,11 +793,11 @@ export default function ReportsPage() {
                         )}
                       </span>
                       <span className="text-ds-t2 truncate" title={link.employeeName}>{link.employeeName}</span>
-                      <span className={`flex items-center justify-end gap-[5px] font-semibold ${activeTop.showViews && link.views != null ? "text-[#FDA4AF]" : "text-[#4A6275]"}`}>
+                      <span className={`flex items-center justify-end gap-[5px] font-semibold ${activeTop.showViews && link.views != null ? "text-[color:var(--hx-FDA4AF)]" : "text-[color:var(--hx-4A6275)]"}`}>
                         <Eye className="h-3 w-3 shrink-0" />
                         {activeTop.showViews ? fmtCompact(link.views) : "—"}
                       </span>
-                      <span className={`flex items-center justify-end gap-[5px] font-semibold ${noLikes || link.likes == null ? "text-[#4A6275]" : "text-[#F9A8D4]"}`}>
+                      <span className={`flex items-center justify-end gap-[5px] font-semibold ${noLikes || link.likes == null ? "text-[color:var(--hx-4A6275)]" : "text-[color:var(--hx-F9A8D4)]"}`}>
                         <Heart className="h-3 w-3 shrink-0" />
                         {noLikes ? "—" : fmtCompact(link.likes)}
                       </span>
@@ -872,7 +872,7 @@ export default function ReportsPage() {
 
       {/* Delete error banner */}
       {deleteError && (
-        <div className="mt-4 px-4 py-3 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] flex items-center gap-2 text-[13px] text-[#FB7185]">
+        <div className="mt-4 px-4 py-3 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] flex items-center gap-2 text-[13px] text-[color:var(--hx-FB7185)]">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           {deleteError}
           <button type="button" onClick={() => setDeleteError(null)} aria-label="Dismiss" className="ml-auto hover:text-ds-text">
@@ -933,7 +933,7 @@ export default function ReportsPage() {
                   type="button"
                   onClick={() => setReportsPage((p) => p + 1)}
                   disabled={!reportsMeta?.hasMore || reportsLoading}
-                  className="h-10 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold hover:bg-[#F4D58C] disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-10 px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {reportsLoading ? "Loading…" : "Next"}
                 </button>
@@ -963,7 +963,7 @@ export default function ReportsPage() {
               return (
                 <div key={date} className="flex items-center gap-3">
                   <span className="text-[12px] text-ds-t2 w-24 shrink-0">{label}</span>
-                  <div className="flex-1 h-1.5 rounded-full bg-[#132430] overflow-hidden">
+                  <div className="flex-1 h-1.5 rounded-full bg-[color:var(--hx-132430)] overflow-hidden">
                     <div className="h-full rounded-full" style={{ width: `${pct}%`, background: platformColor(platformModal.platform) }} />
                   </div>
                   <span className="text-[13px] font-semibold text-ds-text w-10 text-right tabular-nums">{count}</span>
@@ -980,7 +980,7 @@ export default function ReportsPage() {
       <BreakdownModal
         title={empModal.name}
         sub={`${nf.format(empModal.totalLinks)} links · by platform`}
-        color="#00D7A0"
+        color="var(--hx-00D7A0)"
         icon={<Link2 className="h-4 w-4" />}
         onClose={() => setEmpModal(null)}
       >
@@ -993,7 +993,7 @@ export default function ReportsPage() {
       <BreakdownModal
         title={todayModal.name}
         sub={`${nf.format(todayModal.linksToday)} links today · by platform`}
-        color="#6EB2FF"
+        color="var(--hx-6EB2FF)"
         icon={<BarChart2 className="h-4 w-4" />}
         onClose={() => setTodayModal(null)}
       >
@@ -1006,7 +1006,7 @@ export default function ReportsPage() {
       <BreakdownModal
         title={`${isEmployeeView ? selectedEmployeeName : "Team"} · ${windowLabel}`}
         sub={`${nf.format(teamTodayModal.totalLinks)} links · ${isEmployeeView ? "by platform" : "across team · by platform"}`}
-        color="#E9BD62"
+        color="var(--hx-E9BD62)"
         icon={<Calendar className="h-4 w-4" />}
         onClose={() => setTeamTodayModal(null)}
       >

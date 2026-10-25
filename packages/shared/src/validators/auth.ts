@@ -8,6 +8,12 @@ export const loginSchema = z.object({
   rememberMe: z.boolean().optional(),
 });
 
+/** "Sign in with Google" (internal portal): the Google Identity Services ID token, verified server-side. */
+export const googleSchema = z.object({
+  credential: z.string().min(20).max(4096),
+  rememberMe: z.boolean().optional(),
+});
+
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1, "Refresh token is required"),
 });

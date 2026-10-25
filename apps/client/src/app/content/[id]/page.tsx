@@ -198,7 +198,7 @@ export default function ContentDetailPage() {
                       Reject
                     </Button>
                   </div>
-                  <div className="mt-3 pt-3" style={{ borderTop: "1px solid rgba(26,26,26,0.08)" }}>
+                  <div className="mt-3 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,0.10)" }}>
                     <KbdRow items={[{ k: "↑↓", label: "navigate queue" }]} />
                   </div>
                 </>
@@ -215,7 +215,7 @@ export default function ContentDetailPage() {
 
             {/* Thread */}
             <div className="v3-card overflow-hidden">
-              <div className="px-4 h-11 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <div className="px-4 h-11 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
                 <h3 className="text-[11px] uppercase tracking-wider font-bold text-ink-3">Discussion</h3>
                 <span className="text-[11px] text-ink-3 font-medium">{comments.length}</span>
               </div>
@@ -264,7 +264,7 @@ function ReplyBox({ postId }: { postId: string }) {
   };
 
   return (
-    <div className="p-3 flex items-end gap-2" style={{ borderTop: "2px solid rgba(26,26,26,0.07)" }}>
+    <div className="p-3 flex items-end gap-2" style={{ borderTop: "2px solid rgba(255,255,255,0.18)" }}>
       <textarea
         value={val}
         onChange={(e) => setVal(e.target.value)}
@@ -273,7 +273,7 @@ function ReplyBox({ postId }: { postId: string }) {
         disabled={sending}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
         className="flex-1 resize-none text-[13px] bg-bg rounded-xl px-3 py-2 outline-none font-medium min-h-[36px] disabled:opacity-50"
-        style={{ border: "2px solid rgba(26,26,26,0.15)" }}
+        style={{ border: "2px solid rgba(255,255,255,0.25)" }}
       />
       <IconButton size="sm" variant="ink" icon={<Icon.Send size={14} />} label="Send" onClick={send} disabled={!val.trim() || sending} />
     </div>

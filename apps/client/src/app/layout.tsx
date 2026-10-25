@@ -2,9 +2,10 @@
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import "./globals.css";
-import { AuthContext } from "@/lib/auth";
+import { AuthContext, type ClientSession } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { PortalShell } from "@/components/portal-shell";
+import { safeNext } from "@/lib/safe-next";
 
 const publicRoutes = ["/login", "/signup", "/reset-password"];
 
@@ -20,22 +21,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     if (token && stored) {
       try { setUser(JSON.parse(stored)); } catch { /* malformed stored user */ }
     } else if (!publicRoutes.includes(pathname)) {
-      router.push("/login");
+      // Keep where they were going (e.g. the website's "Start a campaign" → /campaigns/new).
+      const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
+      router.push(`/login${next}`);
     }
     setIsLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
+
+  function adoptSession(session: ClientSession) {
+    localStorage.setItem("clientAccessToken", session.accessToken);
+    localStorage.setItem("clientRefreshToken", session.refreshToken);
+    localStorage.setItem("clientUser", JSON.stringify(session.user));
+    setUser(session.user);
+    // replace, not push: Back from the portal must not land on the sign-in form again.
+    router.replace(safeNext() ?? "/dashboard");
+  }
 
   async function login(email: string, password: string) {
     const res: any = await apiFetch("/client/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    localStorage.setItem("clientAccessToken", res.data.accessToken);
-    localStorage.setItem("clientRefreshToken", res.data.refreshToken);
-    localStorage.setItem("clientUser", JSON.stringify(res.data.user));
-    setUser(res.data.user);
-    router.push("/dashboard");
+    adoptSession(res.data);
   }
 
   function logout() {
@@ -54,9 +62,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashmani Client Portal</title>
+        {/* The Digital Sukoon circle logo (same artwork as digitalsukoon.com's /logo.png). */}
+        <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
       </head>
       <body>
-        <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+        <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>
           {isPublicPage ? children : <PortalShell>{children}</PortalShell>}
         </AuthContext.Provider>
       </body>

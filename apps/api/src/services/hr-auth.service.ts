@@ -112,6 +112,127 @@ export async function registerEmployee(data: {
   };
 }
 
+// ===== Sign in with Google =====
+
+/** Mint the HR session for a user row — shared by password login and Google sign-in. */
+async function issueHrSession(user: {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  profileImageUrl: string | null;
+  roles: Array<{ role: { name: string } }>;
+}) {
+  const roleNames = user.roles.map((ur) => ur.role.name);
+  const payload: JwtPayload = {
+    userId: user.id,
+    email: user.email,
+    roles: roleNames,
+    type: "hr",
+  };
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken({ userId: user.id });
+  const hashedToken = crypto.createHash("sha256").update(refreshToken).digest("hex");
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      token: hashedToken,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      profileImageUrl: user.profileImageUrl,
+      roles: roleNames,
+    },
+  };
+}
+
+/**
+ * Sign in (or register) with a Google ID token.
+ *
+ * The token is verified with Google first (our audience, Google issuer, unexpired, verified
+ * email) — see services/google-id-token.ts. Then:
+ *   - an existing user with that email (any casing) signs straight in, under the SAME status
+ *     rules as password login (ONBOARDING → pending approval, INACTIVE / deleted → refused).
+ *     Nothing on the row is touched: Google sign-in can never take over or alter an account.
+ *   - an unknown email is a self-registration, exactly what POST /hr/auth/register does
+ *     (owner decision 2026-09-26: instant ACTIVE access with the Employee role), except the
+ *     password is unusable (bcrypt of 256 random bits) — "Forgot password" sets one.
+ * Google supplies a name and an email, which is all registration requires, so unlike the
+ * client portal there is no second "complete your profile" round-trip.
+ */
+export async function hrGoogleSignIn(credential: string) {
+  const { verifyGoogleIdToken } = await import("./google-id-token");
+  const identity = await verifyGoogleIdToken(credential);
+  const email = identity.email.trim().toLowerCase();
+
+  const findByEmail = () =>
+    prisma.user.findFirst({
+      // Case-insensitive, like every other auth lookup (CLAUDE.md "Email-case lockouts").
+      // likeLiteral: Prisma compiles this to ILIKE without escaping, so a raw '_' or '%' in
+      // the address would widen the match.
+      where: { email: { equals: likeLiteral(email), mode: "insensitive" } },
+      include: { roles: { include: { role: true } } },
+    });
+
+  const existing = await findByEmail();
+  if (existing) {
+    if (existing.deletedAt || existing.status === "INACTIVE") {
+      throw new AppError(403, "ACCOUNT_INACTIVE", "Your account has been deactivated. Contact admin.");
+    }
+    if (existing.status === "ONBOARDING") {
+      throw new AppError(403, "PENDING_APPROVAL", "Your account is pending admin approval. Please wait.");
+    }
+    return { ...(await issueHrSession(existing)), created: false as const };
+  }
+
+  const name = identity.name?.trim().slice(0, 120) || email.split("@")[0];
+  const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
+  const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
+
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        passwordHash,
+        status: "ACTIVE",
+        ...(employeeRole ? { roles: { create: [{ roleId: employeeRole.id }] } } : {}),
+      },
+      include: { roles: { include: { role: true } } },
+    });
+    await prisma.employeeProfile.create({ data: { userId: user.id } });
+  } catch (err) {
+    // Two first sign-ins for one new email racing (two tabs): the loser hits the unique
+    // index. The account now exists, so the loser simply signs into it.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const raced = await findByEmail();
+      if (raced && raced.status === "ACTIVE" && !raced.deletedAt) {
+        return { ...(await issueHrSession(raced)), created: false as const };
+      }
+      throw new AppError(409, "ALREADY_EXISTS", ALREADY_EXISTS_MESSAGE);
+    }
+    throw err;
+  }
+
+  dispatchNotification({
+    type: "GENERAL",
+    title: "New Employee Registration",
+    message: `${name} (${email}) signed up with Google and is now active`,
+    metadata: { userId: user.id, name, email, via: "google" },
+  }).catch((err) => console.error("Admin notification failed:", err));
+
+  return { ...(await issueHrSession(user)), created: true as const };
+}
+
 // ===== Password Login =====
 
 export async function loginWithPassword(identifier: string, password: string) {

@@ -7,20 +7,20 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 // Mockup palette.
 const STATUS_COLORS: Record<string, string> = {
-  TODO: "#738395",
-  IN_PROGRESS: "#E9BD62",
-  IN_REVIEW: "#6EB2FF",
-  DONE: "#00D7A0",
-  CANCELLED: "#FB7185",
-  DRAFT: "#738395",
-  PENDING_APPROVAL: "#E9BD62",
-  APPROVED: "#9B7EDE",
-  SCHEDULED: "#6EB2FF",
-  PUBLISHED: "#00D7A0",
-  FAILED: "#FB7185",
-  REJECTED: "#FB7185",
+  TODO: "var(--hx-738395)",
+  IN_PROGRESS: "var(--hx-E9BD62)",
+  IN_REVIEW: "var(--hx-6EB2FF)",
+  DONE: "var(--hx-00D7A0)",
+  CANCELLED: "var(--hx-FB7185)",
+  DRAFT: "var(--hx-738395)",
+  PENDING_APPROVAL: "var(--hx-E9BD62)",
+  APPROVED: "var(--hx-9B7EDE)",
+  SCHEDULED: "var(--hx-6EB2FF)",
+  PUBLISHED: "var(--hx-00D7A0)",
+  FAILED: "var(--hx-FB7185)",
+  REJECTED: "var(--hx-FB7185)",
 };
-const C = { present: "#00D7A0", late: "#E9BD62", absent: "#FB7185", leave: "#9B7EDE" };
+const C = { present: "var(--hx-00D7A0)", late: "var(--hx-E9BD62)", absent: "var(--hx-FB7185)", leave: "var(--hx-9B7EDE)" };
 // Lifecycle order (the mockup's), not the API's arbitrary groupBy order.
 const TASK_ORDER = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE", "CANCELLED"];
 const CONTENT_ORDER = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "SCHEDULED", "PUBLISHED", "FAILED", "REJECTED"];
@@ -31,20 +31,20 @@ const ordered = (rows: any[], order: string[]) =>
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
 const statusRows = (rows: any[], order: string[]) =>
-  ordered(rows ?? [], order).map((s: any) => ({ label: LABELS[s.status] ?? formatStatus(s.status), count: s.count, color: STATUS_COLORS[s.status] || "#738395" }));
+  ordered(rows ?? [], order).map((s: any) => ({ label: LABELS[s.status] ?? formatStatus(s.status), count: s.count, color: STATUS_COLORS[s.status] || "var(--hx-738395)" }));
 // Local calendar day key (IST for users in India) — never toISOString, which is UTC.
 const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const pct = (n: number, d: number) => `${d > 0 ? Math.min(100, (n / d) * 100) : 0}%`;
 
 function Card({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col min-w-0 rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
+    <div className="flex flex-col min-w-0 rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
       <div className="flex items-center justify-between gap-3 h-[60px] px-6 border-b border-ds-line">
         <span className="text-[15px] font-semibold tracking-[-.01em] text-ds-text">{title}</span>
         {right}
@@ -82,7 +82,7 @@ function Bars({ rows, total }: { rows: { label: string; count: number; color: st
             <i className="h-[7px] w-[7px] rounded-[2px] shrink-0" style={{ background: r.color }} />
             <span className="truncate">{r.label}</span>
           </span>
-          <span className="h-2.5 rounded-[5px] bg-[#132430] overflow-hidden">
+          <span className="h-2.5 rounded-[5px] bg-[color:var(--hx-132430)] overflow-hidden">
             <span className="block h-full rounded-[5px]" style={{ width: pct(r.count, total), background: r.color }} />
           </span>
           <span className="text-right text-[13px] font-semibold text-ds-text tabular-nums">{r.count}</span>
@@ -100,7 +100,7 @@ const Skeleton = () => (
   </div>
 );
 const DetailsLink = ({ href }: { href: string }) => (
-  <Link href={href} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ds-gold hover:text-[#F4D58C] whitespace-nowrap">
+  <Link href={href} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ds-gold hover:text-[color:var(--hx-F4D58C)] whitespace-nowrap">
     View details →
   </Link>
 );
@@ -134,7 +134,7 @@ export default function AnalyticsOverviewPage() {
         <Card title="Task Distribution" right={<DetailsLink href="/analytics/tasks" />}>
           {taskLoading && !taskData ? <Skeleton /> : taskError ? <Muted>Task figures couldn&apos;t be loaded just now.</Muted> : (
             <>
-              <Headline total={tasks?.totalTasks ?? 0} unit="total tasks" pill={`${tasks?.completionRate ?? 0}% complete`} color="#00D7A0" />
+              <Headline total={tasks?.totalTasks ?? 0} unit="total tasks" pill={`${tasks?.completionRate ?? 0}% complete`} color="var(--hx-00D7A0)" />
               {(tasks?.byStatus ?? []).length === 0 ? <Muted>No tasks yet.</Muted> : (
                 <Bars
                   total={tasks?.totalTasks || 0}
@@ -142,7 +142,7 @@ export default function AnalyticsOverviewPage() {
                 />
               )}
               {tasks?.overdueCount > 0 && (
-                <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.25)] text-[#FB7185] text-[12.5px] font-semibold">
+                <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.25)] text-[color:var(--hx-FB7185)] text-[12.5px] font-semibold">
                   <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                   {tasks.overdueCount} overdue task{tasks.overdueCount > 1 ? "s" : ""}
                 </div>
@@ -155,7 +155,7 @@ export default function AnalyticsOverviewPage() {
         <Card title="Content Pipeline" right={<DetailsLink href="/analytics/content" />}>
           {contentLoading && !contentData ? <Skeleton /> : contentError ? <Muted>Content figures couldn&apos;t be loaded just now.</Muted> : (
             <>
-              <Headline total={content?.totalPosts ?? 0} unit="total posts" pill={`${content?.scheduledUpcoming ?? 0} scheduled`} color="#6EB2FF" />
+              <Headline total={content?.totalPosts ?? 0} unit="total posts" pill={`${content?.scheduledUpcoming ?? 0} scheduled`} color="var(--hx-6EB2FF)" />
               {content?.totalPosts === 0 || (content?.byStatus ?? []).length === 0 ? <Muted>No content posts yet.</Muted> : (
                 <Bars
                   total={content?.totalPosts || 0}
@@ -170,7 +170,7 @@ export default function AnalyticsOverviewPage() {
         <Card title="Attendance Today" right={<span className="text-[12px] text-ds-t3">{todayLabel}</span>}>
           {attendanceLoading && !attendanceData ? <Skeleton /> : attendanceError ? <Muted>Attendance figures couldn&apos;t be loaded just now.</Muted> : (
             <>
-              <Headline total={totalEmp} unit="employees" pill={`${attendance?.attendanceRate ?? 0}% attendance`} color="#00D7A0" />
+              <Headline total={totalEmp} unit="employees" pill={`${attendance?.attendanceRate ?? 0}% attendance`} color="var(--hx-00D7A0)" />
               <Bars
                 total={totalEmp}
                 rows={[
@@ -210,7 +210,7 @@ export default function AnalyticsOverviewPage() {
                       <span className="text-[10.5px] text-ds-t3">{sunday ? "Sun · off" : DOW[d.getDay()].slice(0, 3)}</span>
                     </span>
                     <span
-                      className="flex h-3.5 rounded-[7px] bg-[#132430] overflow-hidden"
+                      className="flex h-3.5 rounded-[7px] bg-[color:var(--hx-132430)] overflow-hidden"
                       title={day ? `Present ${onTime} · Late ${late} · Absent ${day.absent ?? 0} · Leave ${day.leave ?? 0}` : "No attendance records for this day"}
                     >
                       {day && (
@@ -222,11 +222,11 @@ export default function AnalyticsOverviewPage() {
                         </>
                       )}
                     </span>
-                    <span className={`text-right text-[13px] font-semibold tabular-nums ${day ? "text-ds-text" : "text-[#4A6275]"}`}>{day ? day.present ?? 0 : "—"}</span>
+                    <span className={`text-right text-[13px] font-semibold tabular-nums ${day ? "text-ds-text" : "text-[color:var(--hx-4A6275)]"}`}>{day ? day.present ?? 0 : "—"}</span>
                   </div>
                 );
               })}
-              <div className="flex gap-x-[18px] gap-y-2 flex-wrap mt-2 pt-4 border-t border-[#132430] text-[11.5px] text-ds-t2">
+              <div className="flex gap-x-[18px] gap-y-2 flex-wrap mt-2 pt-4 border-t border-[color:var(--hx-132430)] text-[11.5px] text-ds-t2">
                 {[["Present", C.present], ["Late", C.late], ["Absent", C.absent], ["Leave", C.leave]].map(([l, c]) => (
                   <span key={l} className="flex items-center gap-[7px]"><i className="h-2 w-2 rounded-[2px]" style={{ background: c }} />{l}</span>
                 ))}

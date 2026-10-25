@@ -42,7 +42,7 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 text-[11px] font-semibold tracking-[.12em] uppercase text-ds-gold">
       {children}
-      <span className="flex-1 h-px bg-[#1A2C38]" />
+      <span className="flex-1 h-px bg-[color:var(--hx-1A2C38)]" />
     </div>
   );
 }
@@ -54,7 +54,7 @@ function GenerateButton({ loading, onClick, label }: { loading: boolean; onClick
         type="button"
         onClick={onClick}
         disabled={loading}
-        className="inline-flex items-center gap-2 h-11 px-[22px] rounded-full bg-ds-gold text-[#060D14] text-[13.5px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-60"
+        className="inline-flex items-center gap-2 h-11 px-[22px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13.5px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60"
       >
         {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />{label}</>}
       </button>
@@ -68,7 +68,7 @@ function Notice({ tone, children }: { tone: "error" | "ok"; children: React.Reac
       role={tone === "error" ? "alert" : "status"}
       className={`px-3 py-2.5 rounded-[8px] text-[12.5px] border ${
         tone === "error"
-          ? "bg-[rgba(229,72,77,.08)] border-[rgba(229,72,77,.3)] text-[#FB7185]"
+          ? "bg-[rgba(229,72,77,.08)] border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)]"
           : "bg-[rgba(0,215,160,.08)] border-[rgba(0,215,160,.3)] text-ds-teal"
       }`}
     >
@@ -85,7 +85,7 @@ function DocResult({ heading, html, title, sentAt, saving, onSend, openHtml, not
   onSend: () => void; openHtml: (html: string, title: string) => void; notice: React.ReactNode; error?: string | null;
 }) {
   return (
-    <div className="flex flex-col gap-3.5 pt-[22px] border-t border-[#1A2C38]">
+    <div className="flex flex-col gap-3.5 pt-[22px] border-t border-[color:var(--hx-1A2C38)]">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <span className="text-[15px] font-semibold text-ds-text">{heading}</span>
         <div className="flex gap-2 flex-wrap">
@@ -94,7 +94,7 @@ function DocResult({ heading, html, title, sentAt, saving, onSend, openHtml, not
               <Check size={14} />Sent to employee at {sentAt}
             </span>
           ) : (
-            <button type="button" onClick={onSend} disabled={saving} className={`${GHOST_BTN} border-0 bg-[#00B386] text-white hover:bg-[#00C996] disabled:opacity-50`}>
+            <button type="button" onClick={onSend} disabled={saving} className={`${GHOST_BTN} border-0 bg-[color:var(--hx-00B386)] text-white hover:bg-[color:var(--hx-00C996)] disabled:opacity-50`}>
               {saving ? <><Loader2 size={14} className="animate-spin" />Sending...</> : <><Send size={14} />Send to Employee</>}
             </button>
           )}
@@ -110,7 +110,7 @@ function DocResult({ heading, html, title, sentAt, saving, onSend, openHtml, not
         </div>
       )}
       {/* The generated document is real print-ready HTML (sanitised), shown on its own paper. */}
-      <div className="h-[420px] rounded-[12px] border border-[#1A2C38] bg-ds-inset p-3 sm:p-6">
+      <div className="h-[420px] rounded-[12px] border border-[color:var(--hx-1A2C38)] bg-ds-inset p-3 sm:p-6">
         <div className="h-full max-w-[720px] mx-auto rounded-[6px] overflow-hidden bg-white shadow-[0_10px_30px_rgba(0,0,0,.4)]">
           <iframe srcDoc={DOMPurify.sanitize(html)} className="w-full h-full" title={`${title} preview`} sandbox="allow-same-origin" />
         </div>
@@ -170,7 +170,7 @@ export default function AIAssistantPage() {
               onClick={() => { setActiveTab(tab.id); setResult(null); }}
               className={`inline-flex items-center gap-[9px] h-12 px-5 rounded-full border text-[14px] font-semibold whitespace-nowrap transition-colors ${
                 on
-                  ? "border-ds-gold bg-ds-gold text-[#060D14]"
+                  ? "border-ds-gold bg-ds-gold text-[color:var(--hx-060D14)]"
                   : "border-ds-line2 bg-ds-inset text-ds-t2 hover:border-[rgba(233,189,98,.55)] hover:text-ds-text"
               }`}
             >
@@ -180,8 +180,8 @@ export default function AIAssistantPage() {
         })}
       </section>
 
-      <section className="relative mt-4 rounded-[18px] border border-[#2A4658] bg-ds-card p-5 sm:p-7 shadow-[0_12px_32px_rgba(0,0,0,.35)] flex flex-col gap-[22px] overflow-hidden">
-        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)] opacity-70" />
+      <section className="relative mt-4 rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card p-5 sm:p-7 shadow-[0_12px_32px_rgba(0,0,0,.35)] flex flex-col gap-[22px] overflow-hidden">
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)] opacity-70" />
         {activeTab === "vacancy" && <VacancyGenerator loading={loading} setLoading={setLoading} result={result} setResult={setResult} copyText={copyText} copied={copied} />}
         {activeTab === "offer" && <OfferLetterGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
         {activeTab === "appointment" && <AppointmentGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
@@ -253,14 +253,14 @@ function VacancyGenerator({ loading, setLoading, result, setResult, copyText, co
       </div>
 
       {result && (
-        <div className="flex flex-col gap-4 pt-[22px] border-t border-[#1A2C38]">
+        <div className="flex flex-col gap-4 pt-[22px] border-t border-[color:var(--hx-1A2C38)]">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span className="text-[15px] font-semibold text-ds-text">Generated Job Description</span>
             <div className="flex gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => copyText(`${result.description}\n\nRequirements:\n${result.requirements}\n\nResponsibilities:\n${result.responsibilities}\n\nBenefits:\n${result.benefits}`)}
-                className={`${GHOST_BTN} h-[38px] border-ds-line2 text-ds-t2 hover:text-ds-text hover:border-[#2A4658]`}
+                className={`${GHOST_BTN} h-[38px] border-ds-line2 text-ds-t2 hover:text-ds-text hover:border-[color:var(--hx-2A4658)]`}
               >
                 {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "Copied" : "Copy All"}
               </button>
@@ -282,7 +282,7 @@ function VacancyGenerator({ loading, setLoading, result, setResult, copyText, co
               { label: "Responsibilities", value: result.responsibilities },
               { label: "Benefits", value: result.benefits },
             ].map((section) => (
-              <div key={section.label} className="px-[18px] py-4 rounded-[12px] bg-ds-inset border border-[#1A2C38]">
+              <div key={section.label} className="px-[18px] py-4 rounded-[12px] bg-ds-inset border border-[color:var(--hx-1A2C38)]">
                 <div className="text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3">{section.label}</div>
                 <p className="mt-2 text-[13px] leading-[1.65] text-ds-t5 whitespace-pre-line break-words">{section.value}</p>
               </div>
@@ -760,8 +760,8 @@ function AIChat({ loading, setLoading, employees }: any) {
             ))}
           </select>
         </label>
-        {employeeError && <p role="alert" className="-mt-1.5 text-[12px] font-semibold text-[#FB7185]">{employeeError}</p>}
-        <div className="h-[380px] overflow-y-auto rounded-[14px] border border-[#1A2C38] bg-ds-inset p-[18px] flex flex-col gap-3">
+        {employeeError && <p role="alert" className="-mt-1.5 text-[12px] font-semibold text-[color:var(--hx-FB7185)]">{employeeError}</p>}
+        <div className="h-[380px] overflow-y-auto rounded-[14px] border border-[color:var(--hx-1A2C38)] bg-ds-inset p-[18px] flex flex-col gap-3">
           {messages.length === 0 && (
             <div className="m-auto flex flex-col items-center gap-3.5 text-center p-5">
               <span className="h-11 w-11 rounded-[12px] bg-[rgba(233,189,98,.1)] text-ds-gold grid place-items-center"><Sparkles size={20} /></span>
@@ -787,7 +787,7 @@ function AIChat({ loading, setLoading, employees }: any) {
                 {!user && <AiBadge />}
                 <div
                   className={`max-w-[78%] px-[15px] py-[11px] rounded-[14px] border text-[13.5px] leading-[1.6] whitespace-pre-wrap break-words ${
-                    user ? "bg-ds-gold border-ds-gold text-[#060D14]" : "bg-ds-card border-[#1A2C38] text-ds-t5"
+                    user ? "bg-ds-gold border-ds-gold text-[color:var(--hx-060D14)]" : "bg-ds-card border-[color:var(--hx-1A2C38)] text-ds-t5"
                   }`}
                 >
                   {msg.content}
@@ -814,7 +814,7 @@ function AIChat({ loading, setLoading, employees }: any) {
             type="button"
             onClick={send}
             disabled={loading || !input.trim()}
-            className="inline-flex items-center gap-2 h-12 px-[22px] rounded-full bg-ds-gold text-[#060D14] text-[13.5px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-50"
+            className="inline-flex items-center gap-2 h-12 px-[22px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13.5px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-50"
           >
             <Send size={15} />Send
           </button>

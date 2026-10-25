@@ -8,31 +8,37 @@ import {
 import { useEmployeePerformance } from "@/lib/hooks/use-reports";
 import { BoxesLoader } from "@/components/boxes-loader";
 
+const rgba = (hex: string, a: number) => { if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+
 const PLATFORM_COLORS: Record<string, string> = {
-  instagram: "bg-pink-100 text-pink-700",
-  twitter: "bg-sky-100 text-sky-700",
-  x: "bg-gray-100 text-gray-800",
-  linkedin: "bg-blue-100 text-blue-700",
-  facebook: "bg-indigo-100 text-indigo-700",
-  youtube: "bg-red-100 text-red-700",
-  snapchat: "bg-yellow-100 text-yellow-800",
-  pinterest: "bg-rose-100 text-rose-700",
-  telegram: "bg-cyan-100 text-cyan-700",
+  instagram: "var(--hx-DD3FAF)",
+  twitter: "var(--hx-6EB2FF)",
+  x: "var(--hx-A7B3C2)",
+  linkedin: "var(--hx-238BFF)",
+  facebook: "var(--hx-2F86F0)",
+  youtube: "var(--hx-E52D47)",
+  snapchat: "var(--hx-E9BD62)",
+  pinterest: "var(--hx-FB7185)",
+  telegram: "var(--hx-00D7A0)",
 };
 
 function getPlatformColor(slug: string) {
-  return PLATFORM_COLORS[slug?.toLowerCase()] ?? "bg-[#FFF3C4] text-[#1A1A1A]";
+  return PLATFORM_COLORS[slug?.toLowerCase()] ?? "var(--hx-E9BD62)";
 }
+
+const CARD = "rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.35)]";
+const ROW = "flex items-center justify-between p-3 rounded-[12px] bg-ds-inset border border-ds-line";
+const HEAT_STEPS = ["bg-[color:var(--hx-132430)]", "bg-ds-gold/30", "bg-ds-gold/60", "bg-ds-gold"];
 
 function HeatCell({ count }: { count: number }) {
   const bg =
     count === 0
-      ? "bg-[#F0EAD8]"
+      ? HEAT_STEPS[0]
       : count <= 3
-        ? "bg-[#FAE89E]"
+        ? HEAT_STEPS[1]
         : count <= 8
-          ? "bg-[#F5D547]"
-          : "bg-[#1A1A1A]";
+          ? HEAT_STEPS[2]
+          : HEAT_STEPS[3];
   return (
     <div
       className={`w-3 h-3 rounded-[2px] ${bg} transition-colors`}
@@ -57,10 +63,10 @@ export default function EmployeePerformancePage() {
   if (!perf) {
     return (
       <div className="space-y-4">
-        <Link href="/employees" className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A]">
-          <ArrowLeft className="h-4 w-4" /> Back to Employees
+        <Link href="/employees" className="inline-flex items-center gap-1.5 pt-[22px] text-[12px] font-medium text-ds-t2 hover:text-ds-gold transition-colors">
+          <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={2} /> Back to Employees
         </Link>
-        <p className="text-[#7A7A7A]">Employee not found.</p>
+        <p className="text-[13px] text-ds-t3">Employee not found.</p>
       </div>
     );
   }
@@ -78,10 +84,10 @@ export default function EmployeePerformancePage() {
   ];
 
   const engagementCards = [
-    { label: "Likes", value: stats.totalLikes, icon: Heart, color: "text-pink-500" },
-    { label: "Comments", value: stats.totalComments, icon: MessageCircle, color: "text-blue-500" },
-    { label: "Shares", value: stats.totalShares, icon: Share2, color: "text-green-500" },
-    { label: "Views", value: stats.totalViews, icon: Eye, color: "text-purple-500" },
+    { label: "Likes", value: stats.totalLikes, icon: Heart, color: "var(--hx-EC42B7)" },
+    { label: "Comments", value: stats.totalComments, icon: MessageCircle, color: "var(--hx-238BFF)" },
+    { label: "Shares", value: stats.totalShares, icon: Share2, color: "var(--hx-20C46E)" },
+    { label: "Views", value: stats.totalViews, icon: Eye, color: "var(--hx-A849F5)" },
   ];
 
   // Group calendar by weeks for display
@@ -98,14 +104,14 @@ export default function EmployeePerformancePage() {
   if (currentWeek.length > 0) weeks.push(currentWeek);
 
   return (
-    <div className="space-y-6 crx-animate-fade">
+    <div className="space-y-6 pb-8 crx-animate-fade">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link href="/employees" className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
-          <ArrowLeft className="h-4 w-4" /> Employees
+      <div className="flex items-center gap-3 pt-[22px]">
+        <Link href="/employees" className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ds-t2 hover:text-ds-gold transition-colors">
+          <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={2} /> Employees
         </Link>
-        <span className="text-[#E8E0D0]">/</span>
-        <Link href={`/reports/${id}`} className="text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
+        <span className="text-ds-t4 text-[12px]">/</span>
+        <Link href={`/reports/${id}`} className="text-[12px] font-medium text-ds-t2 hover:text-ds-gold transition-colors">
           Reports
         </Link>
       </div>
@@ -115,37 +121,36 @@ export default function EmployeePerformancePage() {
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div className="flex items-center gap-3 sm:gap-4 min-w-0">
           <div
-            className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl flex items-center justify-center text-white text-lg sm:text-2xl font-semibold shrink-0"
-            style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
+            className="h-12 w-12 sm:h-16 sm:w-16 rounded-[16px] flex items-center justify-center text-lg sm:text-2xl font-bold shrink-0 border border-[rgba(233,189,98,.3)] bg-[rgba(233,189,98,.1)] text-ds-gold"
           >
             {employee.name?.[0]?.toUpperCase()}
           </div>
           <div className="min-w-0">
-            <h1 className="font-serif text-xl sm:text-4xl font-light text-[#1A1A1A] truncate">{employee.name}</h1>
+            <h1 className="m-0 text-[22px] sm:text-[30px] font-bold tracking-[-.03em] text-ds-text leading-tight truncate">{employee.name}</h1>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-1">
-              <span className="text-[#7A7A7A] text-xs sm:text-sm truncate">{employee.email}</span>
+              <span className="text-ds-t2 text-[12px] sm:text-[13.5px] truncate">{employee.email}</span>
               {employee.designation && (
-                <span className="bg-[#FFF3C4] text-[#1A1A1A] px-2.5 py-0.5 rounded-full text-xs font-medium">{employee.designation}</span>
+                <span className="h-[22px] px-2.5 rounded-[11px] border border-ds-gold/30 bg-ds-gold/10 text-ds-gold text-[10.5px] font-semibold inline-flex items-center whitespace-nowrap">{employee.designation}</span>
               )}
               {employee.team && (
-                <span className="text-xs text-[#7A7A7A] flex items-center gap-1">
+                <span className="text-[12px] text-ds-t3 flex items-center gap-1">
                   <Briefcase className="h-3 w-3" /> {employee.team}
                 </span>
               )}
             </div>
             <div className="flex gap-1.5 mt-2">
               {employee.roles.map((role: string) => (
-                <span key={role} className="bg-[#1A1A1A] text-white px-2.5 py-0.5 rounded-full text-[10px] font-medium">{role}</span>
+                <span key={role} className="h-5 px-2 rounded-[10px] border border-ds-line2 bg-ds-hover text-ds-t5 text-[10.5px] font-semibold inline-flex items-center whitespace-nowrap">{role}</span>
               ))}
-              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium ${
-                employee.status === "ACTIVE" ? "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]" : "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"
-              }`}>{employee.status}</span>
+              <span className={`inline-flex items-center gap-1.5 h-5 px-2 rounded-[10px] border text-[10.5px] font-semibold whitespace-nowrap ${
+                employee.status === "ACTIVE" ? "border-ds-teal/30 bg-ds-teal/10 text-ds-teal" : "border-ds-line2 bg-ds-inset text-ds-t3"
+              }`}><i className={`h-1.5 w-1.5 rounded-full ${employee.status === "ACTIVE" ? "bg-ds-teal" : "bg-ds-t3"}`} />{employee.status}</span>
             </div>
           </div>
         </div>
         <Link
           href={`/reports/${id}`}
-          className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium hover:bg-[#2B2B2B] transition-all shrink-0 w-fit"
+          className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-[6px] border border-ds-gold bg-ds-gold/[.14] text-ds-gold text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-ds-gold/[.22] hover:text-ds-gold2 shrink-0 w-fit"
         >
           <FileText className="h-4 w-4" /> View All Reports
         </Link>
@@ -156,13 +161,13 @@ export default function EmployeePerformancePage() {
         {statCards.map((card, i) => {
           const Icon = card.icon;
           return (
-            <div key={card.title} className={`bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}>
+            <div key={card.title} className={`rounded-[8px] bg-ds-card border border-ds-line p-4 sm:p-5 text-ds-text transition-colors hover:border-ds-line3 crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-[#7A7A7A]">{card.title}</span>
-                <Icon className="h-4 w-4 text-[#B0B0B0]" />
+                <span className="text-[12.5px] text-ds-t5">{card.title}</span>
+                <Icon className="h-4 w-4 text-ds-t3" strokeWidth={1.8} />
               </div>
-              <p className="text-[28px] font-light font-num text-[#1A1A1A] leading-tight">{card.value}</p>
-              <p className="text-[10px] text-[#B0B0B0] mt-1">{card.sub}</p>
+              <p className="text-[26px] font-semibold tracking-[-.02em] font-num text-ds-text leading-tight">{card.value}</p>
+              <p className="text-[11px] text-ds-t3 mt-1">{card.sub}</p>
             </div>
           );
         })}
@@ -173,13 +178,13 @@ export default function EmployeePerformancePage() {
         {engagementCards.map((card) => {
           const Icon = card.icon;
           return (
-            <div key={card.label} className="bg-white rounded-2xl p-3 sm:p-4 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] flex items-center gap-2 sm:gap-3 min-w-0">
-              <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-[#FFF8E1] flex items-center justify-center shrink-0">
-                <Icon className={`h-4 w-4 sm:h-5 sm:w-5 ${card.color}`} />
-              </div>
+            <div key={card.label} className="rounded-[8px] bg-ds-card border border-ds-line p-3 sm:p-4 flex items-center gap-2.5 sm:gap-3.5 min-w-0 transition-colors hover:border-ds-line3">
+              <span className="h-9 w-9 sm:h-10 sm:w-10 rounded-[10px] grid place-items-center shrink-0" style={{ background: rgba(card.color, 0.13), color: card.color }}>
+                <Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" strokeWidth={1.8} />
+              </span>
               <div className="min-w-0">
-                <p className="text-lg sm:text-xl font-light font-num text-[#1A1A1A]">{card.value.toLocaleString()}</p>
-                <p className="text-xs text-[#7A7A7A] truncate">{card.label}</p>
+                <p className="text-[18px] sm:text-[22px] font-semibold tracking-[-.02em] font-num text-ds-text leading-tight">{card.value.toLocaleString()}</p>
+                <p className="text-[12px] text-ds-t3 truncate">{card.label}</p>
               </div>
             </div>
           );
@@ -188,38 +193,37 @@ export default function EmployeePerformancePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Submission Heatmap */}
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+        <div className={`lg:col-span-2 ${CARD} p-5`}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Submission Activity</h3>
-            <span className="text-xs text-[#B0B0B0]">Last 90 days</span>
+            <h3 className="text-[15px] font-semibold text-ds-text">Submission Activity</h3>
+            <span className="text-[11px] text-ds-t3">Last 90 days</span>
           </div>
           <div className="flex gap-[3px] flex-wrap">
             {calendar.map((day: any) => (
               <div key={day.date} className="relative group">
                 <HeatCell count={day.linkCount} />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10">
-                  <div className="bg-[#1A1A1A] text-white text-[10px] px-2 py-1 rounded-lg whitespace-nowrap">
+                  <div className="bg-ds-hover border border-ds-line2 text-ds-text text-[10px] px-2 py-1 rounded-[6px] whitespace-nowrap shadow-[0_8px_20px_rgba(0,0,0,.4)]">
                     {new Date(day.date).toLocaleDateString("en-IN", { month: "short", day: "numeric" })} — {day.linkCount} links
                   </div>
                 </div>
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2 mt-3 text-[10px] text-[#B0B0B0]">
+          <div className="flex items-center gap-2 mt-3 text-[10px] text-ds-t3">
             <span>Less</span>
-            <div className="w-3 h-3 rounded-[2px] bg-[#F0EAD8]" />
-            <div className="w-3 h-3 rounded-[2px] bg-[#FAE89E]" />
-            <div className="w-3 h-3 rounded-[2px] bg-[#F5D547]" />
-            <div className="w-3 h-3 rounded-[2px] bg-[#1A1A1A]" />
+            {HEAT_STEPS.map((c) => (
+              <div key={c} className={`w-3 h-3 rounded-[2px] ${c}`} />
+            ))}
             <span>More</span>
           </div>
         </div>
 
         {/* Platform Breakdown */}
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
-          <h3 className="font-serif text-[#1A1A1A] font-medium mb-4">Platform Breakdown</h3>
+        <div className={`${CARD} p-5`}>
+          <h3 className="text-[15px] font-semibold text-ds-text mb-4">Platform Breakdown</h3>
           {platformBreakdown.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0]">No platform data yet.</p>
+            <p className="text-[13px] text-ds-t3">No platform data yet.</p>
           ) : (
             <div className="space-y-3">
               {platformBreakdown.map((p: any) => {
@@ -227,13 +231,15 @@ export default function EmployeePerformancePage() {
                 return (
                   <div key={p.slug}>
                     <div className="flex items-center justify-between mb-1">
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${getPlatformColor(p.slug)}`}>{p.name}</span>
-                      <span className="text-xs text-[#7A7A7A]">{p.links} links</span>
+                      {(() => { const c = getPlatformColor(p.slug); return (
+                        <span className="h-5 px-2 rounded-[10px] border text-[10.5px] font-semibold inline-flex items-center whitespace-nowrap" style={{ color: c, background: rgba(c, 0.1), borderColor: rgba(c, 0.3) }}>{p.name}</span>
+                      ); })()}
+                      <span className="text-[12px] text-ds-t2">{p.links} links</span>
                     </div>
-                    <div className="h-2 bg-[#F0EAD8] rounded-full overflow-hidden">
-                      <div className="h-full bg-[#F5D547] rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    <div className="h-2 bg-[color:var(--hx-132430)] rounded-full overflow-hidden">
+                      <div className="h-full bg-ds-gold rounded-full transition-all" style={{ width: `${pct}%` }} />
                     </div>
-                    <p className="text-[10px] text-[#B0B0B0] mt-0.5">{pct}% — {p.engagement.toLocaleString()} engagement</p>
+                    <p className="text-[10.5px] text-ds-t3 mt-0.5">{pct}% — {p.engagement.toLocaleString()} engagement</p>
                   </div>
                 );
               })}
@@ -243,12 +249,12 @@ export default function EmployeePerformancePage() {
       </div>
 
       {/* Weekly Trend */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+      <div className={`${CARD} p-5`}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-serif text-[#1A1A1A] font-medium flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-[#B0B0B0]" /> Weekly Trend
+          <h3 className="text-[15px] font-semibold text-ds-text flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-ds-t3" /> Weekly Trend
           </h3>
-          <span className="text-xs text-[#B0B0B0]">Last 12 weeks</span>
+          <span className="text-[11px] text-ds-t3">Last 12 weeks</span>
         </div>
         {/* min-w-0 on each column: flex items default to min-width:auto, so 12 columns
             of content-sized labels overflowed the container instead of shrinking. */}
@@ -259,16 +265,16 @@ export default function EmployeePerformancePage() {
               <div key={i} className="flex-1 min-w-0 flex flex-col items-center gap-1 group">
                 <div className="relative w-full flex justify-center">
                   <div className="absolute -top-6 hidden group-hover:block">
-                    <span className="bg-[#1A1A1A] text-white text-[10px] px-2 py-0.5 rounded-lg whitespace-nowrap">
+                    <span className="bg-ds-hover border border-ds-line2 text-ds-text text-[10px] px-2 py-0.5 rounded-[6px] whitespace-nowrap shadow-[0_8px_20px_rgba(0,0,0,.4)]">
                       {w.reports}r / {w.links}l
                     </span>
                   </div>
                   <div
-                    className="w-full max-w-[28px] rounded-t-lg bg-[#F5D547] hover:bg-[#E8C83A] transition-all"
+                    className="w-full max-w-[28px] rounded-t-[6px] bg-ds-gold/80 hover:bg-ds-gold2 transition-all"
                     style={{ height: `${Math.max(h, 4)}%` }}
                   />
                 </div>
-                <span className="text-[9px] text-[#B0B0B0] truncate w-full text-center">{w.week}</span>
+                <span className="text-[9px] text-ds-t3 truncate w-full text-center">{w.week}</span>
               </div>
             );
           })}
@@ -277,36 +283,36 @@ export default function EmployeePerformancePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Reports */}
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+        <div className={`${CARD} p-5`}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Recent Reports</h3>
-            <Link href={`/reports/${id}`} className="text-xs text-[#1A1A1A] hover:text-[#F5D547] font-medium">View all</Link>
+            <h3 className="text-[15px] font-semibold text-ds-text">Recent Reports</h3>
+            <Link href={`/reports/${id}`} className="text-[12px] text-ds-gold hover:text-ds-gold2 font-semibold transition-colors">View all</Link>
           </div>
           {recentReports.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0]">No reports yet.</p>
+            <p className="text-[13px] text-ds-t3">No reports yet.</p>
           ) : (
             <div className="space-y-2">
               {recentReports.map((r: any) => (
-                <div key={r.id} className="flex items-center justify-between p-3 rounded-xl bg-[#FEFCF7] border border-[#F0EAD8] hover:bg-[#FFF8E1] transition-colors">
+                <div key={r.id} className={`${ROW} hover:bg-ds-hover hover:border-ds-line2 transition-colors`}>
                   <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-lg bg-[#FFF3C4] flex items-center justify-center text-sm font-bold text-[#1A1A1A]">
+                    <div className="h-9 w-9 rounded-[10px] bg-ds-gold/[.13] flex items-center justify-center text-[13px] font-bold text-ds-gold">
                       {r.linkCount}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[#1A1A1A]">
+                      <p className="text-[13px] font-semibold text-ds-text">
                         {new Date(r.date).toLocaleDateString("en-IN", { weekday: "short", month: "short", day: "numeric" })}
                       </p>
                       <div className="flex gap-1 mt-0.5">
                         {r.platforms.slice(0, 3).map((p: string) => (
-                          <span key={p} className="text-[9px] text-[#7A7A7A]">{p}</span>
+                          <span key={p} className="text-[10px] text-ds-t3">{p}</span>
                         ))}
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-[#7A7A7A]">{r.linkCount} links</p>
+                    <p className="text-[12px] text-ds-t2">{r.linkCount} links</p>
                     {r.totalEngagement > 0 && (
-                      <p className="text-[10px] text-[#B0B0B0]">{r.totalEngagement.toLocaleString()} views+likes+cmts</p>
+                      <p className="text-[10.5px] text-ds-t3">{r.totalEngagement.toLocaleString()} views+likes+cmts</p>
                     )}
                   </div>
                 </div>
@@ -316,33 +322,30 @@ export default function EmployeePerformancePage() {
         </div>
 
         {/* Assigned Accounts */}
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+        <div className={`${CARD} p-5`}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-serif text-[#1A1A1A] font-medium flex items-center gap-2">
-              <Globe className="h-4 w-4 text-[#B0B0B0]" /> Assigned Accounts
+            <h3 className="text-[15px] font-semibold text-ds-text flex items-center gap-2">
+              <Globe className="h-4 w-4 text-ds-t3" /> Assigned Accounts
             </h3>
-            <span className="text-xs text-[#B0B0B0]">{assignedAccounts.length} active</span>
+            <span className="text-[11px] text-ds-t3">{assignedAccounts.length} active</span>
           </div>
           {assignedAccounts.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0]">No accounts assigned.</p>
+            <p className="text-[13px] text-ds-t3">No accounts assigned.</p>
           ) : (
             <div className="space-y-2">
               {assignedAccounts.map((acc: any) => (
-                <div key={acc.id} className="flex items-center justify-between p-3 rounded-xl bg-[#FEFCF7] border border-[#F0EAD8]">
+                <div key={acc.id} className={ROW}>
                   <div className="flex items-center gap-3">
-                    <div
-                      className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-semibold"
-                      style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
-                    >
+                    <div className="h-9 w-9 rounded-full border border-ds-line2 bg-[rgba(35,139,255,.14)] text-[color:var(--hx-6EB2FF)] flex items-center justify-center text-[12px] font-bold">
                       {(acc.handle || acc.displayName)?.[0]?.toUpperCase()}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[#1A1A1A]">{acc.handle || acc.displayName}</p>
-                      <p className="text-xs text-[#7A7A7A]">{acc.platform}</p>
+                      <p className="text-[13px] font-semibold text-ds-text">{acc.handle || acc.displayName}</p>
+                      <p className="text-[12px] text-ds-t3">{acc.platform}</p>
                     </div>
                   </div>
                   {acc.followerCount != null && (
-                    <span className="text-xs text-[#7A7A7A]">{acc.followerCount.toLocaleString()} followers</span>
+                    <span className="text-[12px] text-ds-t2">{acc.followerCount.toLocaleString()} followers</span>
                   )}
                 </div>
               ))}

@@ -17,11 +17,11 @@ export default function EditAccountPage() {
     );
   }
   if (!account) {
-    return <div className="text-[#7A7A7A] text-center py-8">Account not found</div>;
+    return <div className="text-[12.5px] text-ds-t3 text-center py-12">Account not found</div>;
   }
 
   return (
-    <div className="max-w-2xl crx-animate-fade">
+    <div className="max-w-2xl pt-[26px] pb-6 crx-animate-fade">
       <AccountForm account={account} />
     </div>
   );

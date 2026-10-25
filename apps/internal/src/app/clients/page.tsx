@@ -9,15 +9,15 @@ import { useAuth } from "@/lib/auth";
 import { ModalPortal } from "@/components/modal-portal";
 
 // Mockup palette.
-const STATUS_COLOR: Record<string, string> = { ACTIVE: "#00D7A0", PAUSED: "#6EB2FF", INACTIVE: "#738395" };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const STATUS_COLOR: Record<string, string> = { ACTIVE: "var(--hx-00D7A0)", PAUSED: "var(--hx-6EB2FF)", INACTIVE: "var(--hx-738395)" };
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const hash = (s: string) => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
   return Math.abs(h);
 };
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const initials = (name: string) =>
@@ -137,7 +137,7 @@ export default function ClientsPage() {
         <button
           type="button"
           onClick={() => { setForm(EMPTY_FORM); setFormError(""); setNewOpen(true); }}
-          className="inline-flex items-center gap-[7px] h-10 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold whitespace-nowrap hover:bg-[#F4D58C]"
+          className="inline-flex items-center gap-[7px] h-10 px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)]"
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={2.4} /> New Client
         </button>
@@ -178,12 +178,12 @@ export default function ClientsPage() {
           </div>
         ) : (
           clients.map((c: any) => {
-            const color = STATUS_COLOR[c.status] ?? "#738395";
+            const color = STATUS_COLOR[c.status] ?? "var(--hx-738395)";
             const n = c._count?.projects || 0;
             return (
               <div
                 key={c.id}
-                className="relative flex items-center gap-4 flex-wrap px-5 py-4 rounded-[12px] bg-ds-card border border-ds-line overflow-hidden transition-colors hover:border-[#2A4658] hover:bg-[#0A1620]"
+                className="relative flex items-center gap-4 flex-wrap px-5 py-4 rounded-[12px] bg-ds-card border border-ds-line overflow-hidden transition-colors hover:border-[color:var(--hx-2A4658)] hover:bg-[color:var(--hx-0A1620)]"
               >
                 <Link href={`/clients/${c.id}`} className="group flex items-center gap-3.5 flex-[1_1_280px] min-w-0 text-ds-text">
                   <span className="h-[46px] w-[46px] rounded-[12px] bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.3)] text-ds-gold grid place-items-center shrink-0">
@@ -192,7 +192,7 @@ export default function ClientsPage() {
                   <span className="min-w-0 leading-[1.4]">
                     <span className="block text-[15px] font-semibold tracking-[-.01em] truncate group-hover:text-ds-gold transition-colors">{c.companyName}</span>
                     <span className="block text-[12px] text-ds-t2 truncate">
-                      {c.contactName || "—"} <span className="text-[#33506A]">·</span> {c.email || "No email on file"}
+                      {c.contactName || "—"} <span className="text-[color:var(--hx-33506A)]">·</span> {c.email || "No email on file"}
                     </span>
                   </span>
                 </Link>
@@ -210,7 +210,7 @@ export default function ClientsPage() {
                       type="button"
                       onClick={() => { setInviteTarget({ id: c.id, email: c.email, name: c.companyName }); setInviteMsg(null); }}
                       title="Invite to Client Portal"
-                      className="inline-flex items-center gap-1.5 h-8 px-[13px] rounded-full border border-ds-line2 text-ds-t5 text-[12px] font-semibold whitespace-nowrap hover:border-[rgba(35,139,255,.55)] hover:text-[#6EB2FF]"
+                      className="inline-flex items-center gap-1.5 h-8 px-[13px] rounded-full border border-ds-line2 text-ds-t5 text-[12px] font-semibold whitespace-nowrap hover:border-[rgba(35,139,255,.55)] hover:text-[color:var(--hx-6EB2FF)]"
                     >
                       <Send className="h-[13px] w-[13px]" /> Invite
                     </button>
@@ -220,7 +220,7 @@ export default function ClientsPage() {
                       type="button"
                       onClick={() => { setDeleteTarget({ id: c.id, name: c.companyName }); setDeleteError(""); }}
                       title="Delete Client"
-                      className="inline-flex items-center gap-1.5 h-8 px-[13px] rounded-full border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px] font-semibold whitespace-nowrap hover:border-[rgba(229,72,77,.6)] hover:bg-[rgba(229,72,77,.08)]"
+                      className="inline-flex items-center gap-1.5 h-8 px-[13px] rounded-full border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px] font-semibold whitespace-nowrap hover:border-[rgba(229,72,77,.6)] hover:bg-[rgba(229,72,77,.08)]"
                     >
                       <Trash2 className="h-[13px] w-[13px]" /> Delete
                     </button>
@@ -254,7 +254,7 @@ export default function ClientsPage() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-[22px] flex flex-col gap-4">
                   {formError && (
-                    <div className="px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">{formError}</div>
+                    <div className="px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{formError}</div>
                   )}
                   {FIELDS.map((f) => (
                     <label key={f.key} className="flex flex-col gap-[7px] text-[10.5px] text-ds-t3 font-semibold tracking-[.1em] uppercase">
@@ -276,7 +276,7 @@ export default function ClientsPage() {
                 </div>
                 <div className="flex justify-end gap-2 px-[22px] py-4 border-t border-ds-line shrink-0">
                   <button type="button" onClick={() => setNewOpen(false)} disabled={creating} className={BTN_GHOST}>Cancel</button>
-                  <button type="submit" disabled={creating} className="h-9 px-[18px] rounded-[6px] bg-ds-gold text-[#060D14] text-[12px] font-bold hover:bg-[#F4D58C] disabled:opacity-60">
+                  <button type="submit" disabled={creating} className="h-9 px-[18px] rounded-[6px] bg-ds-gold text-[color:var(--hx-060D14)] text-[12px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60">
                     {creating ? "Creating..." : "Create Client"}
                   </button>
                 </div>
@@ -298,7 +298,7 @@ export default function ClientsPage() {
                 aria-label="Invite to Client Portal"
                 className="relative w-full max-w-[400px] bg-ds-card border border-ds-line2 rounded-[12px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)] overflow-hidden"
               >
-                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#238BFF_30%,#238BFF_70%,transparent)]" />
+                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-238BFF)_30%,var(--hx-238BFF)_70%,transparent)]" />
                 <div className="flex items-center justify-between">
                   <span className="text-[15px] font-semibold text-ds-text">Invite to Client Portal</span>
                   <button type="button" onClick={() => setInviteTarget(null)} disabled={inviting} aria-label="Close" className="text-ds-t3 hover:text-ds-text">
@@ -328,7 +328,7 @@ export default function ClientsPage() {
                     className={`flex items-center gap-2 mt-3.5 px-3 py-2.5 rounded-[6px] text-[12px] font-semibold border ${
                       inviteMsg.type === "success"
                         ? "bg-[rgba(0,215,160,.08)] border-[rgba(0,215,160,.3)] text-ds-teal"
-                        : "bg-[rgba(229,72,77,.08)] border-[rgba(229,72,77,.3)] text-[#FB7185]"
+                        : "bg-[rgba(229,72,77,.08)] border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)]"
                     }`}
                   >
                     {inviteMsg.type === "success" ? <Check className="h-4 w-4 shrink-0" /> : <X className="h-4 w-4 shrink-0" />}
@@ -365,13 +365,13 @@ export default function ClientsPage() {
                 aria-label={`Delete ${deleteTarget.name}`}
                 className="w-full max-w-[380px] bg-ds-card border border-ds-line2 rounded-[12px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)]"
               >
-                <div className="h-[38px] w-[38px] rounded-[10px] bg-[rgba(229,72,77,.12)] text-[#FB7185] grid place-items-center">
+                <div className="h-[38px] w-[38px] rounded-[10px] bg-[rgba(229,72,77,.12)] text-[color:var(--hx-FB7185)] grid place-items-center">
                   <Trash2 className="h-[17px] w-[17px]" />
                 </div>
                 <div className="text-[15px] font-semibold text-ds-text mt-3.5">Delete “{deleteTarget.name}”?</div>
                 <div className="text-[12.5px] text-ds-t2 mt-1.5">This cannot be undone.</div>
                 {deleteError && (
-                  <div className="mt-3.5 px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">{deleteError}</div>
+                  <div className="mt-3.5 px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{deleteError}</div>
                 )}
                 <div className="flex justify-end gap-2 mt-[22px]">
                   <button type="button" onClick={() => setDeleteTarget(null)} disabled={deleting} className={BTN_GHOST}>Cancel</button>
@@ -379,7 +379,7 @@ export default function ClientsPage() {
                     type="button"
                     onClick={confirmDeleteClient}
                     disabled={deleting}
-                    className="h-9 px-4 rounded-[6px] bg-[#E5484D] text-white text-[12px] font-bold disabled:opacity-60"
+                    className="h-9 px-4 rounded-[6px] bg-[color:var(--hx-E5484D)] text-white text-[12px] font-bold disabled:opacity-60"
                   >
                     {deleting ? "Deleting..." : "Delete"}
                   </button>

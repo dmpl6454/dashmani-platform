@@ -241,6 +241,183 @@ export async function updateClient(id: string, data: { companyName?: string; con
   });
 }
 
+/**
+ * Public self-signup (website "Start a campaign" → client portal). Creates an ACTIVE client
+ * with instant access, like HR self-registration — the portal only ever shows a client its
+ * own data, and a brand-new account has nothing but the campaign booking flow.
+ *
+ * ⚠️ It can never take over an existing account: any existing client row for the email, in
+ * any status and any casing, is a 409 (the lookup is case-insensitive because Postgres's
+ * unique index is not). A pending admin invite for the same email is consumed, so the
+ * invite link cannot later create a second account.
+ */
+export async function clientSignup(data: { companyName: string; contactName: string; email: string; password: string; phone?: string }) {
+  const email = data.email.trim().toLowerCase();
+  const existing = await prisma.client.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } });
+  if (existing) throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in, or use “Forgot password”.");
+
+  const passwordHash = await hash(data.password, 12);
+  let client;
+  try {
+    client = await prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({
+        data: { companyName: data.companyName, contactName: data.contactName, email, passwordHash, phone: data.phone ?? null, status: "ACTIVE" },
+      });
+      await tx.clientInvite.updateMany({ where: { email, usedAt: null }, data: { usedAt: new Date() } });
+      return created;
+    });
+  } catch (err: any) {
+    // Two signups racing on one email: the unique index decides, the loser gets the same 409.
+    if (err?.code === "P2002") throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in, or use “Forgot password”.");
+    throw err;
+  }
+
+  void (async () => {
+    const { notifyAdminByEmail } = await import("./email.service");
+    await notifyAdminByEmail(
+      `New client signed up: ${client.companyName}`,
+      [
+        { label: "Company", value: client.companyName },
+        { label: "Contact", value: client.contactName },
+        { label: "Email", value: client.email },
+        ...(client.phone ? [{ label: "Phone", value: client.phone }] : []),
+      ],
+      `/clients/${client.id}`,
+    );
+  })().catch((e) => console.error("[client-signup] admin email failed", e));
+
+  return issueClientSession(client);
+}
+
+/** Two-label public suffixes a Workspace domain commonly ends in ("acme.co.in" → "acme"). */
+const MULTI_PART_SUFFIXES = new Set([
+  "co.in", "net.in", "org.in", "firm.in", "gen.in", "ind.in", "ac.in", "edu.in", "gov.in",
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk",
+  "com.au", "net.au", "org.au", "co.nz", "co.za", "co.jp", "co.id", "co.kr",
+  "com.sg", "com.my", "com.hk", "com.cn", "com.br", "com.mx", "com.ar", "com.tr",
+  "com.pk", "com.bd", "com.np", "com.lk", "com.ng", "com.ph", "com.vn", "com.sa", "com.eg",
+]);
+
+// Generic second-level labels many country TLDs register under ("acme.co.ae", "acme.edu.au",
+// "acme.com.qa"). Paired with a two-letter country code they are a public suffix even when the
+// pair is not listed above, and on their own they are never a company name ("Co", "Com").
+const GENERIC_SECOND_LEVEL = new Set([
+  "co", "com", "net", "org", "ac", "edu", "gov", "ltd", "plc", "gen", "ind", "firm", "or", "ne", "go", "biz", "info", "mil", "nic",
+]);
+
+function isTwoPartSuffix(lastTwo: string[]): boolean {
+  const [sld, tld] = lastTwo;
+  return MULTI_PART_SUFFIXES.has(lastTwo.join(".")) || (tld?.length === 2 && GENERIC_SECOND_LEVEL.has(sld ?? ""));
+}
+
+/**
+ * A company-name suggestion from a Google Workspace domain — never the bare domain itself
+ * (the portal would otherwise prefill "acme.com" as the company, and the campaign brand
+ * after it). "acme.com" / "mail.acme.co.in" → "Acme"; "acme-studios.com" → "Acme Studios".
+ * Null when nothing sensible remains (no domain, a lone TLD, or a numeric label).
+ */
+export function companyFromDomain(domain: string | null | undefined): string | null {
+  const labels = (domain ?? "").trim().toLowerCase().replace(/\.+$/, "").split(".").filter(Boolean);
+  if (labels.length < 2 || (labels.length === 2 && isTwoPartSuffix(labels))) return null;
+  const rest = labels.slice(0, labels.length - (labels.length >= 3 && isTwoPartSuffix(labels.slice(-2)) ? 2 : 1));
+  const name = rest[rest.length - 1] ?? "";
+  if (!/^[a-z0-9-]+$/.test(name) || /^[0-9-]+$/.test(name) || GENERIC_SECOND_LEVEL.has(name)) return null;
+  const words = name.split("-").filter(Boolean);
+  const out = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return out.length >= 2 ? out.slice(0, 200) : null;
+}
+
+/**
+ * "Sign in with Google" (client portal). The GIS credential is verified with Google first
+ * (`verifyGoogleIdToken`: our audience, Google's issuer, unexpired, email VERIFIED); only
+ * then is the verified email looked up:
+ *
+ * - An existing client with that email (any casing) signs straight in. Google has proven
+ *   they control the address, which is exactly what the password-reset email proves, so
+ *   this is not a takeover path. An INACTIVE/ONBOARDING account is refused like password login.
+ * - An unknown email creates an ACTIVE client, mirroring public self-signup — but a Google
+ *   token names a person, not a business, so the first call answers `needsProfile` and the
+ *   portal asks for the company name; the second call carries `companyName` and creates the
+ *   row. Nothing is written on the first call. The row gets an unusable random password
+ *   (bcrypt of 256 random bits), so password login says "invalid credentials" until the
+ *   client sets one through "Forgot password"; it can never be guessed.
+ *
+ * Returns the same session shape as clientLogin, or `{ needsProfile: true, email, name }`.
+ */
+export async function clientGoogleSignIn(input: { credential: string; companyName?: string }) {
+  const { verifyGoogleIdToken } = await import("./google-id-token");
+  const identity = await verifyGoogleIdToken(input.credential);
+  const email = identity.email;
+
+  const existing = await prisma.client.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+  if (existing) {
+    if (existing.status !== "ACTIVE") throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
+    return issueClientSession(existing);
+  }
+
+  const companyName = input.companyName?.trim();
+  if (!companyName) {
+    return { needsProfile: true as const, email, name: identity.name, suggestedCompany: companyFromDomain(identity.hostedDomain) };
+  }
+
+  const contactName = identity.name.slice(0, 200);
+  const passwordHash = await hash(crypto.randomBytes(32).toString("hex"), 12);
+  let client;
+  try {
+    client = await prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({
+        data: { companyName, contactName, email, passwordHash, phone: null, status: "ACTIVE" },
+      });
+      await tx.clientInvite.updateMany({ where: { email, usedAt: null }, data: { usedAt: new Date() } });
+      return created;
+    });
+  } catch (err: any) {
+    // Two first sign-ins racing on one verified email: the unique index decides, and the
+    // loser simply signs in to the row the winner made (ownership of the email is proven).
+    if (err?.code === "P2002") {
+      const raced = await prisma.client.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+      if (raced && raced.status === "ACTIVE") return issueClientSession(raced);
+      throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in instead.");
+    }
+    throw err;
+  }
+
+  void (async () => {
+    const { notifyAdminByEmail } = await import("./email.service");
+    await notifyAdminByEmail(
+      `New client signed up (Google): ${client.companyName}`,
+      [
+        { label: "Company", value: client.companyName },
+        { label: "Contact", value: client.contactName },
+        { label: "Email", value: client.email },
+        { label: "Method", value: "Sign in with Google" },
+      ],
+      `/clients/${client.id}`,
+    );
+  })().catch((e) => console.error("[client-google-signin] admin email failed", e));
+
+  return issueClientSession(client);
+}
+
+/** Access + refresh token pair for a freshly created or authenticated client (same shape as clientLogin). */
+async function issueClientSession(client: { id: string; email: string; contactName: string; companyName: string }) {
+  const accessToken = jwt.sign(
+    { userId: client.id, email: client.email, roles: [], type: "client" as const },
+    JWT_SECRET,
+    { expiresIn: ACCESS_TOKEN_EXPIRY }
+  );
+  const refreshToken = jwt.sign({ userId: client.id }, JWT_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() });
+  const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+  await prisma.clientRefreshToken.create({
+    data: { clientId: client.id, token: tokenHash, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+  });
+  return {
+    accessToken,
+    refreshToken,
+    user: { id: client.id, name: client.contactName, companyName: client.companyName, email: client.email, roles: [] },
+  };
+}
+
 export async function createInvite(email: string): Promise<{ id: string; email: string; token: string; expiresAt: Date }> {
   const normalized = email.trim().toLowerCase();
 

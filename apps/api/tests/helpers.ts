@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { hash } from "bcrypt";
 import jwt from "jsonwebtoken";
+import { signCreatorAccessToken } from "../src/services/creator/creator-jwt";
 
 export async function createTestRole(name: string, permissions: { resource: string; action: string; scope: string }[]) {
   const role = await prisma.role.create({
@@ -60,6 +61,21 @@ export function generateToken(userId: string, email: string, roles: string[] = [
 }
 
 /**
+ * A client-portal access token, the shape `client-auth.service.ts` issues
+ * (`type: "client"`, no roles). Use this instead of POSTing `/v1/client/auth/login`
+ * in a `beforeEach`: that route sits behind the login limiter (20 tries per
+ * account per 15 min), so a file with 20+ tests logging in the same client
+ * gets a 429 on the 21st and every later test reads `body.data` as undefined.
+ */
+export function generateClientToken(clientId: string, email: string) {
+  return jwt.sign(
+    { userId: clientId, email, roles: [], type: "client" },
+    process.env.JWT_SECRET || "dev-secret",
+    { expiresIn: "15m" }
+  );
+}
+
+/**
  * An HR-portal access token, the shape `hr-auth.service.ts` issues (`type: "hr"`).
  * Signed with the same secret as `generateToken` so `authenticateHr` accepts it.
  */
@@ -69,4 +85,12 @@ export function generateHrToken(userId: string, email: string, roles: string[] =
     process.env.JWT_SECRET || "dev-secret",
     { expiresIn: "15m" }
   );
+}
+
+/**
+ * A creator-portal access token (creators.digitalsukoon.com), minted exactly as the API does —
+ * with the CREATOR secret and `aud: "creators"`, so staff / HR / client gates reject it.
+ */
+export function generateCreatorToken(creatorId: string, email: string) {
+  return signCreatorAccessToken({ creatorId, email });
 }

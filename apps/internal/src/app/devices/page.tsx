@@ -24,10 +24,10 @@ const DICON: Record<string, string> = {
   MOUSE: "M12 2a6 6 0 0 1 6 6v8a6 6 0 0 1-12 0V8a6 6 0 0 1 6-6zM12 6v4",
   OTHER: "M21 16V8l-9-5-9 5v8l9 5zM3.3 7L12 12l8.7-5M12 22V12",
 };
-const COND_COLOR: Record<string, string> = { New: "#00D7A0", Good: "#6EB2FF", Fair: "#E9BD62", Poor: "#FB7185" };
+const COND_COLOR: Record<string, string> = { New: "var(--hx-00D7A0)", Good: "var(--hx-6EB2FF)", Fair: "var(--hx-E9BD62)", Poor: "var(--hx-FB7185)" };
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const fdY = (v: string) => { const d = new Date(v); return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
@@ -146,10 +146,10 @@ export default function DevicesPage() {
   const editingDevice = editingId ? devices.find((d) => d.id === editingId) : null;
 
   const stats = [
-    { label: "Active Devices", value: activeCount, color: "#00D7A0", d: DICON.OTHER },
-    { label: "Laptops", value: laptopCount, color: "#E9BD62", d: DICON.LAPTOP },
-    { label: "Phones", value: phoneCount, color: "#6EB2FF", d: DICON.PHONE },
-    { label: "Total (incl. returned)", value: devices.length, color: "#9B7EDE", d: "M4 6h16M4 12h16M4 18h16" },
+    { label: "Active Devices", value: activeCount, color: "var(--hx-00D7A0)", d: DICON.OTHER },
+    { label: "Laptops", value: laptopCount, color: "var(--hx-E9BD62)", d: DICON.LAPTOP },
+    { label: "Phones", value: phoneCount, color: "var(--hx-6EB2FF)", d: DICON.PHONE },
+    { label: "Total (incl. returned)", value: devices.length, color: "var(--hx-9B7EDE)", d: "M4 6h16M4 12h16M4 18h16" },
   ];
   const tabs = [
     { key: "active" as const, label: "Active", n: activeCount },
@@ -168,7 +168,7 @@ export default function DevicesPage() {
         <button
           type="button"
           onClick={() => { setShowForm(true); setEditingId(null); setForm(BLANK); setFormError(""); }}
-          className="inline-flex items-center gap-2 h-[46px] px-[22px] rounded-full bg-ds-gold text-[#060D14] text-[14px] font-bold whitespace-nowrap hover:bg-[#F4D58C]"
+          className="inline-flex items-center gap-2 h-[46px] px-[22px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[14px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)]"
         >
           <Plus className="h-[15px] w-[15px]" strokeWidth={2.4} /> Assign Device
         </button>
@@ -177,7 +177,7 @@ export default function DevicesPage() {
       {/* Stats */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {stats.map((s) => (
-          <div key={s.label} className="flex items-start justify-between gap-2.5 px-5 py-[18px] rounded-[16px] bg-ds-card border border-[#2A4658] min-w-0">
+          <div key={s.label} className="flex items-start justify-between gap-2.5 px-5 py-[18px] rounded-[16px] bg-ds-card border border-[color:var(--hx-2A4658)] min-w-0">
             <span className="leading-[1.15] min-w-0">
               <span className="block text-[12px] font-semibold text-ds-t2 leading-[1.35] [text-wrap:balance]">{s.label}</span>
               <span className="block mt-3 text-[32px] font-bold tracking-[-.04em] tabular-nums text-ds-text">
@@ -203,7 +203,7 @@ export default function DevicesPage() {
                 role="tab"
                 aria-selected={on}
                 onClick={() => setFilter(t.key)}
-                className={`inline-flex items-center gap-2 h-9 px-[18px] rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors ${on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+                className={`inline-flex items-center gap-2 h-9 px-[18px] rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors ${on ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"}`}
               >
                 {t.label}
                 {loaded && <span className={`text-[11px] font-semibold ${on ? "text-[rgba(6,13,20,.6)]" : "text-ds-t3"}`}>{t.n}</span>}
@@ -219,14 +219,14 @@ export default function DevicesPage() {
       </section>
 
       {actionError && !confirm && (
-        <div className="mt-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+        <div className="mt-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px] flex items-center justify-between gap-3">
           <span>{actionError}</span>
           <button type="button" onClick={() => setActionError("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </div>
       )}
 
       {/* Devices List */}
-      <section className="mt-[18px] rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
+      <section className="mt-[18px] rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
         <div className="overflow-x-auto">
           <div className="min-w-[960px]">
             <div className={`${GRID} h-[52px] px-5 bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.08em] uppercase text-ds-t3 whitespace-nowrap`}>
@@ -235,7 +235,7 @@ export default function DevicesPage() {
             </div>
             {isLoading && !data ? (
               Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className={`${GRID} h-[76px] px-5 border-b border-[#132430]`}>
+                <div key={i} className={`${GRID} h-[76px] px-5 border-b border-[color:var(--hx-132430)]`}>
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-[11px] bg-ds-hover motion-safe:animate-pulse" />
                     <div className="h-3.5 w-32 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
@@ -251,13 +251,13 @@ export default function DevicesPage() {
               </div>
             ) : (
               filteredDevices.map((device: any) => {
-                const cc = COND_COLOR[device.condition] ?? "#A7B3C2";
+                const cc = COND_COLOR[device.condition] ?? "var(--hx-A7B3C2)";
                 const returned = !!device.returnedAt;
-                const sc = returned ? "#738395" : "#00D7A0";
+                const sc = returned ? "var(--hx-738395)" : "var(--hx-00D7A0)";
                 return (
                   <div
                     key={device.id}
-                    className={`${GRID} min-h-[80px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13.5px] tabular-nums hover:bg-[#0A1620] transition-colors ${returned ? "opacity-[.78]" : ""}`}
+                    className={`${GRID} min-h-[80px] py-3 px-5 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13.5px] tabular-nums hover:bg-[color:var(--hx-0A1620)] transition-colors ${returned ? "opacity-[.78]" : ""}`}
                   >
                     <span className="flex items-center gap-3 min-w-0">
                       <span className="h-10 w-10 rounded-[11px] bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.28)] text-ds-gold grid place-items-center shrink-0">
@@ -271,13 +271,13 @@ export default function DevicesPage() {
                     <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
                       {device.employee ? (
                         <>
-                          <Link href={`/employees/${device.employee.id}`} className="font-semibold text-[#E3E8EE] truncate hover:text-ds-gold">
+                          <Link href={`/employees/${device.employee.id}`} className="font-semibold text-[color:var(--hx-E3E8EE)] truncate hover:text-ds-gold">
                             {toTitleCase(device.employee.name)}
                           </Link>
                           <span className="text-[11.5px] text-ds-t3">ID: {device.employee.id.slice(0, 8)}</span>
                         </>
                       ) : (
-                        <span className="text-[#4A6275]">—</span>
+                        <span className="text-[color:var(--hx-4A6275)]">—</span>
                       )}
                     </span>
                     <span className="flex flex-col gap-[3px] min-w-0 leading-[1.25] text-[12px] text-ds-t2">
@@ -287,7 +287,7 @@ export default function DevicesPage() {
                       {device.assetTag && (
                         <span className="truncate"><span className="text-ds-t3">Tag</span> <span className="font-mono text-ds-t5">{device.assetTag}</span></span>
                       )}
-                      {!device.serialNumber && !device.assetTag && <span className="text-[#4A6275]">—</span>}
+                      {!device.serialNumber && !device.assetTag && <span className="text-[color:var(--hx-4A6275)]">—</span>}
                     </span>
                     <span>
                       <span className="inline-flex items-center h-[26px] px-[11px] rounded-full text-[11.5px] font-semibold whitespace-nowrap" style={{ background: rgba(cc, 0.12), color: cc }}>
@@ -309,11 +309,11 @@ export default function DevicesPage() {
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       {!returned && (
-                        <button type="button" onClick={() => { setActionError(""); setConfirm({ kind: "return", device }); }} title="Mark Returned" aria-label={`Mark ${deviceName(device)} returned`} className={`${ROUND_BTN} hover:text-[#6EB2FF] hover:border-[rgba(110,178,255,.5)]`}>
+                        <button type="button" onClick={() => { setActionError(""); setConfirm({ kind: "return", device }); }} title="Mark Returned" aria-label={`Mark ${deviceName(device)} returned`} className={`${ROUND_BTN} hover:text-[color:var(--hx-6EB2FF)] hover:border-[rgba(110,178,255,.5)]`}>
                           <RotateCcw className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      <button type="button" onClick={() => { setActionError(""); setConfirm({ kind: "delete", device }); }} title="Delete" aria-label={`Delete ${deviceName(device)}`} className={`${ROUND_BTN} hover:text-[#FB7185] hover:border-[rgba(229,72,77,.5)]`}>
+                      <button type="button" onClick={() => { setActionError(""); setConfirm({ kind: "delete", device }); }} title="Delete" aria-label={`Delete ${deviceName(device)}`} className={`${ROUND_BTN} hover:text-[color:var(--hx-FB7185)] hover:border-[rgba(229,72,77,.5)]`}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </span>
@@ -338,7 +338,7 @@ export default function DevicesPage() {
                 aria-label={editingId ? "Edit Device" : "Assign New Device"}
                 className="relative w-full max-w-[520px] max-h-full overflow-y-auto bg-ds-card border border-ds-line2 rounded-[16px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)] flex flex-col gap-4"
               >
-                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
                 <div className="flex items-center justify-between">
                   <span className="text-[16px] font-semibold text-ds-text">{editingId ? "Edit Device" : "Assign New Device"}</span>
                   <button type="button" onClick={() => setShowForm(false)} disabled={saving} aria-label="Close" className="text-ds-t3 hover:text-ds-text">
@@ -393,13 +393,13 @@ export default function DevicesPage() {
                   <textarea placeholder="Optional" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} className={`${FIELD} h-auto py-2.5 resize-y`} />
                 </label>
                 {formError && (
-                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">{formError}</div>
+                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{formError}</div>
                 )}
                 <div className="flex justify-end gap-2">
                   <button type="button" onClick={() => setShowForm(false)} disabled={saving} className="h-10 px-[18px] rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold hover:text-ds-text disabled:opacity-50">
                     Cancel
                   </button>
-                  <button type="submit" disabled={saving} className="h-10 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold hover:bg-[#F4D58C] disabled:opacity-60">
+                  <button type="submit" disabled={saving} className="h-10 px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60">
                     {saving ? "Saving..." : editingId ? "Update Device" : "Assign Device"}
                   </button>
                 </div>
@@ -412,7 +412,7 @@ export default function DevicesPage() {
       {/* Return / delete confirmation */}
       {confirm && (() => {
         const isReturn = confirm.kind === "return";
-        const color = isReturn ? "#6EB2FF" : "#FB7185";
+        const color = isReturn ? "var(--hx-6EB2FF)" : "var(--hx-FB7185)";
         const who = confirm.device.employee ? toTitleCase(confirm.device.employee.name) : "the employee";
         return (
           <ModalPortal>
@@ -437,7 +437,7 @@ export default function DevicesPage() {
                       : `${deviceName(confirm.device)} (${who}) will be removed. This cannot be undone.`}
                   </div>
                   {actionError && (
-                    <div className="mt-3.5 px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">{actionError}</div>
+                    <div className="mt-3.5 px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{actionError}</div>
                   )}
                   <div className="flex justify-end gap-2 mt-[22px]">
                     <button type="button" onClick={() => setConfirm(null)} disabled={busy} className="h-[38px] px-4 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold hover:text-ds-text disabled:opacity-50">
@@ -447,7 +447,7 @@ export default function DevicesPage() {
                       type="button"
                       onClick={runConfirm}
                       disabled={busy}
-                      className={`h-[38px] px-[18px] rounded-full text-white text-[13px] font-bold disabled:opacity-60 ${isReturn ? "bg-ds-blue" : "bg-[#E5484D]"}`}
+                      className={`h-[38px] px-[18px] rounded-full text-white text-[13px] font-bold disabled:opacity-60 ${isReturn ? "bg-ds-blue" : "bg-[color:var(--hx-E5484D)]"}`}
                     >
                       {busy ? "Working..." : isReturn ? "Mark Returned" : "Delete"}
                     </button>

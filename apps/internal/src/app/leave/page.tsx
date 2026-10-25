@@ -10,9 +10,9 @@ const STATUS_TABS = ["ALL", "PENDING", "APPROVED", "REJECTED"] as const;
 type StatusTab = typeof STATUS_TABS[number];
 
 // Mockup palette.
-const STATUS_COLOR: Record<string, string> = { PENDING: "#E9BD62", APPROVED: "#00D7A0", REJECTED: "#FB7185" };
-const TYPE_COLOR: Record<string, string> = { CASUAL: "#6EB2FF", SICK: "#F59E66", EARNED: "#9B7EDE", WFH: "#00D7A0" };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const STATUS_COLOR: Record<string, string> = { PENDING: "var(--hx-E9BD62)", APPROVED: "var(--hx-00D7A0)", REJECTED: "var(--hx-FB7185)" };
+const TYPE_COLOR: Record<string, string> = { CASUAL: "var(--hx-6EB2FF)", SICK: "var(--hx-F59E66)", EARNED: "var(--hx-9B7EDE)", WFH: "var(--hx-00D7A0)" };
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const hash = (s: string) => {
   let h = 0;
@@ -20,7 +20,7 @@ const hash = (s: string) => {
   return Math.abs(h);
 };
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const initials = (name: string) =>
@@ -102,7 +102,7 @@ export default function LeavePage() {
                 aria-selected={on}
                 onClick={() => setTab(t)}
                 className={`inline-flex items-center gap-2 h-9 px-[18px] rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors ${
-                  on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+                  on ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"
                 }`}
               >
                 {t === "ALL" ? "All" : formatStatus(t)}
@@ -119,14 +119,14 @@ export default function LeavePage() {
       </section>
 
       {actionError && (
-        <div className="mt-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+        <div className="mt-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px] flex items-center justify-between gap-3">
           <span>{actionError}</span>
           <button type="button" onClick={() => setActionError("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </div>
       )}
 
       {/* Table */}
-      <section className="mt-[18px] rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
+      <section className="mt-[18px] rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
         <div className="overflow-x-auto">
           <div className="min-w-[960px]">
             <div className={`${GRID} h-[50px] px-5 bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3 whitespace-nowrap`}>
@@ -134,7 +134,7 @@ export default function LeavePage() {
             </div>
             {isLoading && !data ? (
               Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className={`${GRID} h-[80px] px-5 border-b border-[#132430]`}>
+                <div key={i} className={`${GRID} h-[80px] px-5 border-b border-[color:var(--hx-132430)]`}>
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-ds-hover motion-safe:animate-pulse" />
                     <div className="h-3.5 w-28 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
@@ -152,12 +152,12 @@ export default function LeavePage() {
               leaves.map((leave: any) => {
                 const name = leave.employee?.name || "—";
                 const hue = HUES[hash(name) % HUES.length];
-                const tc = TYPE_COLOR[leave.type] || "#738395";
-                const sc = STATUS_COLOR[leave.status] || "#738395";
+                const tc = TYPE_COLOR[leave.type] || "var(--hx-738395)";
+                const sc = STATUS_COLOR[leave.status] || "var(--hx-738395)";
                 const { range, days } = dateRange(leave.startDate, leave.endDate);
                 const busy = actioning === leave.id;
                 return (
-                  <div key={leave.id} className={`${GRID} min-h-[80px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13px] hover:bg-[#0A1620] transition-colors tabular-nums`}>
+                  <div key={leave.id} className={`${GRID} min-h-[80px] py-3 px-5 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] hover:bg-[color:var(--hx-0A1620)] transition-colors tabular-nums`}>
                     <span className="flex items-center gap-3 min-w-0">
                       <span
                         aria-hidden="true"
@@ -180,7 +180,7 @@ export default function LeavePage() {
                       </span>
                     </span>
                     <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
-                      <span className="font-semibold text-[#E3E8EE] truncate">{range}</span>
+                      <span className="font-semibold text-[color:var(--hx-E3E8EE)] truncate">{range}</span>
                       <span className="text-[11.5px] text-ds-t3">{days}</span>
                     </span>
                     <span className="text-[13px] text-ds-t2 truncate" title={leave.reason || undefined}>{leave.reason || "—"}</span>
@@ -191,13 +191,13 @@ export default function LeavePage() {
                           target="_blank"
                           rel="noopener noreferrer"
                           title={leave.attachmentName || "View attachment"}
-                          className="inline-flex items-center gap-1.5 min-w-0 max-w-full text-[12.5px] font-semibold text-[#6EB2FF] hover:text-[#9FCBFF]"
+                          className="inline-flex items-center gap-1.5 min-w-0 max-w-full text-[12.5px] font-semibold text-[color:var(--hx-6EB2FF)] hover:text-[color:var(--hx-9FCBFF)]"
                         >
                           <Paperclip className="h-[13px] w-[13px] shrink-0" />
                           <span className="truncate">{leave.attachmentName || "View"}</span>
                         </a>
                       ) : (
-                        <span className="text-[#4A6275]">—</span>
+                        <span className="text-[color:var(--hx-4A6275)]">—</span>
                       )}
                     </span>
                     <span className="pl-4">
@@ -216,7 +216,7 @@ export default function LeavePage() {
                             type="button"
                             onClick={() => act(leave.id, "approve")}
                             disabled={busy}
-                            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-ds-teal text-[#04130D] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[#33E2B5] disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-ds-teal text-[color:var(--hx-04130D)] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[color:var(--hx-33E2B5)] disabled:opacity-50"
                           >
                             <Check className="h-3 w-3" strokeWidth={2.6} /> Approve
                           </button>
@@ -224,13 +224,13 @@ export default function LeavePage() {
                             type="button"
                             onClick={() => act(leave.id, "reject")}
                             disabled={busy}
-                            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full border border-[rgba(229,72,77,.4)] text-[#FB7185] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full border border-[rgba(229,72,77,.4)] text-[color:var(--hx-FB7185)] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50"
                           >
                             <X className="h-3 w-3" strokeWidth={2.6} /> Reject
                           </button>
                         </>
                       ) : (
-                        <span className="text-[#4A6275]">—</span>
+                        <span className="text-[color:var(--hx-4A6275)]">—</span>
                       )}
                     </span>
                   </div>

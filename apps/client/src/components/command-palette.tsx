@@ -133,7 +133,7 @@ export function CommandPalette() {
     <div className="palette-shell pop-in" onClick={() => setOpen(false)}>
       <div className="v3-card palette-card" onClick={(e) => e.stopPropagation()}>
         {/* Input */}
-        <div className="flex items-center gap-3 px-4 h-14 shrink-0" style={{ borderBottom: "2px solid rgba(26,26,26,0.08)" }}>
+        <div className="flex items-center gap-3 px-4 h-14 shrink-0" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
           <Icon.Search size={18} className="text-ink-3 shrink-0" />
           <input
             ref={inputRef}
@@ -200,7 +200,7 @@ export function CommandPalette() {
 
         {/* Footer — keyboard affordances only, so it has nothing to say on touch */}
         {hasKeyboard && (
-          <div className="px-4 py-2.5 flex items-center gap-4 shrink-0" style={{ borderTop: "2px solid rgba(26,26,26,0.07)", background: "rgba(243,238,216,0.4)" }}>
+          <div className="px-4 py-2.5 flex items-center gap-4 shrink-0" style={{ borderTop: "2px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.03)" }}>
             <KbdRow items={[{ k: "↑↓", label: "navigate" }, { k: "↵", label: "open" }, { k: "Esc", label: "close" }]} />
           </div>
         )}

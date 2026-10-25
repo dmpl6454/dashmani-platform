@@ -131,7 +131,7 @@ export function SyncBadge({
         : "Live — we checked this profile within the last two days. The platform published no follower count for it, which is why that column shows a dash.",
     },
     STALE: {
-      dot: "bg-[#FBBF24]", cls: "text-[#FBBF24] border-[#FBBF24]/30",
+      dot: "bg-[color:var(--hx-FBBF24)]", cls: "text-[color:var(--hx-FBBF24)] border-[var(--hx-FBBF24)]/30",
       label: ago ? `Stale · ${ago}` : "Stale",
       title:
         "Stale — we last MEASURED this figure more than two days ago, so it may have moved since. " +
@@ -145,7 +145,7 @@ export function SyncBadge({
       title: "Manual — never collected automatically, so this figure is whatever was entered by hand.",
     },
     UNAVAILABLE: {
-      dot: "bg-[#FBBF24]", cls: "text-[#FBBF24] border-[#FBBF24]/30",
+      dot: "bg-[color:var(--hx-FBBF24)]", cls: "text-[color:var(--hx-FBBF24)] border-[var(--hx-FBBF24)]/30",
       label: ago ? `No data · ${ago}` : "No data",
       title:
         "We check this channel automatically and the platform keeps returning nothing for it — so there has never been a " +
@@ -183,7 +183,7 @@ export function SourceBadge({ source }: { source: string | null | undefined }) {
         : "Scraper — parsed from the channel's public page because no API covers it. Accurate in practice, but best-effort: the platform can change the page and withhold a figure at any time."}
       className={`inline-flex items-center text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none whitespace-nowrap ${
         isApi
-          ? "bg-ds-blue/[.1] text-[#6EB2FF] border-ds-blue/30"
+          ? "bg-ds-blue/[.1] text-[color:var(--hx-6EB2FF)] border-ds-blue/30"
           : "bg-ds-purple/[.12] text-ds-purple border-ds-purple/30"}`}
     >
       {isApi ? "API" : "Scraper"}
@@ -201,7 +201,7 @@ export function SourceBadge({ source }: { source: string | null | undefined }) {
 export function ErrorMark({ message }: { message: string }) {
   return (
     <span title={`The most recent collection for this channel failed, so any figures shown are from the last successful one. It is re-attempted on the next run; if the mark persists, the handle has most likely changed or the channel is gone, and someone needs to fix it here. The platform's reply: ${message}`}>
-      <AlertTriangle className="h-3 w-3 text-[#FBBF24] shrink-0" />
+      <AlertTriangle className="h-3 w-3 text-[color:var(--hx-FBBF24)] shrink-0" />
     </span>
   );
 }
@@ -477,8 +477,8 @@ export function ChannelBoardShell({
   const extra = board ? extraTotal(board) : null;
 
   return (
-    <section className="relative bg-ds-card rounded-[12px] border border-[#1D3444] overflow-hidden">
-      <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+    <section className="relative bg-ds-card rounded-[12px] border border-[color:var(--hx-1D3444)] overflow-hidden">
+      <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
       <div className="px-6 py-5 border-b border-ds-line">
         <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">{title}</h2>
         <p className="text-[12px] text-ds-t2 mt-1">{subtitle}</p>
@@ -572,7 +572,7 @@ export function ChannelBoardShell({
         </div>
       )}
 
-      <div className="px-6 py-3.5 border-b border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-1.5">
+      <div className="px-6 py-3.5 border-b border-ds-line bg-[color:var(--hx-0A1620)] flex flex-wrap items-center gap-1.5">
         {/* ⚠️ Each board owns its own period. They are not hoisted onto the page,
             because the Meta tab's windows are Meta's own (which it can answer at all)
             while these are day counts over our stored snapshots — the same "30" would
@@ -628,7 +628,7 @@ export function ChannelBoardShell({
       </div>
 
       {manageMode && (
-        <div className="px-5 py-3 border-b border-ds-line bg-[#FBBF24]/[.08]">
+        <div className="px-5 py-3 border-b border-ds-line bg-[var(--hx-FBBF24)]/[.08]">
           <form onSubmit={handleAdd} className="flex flex-wrap items-center gap-2">
             <input
               value={addHandle}
@@ -667,7 +667,7 @@ export function ChannelBoardShell({
       )}
 
       {showRemoved && (
-        <div className="px-5 py-3 border-b border-ds-line bg-[#0A1620]">
+        <div className="px-5 py-3 border-b border-ds-line bg-[color:var(--hx-0A1620)]">
           <p className="text-xs font-medium text-ds-text mb-1.5">
             Removed channels{removed ? ` (${removed.rows.length})` : ""}
           </p>
@@ -737,7 +737,7 @@ export function ChannelBoardShell({
         )}
       </div>
 
-      <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[#0A1620] [text-wrap:pretty]">
+      <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[color:var(--hx-0A1620)] [text-wrap:pretty]">
         {footnote}
       </p>
     </section>

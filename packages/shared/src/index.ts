@@ -70,6 +70,7 @@ export * as attendanceValidators from "./validators/attendance";
 export * as taskValidators from "./validators/task";
 export * as accountValidators from "./validators/account";
 export * as clientValidators from "./validators/client";
+export * as creatorValidators from "./validators/creator";
 export * as contentValidators from "./validators/content";
 export * as offerLetterValidators from "./validators/offer-letter";
 export { generateOfferLetterSchema } from "./validators/offer-letter";
@@ -77,3 +78,6 @@ export type { GenerateOfferLetterInput } from "./validators/offer-letter";
 export * as siteEnquiryValidators from "./validators/site-enquiry";
 export { siteEnquirySchema, SITE_ENQUIRY_INTENTS, SITE_ENQUIRY_BUDGETS } from "./validators/site-enquiry";
 export type { SiteEnquiryInput } from "./validators/site-enquiry";
+
+// Self-serve campaign booking (client portal "Start a campaign")
+export * from "./validators/campaign";

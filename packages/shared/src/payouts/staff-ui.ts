@@ -217,6 +217,13 @@ export function payoutStatusView(p: { status: string; releaseAfter: string | nul
 /** A status as a plain word inside a sentence ("Now: released · settling"). */
 export const statusWord = (status: string) => (STATUS_VIEW[status]?.label ?? formatStatus(status)).toLowerCase();
 
+/**
+ * creator_payouts.paused_reason of the pause a PERSON's Reverse puts on a held payout (the engine's payout-pause.ts REVERSE_PAUSE_REASON; the
+ * helper test holds the two equal). It is written when the reversal is claimed and replaces any reason already there, so that a Reverse Razorpay
+ * refuses leaves the payout held and paused under the person's reason, whoever finished the reversal. Resume releases such a payout when due.
+ */
+export const REVERSE_PAUSE_REASON = "staff_reverse";
+
 const PAUSE_REASON: Record<string, string> = {
   dispute: "a dispute on the client's payment",
   external_refund: "the client's payment was refunded outside our system",
@@ -224,6 +231,8 @@ const PAUSE_REASON: Record<string, string> = {
   account_suspended: "the creator's payout account was suspended",
   creator_suspended: "the creator was suspended",
   staff: "paused by staff",
+  [REVERSE_PAUSE_REASON]:
+    "a person pressed Reverse so the creator is not paid, and Razorpay has not taken the money back (it refused, or has not confirmed it yet): resume it only if the creator should be paid after all, and its release then goes ahead when due",
 };
 
 /** Why a payout is paused, in staff words. A reason this page doesn't know is shown as the API wrote it (it is scrubbed, and React escapes it). */
@@ -262,7 +271,11 @@ export function pauseHold(p: { status: string; pausedAt?: string | null; pausedR
 export function pausedChip(p: { status: string; pausedAt?: string | null; pausedReason?: string | null }): { label: string; holds: boolean; title: string } | null {
   const h = pauseHold(p);
   if (h === null) return null;
-  if (h === "holds") return { label: "Paused", holds: true, title: "Nothing more is released or transferred for it while it is paused." };
+  if (h === "holds") {
+    return p.pausedReason === REVERSE_PAUSE_REASON
+      ? { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back and Razorpay refused (or has not confirmed it yet): it is not released while paused. Resume releases it when due; Reverse again takes it back." }
+      : { label: "Paused", holds: true, title: "Nothing more is released or transferred for it while it is paused." };
+  }
   if (h === "asks_rehold") return { label: "Paused · putting the hold back", holds: false, title: "Already released: the system is asking Razorpay to put the hold back. Until then Razorpay may still settle it." };
   return { label: "Paused · doesn't stop it", holds: false, title: "Already released (or being released): Razorpay settles it whatever the pause says. Reverse takes it back while it is still in the creator's account." };
 }
@@ -381,6 +394,10 @@ export function payoutHint(p: HintInput, now: number = Date.now(), o: HintOption
     case "transfer_requested":
       return "Transfer requested. Waiting for Razorpay to confirm the money is set aside.";
     case "held": {
+      // A person's Reverse that Razorpay refused: the pause is theirs, and Resume is the one thing that lets the release go ahead. Said outright,
+      // so the row never reads like a pause for the creator's suspension or a dispute whose own ending invites a resume.
+      if (paused && p.pausedReason === REVERSE_PAUSE_REASON)
+        return "Set aside at Razorpay. A person pressed Reverse to take it back and Razorpay refused, so it is paused and won't be released: press Reverse again to take it back, or resume it only if the creator should be paid after all (it is then released when due).";
       if (paused) return "Set aside at Razorpay. It is paused, so it won't be released until it is resumed.";
       // A verified post with nothing scheduled is not "waiting for verification": the worker schedules it (within minutes, when it runs).
       if (!p.releaseAfter)
@@ -420,7 +437,7 @@ export function payoutHint(p: HintInput, now: number = Date.now(), o: HintOption
       // here only so it stops holding up refunds, or so it can be refunded: paying it would pay for nothing and make the refund impossible.
       if (isLiveItem(p.itemStatus)) return "Razorpay can't pay this creator. Pay them by bank transfer yourself, then record the reference.";
       if (p.itemStatus)
-        return "Nothing is owed to the creator: this post never went live. Refund this post from the campaign page (the campaign can't be approved with it): the refund goes out once Razorpay's records show no money is out for it (none was sent, its transfer failed, or it was taken back), and it waits while Razorpay's list of the payment's transfers can't be read. It can't be paid by bank transfer.";
+        return "Nothing is owed to the creator: this post never went live. Refund this post from the campaign page (press Withdraw offer while the creator's offer is still open, or Discard link & withdraw offer if they sent a link; otherwise Refund this account): the refund goes out once Razorpay's records show no money is out for it (none was sent, its transfer failed, or it was taken back), and it waits while Razorpay's list of the payment's transfers can't be read. It can't be paid by bank transfer.";
       return "Razorpay can't pay this creator. If the post is live, pay them by bank transfer and record the reference; if it never went live, nothing is owed: refund the post from the campaign page instead.";
     case "paid_manual":
       return `Paid by bank transfer outside Razorpay (recorded by staff${p.manualPaidAt ? ` ${whenOf(p.manualPaidAt)}` : ""}).${p.manualReference ? ` Reference ${p.manualReference}.` : ""}`;

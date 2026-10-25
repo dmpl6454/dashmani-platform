@@ -3,7 +3,7 @@ import type { CampaignDispute, CreatorPayout } from "@dashmani/db";
 import { scrubPayoutSecrets } from "../../utils/payout-scrub";
 import { parseRazorpaySettlement } from "./razorpay";
 import { PAYOUT_STATUSES, mapTransferEvent, type PayoutStatus, type TransferFacts, type TransferMove } from "../creator/payout-states";
-import { pausePayoutsOfPaymentRows, type PausedPayout } from "../creator/payout-pause";
+import { liftReversePause, pausePayoutsOfPaymentRows, type PausedPayout } from "../creator/payout-pause";
 import { alertStaffOncePerHour } from "../creator/payout-alert";
 import { applyProductStatus } from "../creator/payout-account.service";
 import { confirmHold } from "../creator/payout.service";
@@ -464,6 +464,8 @@ async function onTransferEvent(name: string, evt: any, eventId?: string): Promis
     eventId,
   });
   if (!applied) return { handled: true, note: "stale" };
+  // The money is back: a person's Reverse pause (payout-pause.ts) has nothing left to hold, as the engine's own finish lifts it.
+  if (move.to === "reversed") await liftReversePause(prisma, row.id);
   if (move.alert || ALERT_STATUSES.has(move.to)) {
     alertPayout(row, move.to, move.reason, name, read.error?.code ? [{ label: "Razorpay code", value: read.error.code }] : []);
   }

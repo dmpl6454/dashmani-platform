@@ -124,3 +124,44 @@ export async function pausePayoutsOfCreatorRows(tx: Tx, creatorId: string, spec:
 export async function pausePayoutsOfPayment(tx: Tx, razorpayPaymentId: string, spec: PauseSpec): Promise<number> {
   return (await pausePayoutsOfPaymentRows(tx, razorpayPaymentId, spec)).length;
 }
+
+// ── A person's Reverse ──────────────────────────────────────────────────────────
+//
+// ⚠️ The one pause that is NOT "first reason kept". A person pressed Reverse on a HELD payout because the creator must not be paid
+// (reversePayout's pauseIfRefused). The pause is written in the SAME move as the reversal's claim, so it is on the row whoever finishes
+// the reversal (the click itself, or the worker reading an unknown answer back after a transient error, or a refund's reversal): if
+// Razorpay then refuses, the payout goes back to held still paused and its due release does not go ahead. It REPLACES the reason of a
+// pause already there (a dispute, a suspended creator, a staff pause) and keeps that pause's time, because the other reason's own way out
+// (the dispute closing, the creator reinstated) tells staff to resume, and a resume here releases money a person asked to take back.
+// Nothing protective is lost: resume and release re-read disputes, the bank change, the account and the creator themselves and never key
+// on the reason, and the only reason-keyed step (the re-hold of a paused RELEASED payout) cannot reach a payout this pause sits on, which
+// is held. No reversal step reads a pause (the reversal bucket, reversePayout, runReversal, finishReversal, reverseForRefund), so it never
+// stops the money coming back. It is lifted when the money is back (the payout reaches `reversed`, by the engine or by Razorpay's event):
+// nothing is left to hold, and a payout then paid by bank transfer instead must not carry it. The staff UI's words for it are
+// staff-ui.ts PAUSE_REASON (the helper test holds the two names equal).
+
+/** creator_payouts.paused_reason of the pause a person's Reverse puts on a held payout (see above). */
+export const REVERSE_PAUSE_REASON = "staff_reverse";
+
+/**
+ * Put a PERSON's pause on a payout INSIDE the caller's transaction, after the caller has locked the row (its status write): pause it when it
+ * is not paused, else keep `pausedAt` and overwrite the reason with this one (the rule above). Returns what it did: "paused" (it was not
+ * paused), "replaced" (it was, for `previous`; its time is kept), or "none" (no such row, or already paused with this reason).
+ */
+export async function applyPersonsPause(tx: Tx, payoutId: string, pause: { at: Date; reason: string }): Promise<{ done: "paused" | "replaced" | "none"; previous: string | null }> {
+  const had = await tx.creatorPayout.findUnique({ where: { id: payoutId }, select: { pausedAt: true, pausedReason: true } });
+  if (!had) return { done: "none", previous: null };
+  if (had.pausedAt === null) {
+    const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedAt: null }, data: { pausedAt: pause.at, pausedReason: pause.reason } });
+    return { done: r.count === 1 ? "paused" : "none", previous: null };
+  }
+  if (had.pausedReason === pause.reason) return { done: "none", previous: had.pausedReason };
+  const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedAt: { not: null } }, data: { pausedReason: pause.reason } });
+  return { done: r.count === 1 ? "replaced" : "none", previous: had.pausedReason };
+}
+
+/** Lift a person's Reverse pause (and only that one) INSIDE the caller's transaction: the payout reached `reversed`. True when one was lifted. */
+export async function liftReversePause(tx: Tx, payoutId: string): Promise<boolean> {
+  const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedReason: REVERSE_PAUSE_REASON }, data: { pausedAt: null, pausedReason: null } });
+  return r.count === 1;
+}

@@ -1204,6 +1204,39 @@ describe("⚠️ r3 #2: a held payout whose transfer fails, on a post that never
     expect(fakeRefunds(fake, w).filter((x) => x.amount === c.price)).toHaveLength(1);
   });
 
+  it("⚠️ r4 #4: the path staff can CLICK: Stop this payout, then 'Withdraw offer' on the campaign page voids the payout and refunds the post exactly once, after the transfer was read and listed", async () => {
+    const { w, c, pid, transferId } = await failedWhileHeld();
+    expect((await payoutPost(pid, "require-manual", { reason: "transfer failed at Razorpay" })).status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "manual_required", razorpayTransferId: transferId });
+    // The queue row names the control the page really shows for an open offer (and the one it shows once the offer is closed).
+    const q = await request(app).get("/v1/admin/creator-payouts?filter=manual_required").set("Authorization", `Bearer ${staff.admin}`);
+    const row = q.body.data.rows.find((x: { id: string }) => x.id === pid);
+    expect(payoutHint(row)).toMatch(/press Withdraw offer while the creator's offer is still open, or Discard link & withdraw offer if they sent a link; otherwise Refund this account/);
+    expect(payoutHint(row)).not.toMatch(/can't be approved with it/);
+
+    const before = fake.calls.length;
+    const r = await staffPost(`${w.booking.id}/items/${c.id}/withdraw-offer`);
+    expect(r.status).toBe(200);
+    expect(r.body.data.withdrawNotice).toBeTruthy();
+    expect(await payoutOf(c.id)).toMatchObject({ status: "void", voidReason: "withdrawn" }); // voided by the withdraw (the close reason), the refund then follows
+    expect((await itemOf(c.id)).status).toBe("refunded");
+    expect((await offerOf(c.id)).status).toBe("withdrawn");
+    const log = callLog(fake).slice(before);
+    expect(countOf(log, "transfer.fetch")).toBeGreaterThan(0); // proven from a fresh read of the transfer
+    expect(countOf(log, "transfer.list")).toBeGreaterThan(0); // and of the payment's transfers
+    expect(firstIndex(log, "transfer.fetch")).toBeLessThan(firstIndex(log, "refund.create"));
+    expect(firstIndex(log, "transfer.list")).toBeLessThan(firstIndex(log, "refund.create"));
+    expect(countOf(log, "refund.create")).toBe(1);
+    expect(countOf(log, "reversal.create")).toBe(0);
+    expect(fakeRefunds(fake, w).filter((x) => x.amount === c.price)).toHaveLength(1);
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: c.id } })).toBe(1);
+    // Neither a second Withdraw nor a Refund click refunds anything more.
+    expect((await staffPost(`${w.booking.id}/items/${c.id}/withdraw-offer`)).status).toBe(409);
+    expect((await staffPost(`${w.booking.id}/items/${c.id}/refund`)).status).toBe(409);
+    expect(fakeRefunds(fake, w).filter((x) => x.amount === c.price)).toHaveLength(1);
+    expect(await prisma.campaignRefund.count({ where: { bookingItemId: c.id } })).toBe(1);
+  });
+
   it("⚠️ the recorded transfer is alive again at Razorpay: nothing is refunded, the payout is parked to track it, and staff are alerted", async () => {
     const { w, c, pid, transferId } = await failedWhileHeld();
     expect((await payoutPost(pid, "require-manual", { reason: "transfer failed at Razorpay" })).status).toBe(200);

@@ -24,7 +24,7 @@ import { notifyAdminByEmail } from "../src/services/email.service";
 import * as routeWebhooks from "../src/services/campaign/route-webhooks";
 import { isRouteEvent, handleRouteEvent } from "../src/services/campaign/route-webhooks";
 import { alertStaffOncePerHour, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
-import { pausePayoutsOfPayment, pausePayoutsOfPaymentRows } from "../src/services/creator/payout-pause";
+import { REVERSE_PAUSE_REASON, pausePayoutsOfPayment, pausePayoutsOfPaymentRows } from "../src/services/creator/payout-pause";
 import { flushRouteWebhookBackgroundForTests } from "../src/services/campaign/route-webhooks";
 import { runPayoutJob, selectDuePayouts } from "../src/services/creator/payout.service";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
@@ -445,6 +445,18 @@ describe("transfer events", () => {
       expect(await eventsOf(row.id), event).toHaveLength(1);
       expect((await reload(row.id)).reversedAt, event).toEqual(after.reversedAt);
     }
+  });
+
+  it("r4 #1: a reversal a PERSON asked for (paused at its claim) confirmed by an event lifts that pause; another pause (a dispute) is left as it is", async () => {
+    const pausedAt = new Date(Date.now() - 60_000);
+    const theirs = await mkPayout({ status: "reversal_requested", pausedAt, pausedReason: REVERSE_PAUSE_REASON });
+    const disputed = await mkPayout({ status: "reversal_requested", pausedAt, pausedReason: "dispute", razorpayTransferId: "trf_R4PAUSE00002" });
+    for (const row of [theirs, disputed]) {
+      const evt = transferEvt("transfer.processed", row, { id: row.razorpayTransferId, amount_reversed: 50000 }, { created_at: nowSec() - 30 });
+      expect(await handleRouteEvent("transfer.processed", evt, `evt_r4_${row.id}`)).toEqual({ handled: true, note: "reversed" });
+    }
+    expect(await reload(theirs.id)).toMatchObject({ status: "reversed", pausedAt: null, pausedReason: null });
+    expect(await reload(disputed.id)).toMatchObject({ status: "reversed", pausedAt, pausedReason: "dispute" });
   });
 
   it("a full reversal we did not ask for still parks the payout for a human, with its own wording, and leaves the reversal columns alone", async () => {

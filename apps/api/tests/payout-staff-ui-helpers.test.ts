@@ -38,6 +38,7 @@ import {
   PAYOUT_FILTER_KEYS,
   RELEASE_SWITCH_TEXT,
   REHOLD_PAUSE_REASONS,
+  REVERSE_PAUSE_REASON,
   TRANSFER_ID_RE,
   UNCONFIRMED_TEXT,
   actionsFor,
@@ -52,6 +53,7 @@ import {
   manualNeedsReverseFirst,
   pauseEffect,
   pauseHold,
+  pauseText,
   pausedChip,
   payoutCounts,
   payoutHint,
@@ -76,6 +78,7 @@ import {
 import { PAYOUT_STATUSES, canMove, isPausable } from "../src/services/creator/payout-states";
 import { PAYOUT_FILTERS, STAFF_REFUSAL_WORDS, changeSince, listPayoutQueue, referenceCsvCell } from "../src/services/creator/payout-staff.service";
 import { RELEASE_REFUSALS } from "../src/services/creator/payout-policy";
+import { REVERSE_PAUSE_REASON as ENGINE_REVERSE_PAUSE_REASON } from "../src/services/creator/payout-pause";
 import { HOLD_RESOLVABLE_REASONS, PARKED_UNKNOWN_CODES, attestNoTransfer, referenceProblem as engineReferenceProblem, selectDuePayouts } from "../src/services/creator/payout.service";
 import { settlePayoutKicksForTests } from "../src/services/campaign/payment.service";
 import { settleCreatorRefundsForTests } from "../src/services/creator/creator-refund.service";
@@ -545,7 +548,7 @@ describe("⚠️ r2 #R10: a pause on a released (or releasing, or failed-settlem
   const paused = (status: string, pausedReason: string, extra: Partial<PayoutRow> = {}) => row({ status, pausedAt: iso(-H), pausedReason, releasedAt: iso(-2 * H), ...extra });
 
   it("pauseHold: what the pause really does, for every status and every reason", () => {
-    const REASONS = ["dispute", "external_refund", "bank_change", "account_suspended", "creator_suspended", "staff"];
+    const REASONS = ["dispute", "external_refund", "bank_change", "account_suspended", "creator_suspended", "staff", REVERSE_PAUSE_REASON];
     for (const status of PAYOUT_STATUSES) {
       expect(pauseHold({ status, pausedAt: null, pausedReason: null }), `${status} unpaused`).toBeNull();
       for (const reason of REASONS) {
@@ -628,7 +631,7 @@ describe("⚠️ r2 #R10: a pause on a released (or releasing, or failed-settlem
     });
 
     it("the worker re-holds a paused released payout exactly for REHOLD_PAUSE_REASONS, and keeps polling the settlement of a paused one whatever the reason", async () => {
-      const REASONS = ["dispute", "external_refund", "bank_change", "account_suspended", "creator_suspended", "staff"];
+      const REASONS = ["dispute", "external_refund", "bank_change", "account_suspended", "creator_suspended", "staff", REVERSE_PAUSE_REASON];
       const w = await mkWorld(fake, { pages: REASONS.map(() => ({})) });
       expect((await capture(fake, w)).status).toBe(200);
       for (const [i, reason] of REASONS.entries()) {
@@ -980,13 +983,44 @@ describe("the API's plain-words table for a refusal", () => {
     // A held payout whose code changed (a refusal that put it back where it was) is not "re-parked"; snapshots without a code compare as before.
     expect(changeSince(snap({ errorCode: null, pausedAt: at, pausedReason: "staff" }), snap({ errorCode: "reversal_refused", pausedAt: at, pausedReason: "staff" }), "reversal_refused")).toBeNull();
     expect(changeSince({ status: "needs_attention", pausedAt: null, pausedReason: null, releaseAfter: null }, { status: "needs_attention", pausedAt: null, pausedReason: null, releaseAfter: null }, "x")).toBeNull();
-    // A person's refused Reverse: back in held AND paused.
-    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "staff", errorCode: "reversal_refused" }), "reversal_refused")).toBe(
-      "No money moved; it is held again and paused, so it will not be released (resume it once the transfer is settled): see its history.",
+    // A person's refused Reverse: back in held AND paused, under the person's reason. The next step named is Reverse again; Resume is what
+    // releases it (r4 #3: never "once the transfer is settled", which a held transfer never is).
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON, errorCode: "reversal_refused" }), "reversal_refused")).toBe(
+      "No money moved; it is held again and paused, so it will not be released. To take it back, press Reverse again once Razorpay allows it; resume it only if the creator should be paid after all (it is then released when due): see its history.",
     );
-    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "staff" }), "transfer_not_processed")).toMatch(/^No money moved; it is held again and paused/);
-    // Any other pause reads as before.
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON }), "transfer_not_processed")).toMatch(/^No money moved; it is held again and paused/);
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON }), "transfer_not_processed")).not.toMatch(/settled/);
+    // Any other pause reads as before (a plain staff pause is not the person's Reverse).
     expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "staff" }), "release_not_due")).toBe("It is now paused (paused by staff): see its history.");
+    expect(changeSince(snap(), snap({ pausedAt: at, pausedReason: "staff", errorCode: "reversal_refused" }), "reversal_refused")).toBe("It is now paused (paused by staff): see its history.");
+    // r4 #2: a payout paused ALREADY (a suspended creator, a dispute) whose refused Reverse took the pause over: the reason change is said.
+    expect(changeSince(snap({ pausedAt: at, pausedReason: "creator_suspended" }), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON, errorCode: "reversal_refused" }), "reversal_refused")).toBe(
+      "It stays paused, now because a person's Reverse was refused (it was paused: the creator was suspended): press Reverse again to take it back, or resume it only if the creator should be paid after all (it is then released when due): see its history.",
+    );
+    expect(changeSince(snap({ pausedAt: at, pausedReason: "dispute" }), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON }), "reversal_refused")).toMatch(/^It stays paused, now because a person's Reverse was refused \(it was paused: a dispute on the client's payment\)/);
+    // The same pause with the same reason is no change at all (the ENDING speaks then).
+    expect(changeSince(snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON }), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON, errorCode: "reversal_refused" }), "reversal_refused")).toBeNull();
+  });
+
+  it("r4 #1/#2: the person's Reverse pause reason is ONE name in the engine and the UI, and the row says whose pause it is and what Resume does", () => {
+    expect(REVERSE_PAUSE_REASON).toBe(ENGINE_REVERSE_PAUSE_REASON);
+    expect(REVERSE_PAUSE_REASON).not.toBe("staff"); // a plain staff Pause reads differently
+    const held = row({ status: "held", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON, releaseAfter: iso(-H), errorCode: "reversal_refused" });
+    const hint = payoutHint(held, NOW);
+    expect(hint).toMatch(/A person pressed Reverse to take it back and Razorpay refused, so it is paused and won't be released/);
+    expect(hint).toMatch(/press Reverse again to take it back, or resume it only if the creator should be paid after all \(it is then released when due\)/);
+    expect(hint).not.toMatch(/settled/);
+    // Any other pause on a held payout keeps the generic sentence.
+    expect(payoutHint(row({ status: "held", pausedAt: iso(-H), pausedReason: "creator_suspended", releaseAfter: iso(-H) }), NOW)).toMatch(/It is paused, so it won't be released until it is resumed/);
+    // The chip still holds (gold "Paused"), and its tooltip names the Reverse and what Resume does.
+    expect(pausedChip(held)).toMatchObject({ label: "Paused", holds: true, title: expect.stringMatching(/A person pressed Reverse .* Resume releases it when due; Reverse again takes it back/) });
+    expect(pausedChip(row({ status: "held", pausedAt: iso(-H), pausedReason: "creator_suspended" }))!.title).toMatch(/^Nothing more is released/);
+    // The pause text itself names the refusal and what Resume does, wherever it is printed ("Paused: …", the Resume dialog).
+    expect(pauseText(REVERSE_PAUSE_REASON)).toMatch(/a person pressed Reverse so the creator is not paid.*refused.*resume it only if the creator should be paid after all, and its release then goes ahead when due/);
+    // A held row paused this way still offers Reverse (the real next step) and Resume. While the reversal is in flight Resume stays offered too
+    // (the action-matrix test above pins it): lifting the person's own pause there is their explicit second choice, and the dialog says what it does.
+    expect(keys(held)).toEqual(expect.arrayContaining(["resume", "reverse"]));
+    expect(keys(row({ status: "reversal_requested", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON }))).not.toContain("pause");
   });
 });
 

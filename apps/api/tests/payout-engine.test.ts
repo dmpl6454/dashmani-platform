@@ -57,6 +57,7 @@ import {
   type StepResult,
 } from "../src/services/creator/payout.service";
 import { ABSENT_CHECK_GAP_MS, requestKeyOf } from "../src/services/creator/payout-policy";
+import { REVERSE_PAUSE_REASON } from "../src/services/creator/payout-pause";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
 import { captureConsole, scanDatabase } from "./payout-privacy";
 
@@ -2477,10 +2478,11 @@ describe("r3 #6: a person's Reverse that Razorpay refuses back to held pauses th
     fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
     expect(await reversePayout(w.payout.id, { reason: "duplicate booking", actor: STAFF, pauseIfRefused: true, now: T(0) })).toMatchObject({ ok: false, outcome: "refused", status: "held", reason: "reversal_refused" });
     const p = await reload(w.payout.id);
-    expect(p).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedReason: "staff" });
+    expect(p).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedReason: REVERSE_PAUSE_REASON });
     expect(p.pausedAt?.getTime()).toBe(T(0).getTime());
     const back = (await eventsOf(w.payout.id)).find((e) => e.kind === "reversal" && e.toStatus === "held")!;
-    expect(back.note).toMatch(/held again and paused, so it will not be released/);
+    expect(back.note).toMatch(/held again and paused, so it will not be released: press Reverse again to take it back, or resume it only if the creator should be paid after all/);
+    expect(back.note).not.toMatch(/settled/);
     expect(back.actorType).toBe("staff");
     // Past the backoff the worker's release is refused (paused): no PATCH.
     expect((await selectDuePayouts(T(30))).some((d) => d.id === w.payout.id && d.job === "release")).toBe(false);
@@ -2488,12 +2490,12 @@ describe("r3 #6: a person's Reverse that Razorpay refuses back to held pauses th
     expect(holdCalls(false)).toHaveLength(0);
   });
 
-  it("an existing pause (a dispute) keeps its reason; a reversal that is not a person's, or one that does not ask, is put back unpaused as before", async () => {
+  it("an existing pause (a dispute) keeps its TIME but takes the person's reason (r4 #2); a reversal that is not a person's, or one that does not ask, is put back unpaused as before", async () => {
     const disputed = await releasable();
     await prisma.creatorPayout.update({ where: { id: disputed.payout.id }, data: { pausedAt: T(-5), pausedReason: "dispute" } });
     fake.intercept({ match: is.createReversal, mode: "reject", status: 400, times: 10 });
     await reversePayout(disputed.payout.id, { reason: "staff", actor: STAFF, pauseIfRefused: true, now: T(0) });
-    expect(await reload(disputed.payout.id)).toMatchObject({ status: "held", pausedReason: "dispute" });
+    expect(await reload(disputed.payout.id)).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
     expect((await reload(disputed.payout.id)).pausedAt?.getTime()).toBe(T(-5).getTime());
 
     // The worker (system actor) asking with the flag: not honoured. A staff actor without the flag (the refund path runs as the staff member
@@ -2506,5 +2508,129 @@ describe("r3 #6: a person's Reverse that Razorpay refuses back to held pauses th
     const r = await mkWorld({ payoutStatus: "held" });
     expect(await reverseForRefund(r.item.id, { reason: "withdrawn", actor: STAFF, now: T(0) })).toMatchObject({ refundable: false });
     expect(await reload(r.payout.id)).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedAt: null });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("r4 #1/#2: a person's Reverse puts its pause on the row AT THE CLAIM, so whoever finishes the reversal honours it, and it outranks another pause's reason", () => {
+  const reversalCalls = () => fake.calls.filter(is.createReversal);
+  /** A held payout whose release is due, Reverse pressed by a person, and the first Razorpay read failing: the reversal is left to the worker. */
+  async function pendingReverse(o: Parameters<typeof releasable>[0] = {}) {
+    const w = await releasable(o);
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    const r = await reversePayout(w.payout.id, { reason: "duplicate booking", actor: STAFF, pauseIfRefused: true, now: T(0) });
+    expect(r).toMatchObject({ ok: false, outcome: "unknown", status: "reversal_requested" });
+    expect(reversalCalls()).toHaveLength(0);
+    // The person's intent is on the row from the claim: paused, under their reason, at the claim time.
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
+    expect(p.pausedAt?.getTime()).toBe(T(0).getTime());
+    expect((await eventsOf(w.payout.id)).find((e) => e.toStatus === "reversal_requested")!.note).toMatch(/paused by a person's Reverse: if Razorpay refuses, the payout is held and not released/);
+    return w;
+  }
+
+  it("⚠️ the click hits a 5xx, the WORKER (system actor) finishes it and Razorpay refuses: held AND paused, and two later ticks release nothing", async () => {
+    const w = await pendingReverse();
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    // The worker's tick, past the 2-minute read-back wait, with no actor at all (exactly how the cron calls it).
+    expect(await runPayoutJob("resolve_reversal", w.payout.id, { now: T(3) })).toMatchObject({ ok: false, outcome: "refused", status: "held", reason: "reversal_refused" });
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "held", errorCode: "reversal_refused", pausedReason: REVERSE_PAUSE_REASON });
+    expect(p.pausedAt?.getTime()).toBe(T(0).getTime());
+    // The worker's own note says the payout is paused (it did not pause it; the claim did).
+    const back = (await eventsOf(w.payout.id)).find((e) => e.kind === "reversal" && e.fromStatus === "reversal_requested" && e.toStatus === "held")!;
+    expect(back.actorType).toBe("system");
+    expect(back.note).toMatch(/held again and paused, so it will not be released: press Reverse again/);
+    // Past the 5-minute backoff, and an hour on: no release job, and the gate refuses the pause; no PATCH ever.
+    for (const at of [T(10), T(70)]) {
+      expect((await selectDuePayouts(at)).some((d) => d.id === w.payout.id && d.job === "release")).toBe(false);
+      expect(await releasePayout(w.payout.id, { now: at })).toMatchObject({ ok: false, reason: "payout_paused" });
+    }
+    expect(holdCalls(false)).toHaveLength(0);
+    // Reverse again is the way to take it back: it goes through, once.
+    expect(await reversePayout(w.payout.id, { reason: "duplicate booking", actor: STAFF, pauseIfRefused: true, now: T(80) })).toMatchObject({ ok: true, status: "reversed" });
+    expect(reversalCalls()).toHaveLength(2); // the refused one, then this one
+  });
+
+  it("a reversal that SUCCEEDS after the pause ends reversed with the pause lifted: exactly one reversal, and 'pay by bank transfer instead' is not held up by a stale pause", async () => {
+    const w = await pendingReverse();
+    expect(await runPayoutJob("resolve_reversal", w.payout.id, { now: T(3) })).toMatchObject({ ok: true, outcome: "reversed", status: "reversed" });
+    expect(reversalCalls()).toHaveLength(1);
+    expect(fake.transfers.get(w.transferId!)!.amountReversed).toBe(w.amount);
+    expect(await reload(w.payout.id)).toMatchObject({ status: "reversed", pausedAt: null, pausedReason: null });
+    // A reversed payout of a live post is owed by bank transfer: the move is open, and the row it lands on is not paused.
+    expect(await requireManualPayment(w.payout.id, { actor: STAFF, reason: "pay by bank transfer", now: T(4) })).toMatchObject({ ok: true, status: "manual_required" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "manual_required", pausedAt: null });
+  });
+
+  it("Razorpay's event finishes the reversal first: the pause is lifted all the same when the engine reads it back", async () => {
+    const w = await pendingReverse();
+    // The transfer comes back fully reversed at Razorpay before the worker's read (the webhook's own move stands in for it here).
+    fake.transfers.get(w.transferId!)!.amountReversed = w.amount;
+    fake.transfers.get(w.transferId!)!.status = "reversed";
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { status: "reversed", reversedAt: T(2), transferStatus: "reversed" } });
+    expect(await runPayoutJob("resolve_reversal", w.payout.id, { now: T(3) })).toMatchObject({ ok: true, status: "reversed" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "reversed", pausedAt: null, pausedReason: null });
+    expect(reversalCalls()).toHaveLength(0);
+  });
+
+  it("⚠️ r4 #2: a payout paused because the creator was SUSPENDED: the refused Reverse keeps the pause's time but the reason is the person's, and nothing protective is lost", async () => {
+    const w = await releasable({ creatorStatus: "suspended" });
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { pausedAt: T(-5), pausedReason: "creator_suspended" } });
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    expect(await reversePayout(w.payout.id, { reason: "not their post", actor: STAFF, pauseIfRefused: true, now: T(0) })).toMatchObject({ ok: false, status: "held", reason: "reversal_refused" });
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
+    expect(p.pausedAt?.getTime()).toBe(T(-5).getTime());
+    // Reinstating the creator never resumes a payout (only a person's Resume lifts a pause), and the release gate still refuses a creator who is not in good standing.
+    await prisma.creator.update({ where: { id: w.creatorId }, data: { status: "suspended" } });
+    expect(await resumePayout(w.payout.id, { actor: STAFF, now: T(10) })).toMatchObject({ ok: true });
+    expect(await releasePayout(w.payout.id, { now: T(10) })).toMatchObject({ ok: false, reason: "creator_not_active" });
+    expect(holdCalls(false)).toHaveLength(0);
+  });
+
+  it("r4 #2: a payout paused for a DISPUTE likewise takes the person's reason, and Resume is still refused while the dispute is open", async () => {
+    const w = await releasable();
+    await prisma.campaignDispute.create({ data: { razorpayDisputeId: `disp_R4${w.n}x`, razorpayPaymentId: w.pay, bookingId: w.booking.id, amountPaise: w.price, status: "open", openedAt: T(-5) } });
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { pausedAt: T(-5), pausedReason: "dispute" } });
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    await reversePayout(w.payout.id, { reason: "staff", actor: STAFF, pauseIfRefused: true, now: T(0) });
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
+    expect(p.pausedAt?.getTime()).toBe(T(-5).getTime());
+    expect(await resumePayout(w.payout.id, { actor: STAFF, now: T(10) })).toMatchObject({ ok: false, reason: "dispute_open" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
+  });
+
+  it("r4 #2: Resume IS what lets the release go ahead: a plain staff pause taken over by a refused Reverse, resumed, releases on the next pass", async () => {
+    const w = await releasable();
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { pausedAt: T(-5), pausedReason: "staff" } });
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    await reversePayout(w.payout.id, { reason: "staff", actor: STAFF, pauseIfRefused: true, now: T(0) });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
+    expect(await resumePayout(w.payout.id, { actor: STAFF, now: T(1) })).toMatchObject({ ok: true });
+    // Past the refusal's backoff the release bucket lists it and the gate passes: the money goes to the creator, as the copy warns.
+    expect((await selectDuePayouts(T(10))).some((d) => d.id === w.payout.id && d.job === "release")).toBe(true);
+    expect(await releasePayout(w.payout.id, { now: T(10) })).toMatchObject({ ok: true, status: "released" });
+    expect(holdCalls(false)).toHaveLength(1);
+  });
+
+  it("a person pressing Reverse on a reversal a REFUND started (in flight, unpaused) puts their pause on it too, so the worker's later refusal leaves it held and paused", async () => {
+    const w = await releasable();
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    // The refund path (no pauseIfRefused) claims it; the read fails; it waits for the worker, unpaused.
+    expect(await reverseForRefund(w.item.id, { reason: "withdrawn", actor: STAFF, now: T(0) })).toMatchObject({ refundable: false, state: "reversal_pending" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "reversal_requested", pausedAt: null });
+    // The person presses Reverse while it is in flight: the lease is free (the claim dropped it), so this is the read-back branch.
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    expect(await reversePayout(w.payout.id, { reason: "not their post", actor: STAFF, pauseIfRefused: true, now: T(1) })).toMatchObject({ outcome: "unknown", status: "reversal_requested" });
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
+    expect(p.pausedAt?.getTime()).toBe(T(1).getTime());
+    expect((await eventsOf(w.payout.id)).some((e) => e.kind === "pause" && /Paused by a person's Reverse/.test(e.note ?? ""))).toBe(true);
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    expect(await runPayoutJob("resolve_reversal", w.payout.id, { now: T(4) })).toMatchObject({ ok: false, status: "held", reason: "reversal_refused" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
+    expect((await selectDuePayouts(T(10))).some((d) => d.id === w.payout.id && d.job === "release")).toBe(false);
   });
 });

@@ -6,7 +6,7 @@ import { ChevronDown, ChevronUp, PauseCircle, RefreshCw } from "lucide-react";
 import { PAYOUTS_BASE, isUnconfirmed, runPayoutAction, usePayoutDetail, type PayoutDetail, type PayoutRow } from "@/lib/hooks/use-creator-payouts";
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, ErrorBar, INPUT, Pill, fmtWhen, rupees } from "./_ds";
 import {
-  RELEASE_SWITCH_TEXT, actionsFor, actorWord, buildTimeline, eventTitle, isLiveItem, manualNeedsReverseFirst, payoutHint, payoutStatusView, pauseEffect, pausedChip, pauseText, referenceProblem,
+  RELEASE_SWITCH_TEXT, REVERSE_PAUSE_REASON, actionsFor, actorWord, buildTimeline, eventTitle, isLiveItem, manualNeedsReverseFirst, payoutHint, payoutStatusView, pauseEffect, pausedChip, pauseText, referenceProblem,
   splitRefusal, statusWord, transferIdProblem,
   type PayoutActionKey, type PayoutActionView, type StepState, type TimelineStep,
 } from "./_payout";
@@ -288,7 +288,12 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
         body: (
           <>
             <p>It was paused: {pauseText(row.pausedReason)}.</p>
-            <p>Resuming does not release it. It is released only when every check passes, after the hold: the post verified, no dispute open, no bank change pending, releases switched on. The system refuses to resume while a dispute is still open.</p>
+            {row.pausedReason === REVERSE_PAUSE_REASON && (
+              <p className="text-ds-gold">
+                A person pressed Reverse on it because the creator must not be paid, and Razorpay refused (or has not confirmed it yet). Resume only if the creator should be paid after all: a held payout whose hold has run out is then released within minutes. To take the money back instead, press Reverse again.
+              </p>
+            )}
+            <p>Resuming does not release it by itself. It is released only when every check passes, after the hold: the post verified, no dispute open, no bank change pending, releases switched on. The system refuses to resume while a dispute is still open.</p>
           </>
         ),
         run: () => act("resume"),
@@ -374,7 +379,7 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
       const reverseFirst = manualNeedsReverseFirst(row) ? (
         <p className="text-ds-gold">
           This payout records a transfer at Razorpay. Unless that transfer failed or was fully taken back, the system refuses this, because the transfer could still release money and the creator would be paid twice. Take it back first with Reverse:{" "}
-          {isLiveItem(row.itemStatus) ? "the payout then shows under Owed after reversal, where Pay by bank transfer instead records the payment." : "once it is taken back, the post can be refunded from the campaign page."}
+          {isLiveItem(row.itemStatus) ? "the payout then shows under Owed after reversal, where Pay by bank transfer instead records the payment." : "once it is taken back, end the post from the campaign page: Withdraw offer while the creator's offer is still open (Discard link & withdraw offer if they sent a link), otherwise Refund this account."}
         </p>
       ) : null;
       // ⚠️ Offered for a post that never went live only on a PARKED payout ("Stop this payout"): nothing is owed, and this is how the payout is stopped
@@ -389,7 +394,7 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
               <p>{who(row)}&apos;s post never went live, so nothing is owed to them. This stops the payout: no transfer is made or retried for it. The system refuses it while Razorpay could still have money out for it.</p>
               {reverseFirst}
               <p>
-                It pays nobody, and it can&apos;t be recorded as paid. Refund the post from the campaign page afterwards (a post already waiting for its refund is refunded automatically). The refund goes out once Razorpay&apos;s records show no money is out for this payout: none was sent, its transfer failed, or it was taken back. While Razorpay&apos;s list of the payment&apos;s transfers can&apos;t be read the refund waits: a record that no transfer exists never counts for a refund.
+                It pays nobody, and it can&apos;t be recorded as paid. Then end the post from the campaign page: press Withdraw offer while the creator&apos;s offer is still open (Discard link &amp; withdraw offer if they sent a link), otherwise Refund this account; a post already waiting for its refund is refunded automatically. The refund goes out once Razorpay&apos;s records show no money is out for this payout: none was sent, its transfer failed, or it was taken back. While Razorpay&apos;s list of the payment&apos;s transfers can&apos;t be read the refund waits: a record that no transfer exists never counts for a refund.
               </p>
             </>
           ),
@@ -519,7 +524,7 @@ export function noticeFor(key: PayoutActionKey, d: PayoutDetail, values: Record<
         ? { tone: "ok", text: "Marked to be paid by bank transfer. Pay the creator, then press Mark paid manually and record the reference." }
         : {
             tone: "ok",
-            text: "The payout is stopped: no transfer is made for it. Nothing is owed to the creator, because the post never went live. Refund the post from the campaign page: the refund goes out once Razorpay's records show no money is out for it (it waits while Razorpay's list of the payment's transfers can't be read).",
+            text: "The payout is stopped: no transfer is made for it. Nothing is owed to the creator, because the post never went live. Now end the post from the campaign page: Withdraw offer while the creator's offer is still open (Discard link & withdraw offer if they sent a link), otherwise Refund this account. The refund goes out once Razorpay's records show no money is out for it (it waits while Razorpay's list of the payment's transfers can't be read).",
           };
     case "mark_paid":
       return { tone: "ok", text: `Recorded as paid by bank transfer (reference ${values.reference ?? ""}).` };

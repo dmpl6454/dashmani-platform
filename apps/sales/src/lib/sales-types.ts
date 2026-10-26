@@ -54,19 +54,31 @@ export interface Invoice extends DocumentTotals {
   notes: string | null; terms: string | null; internalNotes: string | null; cancelReason: string | null; issuedAt: string | null; sentAt: string | null; paidAt: string | null; createdAt: string;
   sellerSnapshot: Record<string, string | null> | null; buyerSnapshot: Record<string, string | null> | null;
   client: ClientBrief & { phone?: string | null; billingProfile?: BillingProfile | null }; order: { id: string; number: string; title: string } | null; items: InvoiceItem[];
-  allocations: Array<{ id: string; amountPaise: number; tdsPaise: number; payment: { id: string; number: string; mode: string; reference: string | null; paidOn: string | null } }>;
+  allocations: Array<{ id: string; amountPaise: number; tdsPaise: number; payment: { id: string; number: string; mode: string; reference: string | null; paidOn: string | null; status: string } }>;
+  /** The proforma this tax invoice was converted from, and the tax invoices made from this proforma. */
+  convertedFrom: { id: string; number: string | null } | null;
+  conversions: Array<{ id: string; number: string | null; status: string }>;
   creditNotes: Array<{ id: string; number: string; status: string; issueDate: string | null; reason: string; totalPaise: number; taxablePaise: number }>;
 }
 export interface InvoiceRow extends DocumentTotals {
   id: string; number: string | null; kind: string; status: string; derivedStatus: DerivedInvoiceStatus; issueDate: string | null; dueDate: string | null;
   paidPaise: number; tdsPaise: number; creditedPaise: number; balancePaise: number; clientId: string; client?: { id: string; companyName: string; billingProfile?: { legalName: string } | null };
 }
+export interface Refund {
+  id: string; number: string; paymentId: string; amountPaise: number; mode: string; reference: string | null; refundedOn: string | null; notes: string | null;
+  status: "issued" | "cancelled"; cancelledAt: string | null; createdAt: string;
+}
 export interface Payment {
   id: string; number: string; clientId: string; amountPaise: number; tdsPaise: number; mode: string; reference: string | null; paidOn: string | null; bankName: string | null; notes: string | null;
   createdAt: string; client: { id: string; companyName: string }; allocations: Array<{ invoiceId: string; amountPaise: number; tdsPaise: number; invoice: { id: string; number: string | null; totalPaise: number } }>;
+  /** recorded | voided — a voided receipt keeps its number; its allocations stop counting. */
+  status: "recorded" | "voided"; voidReason: string | null; voidedAt: string | null;
+  refunds: Refund[];
+  /** Computed by the API: on invoices, refunded, and what is left to apply or refund. */
+  allocatedPaise: number; allocatedTdsPaise: number; refundedPaise: number; unallocatedPaise: number; unallocatedTdsPaise: number;
 }
 export interface CreditNote { id: string; number: string; invoiceId: string; status: string; issueDate: string | null; reason: string; taxablePaise: number; totalPaise: number; invoice?: { id: string; number: string | null }; client?: { id: string; companyName: string } }
-export interface Statement { client: ClientRow; invoices: InvoiceRow[]; payments: Payment[]; creditNotes: CreditNote[]; totals: { invoicedPaise: number; collectedPaise: number; tdsPaise: number; creditedPaise: number; outstandingPaise: number; overduePaise: number } }
+export interface Statement { client: ClientRow; invoices: InvoiceRow[]; payments: Payment[]; creditNotes: CreditNote[]; totals: { invoicedPaise: number; collectedPaise: number; tdsPaise: number; creditedPaise: number; outstandingPaise: number; overduePaise: number; refundedPaise: number; unappliedPaise: number } }
 export interface SalesEvent { id: string; entityType: string; entityId: string; actorId: string | null; action: string; fromStatus: string | null; toStatus: string | null; note: string | null; createdAt: string; label?: string | null }
 export interface Dashboard {
   today: string; financialYear: string; ordersByFy: Array<{ financialYear: string; count: number; totalPaise: number; closedPaise: number }>; invoicedFyPaise: number; invoicedFyCount: number; invoicedMonthPaise: number; collectedFyPaise: number; tdsFyPaise: number; collectedMonthPaise: number;

@@ -2,8 +2,9 @@ import crypto from "crypto";
 import { hash } from "bcrypt";
 import { prisma } from "@dashmani/db";
 import type { ClientBillingProfileInput } from "@dashmani/shared";
+import { receiptBalance } from "./payments.service";
 import { AppError } from "../../middleware/error-handler";
-import { logSalesEvent } from "./common";
+import { logSalesEvent, dateToDay } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
 import { todayIST } from "@dashmani/shared";
 
@@ -104,18 +105,30 @@ export async function getClientStatement(clientId: string) {
   const today = todayIST();
   const [invoices, payments, creditNotes] = await Promise.all([
     prisma.salesInvoice.findMany({ where: { clientId, status: { not: "draft" } }, orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }], select: invoiceSummarySelect }),
-    prisma.salesPayment.findMany({ where: { clientId }, orderBy: { paidOn: "desc" }, include: { allocations: { select: { invoiceId: true, amountPaise: true, tdsPaise: true } } } }),
+    prisma.salesPayment.findMany({ where: { clientId }, orderBy: { paidOn: "desc" }, include: { allocations: { select: { invoiceId: true, amountPaise: true, tdsPaise: true } }, refunds: true } }),
     prisma.salesCreditNote.findMany({ where: { clientId }, orderBy: { issueDate: "desc" } }),
   ]);
   const derived = invoices.map((i) => deriveInvoice(i, today));
+  const live = payments.filter((p) => p.status === "recorded");
+  const refundedPaise = live.flatMap((p) => p.refunds).filter((r) => r.status === "issued").reduce((s, r) => s + r.amountPaise, 0);
   const totals = {
     invoicedPaise: derived.filter((i) => i.kind === "tax_invoice" && i.status !== "cancelled").reduce((s, i) => s + i.totalPaise, 0),
-    collectedPaise: payments.reduce((s, p) => s + p.amountPaise, 0),
-    tdsPaise: payments.reduce((s, p) => s + p.tdsPaise, 0),
+    // Voided receipts never happened; refunds are money that went back out.
+    collectedPaise: live.reduce((s, p) => s + p.amountPaise, 0) - refundedPaise,
+    tdsPaise: live.reduce((s, p) => s + p.tdsPaise, 0),
+    refundedPaise,
+    /** Money received but on no invoice and not refunded (advances, credit released by credit notes): apply it or refund it. */
+    unappliedPaise: live.reduce((s, p) => { const b = receiptBalance(p); return s + b.unallocatedPaise + b.unallocatedTdsPaise; }, 0),
     creditedPaise: creditNotes.filter((c) => c.status === "issued").reduce((s, c) => s + c.totalPaise, 0),
     // Proformas are not receivables (the client list's outstanding never counted them either).
     outstandingPaise: derived.filter((i) => i.kind === "tax_invoice" && (i.derivedStatus === "issued" || i.derivedStatus === "partially_paid" || i.derivedStatus === "overdue")).reduce((s, i) => s + i.balancePaise, 0),
     overduePaise: derived.filter((i) => i.kind === "tax_invoice" && i.derivedStatus === "overdue").reduce((s, i) => s + i.balancePaise, 0),
   };
-  return { client, invoices: derived, payments, creditNotes, totals };
+  return {
+    client,
+    invoices: derived,
+    payments: payments.map((p) => ({ ...p, paidOn: dateToDay(p.paidOn), refunds: p.refunds.map((r) => ({ ...r, refundedOn: dateToDay(r.refundedOn) })), ...receiptBalance(p) })),
+    creditNotes,
+    totals,
+  };
 }

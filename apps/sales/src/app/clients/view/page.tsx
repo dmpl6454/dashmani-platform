@@ -57,9 +57,10 @@ function ClientView() {
       </PageHead>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <Stat label="Invoiced" value={<Money paise={t?.invoicedPaise ?? 0} whole />} />
-        <Stat label="Collected" value={<Money paise={t?.collectedPaise ?? 0} whole />} sub={t?.tdsPaise ? <>TDS withheld <Money paise={t.tdsPaise} whole /></> : undefined} tone="success" />
+        <Stat label="Collected" value={<Money paise={t?.collectedPaise ?? 0} whole />} sub={t?.tdsPaise || t?.refundedPaise ? <>{t?.tdsPaise ? <>TDS withheld <Money paise={t.tdsPaise} whole /></> : null}{t?.tdsPaise && t?.refundedPaise ? " · " : null}{t?.refundedPaise ? <>net of <Money paise={t.refundedPaise} whole /> refunded</> : null}</> : undefined} tone="success" />
         <Stat label="Outstanding" value={<Money paise={t?.outstandingPaise ?? 0} whole />} tone={t?.outstandingPaise ? "attention" : undefined} />
         <Stat label="Overdue" value={<Money paise={t?.overduePaise ?? 0} whole />} tone={t?.overduePaise ? "danger" : undefined} />
+        {!!t?.unappliedPaise && <Stat label="Unapplied credit" value={<Money paise={t.unappliedPaise} whole />} sub="Received, on no invoice: apply it from an invoice or refund it" tone="attention" />}
       </div>
       <div className="grid lg:grid-cols-3 gap-4 mb-6">
         <section className="card p-4 lg:col-span-1">
@@ -125,7 +126,7 @@ function ClientView() {
                 <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-2">Receipt</th><th className="p-2">Date</th><th className="p-2">Mode</th><th className="p-2">Reference</th><th className="p-2 text-right">Received</th><th className="p-2 text-right">TDS</th></tr></thead>
                 <tbody>
                   {statement.payments.map((p) => (
-                    <tr key={p.id} className="border-b border-rule"><td className="p-2 font-mono">{p.number}</td><td className="p-2">{fmtDate(p.paidOn)}</td><td className="p-2">{titleCase(p.mode)}</td><td className="p-2 font-mono text-xs">{p.reference ?? "—"}</td><td className="p-2 text-right"><Money paise={p.amountPaise} /></td><td className="p-2 text-right"><Money paise={p.tdsPaise} className={p.tdsPaise ? "" : "text-ink-3"} /></td></tr>
+                    <tr key={p.id} className={`border-b border-rule ${p.status === "voided" ? "line-through text-ink-3" : ""}`}><td className="p-2 font-mono"><Link href={`/payments/view?id=${p.id}`} className="hover:text-indigo-light">{p.number}</Link>{p.status === "voided" ? " (voided)" : ""}</td><td className="p-2">{fmtDate(p.paidOn)}</td><td className="p-2">{titleCase(p.mode)}</td><td className="p-2 font-mono text-xs">{p.reference ?? "—"}</td><td className="p-2 text-right"><Money paise={p.amountPaise} /></td><td className="p-2 text-right"><Money paise={p.tdsPaise} className={p.tdsPaise ? "" : "text-ink-3"} /></td></tr>
                   ))}
                 </tbody>
               </table>

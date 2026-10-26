@@ -1,6 +1,7 @@
 import PDFDocument from "pdfkit";
-import { GST_STATE_CODES, TAX_MODE_LABELS } from "@dashmani/shared";
+import { GST_STATE_CODES, TAX_MODE_LABELS, DEFAULT_SAC, rupeesInWords } from "@dashmani/shared";
 import type { InvoiceView, SellerSnapshot, BuyerSnapshot } from "./invoices.service";
+import type { CreditNoteView } from "./payments.service";
 
 // The printed invoice, drawn with pdfkit (pure JS — no browser on the 2 GB box). Renders from
 // the snapshots frozen at issue, so re-downloading an old invoice always prints what the
@@ -180,6 +181,106 @@ export function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   doc.y += 28;
   doc.text(seller.signatory ?? "Authorised signatory", right - 200, doc.y, { width: 200, align: "right" });
 
+  doc.end();
+  return done;
+}
+
+/**
+ * A GST credit note (CGST Rules, rule 53): the supplier and recipient as printed on the original
+ * invoice (its frozen snapshots), the note's own serial and date, the invoice it reduces with that
+ * invoice's date, the taxable value credited, the tax by type and rate, the total, and a signature.
+ */
+export function renderCreditNotePdf(cn: CreditNoteView): Promise<Buffer> {
+  const seller = (cn.invoice.sellerSnapshot ?? {}) as Partial<SellerSnapshot>;
+  const buyer = (cn.invoice.buyerSnapshot ?? {}) as Partial<BuyerSnapshot>;
+  const doc = new PDFDocument({ size: "A4", margin: PAGE.margin, info: { Title: `CREDIT NOTE ${cn.number}`, Author: seller.legalName ?? "Digital Sukoon" } });
+  const chunks: Buffer[] = [];
+  doc.on("data", (c: Buffer) => chunks.push(c));
+  const done = new Promise<Buffer>((resolve, reject) => {
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+  });
+  const left = PAGE.margin;
+  const right = PAGE.width - PAGE.margin;
+  const width = right - left;
+
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(16).text(seller.legalName ?? "Digital Sukoon", left, PAGE.margin, { width: width * 0.6 });
+  doc.font("Helvetica").fontSize(9).fillColor(MUTED);
+  for (const line of addressLines(seller)) doc.text(line, { width: width * 0.6 });
+  if (seller.gstin) doc.text(`GSTIN: ${seller.gstin}`, { width: width * 0.6 });
+  if (seller.pan) doc.text(`PAN: ${seller.pan}`, { width: width * 0.6 });
+  const headerBottom = doc.y;
+
+  doc.font("Helvetica-Bold").fontSize(18).fillColor(INK).text("CREDIT NOTE", left + width * 0.6, PAGE.margin, { width: width * 0.4, align: "right" });
+  doc.font("Helvetica").fontSize(9).fillColor(MUTED);
+  const pos = cn.invoice.placeOfSupplyCode;
+  const meta: Array<[string, string]> = [
+    ["Credit note no.", cn.number],
+    ["Date", fmtDay(cn.issueDate)],
+    ["Against invoice", cn.invoice.number ?? "—"],
+    ["Invoice date", fmtDay(cn.invoice.issueDate)],
+    ["Place of supply", pos ? `${pos} — ${GST_STATE_CODES[pos] ?? ""}` : "—"],
+    ["Reverse charge", "No"],
+  ];
+  for (const [k, v] of meta) doc.text(`${k}: ${v}`, left + width * 0.6, doc.y, { width: width * 0.4, align: "right" });
+  doc.y = Math.max(headerBottom, doc.y) + 14;
+  doc.moveTo(left, doc.y).lineTo(right, doc.y).strokeColor(RULE).lineWidth(1).stroke();
+  doc.y += 12;
+
+  doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("ISSUED TO", left, doc.y);
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(buyer.legalName ?? buyer.companyName ?? cn.client.companyName, { width: width * 0.6 });
+  doc.font("Helvetica").fontSize(9).fillColor(INK);
+  for (const line of addressLines(buyer)) doc.text(line, { width: width * 0.6 });
+  doc.text(buyer.gstin ? `GSTIN: ${buyer.gstin}` : "Unregistered (no GSTIN)", { width: width * 0.6 });
+  doc.y += 14;
+
+  // One line: what is credited and why.
+  const cols = [
+    { label: "#", w: 24, align: "left" as const },
+    { label: "Description", w: width - 24 - 60 - 110, align: "left" as const },
+    { label: "SAC", w: 60, align: "left" as const },
+    { label: "Taxable value", w: 110, align: "right" as const },
+  ];
+  const headY = doc.y;
+  doc.rect(left, headY - 3, width, 18).fill("#f2f2f2");
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(8.5);
+  let x = left;
+  for (const c of cols) { doc.text(c.label, x + 3, headY + 1, { width: c.w - 6, align: c.align }); x += c.w; }
+  doc.y = headY + 20;
+  doc.font("Helvetica").fontSize(9);
+  const rowY = doc.y;
+  const cells = ["1", `${cn.reason} (against ${cn.invoice.number ?? "the invoice"})`, cn.invoice.items[0]?.sac ?? DEFAULT_SAC, rs(cn.taxablePaise)];
+  x = left;
+  cells.forEach((c, i) => { doc.text(c, x + 3, rowY, { width: cols[i].w - 6, align: cols[i].align }); x += cols[i].w; });
+  doc.y = Math.max(doc.y, rowY + 14) + 6;
+  doc.moveTo(left, doc.y).lineTo(right, doc.y).strokeColor(RULE).lineWidth(0.5).stroke();
+  doc.y += 10;
+
+  const pct = (bp: number) => `${(bp / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}%`;
+  const totals: Array<[string, string, boolean]> = [["Taxable value", rs(cn.taxablePaise), false]];
+  if (cn.taxMode === "intra") totals.push([`CGST @ ${pct(cn.gstRateBp / 2)}`, rs(cn.cgstPaise), false], [`SGST @ ${pct(cn.gstRateBp / 2)}`, rs(cn.sgstPaise), false]);
+  else if (cn.taxMode === "inter") totals.push([`IGST @ ${pct(cn.gstRateBp)}`, rs(cn.igstPaise), false]);
+  else totals.push(["GST", "Nil — export of services / SEZ", false]);
+  const roundOff = cn.totalPaise - (cn.taxablePaise + cn.cgstPaise + cn.sgstPaise + cn.igstPaise);
+  if (roundOff) totals.push(["Round off", rs(roundOff), false]);
+  totals.push(["Total credited", rs(cn.totalPaise), true]);
+  const labelX = right - 260;
+  for (const [k, v, bold] of totals) {
+    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(bold ? 11 : 9).fillColor(INK);
+    doc.text(k, labelX, doc.y, { width: 140, align: "left" });
+    doc.text(v, labelX + 140, doc.y - doc.currentLineHeight(), { width: 120, align: "right" });
+    doc.y += 4;
+  }
+  doc.y += 6;
+  doc.font("Helvetica-Oblique").fontSize(9).fillColor(MUTED).text(`Amount in words: ${rupeesInWords(cn.totalPaise)}`, left, doc.y, { width });
+  if (cn.status === "cancelled") {
+    doc.y += 8;
+    doc.font("Helvetica-Bold").fontSize(12).fillColor("#b00020").text("CANCELLED", left, doc.y, { width });
+  }
+  doc.y = Math.max(doc.y + 40, Math.min(doc.y + 40, PAGE.height - PAGE.margin - 40));
+  doc.font("Helvetica").fontSize(9).fillColor(INK).text(`For ${seller.legalName ?? "Digital Sukoon"}`, right - 200, doc.y, { width: 200, align: "right" });
+  doc.y += 28;
+  doc.text(seller.signatory ?? "Authorised signatory", right - 200, doc.y, { width: 200, align: "right" });
   doc.end();
   return done;
 }

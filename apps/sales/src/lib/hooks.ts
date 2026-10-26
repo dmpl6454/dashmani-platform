@@ -26,6 +26,7 @@ export const useOrder = (id: string | null) => useSWR<Order>(id ? `/sales/orders
 export const useInvoices = (f: { status?: string; clientId?: string; q?: string }) => useSWR<InvoiceRow[]>(`/sales/invoices${qs(f)}`, fetcher, opts);
 export const useInvoice = (id: string | null) => useSWR<Invoice>(id ? `/sales/invoices/${id}` : null, fetcher, opts);
 export const usePayments = (f: { clientId?: string; q?: string }) => useSWR<Payment[]>(`/sales/payments${qs(f)}`, fetcher, opts);
+export const usePayment = (id: string | null) => useSWR<Payment>(id ? `/sales/payments/${id}` : null, fetcher, opts);
 /** One client's receipts, for applying an unallocated advance to an invoice (no request until the client is known). */
 export const useClientReceipts = (clientId: string | null | undefined) => useSWR<Payment[]>(clientId ? `/sales/payments${qs({ clientId })}` : null, fetcher, opts);
 export const useCreditNotes = (f: { invoiceId?: string; clientId?: string }) => useSWR<CreditNote[]>(`/sales/credit-notes${qs(f)}`, fetcher, opts);

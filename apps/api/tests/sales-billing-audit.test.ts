@@ -254,9 +254,13 @@ describe("billing audit", () => {
     const allocs = await prisma.salesPaymentAllocation.findMany({ where: { paymentId: advance.body.data.id } });
     expect(allocs).toHaveLength(1);
     expect(allocs[0].amountPaise).toBe(100_000);
-    expect((await apply(60_000)).body.error.code).toBe("OVER_ALLOCATED"); // only ₹500 left on the receipt
+    const over = await apply(60_000); // only ₹500 left on the receipt
+    expect(over.status, JSON.stringify(over.body)).toBe(409);
+    expect(over.body.error.code).toBe("OVER_ALLOCATED");
     const other = await issued(clientKa);
-    expect((await apply(10_000, other.id)).body.error.code).toBe("WRONG_CLIENT");
+    const wrong = await apply(10_000, other.id);
+    expect(wrong.status, JSON.stringify(wrong.body)).toBe(409);
+    expect(wrong.body.error.code).toBe("WRONG_CLIENT");
     const view = await api().get(`/v1/sales/invoices/${inv.id}`).set(auth(token));
     expect(view.body.data).toMatchObject({ paidPaise: 100_000, balancePaise: 18_000, derivedStatus: "partially_paid" });
   });

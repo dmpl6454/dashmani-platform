@@ -199,6 +199,9 @@ const inr = (paise: number): string => `₹${(paise / 100).toFixed(2)}`;
 
 const loadPayout = (id: string) => prisma.creatorPayout.findUnique({ where: { id } });
 
+/** The moves on which transition() lifts a person's Reverse pause (payout-pause.ts, "the rule"): the money is back, or proven never out. */
+export const REVERSE_PAUSE_LIFTING_STATUSES: readonly PayoutStatus[] = ["reversed", "manual_required"];
+
 /** Applies `to` only to a row still in `from`, and writes its audit row, in ONE short transaction. False = the row had moved on (a lost race). */
 async function transition(a: {
   id: string;
@@ -217,8 +220,6 @@ async function transition(a: {
    * first, so a pause landing meanwhile is either seen here or waits for this one.
    */
   pause?: { at: Date; reason: string };
-  /** Also lift a person's Reverse pause, in the same transaction (the payout reached `reversed`: the money is back, nothing is left to hold). */
-  liftReversePause?: boolean;
 }): Promise<boolean> {
   for (const f of a.from) if (!canMove(f, a.to)) throw new Error(`illegal payout move ${f} -> ${a.to}`);
   return prisma.$transaction(async (tx) => {
@@ -227,7 +228,13 @@ async function transition(a: {
     const r = await tx.creatorPayout.updateMany({ where: { ...a.where, id: a.id, status: cur.status }, data: { ...a.data, status: a.to } });
     if (r.count !== 1) return false;
     if (a.pause) await applyPersonsPause(tx, a.id, a.pause);
-    if (a.liftReversePause) await liftReversePause(tx, a.id);
+    // ⚠️ THE RULE for a person's Reverse pause (payout-pause.ts): it survives every other move and is lifted, in the same transaction as the
+    // move, on EVERY move to `reversed` (the money is back, whichever door it came through: finishReversal, applyFreshTransfer's fresh read)
+    // and on the move to `manual_required` (decideManualFallback has proven nothing is out: no transfer, a failed one, or the whole of it back,
+    // so nothing is left to hold and a payout paid by bank transfer must not carry it). Lifted HERE, on the move, so no door can forget it.
+    // Only the person's reason is cleared: a dispute's or a suspension's pause stays, inert on a reversed payout. route-webhooks' own
+    // applyMove (not this function) lifts it after its move to `reversed`.
+    if (REVERSE_PAUSE_LIFTING_STATUSES.includes(a.to)) await liftReversePause(tx, a.id);
     await tx.creatorPayoutEvent.create({
       data: {
         payoutId: a.id,
@@ -1556,9 +1563,11 @@ export async function pollSettlement(payoutId: string, opts: StepOptions = {}): 
 /**
  * Where the payout was before its reversal was claimed: the move INTO reversal_requested. ⚠️ Audit rows written while it waits there (an unknown
  * answer being reconciled, a person's pause) have from = to = reversal_requested and are not that move: read as the prior, they would turn a
- * later definite refusal of a held payout into a parked one (reversal_refused_after_release) instead of putting it back in held.
+ * later definite refusal of a held payout into a parked one (reversal_refused_after_release) instead of putting it back in held. Exported so the
+ * staff wrapper's note about a reversal left to the worker (payout-staff.service pendingReverseNote) reads the SAME prior this engine will
+ * decide on, never a guess from the row's current status.
  */
-async function priorStatusOfReversal(p: PayoutRow): Promise<string> {
+export async function priorStatusOfReversal(p: Pick<PayoutRow, "id" | "releasedAt">): Promise<string> {
   const ev = await prisma.creatorPayoutEvent.findFirst({
     where: { payoutId: p.id, toStatus: "reversal_requested", NOT: { fromStatus: "reversal_requested" } },
     orderBy: { createdAt: "desc" },
@@ -1573,9 +1582,11 @@ export interface ReverseOptions extends StepOptions {
   /**
    * A PERSON pressed Reverse because the creator must not be paid (the staff wrapper sets it; a reversal before a refund does not). A held
    * payout is PAUSED (reason REVERSE_PAUSE_REASON) in the same move as the claim, so whoever finishes the reversal (this call, or the worker
-   * reading an unknown answer back after a transient error) leaves a definite refusal back in `held` AND paused, and the release the person
-   * meant to stop does not go ahead minutes later; a pause already there keeps its time and takes this reason (payout-pause.ts). Honoured only
-   * for a staff actor. A person takes it back by pressing Reverse again once Razorpay allows it; Resume lets its release go ahead when due.
+   * reading an unknown answer back after a transient error) leaves a definite refusal PAUSED where the engine lands it: back in `held` when
+   * Razorpay still holds the money (decideReversalOutcome), so the release the person meant to stop does not go ahead minutes later, else
+   * parked as needs_attention for a person; a pause already there keeps its time and takes this reason (payout-pause.ts, "the rule").
+   * Honoured only for a staff actor. A person takes it back by pressing Reverse again once Razorpay allows it; Resume lets a HELD payout's
+   * release go ahead when due (a parked one stays with a person).
    */
   pauseIfRefused?: boolean;
 }
@@ -1627,7 +1638,7 @@ export async function reversePayout(payoutId: string, opts: ReverseOptions): Pro
       if (pauseOnRefusal && prior === "held") {
         await prisma.$transaction(async (tx) => {
           const put = await applyPersonsPause(tx, payoutId, { at: now, reason: REVERSE_PAUSE_REASON }, { status: "reversal_requested" });
-          if (put.done !== "none") await recordEvent(p0, "pause", "reversal_requested", `Paused by a person's Reverse: if Razorpay refuses the reversal, the payout is held and not released${put.previous ? ` (it was paused: ${put.previous})` : ""}.`, actor, tx);
+          if (put.done !== "none") await recordEvent(p0, "pause", "reversal_requested", `Paused by a person's Reverse: if Razorpay refuses the reversal while it still holds the money, the payout is held and not released; if it has already let the money go, the payout is parked as Needs attention, still paused${put.previous ? ` (it was paused: ${put.previous})` : ""}.`, actor, tx);
         });
       }
       return await runReversal(ctx, (await loadPayout(payoutId))!, prior, now, actor, why, pauseOnRefusal);
@@ -1652,7 +1663,7 @@ export async function reversePayout(payoutId: string, opts: ReverseOptions): Pro
     kind: "reversal",
     actor,
     ...(pauseAtClaim ? { pause: { at: now, reason: REVERSE_PAUSE_REASON } } : {}),
-    note: pauseAtClaim ? `Reversal requested (${why}); paused by a person's Reverse: if Razorpay refuses, the payout is held and not released.` : `Reversal requested (${why}).`,
+    note: pauseAtClaim ? `Reversal requested (${why}); paused by a person's Reverse: if Razorpay refuses while it still holds the money, the payout is held and not released; otherwise it is parked as Needs attention, still paused.` : `Reversal requested (${why}).`,
   });
   if (!claimed) return result(ctx, (await loadPayout(payoutId))?.status ?? null, false, "lost_claim");
   try {
@@ -1792,8 +1803,8 @@ async function finishReversal(ctx: Ctx, p: PayoutRow, amount: number, reversalId
     kind: "reversal",
     actor,
     note: text,
-    // The money is back: a person's Reverse pause has nothing left to hold (a dispute's or a suspension's pause is left as it is, inert on a reversed payout).
-    liftReversePause: true,
+    // The money is back: transition() lifts a person's Reverse pause on this move (the rule in payout-pause.ts; a dispute's or a suspension's
+    // pause is left as it is, inert on a reversed payout).
   });
   if (moved) return result(ctx, "reversed", true, "reversed");
   // The webhook may have finished it first: that is the same success (and the same lift, in case the event's own one has not run).

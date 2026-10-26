@@ -20,7 +20,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { prisma, PrismaClient } from "@dashmani/db";
-import { todayIST } from "@dashmani/shared";
+import { dateToIST, istMidnight, todayIST } from "@dashmani/shared";
 import "./setup";
 
 vi.mock("../src/services/email.service", async (orig) => {
@@ -389,7 +389,11 @@ describe("creator offers", () => {
   }
 
   async function seedBooking() {
-    const from = new Date(`${todayIST()}T00:00:00.000Z`);
+    // ⚠️ The window OPENS on the IST day before today's, so it is open whatever the clock says. `${todayIST()}T00:00:00.000Z` (midnight UTC of the
+    // IST day, the stored shape) opens at 18:30 UTC of the day before that date; between 18:30 and ~19:45 UTC, when todayIST() already names
+    // tomorrow, that is minutes ago or still ahead, every "a minute ago" post then sits before it, and the busy-page checks read "reached the
+    // window's start" / "outside the window" instead of page_too_busy / a match. Proven with a clock pinned at 19:00 UTC (r6 item 6).
+    const from = istMidnight(dateToIST(new Date(Date.now() - DAY)));
     const to = new Date(from.getTime() + 7 * DAY);
     const booking = await prisma.campaignBooking.create({
       data: {

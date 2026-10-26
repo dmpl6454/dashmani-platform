@@ -136,9 +136,23 @@ export async function pausePayoutsOfPayment(tx: Tx, razorpayPaymentId: string, s
 // Nothing protective is lost: resume and release re-read disputes, the bank change, the account and the creator themselves and never key
 // on the reason, and the only reason-keyed step (the re-hold of a paused RELEASED payout) cannot reach a payout this pause sits on, which
 // is held. No reversal step reads a pause (the reversal bucket, reversePayout, runReversal, finishReversal, reverseForRefund), so it never
-// stops the money coming back. It is lifted when the money is back (the payout reaches `reversed`, by the engine or by Razorpay's event):
-// nothing is left to hold, and a payout then paid by bank transfer instead must not carry it. The staff UI's words for it are
-// staff-ui.ts PAUSE_REASON (the helper test holds the two names equal).
+// stops the money coming back.
+//
+// ⚠️ THE RULE, stated once here and applied everywhere (every staff-facing sentence about this pause is held to it, per status):
+//  • The person's pause SURVIVES EVERY STATUS MOVE (transition() never touches pausedAt), and is lifted ONLY when the money is back — the
+//    payout reaches `reversed`, through ANY door (the engine's own finish, the fresh-read resolver applyFreshTransfer, Razorpay's event in
+//    route-webhooks) — or when a person resumes. transition() lifts it on EVERY move to `reversed`, so no door can forget it; the webhook's
+//    own move lifts it too. The one other lift is the move to `manual_required`: decideManualFallback lets a payout through only when no
+//    transfer exists, it failed, or the whole of it is back, so nothing is left for the pause to hold, and a payout paid by bank transfer
+//    must not carry it.
+//  • A REFUSAL lands the payout back where the ENGINE decides, still paused: `held` only when Razorpay still holds the money (the prior was
+//    held and the transfer is still on hold and unsettled, decideReversalOutcome); otherwise it is PARKED as `needs_attention`, pause kept
+//    (a refusal after the money was let go, a mismatch, a failed transfer). Nothing re-reads the pause there: the row waits for a person.
+//  • Resume only lifts the pause. A HELD payout is then released when due (the release gate runs again); a PARKED one is NEVER released by
+//    Resume — it stays parked until a person resolves it (Reverse again takes the money back; "Pay by bank transfer instead" lifts the
+//    pause by the rule above).
+// The staff UI's words for it are staff-ui.ts PAUSE_REASON / pausedChip / reversePauseResumeNote and the staff service's pendingReverseNote
+// (the helper test holds the two names equal and the sentences to the status they are shown for).
 
 /** creator_payouts.paused_reason of the pause a person's Reverse puts on a held payout (see above). */
 export const REVERSE_PAUSE_REASON = "staff_reverse";
@@ -168,7 +182,10 @@ export async function applyPersonsPause(tx: Tx, payoutId: string, pause: { at: D
   return { done: r.count === 1 ? "replaced" : "none", previous: had.pausedReason };
 }
 
-/** Lift a person's Reverse pause (and only that one) INSIDE the caller's transaction: the payout reached `reversed`. True when one was lifted. */
+/**
+ * Lift a person's Reverse pause (and only that one) INSIDE the caller's transaction: the payout reached `reversed` (or `manual_required`, the
+ * rule above). True when one was lifted. A pause for any other reason (a dispute, a suspension, staff) is left exactly as it is.
+ */
 export async function liftReversePause(tx: Tx, payoutId: string): Promise<boolean> {
   const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedReason: REVERSE_PAUSE_REASON }, data: { pausedAt: null, pausedReason: null } });
   return r.count === 1;

@@ -10,7 +10,7 @@ import crypto from "crypto";
 import request from "supertest";
 import { vi } from "vitest";
 import { prisma } from "@dashmani/db";
-import { todayIST } from "@dashmani/shared";
+import { dateToIST, istMidnight } from "@dashmani/shared";
 import app from "../src/app";
 import { buildCreatorSnapshotFields } from "../src/services/creator/payout-ledger";
 import { settlePayoutKicksForTests } from "../src/services/campaign/payment.service";
@@ -23,6 +23,15 @@ export const WEBHOOK_SECRET = "whsec_p4_integration";
 export const MIN = 60_000;
 export const HOUR = 3_600_000;
 export const DAY = 86_400_000;
+
+/**
+ * The first day of every posting window these fixtures book (a booking's launchFrom, an offer's windowFrom), as the stored IST calendar day
+ * (midnight UTC of that date): the IST day BEFORE today's, so the window is open whatever the clock says. ⚠️ `${todayIST()}T00:00:00.000Z` opens
+ * at 18:30 UTC of the day before that date, which between 18:30 and ~19:45 UTC (when todayIST() already names tomorrow) is minutes ago or still
+ * ahead: a check that compares a post's time with the window's start then reads differently at that hour (the creator-offers busy-page flake,
+ * r6 item 6). The window runs 7 days from here (`windowFrom() + 7 * DAY`), as before.
+ */
+export const windowFrom = () => istMidnight(dateToIST(new Date(Date.now() - DAY)));
 
 /** The environment of a booking that pays a creator through Razorpay, with every money switch ON. */
 export function stubPayoutEnv(extra: Record<string, string> = {}) {
@@ -110,7 +119,7 @@ export interface World {
 export async function mkWorld(fake: FakeRazorpay, spec: BookingSpec): Promise<World> {
   const n = ++seq;
   const client = await prisma.client.create({ data: { companyName: `Brand ${n}`, contactName: "Asha", email: `brand${n}@p4i.test`, passwordHash: "x" } });
-  const from = new Date(`${todayIST()}T00:00:00.000Z`);
+  const from = windowFrom();
   const to = new Date(from.getTime() + 7 * DAY);
   const booking = await prisma.campaignBooking.create({
     data: { clientId: client.id, name: `Campaign ${n}`, brand: "Acme Cola", status: "awaiting_payment", campaignType: "brand", format: "post", caption: "Sip", launchFrom: from, launchTo: to },
@@ -258,8 +267,8 @@ export async function verifiedOffer(w: World, itemId: string, o: { ownership?: s
       linkSubmittedAt: new Date(Date.now() - HOUR),
       linkVerifiedAt: o.verifiedAt ?? new Date(Date.now() - 30 * MIN),
       ownershipCheck: o.ownership ?? "auto_ok",
-      windowFrom: new Date(`${todayIST()}T00:00:00.000Z`),
-      windowTo: new Date(new Date(`${todayIST()}T00:00:00.000Z`).getTime() + 7 * DAY),
+      windowFrom: windowFrom(),
+      windowTo: new Date(windowFrom().getTime() + 7 * DAY),
     },
   });
   await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: "posted_manual", permalink: "https://www.instagram.com/p/x/", postedAt: new Date() } });
@@ -270,7 +279,7 @@ export async function verifiedOffer(w: World, itemId: string, o: { ownership?: s
 export async function openOffer(w: World, itemId: string, o: { status?: "offered" | "accepted"; expiresAt?: Date; windowTo?: Date; linkSubmitted?: boolean } = {}) {
   const item = w.items.find((i) => i.id === itemId)!;
   const status = o.status ?? "offered";
-  const from = new Date(`${todayIST()}T00:00:00.000Z`);
+  const from = windowFrom();
   const offer = await prisma.creatorOffer.create({
     data: {
       bookingId: w.booking.id,

@@ -36,6 +36,7 @@ import {
   executePlannedPayout,
   markManualPaid,
   pausePayout,
+  priorStatusOfReversal,
   releasePayout,
   releaseSwitchOn,
   requireManualPayment,
@@ -561,8 +562,9 @@ function why(r: StepResult): string {
  * What the staff UI sees of a payout around a refused step: whether it moved, whether it got paused, whether its release got scheduled, and the
  * problem a parked payout records (its error code: a refused step can re-park a parked payout under a new one, and alert staff about it).
  */
-type Snapshot = { status: string; pausedAt: Date | null; pausedReason: string | null; releaseAfter: Date | null; errorCode?: string | null } | null;
-const SNAPSHOT_SELECT = { status: true, pausedAt: true, pausedReason: true, releaseAfter: true, errorCode: true } satisfies Prisma.CreatorPayoutSelect;
+type Snapshot = { status: string; pausedAt: Date | null; pausedReason: string | null; releaseAfter: Date | null; errorCode?: string | null; releasedAt?: Date | null } | null;
+// releasedAt: only priorStatusOfReversal's fallback reads it (pendingReverseNote); changeSince never does.
+const SNAPSHOT_SELECT = { status: true, pausedAt: true, pausedReason: true, releaseAfter: true, errorCode: true, releasedAt: true } satisfies Prisma.CreatorPayoutSelect;
 
 /** The refusals of a person's Reverse that put the payout back in held (rollbackReversal): it stays paused (the pause was put on at the claim). */
 const REVERSAL_PUT_BACK_IN_HELD = ["reversal_refused", "transfer_not_processed"];
@@ -589,9 +591,11 @@ export function changeSince(before: Snapshot, after: Snapshot, reason?: string):
   } else if (!after.pausedAt && before.pausedAt) parts.push("it is no longer paused");
   // A payout that was paused ALREADY (a dispute, a suspended creator, a staff pause) and that a person's refused Reverse now holds: its pause
   // keeps its time but the reason is the person's (payout-pause.ts), so the resumer is told a Reverse was refused, not the old reason.
+  // What Resume then does is the rule's (payout-pause.ts): a HELD payout is released when due; a payout the refusal PARKED (Razorpay had let
+  // the money go) stays parked until a person resolves it, so that sentence never promises a release there.
   else if (after.pausedAt && before.pausedAt && before.pausedReason !== after.pausedReason && after.pausedReason === REVERSE_PAUSE_REASON) {
     parts.push(
-      `it stays paused, now because a person's Reverse was refused (it was paused: ${pauseText(before.pausedReason)}): press Reverse again to take it back, or resume it only if the creator should be paid after all (it is then released when due)`,
+      `it stays paused, now because a person's Reverse was refused (it was paused: ${pauseText(before.pausedReason)}): press Reverse again to take it back, or resume it only if the creator should be paid after all (${after.status === "held" ? "it is then released when due" : "a parked payout stays with a person"})`,
     );
   }
   if (after.releaseAfter && !before.releaseAfter) parts.push("its release is now scheduled");
@@ -668,19 +672,24 @@ export async function staffRetryTransfer(id: string, staffId: string) {
 }
 
 /**
- * What a person is told when their Reverse is left to the worker (an unknown, partial or waiting answer, or a reversal already in flight). The
- * second sentence is read off the ROW after the call, never assumed: the person's pause (REVERSE_PAUSE_REASON) is on it only when the prior was
- * held (written at the claim, or by the in-flight branch for a held prior), and only then does a refusal put the payout back in held and paused.
- * For a released, settlement_failed or needs_attention prior the engine parks a refusal as needs_attention, UNPAUSED (decideReversalOutcome,
- * rollbackReversal), and money Razorpay already let go may still settle to the creator: that person must not be told it is held and paused.
- * `before.status` is checked as well, because a parked payout can still carry the pause from an earlier held-prior reversal (parkMismatch leaves
- * it on), and a refusal re-parks it rather than putting it back in held.
+ * What a person is told when their Reverse is left to the worker (an unknown, partial or waiting answer, or a reversal already in flight). It
+ * states the RULE (payout-pause.ts) for the prior the ENGINE will decide on, never a guess:
+ *  • the pause is read off the ROW after the call (the person's pause, REVERSE_PAUSE_REASON, is on it only when the prior was held: written at
+ *    the claim, or by the in-flight branch for a held prior — or left there by an earlier refusal that parked the row);
+ *  • the prior is the row's status before the call, or, for a reversal that was already in flight, the status it was CLAIMED from, read the
+ *    way the worker reads it (priorStatusOfReversal), so a parked payout still carrying the pause is never told "back to held".
+ * A held prior still paused: a refusal lands where the engine decides — back in held, still paused and so not released, ONLY while Razorpay
+ * still holds the money (decideReversalOutcome); if Razorpay has already let it go (released outside our flow, or settled) the refusal parks
+ * it as needs_attention with the pause kept, and the money may settle to the creator. The note cannot know which (its one read just failed,
+ * and the row's stored transfer columns predate that read), so it says both. Any other prior: the engine parks a refusal as needs_attention,
+ * UNPAUSED unless the pause was already there, and money Razorpay already let go may still settle: that person must not be told it is held.
  */
 async function pendingReverseNote(id: string, before: Snapshot): Promise<string> {
   const after = await snapshot(id);
-  const heldAndPaused = after?.pausedReason === REVERSE_PAUSE_REASON && (before?.status === "held" || before?.status === "reversal_requested");
+  const prior = before === null ? null : before.status === "reversal_requested" ? await priorStatusOfReversal({ id, releasedAt: before.releasedAt ?? null }) : before.status;
+  const heldAndPaused = after?.pausedReason === REVERSE_PAUSE_REASON && prior === "held";
   return heldAndPaused
-    ? "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically. If Razorpay refuses it, the payout goes back to held and stays paused, so it is not released."
+    ? "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically. If Razorpay refuses it while it still holds the money, the payout goes back to held and stays paused, so it is not released; if Razorpay has already let the money go, it is parked as Needs attention, still paused, and may settle to the creator: press Reverse again or check Razorpay."
     : "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically. If Razorpay refuses it, the payout is parked as Needs attention for a person and staff are alerted; money already released may still settle to the creator's bank: press Reverse again or check Razorpay.";
 }
 

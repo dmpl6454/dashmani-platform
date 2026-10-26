@@ -1210,7 +1210,8 @@ describe("⚠️ r2 #R11: a refusal never says 'Nothing was changed' when the st
     const res = await post(`/${id}/reverse`, { reason: "duplicate booking" });
     expect(res.status).toBe(200);
     expect(res.body.data.result).toMatchObject({ ok: false, outcome: "unknown" });
-    expect(res.body.data.result.note).toMatch(/finished automatically\. If Razorpay refuses it, the payout goes back to held and stays paused, so it is not released\./);
+    // The hold is still on (the fake's transfer is held and unsettled), so the first landing the note names is the one the worker takes (r6 #2/#4).
+    expect(res.body.data.result.note).toMatch(/finished automatically\. If Razorpay refuses it while it still holds the money, the payout goes back to held and stays paused, so it is not released;/);
     // The person's intent is on the row already.
     expect(await payoutOf(c.id)).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
     // The worker reads it back (no actor) and Razorpay refuses the reversal outright.
@@ -1275,9 +1276,53 @@ describe("⚠️ r2 #R11: a refusal never says 'Nothing was changed' when the st
     // The pause IS on the row, but the prior was not held: a refusal parks it again, so the note must not say it goes back to held.
     expect(res.body.data.result.note).toMatch(/parked as Needs attention for a person/);
     expect(res.body.data.result.note).not.toMatch(/goes back to held/);
+    // r6: pressed AGAIN while it is in flight (the in-flight branch): the row carries the pause and reads reversal_requested, but the prior the
+    // engine will decide on is still needs_attention (the claim's own event), so the note still says parked, never "held" (the r5 residual).
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    const again = await post(`/${id}/reverse`, { reason: "withdrawn" });
+    expect(again.status).toBe(200);
+    expect(again.body.data.result).toMatchObject({ ok: false, outcome: "unknown" });
+    expect(again.body.data.result.note).toMatch(/parked as Needs attention for a person/);
+    expect(again.body.data.result.note).not.toMatch(/goes back to held/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
     fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
     await runCreatorPayoutsTick({ now: new Date(Date.now() + 3 * MIN) });
-    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "reversal_refused_after_release" });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "reversal_refused_after_release", pausedReason: REVERSE_PAUSE_REASON });
+  });
+
+  it("⚠️ r6 #2/#4: a HELD prior whose hold was lifted in the Razorpay dashboard: the note names both landings, and the worker's refusal PARKS it with the person's pause KEPT", async () => {
+    const { c, id } = await releasable();
+    const tid = (await payoutOf(c.id)).razorpayTransferId!;
+    fake.transfers.get(tid)!.onHold = false; // released in the dashboard; our row still reads held (the daily re-read has not run)
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    const res = await post(`/${id}/reverse`, { reason: "creator misconduct" });
+    expect(res.status).toBe(200);
+    expect(res.body.data.result).toMatchObject({ ok: false, outcome: "unknown" });
+    // The pause is on the row and the prior was held, but the note cannot know whether Razorpay still holds the money (its one read just failed): it says both.
+    expect(res.body.data.result.note).toMatch(
+      /If Razorpay refuses it while it still holds the money, the payout goes back to held and stays paused, so it is not released; if Razorpay has already let the money go, it is parked as Needs attention, still paused, and may settle to the creator: press Reverse again or check Razorpay\.$/,
+    );
+    expect(res.body.data.result.note).not.toMatch(/so it is not released\.$/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
+    // The worker reads the transfer (processed, NOT on hold) and Razorpay refuses the reversal: parked, the person's pause kept, staff alerted, nothing re-held.
+    vi.mocked(notifyAdminByEmail).mockClear();
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    await runCreatorPayoutsTick({ now: new Date(Date.now() + 3 * MIN) });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "reversal_refused_after_release", pausedReason: REVERSE_PAUSE_REASON });
+    expect(fake.count((x) => is.setHold(x, true))).toBe(0);
+    await flushPayoutAlertsForTests();
+    expect(vi.mocked(notifyAdminByEmail).mock.calls.map((m) => String(m[0]))).toContain("Creator payout reversal FAILED");
+    // Parked and paused: the queue row offers Reverse again and Resume, and its chip promises no release (r6 #5).
+    const q = await get("?filter=paused");
+    const row = q.body.data.rows.find((x: { id: string }) => x.id === id);
+    expect(row).toMatchObject({ status: "needs_attention", pausedReason: REVERSE_PAUSE_REASON });
+    expect(pausedChip(row)!.title).toMatch(/parked for a person and not released while paused\. Reverse again takes it back; Resume only lifts the pause/);
+    expect(pausedChip(row)!.title).not.toMatch(/Resume releases it when due/);
+    // Resume only lifts the pause: an hour on, the parked row is exactly where it was, and nothing was released.
+    expect((await post(`/${id}/resume`)).status).toBe(200);
+    await runCreatorPayoutsTick({ now: new Date(Date.now() + HOUR) });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "reversal_refused_after_release", pausedAt: null });
+    expect(fake.count((x) => is.setHold(x, false))).toBe(0);
   });
 
   it("r3 #6 / r4 #2: a payout paused already keeps its pause's TIME when a Reverse is refused, but the reason becomes the person's, and the refusal says so", async () => {

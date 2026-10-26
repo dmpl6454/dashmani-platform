@@ -2525,7 +2525,7 @@ describe("r4 #1/#2: a person's Reverse puts its pause on the row AT THE CLAIM, s
     const p = await reload(w.payout.id);
     expect(p).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
     expect(p.pausedAt?.getTime()).toBe(T(0).getTime());
-    expect((await eventsOf(w.payout.id)).find((e) => e.toStatus === "reversal_requested")!.note).toMatch(/paused by a person's Reverse: if Razorpay refuses, the payout is held and not released/);
+    expect((await eventsOf(w.payout.id)).find((e) => e.toStatus === "reversal_requested")!.note).toMatch(/paused by a person's Reverse: if Razorpay refuses while it still holds the money, the payout is held and not released; otherwise it is parked as Needs attention, still paused/);
     return w;
   }
 
@@ -2691,5 +2691,63 @@ describe("r5 #2: a person's Reverse on a reversal in flight writes its pause onl
     const inFlightPaused = await mkWorld({ payoutStatus: "reversal_requested", paused: true });
     expect(await applyPersonsPause(prisma, inFlightPaused.payout.id, { at: T(0), reason: REVERSE_PAUSE_REASON }, { status: "reversal_requested" })).toMatchObject({ done: "replaced", previous: "staff" });
     expect(await reload(inFlightPaused.payout.id)).toMatchObject({ pausedReason: REVERSE_PAUSE_REASON });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("r6 #1: the person's Reverse pause is lifted on EVERY door to reversed, and on the move to manual_required (the rule in payout-pause.ts)", () => {
+  /** held + the person's pause (a refused Reverse), the shape every lift starts from. */
+  async function heldAndPaused() {
+    const w = await releasable();
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    expect(await reversePayout(w.payout.id, { reason: "not their post", actor: STAFF, pauseIfRefused: true, now: T(0) })).toMatchObject({ ok: false, status: "held", reason: "reversal_refused" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
+    return w;
+  }
+  /** The transfer reversed in the Razorpay dashboard (the design's job 9 exists to notice it). */
+  const reversedByHand = (w: World) => {
+    const t = fake.transfers.get(w.transferId!)!;
+    t.amountReversed = t.amount;
+    t.status = "reversed";
+  };
+
+  it("⚠️ a dashboard reversal read by the daily re-read parks it with the pause KEPT (a person must look); 'pay by bank transfer instead' then lands on an UNPAUSED manual_required row", async () => {
+    const w = await heldAndPaused();
+    reversedByHand(w);
+    expect(await recheckHeld(w.payout.id, { now: T(10) })).toMatchObject({ status: "needs_attention", reason: "reversed_outside_flow" });
+    // The park keeps the pause: the row waits for a person, still saying the creator must not be paid (the rule: it survives every move).
+    expect(await reload(w.payout.id)).toMatchObject({ status: "needs_attention", errorCode: "reversed_outside_flow", pausedReason: REVERSE_PAUSE_REASON });
+    // The person chooses the bank transfer: the fresh read proves the whole transfer is back, so nothing is left for the pause to hold.
+    expect(await requireManualPayment(w.payout.id, { actor: STAFF, reason: "pay by bank transfer", now: T(11) })).toMatchObject({ ok: true, status: "manual_required" });
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "manual_required", pausedAt: null, pausedReason: null });
+    expect(p.reversedAt).not.toBeNull();
+  });
+
+  it("⚠️ a parked row (its hold was gone) that the hold re-check reads fully reversed reaches `reversed` through the fresh-read door with the pause lifted", async () => {
+    const w = await heldAndPaused();
+    fake.transfers.get(w.transferId!)!.onHold = false; // released in the dashboard
+    expect(await recheckHeld(w.payout.id, { now: T(10) })).toMatchObject({ status: "needs_attention", reason: "released_outside_flow" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "needs_attention", pausedReason: REVERSE_PAUSE_REASON });
+    // Before the next confirm_hold read the transfer is reversed in the dashboard: the money is back, whichever door read it.
+    reversedByHand(w);
+    expect(await confirmHold(w.payout.id, { now: T(20) })).toMatchObject({ ok: true, status: "reversed" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "reversed", pausedAt: null, pausedReason: null });
+    expect(fake.calls.filter(is.createReversal)).toHaveLength(1); // the refused one only: the dashboard did the rest
+  });
+
+  it("only the person's pause is lifted: a dispute's pause on a parked row reaching reversed the same way stays (inert); and the engine's own finish still lifts, from the same one rule", async () => {
+    const w = await mkWorld({ payoutStatus: "needs_attention", paused: true });
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { errorCode: "released_outside_flow", pausedReason: "dispute" } });
+    reversedByHand(w);
+    expect(await confirmHold(w.payout.id, { now: T(0) })).toMatchObject({ ok: true, status: "reversed" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "reversed", pausedReason: "dispute" });
+    // The worker finishing the person's own reversal after a 5xx (r4 #1) lifts it as before.
+    const v = await releasable();
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    expect(await reversePayout(v.payout.id, { reason: "staff", actor: STAFF, pauseIfRefused: true, now: T(0) })).toMatchObject({ outcome: "unknown", status: "reversal_requested" });
+    expect(await reload(v.payout.id)).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
+    expect(await runPayoutJob("resolve_reversal", v.payout.id, { now: T(3) })).toMatchObject({ ok: true, status: "reversed" });
+    expect(await reload(v.payout.id)).toMatchObject({ status: "reversed", pausedAt: null, pausedReason: null });
   });
 });

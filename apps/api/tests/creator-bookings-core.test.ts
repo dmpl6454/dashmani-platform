@@ -23,6 +23,8 @@ import {
   LIVE_ITEM_STATUSES,
   SETTLED_ITEM_STATUSES,
   campaignRateCardUpsertSchema,
+  dateToIST,
+  istMidnight,
   todayIST,
 } from "@dashmani/shared";
 import "./setup";
@@ -361,9 +363,12 @@ describe("creator bookings, the core", () => {
     return { asset, card };
   }
 
+  /** The first IST day of every seeded window: the day BEFORE today's, so the window is open whatever the clock says (see payout-fixtures windowFrom; r6 item 6). */
+  const windowFrom = () => istMidnight(dateToIST(new Date(Date.now() - DAY)));
+
   /** A draft campaign with a finished creative (so checkout's render gate passes). Items are picked through the real route. */
   async function seedBooking(o: { status?: string; campaignType?: string } = {}) {
-    const from = new Date(`${todayIST()}T00:00:00.000Z`);
+    const from = windowFrom();
     const to = new Date(from.getTime() + 7 * DAY);
     const booking = await prisma.campaignBooking.create({
       data: { clientId, name: `Campaign ${++seq}`, brand: "Brand", status: o.status ?? "draft", campaignType: o.campaignType ?? "brand", format: "post", launchFrom: from, launchTo: to },
@@ -1615,9 +1620,9 @@ describe("creator bookings, the core", () => {
     it("⚠️ the 'approved' email never calls a creator's post 'scheduled': it says the creator confirms and posts, and that an unconfirmed post is refunded", async () => {
       const page = await seedPage({ creatorName: "Meera Kapoor", name: "Meera Eats", tdsBps: 1000, shareBps: 4321 });
       const net = await seedNetwork();
-      // seedBooking's go-live window: today (IST) to a week later, as date-only columns formatted in UTC.
+      // seedBooking's go-live window: the IST day before today's to a week later, as date-only columns formatted in UTC.
       const fmt = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-      const from = new Date(`${todayIST()}T00:00:00Z`);
+      const from = windowFrom();
       const windowText = `${fmt(from)} – ${fmt(new Date(from.getTime() + 7 * DAY))}`;
 
       // Network-only: the sentence is exactly what it always was.

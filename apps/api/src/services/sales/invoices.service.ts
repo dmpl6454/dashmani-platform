@@ -1,9 +1,10 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
+import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { assertSameCompany, resolveDocumentTax, type ResolvedTax } from "./documents.service";
 import { getSellerProfile, sellerMissingFields, type SellerProfile } from "./settings.service";
+import { UNBILLABLE_BOOKING_STATUSES, UNBILLED_ITEM_STATUSES } from "./bookings.service";
 import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueInvoiceEInvoice, registerEInvoice } from "./einvoice.service";
 
 // GST invoices. A draft has no number and may be edited freely; ISSUING assigns the next
@@ -251,9 +252,15 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
 export async function createInvoiceFromBooking(bookingId: string, actorId: string, company: CompanyKey = "dspl") {
   const booking = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, include: { items: true } });
   if (!booking) throw new AppError(404, "NOT_FOUND", "Campaign booking not found");
+  if ((UNBILLABLE_BOOKING_STATUSES as readonly string[]).includes(booking.status)) {
+    throw new AppError(409, "BOOKING_NOT_BILLABLE", `A booking that is ${BOOKING_STATUS_LABELS[booking.status as BookingStatus]?.toLowerCase() ?? booking.status} cannot be invoiced`);
+  }
   if (!booking.items.length) throw new AppError(409, "BOOKING_EMPTY", "This booking has no priced accounts yet");
   const existing = await prisma.salesInvoice.findFirst({ where: { campaignBookingId: booking.id, status: { not: "cancelled" } }, select: { number: true } });
   if (existing) throw new AppError(409, "BOOKING_ALREADY_INVOICED", `This booking is already on ${existing.number ?? "a draft invoice"} — open that invoice instead`);
+  if (!booking.items.some((it) => !(UNBILLED_ITEM_STATUSES as readonly string[]).includes(it.status))) {
+    throw new AppError(409, "BOOKING_EMPTY", "Every post on this booking failed or was refunded — there is nothing to bill");
+  }
   const labelFormat = (f: string) => f.charAt(0).toUpperCase() + f.slice(1);
   return createInvoice(
     {
@@ -264,7 +271,8 @@ export async function createInvoiceFromBooking(bookingId: string, actorId: strin
       discountPaise: 0,
       notes: `Campaign "${booking.name}" for ${booking.brand}`,
       items: booking.items
-        .filter((it) => it.status !== "cancelled" && it.status !== "refunded")
+        // A failed post was never made and a refunded one was paid back: neither is billed.
+        .filter((it) => !(UNBILLED_ITEM_STATUSES as readonly string[]).includes(it.status))
         .map((it) => ({
           description: `${it.accountName}${it.accountHandle ? ` (@${it.accountHandle})` : ""} · ${labelFormat(it.platform)} ${labelFormat(it.format)}`,
           quantity: 1,

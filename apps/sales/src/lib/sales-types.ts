@@ -90,8 +90,28 @@ export interface Payment {
 export interface CreditNote { id: string; number: string; invoiceId: string; status: string; issueDate: string | null; reason: string; taxablePaise: number; totalPaise: number; invoice?: { id: string; number: string | null }; client?: { id: string; companyName: string } }
 export interface Statement { client: ClientRow; invoices: InvoiceRow[]; payments: Payment[]; creditNotes: CreditNote[]; totals: { invoicedPaise: number; collectedPaise: number; tdsPaise: number; creditedPaise: number; outstandingPaise: number; overduePaise: number; refundedPaise: number; unappliedPaise: number } }
 export interface SalesEvent { id: string; entityType: string; entityId: string; actorId: string | null; action: string; fromStatus: string | null; toStatus: string | null; note: string | null; createdAt: string; label?: string | null }
+export interface BookingInvoice { id: string; number: string | null; kind: string; status: string; companyKey: string; totalPaise: number }
+export interface BookingRow {
+  id: string; name: string; brand: string; status: string; statusLabel: string; format: string | null; campaignType: string; totalPaise: number | null;
+  launchFrom: string | null; launchTo: string | null; submittedAt: string | null; paidOnline: boolean; approvedAt: string | null; createdAt: string;
+  client: { id: string; companyName: string; billingProfile?: { legalName: string } | null };
+  itemCount: number; liveCount: number; billablePaise: number; billable: boolean; invoiced: boolean; invoices: BookingInvoice[];
+}
+export interface BookingDetail {
+  id: string; name: string; brand: string; objective: string | null; status: string; statusLabel: string; format: string | null; campaignType: string;
+  audioIntegration: boolean; audioTrack: string | null; totalPaise: number | null; launchFrom: string | null; launchTo: string | null;
+  submittedAt: string | null; paidOnline: boolean; approvedAt: string | null; deliveredAt: string | null; createdAt: string; reviewNote: string | null;
+  client: { id: string; companyName: string; contactName: string | null; email: string; billingProfile?: { legalName: string; gstin: string | null; stateCode: string | null } | null };
+  items: Array<{ id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number; audioAddonPaise: number; status: string; permalink: string | null; postedAt: string | null; live: boolean; billed: boolean }>;
+  billable: boolean; billablePaise: number; invoices: BookingInvoice[];
+}
+export interface BookingsSummary {
+  review: { count: number; totalPaise: number }; active: { count: number; totalPaise: number }; live: { count: number; totalPaise: number };
+  toInvoice: { count: number; totalPaise: number };
+  recentToInvoice: Array<{ id: string; name: string; brand: string; status: string; statusLabel: string; client: string; billablePaise: number }>;
+}
 export interface Dashboard {
-  company: string; today: string; financialYear: string; ordersByFy: Array<{ financialYear: string; count: number; totalPaise: number; closedPaise: number }>; invoicedFyPaise: number; invoicedFyCount: number; invoicedMonthPaise: number; collectedFyPaise: number; tdsFyPaise: number; collectedMonthPaise: number;
+  company: string; today: string; bookings?: BookingsSummary; financialYear: string; ordersByFy: Array<{ financialYear: string; count: number; totalPaise: number; closedPaise: number }>; invoicedFyPaise: number; invoicedFyCount: number; invoicedMonthPaise: number; collectedFyPaise: number; tdsFyPaise: number; collectedMonthPaise: number;
   outstandingPaise: number; outstandingCount: number; overduePaise: number; overdueCount: number;
   openQuotes: { count: number; totalPaise: number }; acceptedQuotes: { count: number; totalPaise: number }; activeOrders: { count: number; totalPaise: number }; deliveredOrders: { count: number; totalPaise: number };
   topClients: Array<{ clientId: string; name: string; invoicedPaise: number }>; byPlatform: Array<{ platform: string; lines: number; amountPaise: number }>; recent: SalesEvent[];

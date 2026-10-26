@@ -2,6 +2,7 @@ import { prisma } from "@dashmani/db";
 import { DEFAULT_COMPANY, financialYear, SALES_COMPANIES, todayIST, type CompanyKey } from "@dashmani/shared";
 import { dateToDay, dayToDate, istDayOf, istMidnight } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
+import { bookingsSummary } from "./bookings.service";
 
 // The sales dashboard: this financial year and this month, from the sales tables only. Every
 // figure is a sum over documents that exist — nothing projected, nothing estimated.
@@ -24,6 +25,7 @@ export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
   const monthStart = dayToDate(month.from);
   const monthEnd = dayToDate(month.to);
 
+  const bookingsPromise = bookingsSummary();
   const [issuedFy, openInvoices, paymentsFy, paymentsMonth, quotes, orders, topClientRows, platformRows, recent, allOrders, refundsFy, refundsMonth] = await Promise.all([
     prisma.salesInvoice.findMany({
       where: { ...c, kind: "tax_invoice", status: { in: ["issued", "paid"] }, issueDate: { gte: fyStart, lt: fyEndExclusive } },
@@ -135,6 +137,8 @@ export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
       .map((r) => ({ platform: r.platform ?? "custom", lines: r._count, amountPaise: r._sum.amountPaise ?? 0 }))
       .sort((a, b) => b.amountPaise - a.amountPaise),
     company,
+    /** Client campaign bookings — the same for both companies (a booking has no billing company). */
+    bookings: await bookingsPromise,
     recent: feed.map((e) => ({ ...e, label: label.get(`${e.entityType}:${e.entityId}`) ?? null })),
   };
 }

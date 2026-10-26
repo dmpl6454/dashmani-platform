@@ -33,6 +33,30 @@ export default function DashboardPage() {
         <Stat label="Active orders" value={d.activeOrders.count} sub={fmtInr(d.activeOrders.totalPaise, { whole: true })} />
         <Stat label="Delivered, awaiting close" value={d.deliveredOrders.count} sub={fmtInr(d.deliveredOrders.totalPaise, { whole: true })} />
       </div>
+      {d.bookings && (
+        <section className="card p-4 mb-8">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+            <h2 className="font-bold">Campaign bookings <span className="text-ink-3 font-normal text-xs">booked by clients on the client portal · same for both companies</span></h2>
+            <Link href="/bookings" className="text-sm hover:text-indigo-light">All bookings →</Link>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Link href="/bookings?stage=review" className="min-w-0"><Stat label="In review" value={d.bookings.review.count} sub={fmtInr(d.bookings.review.totalPaise, { whole: true })} tone={d.bookings.review.count ? "attention" : undefined} /></Link>
+            <Link href="/bookings?stage=active" className="min-w-0"><Stat label="Approved, going live" value={d.bookings.active.count} sub={fmtInr(d.bookings.active.totalPaise, { whole: true })} /></Link>
+            <Link href="/bookings?stage=live" className="min-w-0"><Stat label="Live" value={d.bookings.live.count} sub={fmtInr(d.bookings.live.totalPaise, { whole: true })} tone={d.bookings.live.count ? "success" : undefined} /></Link>
+            <Link href="/bookings?stage=to_invoice" className="min-w-0"><Stat label="To invoice" value={d.bookings.toInvoice.count} sub={fmtInr(d.bookings.toInvoice.totalPaise, { whole: true })} tone={d.bookings.toInvoice.count ? "attention" : undefined} /></Link>
+          </div>
+          {d.bookings.recentToInvoice.length > 0 && (
+            <ul className="divide-y divide-rule mt-3">
+              {d.bookings.recentToInvoice.map((b) => (
+                <li key={b.id} className="py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0"><Link href={`/bookings/view?id=${b.id}`} className="font-bold hover:text-indigo-light">{b.name}</Link> <span className="text-ink-4">· {b.client}</span> <StatusPill status={b.status} label={b.statusLabel} /></span>
+                  <span className="flex items-center gap-3"><Money paise={b.billablePaise} whole /><Link href={`/bookings/view?id=${b.id}`} className="btn btn-light btn-sm">Invoice</Link></span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       {d.ordersByFy.length > 0 && (
         <section className="card p-4 mb-4">
           <h2 className="font-bold mb-3">Sales by financial year <span className="text-ink-3 font-normal text-xs">confirmed orders · closed = delivered and paid</span></h2>

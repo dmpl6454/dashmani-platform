@@ -2,7 +2,7 @@
 import useSWR, { type SWRConfiguration } from "swr";
 import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
-import type { ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, SalesEvent, SellerSettings, Statement } from "./sales-types";
+import type { BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
 // SWR hooks over /v1/sales/*. A null key skips the request (no id yet, or a detail page
 // opened without ?id=). keepPreviousData keeps a list on screen while a filter changes.
@@ -60,4 +60,7 @@ export const usePayment = (id: string | null) => useSWR<Payment>(id ? `/sales/pa
 export const useClientReceipts = (clientId: string | null | undefined, company: CompanyKey | undefined) =>
   useSWR<Payment[]>(clientId && company ? `/sales/payments${qs({ clientId, company })}` : null, fetcher, opts);
 export const useCreditNotes = (f: { invoiceId?: string; clientId?: string }) => useSWR<CreditNote[]>(`/sales/credit-notes${qs(f)}`, fetcher, opts);
+/** Client campaign bookings — shared by both companies (a booking has no billing company). */
+export const useBookings = (f: { stage?: string; q?: string; clientId?: string }) => useSWR<BookingRow[]>(`/sales/bookings${qs(f)}`, fetcher, opts);
+export const useBooking = (id: string | null) => useSWR<BookingDetail>(id ? `/sales/bookings/${id}` : null, fetcher, opts);
 export const useEvents = (entityType: string, entityId: string | null) => useSWR<SalesEvent[]>(entityId ? `/sales/events${qs({ entityType, entityId })}` : null, fetcher, opts);

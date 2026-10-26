@@ -10,7 +10,7 @@ import {
   type TaxMode,
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
-import { dateToDay, dayToDate, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
+import { assertMoneyFits, dateToDay, dayToDate, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { getSellerOrDefaults, type SellerProfile } from "./settings.service";
 
 // Quotes and sales orders. Both carry the same line shape and the same tax resolution; an
@@ -64,6 +64,7 @@ export function buildLines(items: LineItemInput[], defaultSac: string) {
 
 function documentTotals(lines: Array<{ quantity: number; unitPricePaise: number; discountPaise: number }>, discountPaise: number, tax: ResolvedTax) {
   const t = computeTotals({ lines, discountPaise, taxMode: tax.taxMode, gstRateBp: tax.gstRateBp, roundToRupee: false });
+  assertMoneyFits({ subtotalPaise: t.subtotalPaise, taxablePaise: t.taxablePaise, totalPaise: t.totalPaise });
   return {
     subtotalPaise: t.subtotalPaise,
     discountPaise: t.discountPaise,
@@ -343,6 +344,12 @@ export async function updateOrder(id: string, input: OrderUpsertInput, actorId: 
   const lines = buildLines(input.items, tax.seller.defaultSac);
   const totals = documentTotals(lines, input.discountPaise, tax);
   await prisma.$transaction(async (tx) => {
+    // Saving an order recreates its lines with new ids, which would hide them from the "already
+    // billed" check and let the same work be invoiced again. So once any invoice (a draft
+    // included) covers the order, its lines are frozen: delete the draft or cancel the invoice first.
+    await tx.$queryRaw`SELECT id FROM sales_orders WHERE id = ${id} FOR UPDATE`;
+    const billed = await tx.salesInvoice.findFirst({ where: { orderId: id, status: { not: "cancelled" } }, select: { number: true } });
+    if (billed) throw new AppError(409, "ORDER_INVOICED", `This order is on ${billed.number ?? "a draft invoice"} — delete the draft or cancel the invoice before changing the order`);
     await tx.salesOrderItem.deleteMany({ where: { orderId: id } });
     await tx.salesOrder.update({ where: { id }, data: { ...orderData(input, tax, totals), items: { create: lines } } });
     await logSalesEvent(tx, { entityType: "order", entityId: id, actorId, action: "updated" });

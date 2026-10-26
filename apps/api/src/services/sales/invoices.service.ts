@@ -1,7 +1,7 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { computeTotals, lineAmountPaise, rupeesInWords, todayIST, type InvoiceUpsertInput } from "@dashmani/shared";
+import { computeTotals, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
-import { dateToDay, dayToDate, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
+import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { resolveDocumentTax, type ResolvedTax } from "./documents.service";
 import { getSellerProfile, sellerMissingFields, type SellerProfile } from "./settings.service";
 
@@ -115,6 +115,7 @@ function invoiceLines(items: InvoiceUpsertInput["items"], defaultSac: string) {
 
 function invoiceTotals(lines: Array<{ quantity: number; unitPricePaise: number; discountPaise: number }>, discountPaise: number, tax: ResolvedTax) {
   const t = computeTotals({ lines, discountPaise, taxMode: tax.taxMode, gstRateBp: tax.gstRateBp, roundToRupee: tax.seller.roundToRupee });
+  assertMoneyFits({ subtotalPaise: t.subtotalPaise, taxablePaise: t.taxablePaise, totalPaise: t.totalPaise });
   return {
     subtotalPaise: t.subtotalPaise, discountPaise: t.discountPaise, taxablePaise: t.taxablePaise,
     cgstPaise: t.cgstPaise, sgstPaise: t.sgstPaise, igstPaise: t.igstPaise, roundOffPaise: t.roundOffPaise, totalPaise: t.totalPaise,
@@ -157,6 +158,12 @@ export async function updateInvoice(id: string, input: InvoiceUpsertInput, actor
   const lines = invoiceLines(input.items, tax.seller.defaultSac);
   const totals = invoiceTotals(lines, input.discountPaise, tax);
   await prisma.$transaction(async (tx) => {
+    // Re-checked under the lock Issue also takes: an edit can never rewrite an invoice that was
+    // issued (numbered, snapshotted, amount in words) a moment earlier from another tab.
+    await lockInvoices(tx, [id]);
+    const cur = await tx.salesInvoice.findUnique({ where: { id }, select: { status: true } });
+    if (!cur) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+    if (cur.status !== "draft") throw new AppError(409, "INVOICE_LOCKED", "This invoice was issued a moment ago and can no longer be edited — reload it");
     await tx.salesInvoiceItem.deleteMany({ where: { invoiceId: id } });
     await tx.salesInvoice.update({
       where: { id },
@@ -187,6 +194,18 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
   const order = await prisma.salesOrder.findUnique({ where: { id: orderId }, include: { items: { orderBy: { position: "asc" } } } });
   if (!order) throw new AppError(404, "NOT_FOUND", "Order not found");
   if (order.status === "cancelled" || order.status === "draft") throw new AppError(409, "ORDER_NOT_BILLABLE", `A ${order.status} order cannot be invoiced`);
+  // An order line already on a live invoice (a draft or an issued one) is never billed twice.
+  // Deleting the draft or cancelling the invoice frees its lines again.
+  const billable = order.items.filter((it) => it.status !== "cancelled");
+  const onInvoices = await prisma.salesInvoiceItem.findMany({
+    where: { orderItemId: { in: billable.map((it) => it.id) }, invoice: { status: { not: "cancelled" } } },
+    select: { orderItemId: true, invoice: { select: { number: true } } },
+  });
+  const taken = new Set(onInvoices.map((r) => r.orderItemId));
+  const remaining = billable.filter((it) => !taken.has(it.id));
+  if (!remaining.length) {
+    throw new AppError(409, "ORDER_ALREADY_INVOICED", `Every line of ${order.number} is already on ${onInvoices[0]?.invoice.number ?? "a draft invoice"} — open that invoice instead`);
+  }
   return createInvoice(
     {
       clientId: order.clientId,
@@ -196,10 +215,10 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
       placeOfSupplyCode: order.placeOfSupplyCode,
       taxMode: order.taxMode as ResolvedTax["taxMode"],
       gstRateBp: order.gstRateBp,
-      discountPaise: order.discountPaise,
+      // The order-level discount belongs to the first invoice for the order, never to a later one.
+      discountPaise: taken.size === 0 ? order.discountPaise : 0,
       notes: `${order.number} — ${order.title}${order.poNumber ? ` · PO ${order.poNumber}` : ""}`,
-      items: order.items
-        .filter((it) => it.status !== "cancelled")
+      items: remaining
         .map((it) => ({ description: it.description, sac: it.sac, quantity: it.quantity, unitPricePaise: it.unitPricePaise, discountPaise: it.discountPaise, orderItemId: it.id })),
     },
     actorId,
@@ -211,6 +230,8 @@ export async function createInvoiceFromBooking(bookingId: string, actorId: strin
   const booking = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, include: { items: true } });
   if (!booking) throw new AppError(404, "NOT_FOUND", "Campaign booking not found");
   if (!booking.items.length) throw new AppError(409, "BOOKING_EMPTY", "This booking has no priced accounts yet");
+  const existing = await prisma.salesInvoice.findFirst({ where: { campaignBookingId: booking.id, status: { not: "cancelled" } }, select: { number: true } });
+  if (existing) throw new AppError(409, "BOOKING_ALREADY_INVOICED", `This booking is already on ${existing.number ?? "a draft invoice"} — open that invoice instead`);
   const labelFormat = (f: string) => f.charAt(0).toUpperCase() + f.slice(1);
   return createInvoice(
     {
@@ -262,35 +283,105 @@ function sellerSnapshotFor(s: SellerProfile) {
 export type SellerSnapshot = ReturnType<typeof sellerSnapshotFor>;
 
 /** Assign the serial, freeze both parties and the totals, and make the document final. */
-export async function issueInvoice(id: string, input: { issueDate?: string; dueDate?: string | null }, actorId: string) {
-  const inv = await getInvoice(id);
-  if (inv.status !== "draft") throw new AppError(409, "BAD_TRANSITION", `A ${inv.status} invoice cannot be issued again`);
+export async function issueInvoice(
+  id: string,
+  input: { issueDate?: string; dueDate?: string | null; taxResolution?: "recompute" | "keep" },
+  actorId: string,
+) {
   const seller = await getSellerProfile();
-  const missing = sellerMissingFields(seller);
-  if (!seller || (inv.kind === "tax_invoice" && missing.length)) {
-    throw new AppError(422, "SELLER_PROFILE_INCOMPLETE", "Complete the company GST profile in Settings before issuing a tax invoice", missing.map((f) => ({ field: f, message: "required" })));
-  }
-  if (!inv.items.length) throw new AppError(409, "INVOICE_EMPTY", "Add at least one line before issuing");
-  const issueDate = input.issueDate ?? todayIST();
-  const dueDate = input.dueDate ?? (inv.dueDate ?? addDays(issueDate, seller.defaultDueDays));
-  const buyer = buyerSnapshotFor(inv.client);
   await prisma.$transaction(async (tx) => {
-    const number = await nextDocumentNumber(tx, "invoice", inv.kind === "proforma" ? `PI` : seller.invoicePrefix, issueDate);
+    // Everything is read AFTER the row lock. A second Issue (another tab, a retry) waits here and
+    // then finds the invoice issued, so it never takes — and wastes — a serial; an edit saved a
+    // moment earlier is what gets numbered, never the figures from before it.
+    await lockInvoices(tx, [id]);
+    const inv = await tx.salesInvoice.findUnique({ where: { id }, include: { items: { orderBy: { position: "asc" } }, client: clientBrief } });
+    if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+    if (inv.status !== "draft") throw new AppError(409, "BAD_TRANSITION", `A ${inv.status} invoice cannot be issued again`);
+    const missing = sellerMissingFields(seller);
+    if (!seller || (inv.kind === "tax_invoice" && missing.length)) {
+      throw new AppError(422, "SELLER_PROFILE_INCOMPLETE", "Complete the company GST profile in Settings before issuing a tax invoice", missing.map((f) => ({ field: f, message: "required" })));
+    }
+    if (!inv.items.length) throw new AppError(409, "INVOICE_EMPTY", "Add at least one line before issuing");
+    const issueDate = input.issueDate ?? todayIST();
+    const dueDate = input.dueDate ?? (dateToDay(inv.dueDate) ?? addDays(issueDate, seller.defaultDueDays));
+    if (dueDate < issueDate) throw new AppError(422, "DUE_BEFORE_ISSUE", `The due date (${dueDate}) is before the issue date (${issueDate}) — pick a later due date`);
+
+    // The GST type was worked out when the draft was saved. If the company profile or the client's
+    // billing state changed since (e.g. drafted before the real profile existed), issuing it as-is
+    // would print the wrong tax — and a tax invoice can only be fixed by cancelling it. So a
+    // mismatch stops here until staff choose: update it (recompute) or keep it (an SEZ buyer, a
+    // deliberate place of supply).
+    const buyerProfile = inv.client.billingProfile;
+    const expectedPos = buyerProfile?.stateCode ?? inv.placeOfSupplyCode ?? null;
+    const expectedMode = taxModeFor(seller.stateCode, expectedPos, buyerProfile?.country ?? "IN");
+    const storedMode = inv.taxMode as TaxMode;
+    const taxChanged = expectedMode !== storedMode || expectedPos !== (inv.placeOfSupplyCode ?? null);
+    if (taxChanged && !input.taxResolution) {
+      const pos = (c: string | null) => (c ? `, place of supply ${c}${GST_STATE_CODES[c] ? ` ${GST_STATE_CODES[c]}` : ""}` : "");
+      throw new AppError(
+        409,
+        "TAX_CHANGED",
+        // No `details`: the portal shows an error's first detail INSTEAD of its message.
+        `This draft was saved with ${TAX_MODE_LABELS[storedMode]}${pos(inv.placeOfSupplyCode)}, but the company profile and the client's billing details now give ${TAX_MODE_LABELS[expectedMode]}${pos(expectedPos)}. Update the GST, or keep it as drafted if that was deliberate.`,
+      );
+    }
+    const recompute = taxChanged && input.taxResolution === "recompute";
+
+    // Never bill the same work twice: duplicate drafts can exist (two quick "Create invoice"
+    // clicks), so the check that counts is here, under a lock on the order / booking row.
+    if (inv.orderId) {
+      await tx.$queryRaw`SELECT id FROM sales_orders WHERE id = ${inv.orderId} FOR UPDATE`;
+      const lineIds = inv.items.map((it) => it.orderItemId).filter((x): x is string => !!x);
+      const clash = lineIds.length
+        ? await tx.salesInvoiceItem.findFirst({ where: { orderItemId: { in: lineIds }, invoiceId: { not: id }, invoice: { status: { in: ["issued", "paid"] } } }, select: { invoice: { select: { number: true } } } })
+        : null;
+      if (clash) throw new AppError(409, "ORDER_ALREADY_INVOICED", `Lines on this draft are already billed on ${clash.invoice.number} — delete this draft or remove those lines`);
+    }
+    if (inv.campaignBookingId) {
+      await tx.$queryRaw`SELECT id FROM campaign_bookings WHERE id = ${inv.campaignBookingId} FOR UPDATE`;
+      const clash = await tx.salesInvoice.findFirst({ where: { campaignBookingId: inv.campaignBookingId, id: { not: id }, status: { in: ["issued", "paid"] } }, select: { number: true } });
+      if (clash) throw new AppError(409, "BOOKING_ALREADY_INVOICED", `This booking is already billed on ${clash.number} — delete this draft`);
+    }
+
+    let totalPaise = inv.totalPaise;
+    let taxData: Prisma.SalesInvoiceUpdateInput = {};
+    if (recompute) {
+      const t = computeTotals({
+        lines: inv.items.map((it) => ({ quantity: it.quantity, unitPricePaise: it.unitPricePaise, discountPaise: it.discountPaise })),
+        discountPaise: inv.discountPaise,
+        taxMode: expectedMode,
+        gstRateBp: inv.gstRateBp,
+        roundToRupee: seller.roundToRupee,
+      });
+      assertMoneyFits({ subtotalPaise: t.subtotalPaise, taxablePaise: t.taxablePaise, totalPaise: t.totalPaise });
+      totalPaise = t.totalPaise;
+      taxData = {
+        placeOfSupplyCode: expectedPos, taxMode: expectedMode,
+        subtotalPaise: t.subtotalPaise, discountPaise: t.discountPaise, taxablePaise: t.taxablePaise,
+        cgstPaise: t.cgstPaise, sgstPaise: t.sgstPaise, igstPaise: t.igstPaise, roundOffPaise: t.roundOffPaise, totalPaise: t.totalPaise,
+      };
+    }
+    // Proformas are not tax invoices: their own PI series, so the tax-invoice serials stay consecutive.
+    const number = inv.kind === "proforma"
+      ? await nextDocumentNumber(tx, "proforma", "PI", issueDate)
+      : await nextDocumentNumber(tx, "invoice", seller.invoicePrefix, issueDate);
     await tx.salesInvoice.update({
       where: { id },
       data: {
+        ...taxData,
         number,
         status: "issued",
         issueDate: dayToDate(issueDate),
         dueDate: dayToDate(dueDate),
         issuedAt: new Date(),
         sellerSnapshot: sellerSnapshotFor(seller) as Prisma.InputJsonValue,
-        buyerSnapshot: buyer as Prisma.InputJsonValue,
-        amountInWords: rupeesInWords(inv.totalPaise),
+        buyerSnapshot: buyerSnapshotFor(inv.client as Parameters<typeof buyerSnapshotFor>[0]) as Prisma.InputJsonValue,
+        amountInWords: rupeesInWords(totalPaise),
         terms: inv.terms ?? seller.terms ?? null,
       },
     });
-    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "issued", fromStatus: "draft", toStatus: "issued", note: number });
+    const taxNote = !taxChanged ? "" : recompute ? ` · GST updated to ${TAX_MODE_LABELS[expectedMode]}` : ` · GST kept as drafted (${TAX_MODE_LABELS[storedMode]})`;
+    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "issued", fromStatus: "draft", toStatus: "issued", note: `${number}${taxNote}` });
   });
   return getInvoice(id);
 }
@@ -300,21 +391,25 @@ function addDays(day: string, days: number): string {
 }
 
 export async function cancelInvoice(id: string, reason: string, actorId: string) {
-  const inv = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true, paidPaise: true, tdsPaise: true, creditedPaise: true } });
-  if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
-  if (inv.status === "cancelled") return getInvoice(id);
-  if (inv.status === "draft") {
-    await prisma.salesInvoice.delete({ where: { id } });
-    return null;
-  }
-  if (inv.paidPaise + inv.tdsPaise + inv.creditedPaise > 0) {
-    throw new AppError(409, "INVOICE_SETTLED", "This invoice has payments or credit notes against it — issue a credit note instead of cancelling");
-  }
-  await prisma.$transaction(async (tx) => {
+  // Decided under the row lock, so a payment or credit note landing at the same moment either
+  // goes first (and the cancel is refused) or finds the invoice cancelled (and is refused).
+  const outcome = await prisma.$transaction(async (tx) => {
+    await lockInvoices(tx, [id]);
+    const inv = await tx.salesInvoice.findUnique({ where: { id }, select: { status: true, paidPaise: true, tdsPaise: true, creditedPaise: true } });
+    if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+    if (inv.status === "cancelled") return "unchanged" as const;
+    if (inv.status === "draft") {
+      await tx.salesInvoice.delete({ where: { id } });
+      return "deleted" as const;
+    }
+    if (inv.paidPaise + inv.tdsPaise + inv.creditedPaise > 0) {
+      throw new AppError(409, "INVOICE_SETTLED", "This invoice has payments or credit notes against it — issue a credit note instead of cancelling");
+    }
     await tx.salesInvoice.update({ where: { id }, data: { status: "cancelled", cancelledAt: new Date(), cancelReason: reason } });
     await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "cancelled", fromStatus: inv.status, toStatus: "cancelled", note: reason });
+    return "cancelled" as const;
   });
-  return getInvoice(id);
+  return outcome === "deleted" ? null : getInvoice(id);
 }
 
 export async function markInvoiceSent(id: string, actorId: string) {

@@ -113,8 +113,9 @@ export async function getClientStatement(clientId: string) {
     collectedPaise: payments.reduce((s, p) => s + p.amountPaise, 0),
     tdsPaise: payments.reduce((s, p) => s + p.tdsPaise, 0),
     creditedPaise: creditNotes.filter((c) => c.status === "issued").reduce((s, c) => s + c.totalPaise, 0),
-    outstandingPaise: derived.filter((i) => i.derivedStatus === "issued" || i.derivedStatus === "partially_paid" || i.derivedStatus === "overdue").reduce((s, i) => s + i.balancePaise, 0),
-    overduePaise: derived.filter((i) => i.derivedStatus === "overdue").reduce((s, i) => s + i.balancePaise, 0),
+    // Proformas are not receivables (the client list's outstanding never counted them either).
+    outstandingPaise: derived.filter((i) => i.kind === "tax_invoice" && (i.derivedStatus === "issued" || i.derivedStatus === "partially_paid" || i.derivedStatus === "overdue")).reduce((s, i) => s + i.balancePaise, 0),
+    overduePaise: derived.filter((i) => i.kind === "tax_invoice" && i.derivedStatus === "overdue").reduce((s, i) => s + i.balancePaise, 0),
   };
   return { client, invoices: derived, payments, creditNotes, totals };
 }

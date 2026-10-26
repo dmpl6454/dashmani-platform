@@ -1,6 +1,6 @@
 import { prisma } from "@dashmani/db";
 import { financialYear, todayIST } from "@dashmani/shared";
-import { dayToDate } from "./common";
+import { dateToDay, dayToDate, istDayOf, istMidnight } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
 
 // The sales dashboard: this financial year and this month, from the sales tables only. Every
@@ -41,7 +41,8 @@ export async function getSalesDashboard() {
     }),
     prisma.salesOrderItem.groupBy({
       by: ["platform"],
-      where: { status: { not: "cancelled" }, order: { status: { in: ["confirmed", "in_progress", "delivered", "closed"] }, createdAt: { gte: fyStart, lt: fyEndExclusive } } },
+      // createdAt is a TIMESTAMP: the financial year starts at 00:00 IST, not 00:00 UTC.
+      where: { status: { not: "cancelled" }, order: { status: { in: ["confirmed", "in_progress", "delivered", "closed"] }, createdAt: { gte: istMidnight(fy.startDay), lt: istMidnight(`${Number(fy.endDay.slice(0, 4))}-04-01`) } } },
       _sum: { amountPaise: true },
       _count: true,
     }),
@@ -83,7 +84,9 @@ export async function getSalesDashboard() {
 
   const byFyMap = new Map<string, { count: number; totalPaise: number; closedPaise: number }>();
   for (const o of allOrders) {
-    const day = (o.startDate ?? o.createdAt).toISOString().slice(0, 10);
+    // startDate is a DATE (already the IST day); createdAt is a timestamp, read in IST so an order
+    // made between 00:00 and 05:30 IST on 1 April counts in the new financial year.
+    const day = o.startDate ? dateToDay(o.startDate)! : istDayOf(o.createdAt);
     const label = financialYear(day).label;
     const e = byFyMap.get(label) ?? { count: 0, totalPaise: 0, closedPaise: 0 };
     e.count++; e.totalPaise += o.totalPaise; if (o.status === "closed") e.closedPaise += o.totalPaise;

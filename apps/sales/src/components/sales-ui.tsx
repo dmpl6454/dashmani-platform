@@ -84,7 +84,12 @@ export function Field({ label, children, hint, className = "" }: { label: string
 /** Rupee input that stores integer paise. Shows two decimals on blur. */
 export function MoneyInput({ paise, onChange, className = "", placeholder = "0.00", disabled }: { paise: number; onChange: (paise: number) => void; className?: string; placeholder?: string; disabled?: boolean }) {
   const [text, setText] = useState(paise ? (paise / 100).toFixed(2) : "");
-  useEffect(() => { setText(paise ? (paise / 100).toFixed(2) : ""); }, [paise]);
+  // Re-sync from the prop ONLY when it differs from what the text already says. Rewriting on every
+  // change turned "5" into "5.00" mid-typing, so the next digits landed after the decimals and
+  // 5000 saved as ₹5.00. A value set from outside (auto-allocate, a preset balance) still shows.
+  useEffect(() => {
+    setText((t) => ((toPaise(t) ?? 0) === paise ? t : paise ? (paise / 100).toFixed(2) : ""));
+  }, [paise]);
   return (
     <input
       type="text" inputMode="decimal" className={`input text-right font-mono ${className}`} placeholder={placeholder} value={text} disabled={disabled}

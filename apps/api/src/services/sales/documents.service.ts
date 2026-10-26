@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { computeTotals, lineAmountPaise, taxModeFor, todayIST, type LineItemInput, type OrderUpsertInput, type QuoteUpsertInput, type TaxMode, registrationFor } from "@dashmani/shared";
+import { companyScope, computeTotals, lineAmountPaise, taxModeFor, todayIST, type CompanyKey, type LineItemInput, type OrderUpsertInput, type QuoteUpsertInput, type TaxMode, registrationFor } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { getSellerOrDefaults, type SellerProfile } from "./settings.service";
@@ -20,9 +20,10 @@ export interface ResolvedTax {
 export async function resolveDocumentTax(
   clientId: string,
   input: { placeOfSupplyCode?: string | null; taxMode?: TaxMode; gstRateBp?: number },
+  company: CompanyKey,
 ): Promise<ResolvedTax> {
   const [seller, client] = await Promise.all([
-    getSellerOrDefaults(),
+    getSellerOrDefaults(company),
     prisma.client.findUnique({ where: { id: clientId }, select: { id: true, billingProfile: { select: { stateCode: true, country: true } } } }),
   ]);
   if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
@@ -67,6 +68,11 @@ function documentTotals(lines: Array<{ quantity: number; unitPricePaise: number;
   };
 }
 
+/** A document stays with the company it was created under: its number and books belong there. */
+export function assertSameCompany(existing: string, requested: string, what: string) {
+  if (existing !== requested) throw new AppError(409, "COMPANY_FIXED", `This ${what} belongs to the other company and cannot be moved. Create a new one under the right company instead.`);
+}
+
 const shapeItem = <T extends { scheduledOn: Date | null }>(i: T) => ({ ...i, scheduledOn: dateToDay(i.scheduledOn) });
 
 // ── Quotes ──────────────────────────────────────────────────────────────────────
@@ -83,11 +89,12 @@ function quoteExpired(q: { status: string; validUntil: Date | null }, today: str
   return !!until && until < today && (q.status === "draft" || q.status === "sent");
 }
 
-export async function listQuotes(filter: { status?: string; clientId?: string; q?: string }) {
+export async function listQuotes(filter: { status?: string; clientId?: string; q?: string; companyKey?: CompanyKey }) {
   const today = todayIST();
   const term = filter.q?.trim();
   const rows = await prisma.salesQuote.findMany({
     where: {
+      ...(filter.companyKey ? { companyKey: filter.companyKey } : {}),
       ...(filter.clientId ? { clientId: filter.clientId } : {}),
       ...(filter.status && filter.status !== "expired" ? { status: filter.status } : {}),
       ...(term ? { OR: [{ number: { contains: term, mode: "insensitive" } }, { title: { contains: term, mode: "insensitive" } }, { client: { companyName: { contains: term, mode: "insensitive" } } }] } : {}),
@@ -107,14 +114,15 @@ export async function getQuote(id: string) {
 }
 
 export async function createQuote(input: QuoteUpsertInput, actorId: string) {
-  const tax = await resolveDocumentTax(input.clientId, input);
+  const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
   const lines = buildLines(input.items, tax.seller.defaultSac);
   const totals = documentTotals(lines, input.discountPaise, tax);
   const created = await prisma.$transaction(async (tx) => {
-    const number = await nextDocumentNumber(tx, "quote", tax.seller.quotePrefix, todayIST());
+    const number = await nextDocumentNumber(tx, "quote", tax.seller.quotePrefix, todayIST(), companyScope(input.companyKey, null));
     const q = await tx.salesQuote.create({
       data: {
         number,
+        companyKey: input.companyKey,
         clientId: input.clientId,
         title: input.title,
         campaignType: input.campaignType,
@@ -137,10 +145,11 @@ export async function createQuote(input: QuoteUpsertInput, actorId: string) {
 }
 
 export async function updateQuote(id: string, input: QuoteUpsertInput, actorId: string) {
-  const existing = await prisma.salesQuote.findUnique({ where: { id }, select: { status: true, clientId: true } });
+  const existing = await prisma.salesQuote.findUnique({ where: { id }, select: { status: true, clientId: true, companyKey: true } });
   if (!existing) throw new AppError(404, "NOT_FOUND", "Quote not found");
   if (existing.status !== "draft" && existing.status !== "sent") throw new AppError(409, "QUOTE_LOCKED", `A ${existing.status} quote cannot be edited`);
-  const tax = await resolveDocumentTax(input.clientId, input);
+  assertSameCompany(existing.companyKey, input.companyKey, "quote");
+  const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
   const lines = buildLines(input.items, tax.seller.defaultSac);
   const totals = documentTotals(lines, input.discountPaise, tax);
   await prisma.$transaction(async (tx) => {
@@ -196,12 +205,14 @@ export async function convertQuote(id: string, actorId: string) {
   if (!q) throw new AppError(404, "NOT_FOUND", "Quote not found");
   if (q.status === "converted" && q.convertedOrderId) return getOrder(q.convertedOrderId);
   if (!["draft", "sent", "accepted"].includes(q.status)) throw new AppError(409, "BAD_TRANSITION", `A ${q.status} quote cannot be converted`);
-  const seller = await getSellerOrDefaults();
+  const company = q.companyKey as CompanyKey;
+  const seller = await getSellerOrDefaults(company);
   const orderId = await prisma.$transaction(async (tx) => {
-    const number = await nextDocumentNumber(tx, "order", seller.orderPrefix, todayIST());
+    const number = await nextDocumentNumber(tx, "order", seller.orderPrefix, todayIST(), companyScope(company, null));
     const order = await tx.salesOrder.create({
       data: {
         number,
+        companyKey: company,
         clientId: q.clientId,
         quoteId: q.id,
         title: q.title,
@@ -250,10 +261,11 @@ const ORDER_TRANSITIONS: Record<string, { from: string[]; to: string; stamp?: "c
   cancel: { from: ["draft", "confirmed", "in_progress"], to: "cancelled", stamp: "cancelledAt" },
 };
 
-export async function listOrders(filter: { status?: string; clientId?: string; q?: string }) {
+export async function listOrders(filter: { status?: string; clientId?: string; q?: string; companyKey?: CompanyKey }) {
   const term = filter.q?.trim();
   const rows = await prisma.salesOrder.findMany({
     where: {
+      ...(filter.companyKey ? { companyKey: filter.companyKey } : {}),
       ...(filter.clientId ? { clientId: filter.clientId } : {}),
       ...(filter.status ? { status: filter.status } : {}),
       ...(term ? { OR: [{ number: { contains: term, mode: "insensitive" } }, { title: { contains: term, mode: "insensitive" } }, { client: { companyName: { contains: term, mode: "insensitive" } } }] } : {}),
@@ -315,12 +327,12 @@ function orderData(input: OrderUpsertInput, tax: ResolvedTax, totals: ReturnType
 }
 
 export async function createOrder(input: OrderUpsertInput, actorId: string) {
-  const tax = await resolveDocumentTax(input.clientId, input);
+  const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
   const lines = buildLines(input.items, tax.seller.defaultSac);
   const totals = documentTotals(lines, input.discountPaise, tax);
   const created = await prisma.$transaction(async (tx) => {
-    const number = await nextDocumentNumber(tx, "order", tax.seller.orderPrefix, todayIST());
-    const o = await tx.salesOrder.create({ data: { number, ...orderData(input, tax, totals), createdById: actorId, items: { create: lines } }, select: { id: true } });
+    const number = await nextDocumentNumber(tx, "order", tax.seller.orderPrefix, todayIST(), companyScope(input.companyKey, null));
+    const o = await tx.salesOrder.create({ data: { number, companyKey: input.companyKey, ...orderData(input, tax, totals), createdById: actorId, items: { create: lines } }, select: { id: true } });
     await logSalesEvent(tx, { entityType: "order", entityId: o.id, actorId, action: "created", toStatus: "draft" });
     return o;
   });
@@ -328,10 +340,11 @@ export async function createOrder(input: OrderUpsertInput, actorId: string) {
 }
 
 export async function updateOrder(id: string, input: OrderUpsertInput, actorId: string) {
-  const existing = await prisma.salesOrder.findUnique({ where: { id }, select: { status: true } });
+  const existing = await prisma.salesOrder.findUnique({ where: { id }, select: { status: true, companyKey: true } });
   if (!existing) throw new AppError(404, "NOT_FOUND", "Order not found");
   if (existing.status !== "draft" && existing.status !== "confirmed") throw new AppError(409, "ORDER_LOCKED", `A ${existing.status} order cannot be edited`);
-  const tax = await resolveDocumentTax(input.clientId, input);
+  assertSameCompany(existing.companyKey, input.companyKey, "order");
+  const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
   const lines = buildLines(input.items, tax.seller.defaultSac);
   const totals = documentTotals(lines, input.discountPaise, tax);
   await prisma.$transaction(async (tx) => {

@@ -7,6 +7,7 @@ import { isSalesUser } from "@/lib/access";
 import { safeNext } from "@/lib/safe-next";
 import type { StaffSession, StaffUser } from "@/lib/types";
 import { AppShell } from "./app-shell";
+import { CompanyProvider } from "@/lib/company";
 
 // Client-side auth guard for a static export: there is no server to check a session, so the
 // signed-in pages render a placeholder until localStorage has been read, and a visitor without
@@ -59,7 +60,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   if (isPublic) content = children;
   else if (isLoading || !user) content = <GuardPlaceholder />;
   else if (!isSalesUser(user)) content = <NotForRole onLogout={logout} name={user.name} />;
-  else content = <AppShell>{children}</AppShell>;
+  else content = <CompanyProvider><AppShell>{children}</AppShell></CompanyProvider>;
 
   return <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>{content}</AuthContext.Provider>;
 }

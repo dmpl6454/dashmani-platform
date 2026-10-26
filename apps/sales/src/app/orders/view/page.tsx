@@ -3,6 +3,7 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEvents, useOrder } from "@/lib/hooks";
+import { companyName } from "@/lib/company";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, todayIST } from "@/lib/format";
@@ -57,7 +58,7 @@ function OrderView() {
   const locked = o.status === "closed" || o.status === "cancelled";
   return (
     <>
-      <PageHead kicker={<><Link href="/orders" className="hover:text-white">Orders</Link> · <span className="font-mono">{o.number}</span></> as unknown as string} title={<>{o.title} <StatusPill status={o.status} /></>}>
+      <PageHead kicker={<><Link href="/orders" className="hover:text-white">Orders</Link> · {companyName(o.companyKey)} · <span className="font-mono">{o.number}</span></> as unknown as string} title={<>{o.title} <StatusPill status={o.status} /></>}>
         {(o.status === "draft" || o.status === "confirmed") && <Link href={`/orders/edit?id=${o.id}`} className="btn btn-light">Edit</Link>}
         {o.status === "draft" && <button type="button" className="btn" onClick={() => act("confirm", "Order confirmed.")}>Confirm</button>}
         {o.status === "confirmed" && <button type="button" className="btn btn-ghost" onClick={() => act("start", "Marked in progress.")}>Start</button>}

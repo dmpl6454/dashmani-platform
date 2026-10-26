@@ -3,6 +3,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useClient, useStatement } from "@/lib/hooks";
+import { useCompany } from "@/lib/company";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
@@ -16,6 +17,7 @@ function ClientView() {
   const id = useSearchParams().get("id");
   const { data: client, error, isLoading, mutate } = useClient(id);
   const { data: statement, mutate: mutateStatement } = useStatement(id);
+  const { info } = useCompany();
   const [form, setForm] = useState<BillingProfile>(EMPTY);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -55,6 +57,7 @@ function ClientView() {
         <Link href={`/invoices/edit?clientId=${id}`} className="btn btn-light">New invoice</Link>
         <Link href={`/payments/record?clientId=${id}`} className="btn btn-light">Record payment</Link>
       </PageHead>
+      <p className="text-[11px] uppercase tracking-[0.1em] text-ink-3 mb-2">Account with {info.name} · switch company at the top to see the other</p>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <Stat label="Invoiced" value={<Money paise={t?.invoicedPaise ?? 0} whole />} />
         <Stat label="Collected" value={<Money paise={t?.collectedPaise ?? 0} whole />} sub={t?.tdsPaise || t?.refundedPaise ? <>{t?.tdsPaise ? <>TDS withheld <Money paise={t.tdsPaise} whole /></> : null}{t?.tdsPaise && t?.refundedPaise ? " · " : null}{t?.refundedPaise ? <>net of <Money paise={t.refundedPaise} whole /> refunded</> : null}</> : undefined} tone="success" />

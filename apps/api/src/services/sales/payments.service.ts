@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { registrationByGstin, todayIST, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
+import { companyScope, registrationByGstin, SALES_COMPANIES, todayIST, type CompanyKey, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { getSellerOrDefaults } from "./settings.service";
@@ -16,7 +16,7 @@ import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueCreditNoteEI
 
 const paymentInclude = {
   client: { select: { id: true, companyName: true } },
-  allocations: { include: { invoice: { select: { id: true, number: true, totalPaise: true } } } },
+  allocations: { include: { invoice: { select: { id: true, number: true, totalPaise: true, companyKey: true } } } },
   refunds: { orderBy: { createdAt: "asc" as const } },
 } as const;
 
@@ -52,10 +52,11 @@ function present<T extends PaymentRow>(p: T) {
   };
 }
 
-export async function listPayments(filter: { clientId?: string; q?: string; from?: string; to?: string }) {
+export async function listPayments(filter: { clientId?: string; q?: string; from?: string; to?: string; companyKey?: CompanyKey }) {
   const term = filter.q?.trim();
   const rows = await prisma.salesPayment.findMany({
     where: {
+      ...(filter.companyKey ? { companyKey: filter.companyKey } : {}),
       ...(filter.clientId ? { clientId: filter.clientId } : {}),
       ...(filter.from || filter.to ? { paidOn: { ...(filter.from ? { gte: dayToDate(filter.from) } : {}), ...(filter.to ? { lte: dayToDate(filter.to) } : {}) } } : {}),
       ...(term ? { OR: [{ number: { contains: term, mode: "insensitive" } }, { reference: { contains: term, mode: "insensitive" } }, { client: { companyName: { contains: term, mode: "insensitive" } } }] } : {}),
@@ -77,7 +78,7 @@ export async function getPayment(id: string) {
  * The rules every allocation obeys, checked under the invoice row locks: the client's own
  * invoice, issued (not draft or cancelled), and no more than what is still outstanding on it.
  */
-async function checkAllocations(tx: Tx, clientId: string, allocations: Array<{ invoiceId: string; amountPaise: number; tdsPaise: number }>) {
+async function checkAllocations(tx: Tx, clientId: string, company: string, allocations: Array<{ invoiceId: string; amountPaise: number; tdsPaise: number }>) {
   const ids = allocations.map((a) => a.invoiceId);
   if (!ids.length) return;
   // Balances are read AFTER the lock: a second payment for the same invoice waits here and then
@@ -85,12 +86,14 @@ async function checkAllocations(tx: Tx, clientId: string, allocations: Array<{ i
   await lockInvoices(tx, ids);
   const invoices = await tx.salesInvoice.findMany({
     where: { id: { in: ids } },
-    select: { id: true, number: true, clientId: true, status: true, totalPaise: true, paidPaise: true, tdsPaise: true, creditedPaise: true },
+    select: { id: true, number: true, clientId: true, companyKey: true, status: true, totalPaise: true, paidPaise: true, tdsPaise: true, creditedPaise: true },
   });
   for (const a of allocations) {
     const inv = invoices.find((i) => i.id === a.invoiceId);
     if (!inv) throw new AppError(404, "NOT_FOUND", "An allocated invoice does not exist");
     if (inv.clientId !== clientId) throw new AppError(409, "WRONG_CLIENT", `${inv.number ?? "That invoice"} belongs to another client`);
+    // Each company keeps its own books: money received by one can never settle the other's bill.
+    if (inv.companyKey !== company) throw new AppError(409, "WRONG_COMPANY", `${inv.number ?? "That invoice"} is ${SALES_COMPANIES[inv.companyKey as CompanyKey]?.name ?? "the other company"}'s invoice — record the payment under that company`);
     if (inv.status !== "issued" && inv.status !== "paid") throw new AppError(409, "NOT_ISSUED", `${inv.number ?? "That invoice"} is ${inv.status}; only an issued invoice can take a payment`);
     const balance = inv.totalPaise - inv.paidPaise - inv.tdsPaise - inv.creditedPaise;
     if (a.amountPaise + a.tdsPaise > balance) throw new AppError(409, "OVER_ALLOCATED", `${inv.number} has only ${rs(Math.max(0, balance))} outstanding`);
@@ -107,14 +110,15 @@ async function lockPayment(tx: Tx, paymentId: string) {
 }
 
 export async function createPayment(input: PaymentCreateInput, actorId: string) {
-  const seller = await getSellerOrDefaults();
+  const seller = await getSellerOrDefaults(input.companyKey);
   const invoiceIds = input.allocations.map((a) => a.invoiceId);
   const created = await prisma.$transaction(async (tx) => {
-    await checkAllocations(tx, input.clientId, input.allocations);
-    const number = await nextDocumentNumber(tx, "receipt", seller.receiptPrefix, input.paidOn);
+    await checkAllocations(tx, input.clientId, input.companyKey, input.allocations);
+    const number = await nextDocumentNumber(tx, "receipt", seller.receiptPrefix, input.paidOn, companyScope(input.companyKey, null));
     const p = await tx.salesPayment.create({
       data: {
         number,
+        companyKey: input.companyKey,
         clientId: input.clientId,
         amountPaise: input.amountPaise,
         tdsPaise: input.tdsPaise,
@@ -153,7 +157,7 @@ export async function allocatePayment(paymentId: string, input: PaymentAllocateI
     const addTds = input.allocations.reduce((s, a) => s + a.tdsPaise, 0);
     if (addAmount > left.unallocatedPaise) throw new AppError(409, "OVER_ALLOCATED", `Only ${rs(left.unallocatedPaise)} of ${p.number} is unallocated`);
     if (addTds > left.unallocatedTdsPaise) throw new AppError(409, "OVER_ALLOCATED", `Only ${rs(left.unallocatedTdsPaise)} of TDS on ${p.number} is unallocated`);
-    await checkAllocations(tx, p.clientId, input.allocations);
+    await checkAllocations(tx, p.clientId, p.companyKey, input.allocations);
     for (const a of input.allocations) {
       await tx.salesPaymentAllocation.upsert({
         where: { paymentId_invoiceId: { paymentId, invoiceId: a.invoiceId } },
@@ -204,7 +208,8 @@ export async function createRefund(paymentId: string, input: RefundCreateInput, 
       throw new AppError(409, "OVER_REFUNDED", `Only ${rs(left.unallocatedPaise)} of ${p.number} is free to refund — money on an invoice comes back only through a credit note`);
     }
     if (input.refundedOn < dateToDay(p.paidOn)!) throw new AppError(422, "REFUND_BEFORE_PAYMENT", `A refund cannot be dated before the receipt (${dateToDay(p.paidOn)})`);
-    const number = await nextDocumentNumber(tx, "refund", "RF", input.refundedOn);
+    const company = p.companyKey as CompanyKey;
+    const number = await nextDocumentNumber(tx, "refund", SALES_COMPANIES[company].refundPrefix, input.refundedOn, companyScope(company, null));
     const r = await tx.salesRefund.create({
       data: {
         number,
@@ -254,7 +259,7 @@ export async function getCreditNote(id: string) {
   const cn = await prisma.salesCreditNote.findUnique({
     where: { id },
     include: {
-      invoice: { select: { id: true, number: true, issueDate: true, placeOfSupplyCode: true, sellerSnapshot: true, buyerSnapshot: true, items: { select: { sac: true }, take: 1, orderBy: { position: "asc" } } } },
+      invoice: { select: { id: true, companyKey: true, number: true, issueDate: true, placeOfSupplyCode: true, sellerSnapshot: true, buyerSnapshot: true, items: { select: { sac: true }, take: 1, orderBy: { position: "asc" } } } },
       client: { select: { id: true, companyName: true } },
       einvoice: { select: { status: true, irn: true, ackNo: true, ackDate: true, signedQrCode: true } },
     },
@@ -266,7 +271,11 @@ export async function getCreditNote(id: string) {
 export type CreditNoteView = Awaited<ReturnType<typeof getCreditNote>>;
 
 export async function createCreditNote(input: CreditNoteCreateInput, actorId: string) {
-  const seller = await getSellerOrDefaults();
+  // A credit note belongs to the company of the invoice it reduces (fixed since creation).
+  const owner = await prisma.salesInvoice.findUnique({ where: { id: input.invoiceId }, select: { companyKey: true } });
+  if (!owner) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+  const company = owner.companyKey as CompanyKey;
+  const seller = await getSellerOrDefaults(company);
   const issueDate = input.issueDate ?? todayIST();
   const created = await prisma.$transaction(async (tx) => {
     // Locked before the room check, so two credit notes at once cannot both fit in the same room.
@@ -309,7 +318,7 @@ export async function createCreditNote(input: CreditNoteCreateInput, actorId: st
     if (wantsIrn) assertEInvoiceData((inv.sellerSnapshot ?? {}) as object, buyerSnap);
     // A credit note is numbered in the series of the GSTIN that issued the invoice.
     const reg = registrationByGstin(seller, (inv.sellerSnapshot as { gstin?: string | null } | null)?.gstin);
-    const number = await nextDocumentNumber(tx, "credit_note", reg.creditNotePrefix, issueDate, reg.scope);
+    const number = await nextDocumentNumber(tx, "credit_note", reg.creditNotePrefix, issueDate, companyScope(company, reg.scope));
     const cn = await tx.salesCreditNote.create({
       data: {
         number, invoiceId: inv.id, clientId: inv.clientId, issueDate: dayToDate(issueDate), reason: input.reason,

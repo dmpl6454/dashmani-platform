@@ -1,8 +1,8 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { computeTotals, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
+import { companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
-import { resolveDocumentTax, type ResolvedTax } from "./documents.service";
+import { assertSameCompany, resolveDocumentTax, type ResolvedTax } from "./documents.service";
 import { getSellerProfile, sellerMissingFields, type SellerProfile } from "./settings.service";
 import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueInvoiceEInvoice, registerEInvoice } from "./einvoice.service";
 
@@ -13,7 +13,7 @@ import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueInvoiceEInvo
 // `tdsPaise` and `creditedPaise` are maintained by recomputeSettlement, the single writer.
 
 export const invoiceSummarySelect = {
-  id: true, number: true, kind: true, status: true, issueDate: true, dueDate: true, taxMode: true,
+  id: true, companyKey: true, number: true, kind: true, status: true, issueDate: true, dueDate: true, taxMode: true,
   subtotalPaise: true, discountPaise: true, taxablePaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, roundOffPaise: true,
   totalPaise: true, paidPaise: true, tdsPaise: true, creditedPaise: true, clientId: true, orderId: true, campaignBookingId: true,
   issuedAt: true, sentAt: true, paidAt: true, cancelledAt: true, createdAt: true,
@@ -45,7 +45,7 @@ const clientBrief = {
   },
 };
 
-export async function listInvoices(filter: { status?: string; clientId?: string; q?: string }) {
+export async function listInvoices(filter: { status?: string; clientId?: string; q?: string; companyKey?: CompanyKey }) {
   const today = todayIST();
   const term = filter.q?.trim();
   const storedStatus =
@@ -53,6 +53,7 @@ export async function listInvoices(filter: { status?: string; clientId?: string;
     : filter.status && filter.status !== "all" ? "issued" : undefined;
   const rows = await prisma.salesInvoice.findMany({
     where: {
+      ...(filter.companyKey ? { companyKey: filter.companyKey } : {}),
       ...(filter.clientId ? { clientId: filter.clientId } : {}),
       ...(storedStatus ? { status: storedStatus } : {}),
       ...(term ? { OR: [{ number: { contains: term, mode: "insensitive" } }, { client: { companyName: { contains: term, mode: "insensitive" } } }] } : {}),
@@ -129,12 +130,21 @@ function invoiceTotals(lines: Array<{ quantity: number; unitPricePaise: number; 
   };
 }
 
+/** An invoice billed against an order bills it from the order's company. */
+async function assertOrderCompany(orderId: string | null | undefined, company: CompanyKey) {
+  if (!orderId) return;
+  const order = await prisma.salesOrder.findUnique({ where: { id: orderId }, select: { companyKey: true, number: true } });
+  if (order && order.companyKey !== company) throw new AppError(409, "COMPANY_MISMATCH", `${order.number} is ${SALES_COMPANIES[order.companyKey as CompanyKey]?.name ?? "the other company"}'s order — invoice it from that company`);
+}
+
 export async function createInvoice(input: InvoiceUpsertInput, actorId: string, link: { convertedFromId?: string } = {}) {
-  const tax = await resolveDocumentTax(input.clientId, input);
+  await assertOrderCompany(input.orderId, input.companyKey);
+  const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
   const lines = invoiceLines(input.items, tax.seller.defaultSac);
   const totals = invoiceTotals(lines, input.discountPaise, tax);
   const created = await prisma.salesInvoice.create({
     data: {
+      companyKey: input.companyKey,
       kind: input.kind,
       clientId: input.clientId,
       orderId: input.orderId ?? null,
@@ -159,10 +169,12 @@ export async function createInvoice(input: InvoiceUpsertInput, actorId: string, 
 }
 
 export async function updateInvoice(id: string, input: InvoiceUpsertInput, actorId: string) {
-  const existing = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true } });
+  const existing = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true, companyKey: true } });
   if (!existing) throw new AppError(404, "NOT_FOUND", "Invoice not found");
   if (existing.status !== "draft") throw new AppError(409, "INVOICE_LOCKED", "Only a draft invoice can be edited — cancel and re-issue instead");
-  const tax = await resolveDocumentTax(input.clientId, input);
+  assertSameCompany(existing.companyKey, input.companyKey, "invoice");
+  await assertOrderCompany(input.orderId, input.companyKey);
+  const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
   const lines = invoiceLines(input.items, tax.seller.defaultSac);
   const totals = invoiceTotals(lines, input.discountPaise, tax);
   await prisma.$transaction(async (tx) => {
@@ -207,16 +219,17 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
   const billable = order.items.filter((it) => it.status !== "cancelled");
   const onInvoices = await prisma.salesInvoiceItem.findMany({
     where: { orderItemId: { in: billable.map((it) => it.id) }, invoice: { status: { not: "cancelled" } } },
-    select: { orderItemId: true, invoice: { select: { number: true } } },
+    select: { orderItemId: true, invoice: { select: { number: true, kind: true } } },
   });
   const taken = new Set(onInvoices.map((r) => r.orderItemId));
   const remaining = billable.filter((it) => !taken.has(it.id));
   if (!remaining.length) {
-    const on = onInvoices[0]?.invoice.number ?? null;
-    throw new AppError(409, "ORDER_ALREADY_INVOICED", `Every line of ${order.number} is already on ${on ?? "a draft invoice"} — ${on?.startsWith("PI/") ? "convert that proforma to a tax invoice instead" : "open that invoice instead"}`);
+    const on = onInvoices[0]?.invoice ?? null;
+    throw new AppError(409, "ORDER_ALREADY_INVOICED", `Every line of ${order.number} is already on ${on?.number ?? "a draft invoice"} — ${on?.kind === "proforma" && on.number ? "convert that proforma to a tax invoice instead" : "open that invoice instead"}`);
   }
   return createInvoice(
     {
+      companyKey: order.companyKey as CompanyKey,
       clientId: order.clientId,
       kind: "tax_invoice",
       orderId: order.id,
@@ -235,7 +248,7 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
 }
 
 /** A draft invoice for a client's self-serve campaign booking (frozen item prices). */
-export async function createInvoiceFromBooking(bookingId: string, actorId: string) {
+export async function createInvoiceFromBooking(bookingId: string, actorId: string, company: CompanyKey = "dspl") {
   const booking = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, include: { items: true } });
   if (!booking) throw new AppError(404, "NOT_FOUND", "Campaign booking not found");
   if (!booking.items.length) throw new AppError(409, "BOOKING_EMPTY", "This booking has no priced accounts yet");
@@ -244,6 +257,7 @@ export async function createInvoiceFromBooking(bookingId: string, actorId: strin
   const labelFormat = (f: string) => f.charAt(0).toUpperCase() + f.slice(1);
   return createInvoice(
     {
+      companyKey: company,
       clientId: booking.clientId,
       kind: "tax_invoice",
       campaignBookingId: booking.id,
@@ -298,7 +312,11 @@ export async function issueInvoice(
   input: { issueDate?: string; dueDate?: string | null; taxResolution?: "recompute" | "keep" },
   actorId: string,
 ) {
-  const seller = await getSellerProfile();
+  // The company never changes after creation, so reading it before the lock is safe.
+  const owner = await prisma.salesInvoice.findUnique({ where: { id }, select: { companyKey: true } });
+  if (!owner) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+  const company = owner.companyKey as CompanyKey;
+  const seller = await getSellerProfile(company);
   let einvoiceId: string | null = null;
   await prisma.$transaction(async (tx) => {
     // Everything is read AFTER the row lock. A second Issue (another tab, a retry) waits here and
@@ -310,7 +328,7 @@ export async function issueInvoice(
     if (inv.status !== "draft") throw new AppError(409, "BAD_TRANSITION", `A ${inv.status} invoice cannot be issued again`);
     const missing = sellerMissingFields(seller);
     if (!seller || (inv.kind === "tax_invoice" && missing.length)) {
-      throw new AppError(422, "SELLER_PROFILE_INCOMPLETE", "Complete the company GST profile in Settings before issuing a tax invoice", missing.map((f) => ({ field: f, message: "required" })));
+      throw new AppError(422, "SELLER_PROFILE_INCOMPLETE", `Complete ${SALES_COMPANIES[company].name}'s GST profile in Settings before issuing a tax invoice`, missing.map((f) => ({ field: f, message: "required" })));
     }
     if (!inv.items.length) throw new AppError(409, "INVOICE_EMPTY", "Add at least one line before issuing");
     const issueDate = input.issueDate ?? todayIST();
@@ -381,8 +399,8 @@ export async function issueInvoice(
     if (wantsIrn) assertEInvoiceData(sellerSnap, buyerSnap);
     // Proformas are not tax invoices: their own PI series, so the tax-invoice serials stay consecutive.
     const number = inv.kind === "proforma"
-      ? await nextDocumentNumber(tx, "proforma", "PI", issueDate)
-      : await nextDocumentNumber(tx, "invoice", reg.invoicePrefix, issueDate, reg.scope);
+      ? await nextDocumentNumber(tx, "proforma", SALES_COMPANIES[company].proformaPrefix, issueDate, companyScope(company, null))
+      : await nextDocumentNumber(tx, "invoice", reg.invoicePrefix, issueDate, companyScope(company, reg.scope));
     await tx.salesInvoice.update({
       where: { id },
       data: {
@@ -550,6 +568,7 @@ export async function convertProforma(id: string, actorId: string) {
   if (existing) throw new AppError(409, "ALREADY_CONVERTED", `This proforma is already on ${existing.number ?? "a draft tax invoice"} — open that invoice instead`);
   const draft = await createInvoice(
     {
+      companyKey: pf.companyKey as CompanyKey,
       clientId: pf.clientId,
       kind: "tax_invoice",
       orderId: pf.orderId,

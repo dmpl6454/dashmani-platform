@@ -14,6 +14,9 @@ import {
   quoteUpsertSchema,
   salesClientCreateSchema,
   sellerProfileSchema,
+  DEFAULT_COMPANY,
+  isCompanyKey,
+  type CompanyKey,
 } from "@dashmani/shared";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
@@ -23,7 +26,7 @@ import { AppError } from "../middleware/error-handler";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 import { listSalesEvents, type SalesEntity } from "../services/sales/common";
-import { getSellerProfile, saveSellerProfile, sellerMissingFields, SELLER_FALLBACK } from "../services/sales/settings.service";
+import { getSellerProfile, saveSellerProfile, sellerFallback, sellerMissingFields } from "../services/sales/settings.service";
 import { listInventory } from "../services/sales/inventory.service";
 import { createSalesClient, getClientStatement, getSalesClient, listSalesClients, upsertClientBilling } from "../services/sales/clients.service";
 import * as docs from "../services/sales/documents.service";
@@ -45,19 +48,29 @@ const manage = [authenticate, requireInternalUser, requirePermission("sales", "m
 const admin = [authenticate, requireInternalUser, requirePermission("sales", "approve")];
 const staffId = (req: Request) => req.user!.userId;
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+/** ?company=dspl|dmpl. Lists without it show both companies; settings and the dashboard default to Digital Sukoon. */
+const companyQuery = (req: Request): CompanyKey | undefined => {
+  const v = str(req.query.company);
+  if (v === undefined) return undefined;
+  if (!isCompanyKey(v)) throw new AppError(400, "BAD_COMPANY", "Unknown company");
+  return v;
+};
+const companyOf = (req: Request): CompanyKey => companyQuery(req) ?? DEFAULT_COMPANY;
 
 // ── Dashboard, settings, inventory ─────────────────────────────────────────────
 
-router.get("/sales/dashboard", ...view, asyncHandler(async (_req, res) => success(res, await getSalesDashboard())));
+router.get("/sales/dashboard", ...view, asyncHandler(async (req, res) => success(res, await getSalesDashboard(companyOf(req)))));
 
-router.get("/sales/settings/seller", ...view, asyncHandler(async (_req, res) => {
-  const profile = await getSellerProfile();
-  return success(res, { profile: profile ?? SELLER_FALLBACK, saved: !!profile, missing: sellerMissingFields(profile) });
+router.get("/sales/settings/seller", ...view, asyncHandler(async (req, res) => {
+  const company = companyOf(req);
+  const profile = await getSellerProfile(company);
+  return success(res, { company, profile: profile ?? sellerFallback(company), saved: !!profile, missing: sellerMissingFields(profile) });
 }));
 
 router.put("/sales/settings/seller", ...admin, validate(sellerProfileSchema), asyncHandler(async (req, res) => {
-  const profile = await saveSellerProfile(req.body, staffId(req));
-  return success(res, { profile, saved: true, missing: sellerMissingFields(profile) });
+  const company = companyOf(req);
+  const profile = await saveSellerProfile(req.body, staffId(req), company);
+  return success(res, { company, profile, saved: true, missing: sellerMissingFields(profile) });
 }));
 
 router.get("/sales/inventory", ...view, asyncHandler(async (_req, res) => success(res, await listInventory())));
@@ -68,11 +81,11 @@ router.get("/sales/clients", ...view, asyncHandler(async (req, res) => success(r
 router.post("/sales/clients", ...manage, validate(salesClientCreateSchema), asyncHandler(async (req, res) => success(res, await createSalesClient(req.body, staffId(req)), undefined, 201)));
 router.get("/sales/clients/:id", ...view, asyncHandler(async (req, res) => success(res, await getSalesClient(req.params.id))));
 router.put("/sales/clients/:id/billing", ...manage, validate(clientBillingProfileSchema), asyncHandler(async (req, res) => success(res, await upsertClientBilling(req.params.id, req.body, staffId(req)))));
-router.get("/sales/clients/:id/statement", ...view, asyncHandler(async (req, res) => success(res, await getClientStatement(req.params.id))));
+router.get("/sales/clients/:id/statement", ...view, asyncHandler(async (req, res) => success(res, await getClientStatement(req.params.id, companyQuery(req)))));
 
 // ── Quotes ──────────────────────────────────────────────────────────────────────
 
-router.get("/sales/quotes", ...view, asyncHandler(async (req, res) => success(res, await docs.listQuotes({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q) }))));
+router.get("/sales/quotes", ...view, asyncHandler(async (req, res) => success(res, await docs.listQuotes({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q), companyKey: companyQuery(req) }))));
 router.post("/sales/quotes", ...manage, validate(quoteUpsertSchema), asyncHandler(async (req, res) => success(res, await docs.createQuote(req.body, staffId(req)), undefined, 201)));
 router.get("/sales/quotes/:id", ...view, asyncHandler(async (req, res) => success(res, await docs.getQuote(req.params.id))));
 router.put("/sales/quotes/:id", ...manage, validate(quoteUpsertSchema), asyncHandler(async (req, res) => success(res, await docs.updateQuote(req.params.id, req.body, staffId(req)))));
@@ -84,7 +97,7 @@ router.post("/sales/quotes/:id/convert", ...manage, asyncHandler(async (req, res
 
 // ── Orders ──────────────────────────────────────────────────────────────────────
 
-router.get("/sales/orders", ...view, asyncHandler(async (req, res) => success(res, await docs.listOrders({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q) }))));
+router.get("/sales/orders", ...view, asyncHandler(async (req, res) => success(res, await docs.listOrders({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q), companyKey: companyQuery(req) }))));
 router.post("/sales/orders", ...manage, validate(orderUpsertSchema), asyncHandler(async (req, res) => success(res, await docs.createOrder(req.body, staffId(req)), undefined, 201)));
 router.get("/sales/orders/:id", ...view, asyncHandler(async (req, res) => success(res, await docs.getOrder(req.params.id))));
 router.put("/sales/orders/:id", ...manage, validate(orderUpsertSchema), asyncHandler(async (req, res) => success(res, await docs.updateOrder(req.params.id, req.body, staffId(req)))));
@@ -96,9 +109,9 @@ router.post("/sales/orders/:id/invoice", ...manage, asyncHandler(async (req, res
 
 // ── Invoices ────────────────────────────────────────────────────────────────────
 
-router.get("/sales/invoices", ...view, asyncHandler(async (req, res) => success(res, await invoices.listInvoices({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q) }))));
+router.get("/sales/invoices", ...view, asyncHandler(async (req, res) => success(res, await invoices.listInvoices({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q), companyKey: companyQuery(req) }))));
 router.post("/sales/invoices", ...manage, validate(invoiceUpsertSchema), asyncHandler(async (req, res) => success(res, await invoices.createInvoice(req.body, staffId(req)), undefined, 201)));
-router.post("/sales/invoices/from-booking/:bookingId", ...manage, asyncHandler(async (req, res) => success(res, await invoices.createInvoiceFromBooking(req.params.bookingId, staffId(req)), undefined, 201)));
+router.post("/sales/invoices/from-booking/:bookingId", ...manage, asyncHandler(async (req, res) => success(res, await invoices.createInvoiceFromBooking(req.params.bookingId, staffId(req), companyOf(req)), undefined, 201)));
 router.get("/sales/invoices/:id", ...view, asyncHandler(async (req, res) => success(res, await invoices.getInvoice(req.params.id))));
 router.put("/sales/invoices/:id", ...manage, validate(invoiceUpsertSchema), asyncHandler(async (req, res) => success(res, await invoices.updateInvoice(req.params.id, req.body, staffId(req)))));
 router.post("/sales/invoices/:id/issue", ...manage, validate(invoiceIssueSchema), asyncHandler(async (req, res) => success(res, await invoices.issueInvoice(req.params.id, req.body, staffId(req)))));
@@ -121,7 +134,7 @@ router.get("/sales/invoices/:id/pdf", ...view, asyncHandler(async (req, res) => 
 
 // ── Payments & credit notes ─────────────────────────────────────────────────────
 
-router.get("/sales/payments", ...view, asyncHandler(async (req, res) => success(res, await payments.listPayments({ clientId: str(req.query.clientId), q: str(req.query.q), from: str(req.query.from), to: str(req.query.to) }))));
+router.get("/sales/payments", ...view, asyncHandler(async (req, res) => success(res, await payments.listPayments({ clientId: str(req.query.clientId), q: str(req.query.q), from: str(req.query.from), to: str(req.query.to), companyKey: companyQuery(req) }))));
 router.post("/sales/payments", ...manage, validate(paymentCreateSchema), asyncHandler(async (req, res) => success(res, await payments.createPayment(req.body, staffId(req)), undefined, 201)));
 router.post("/sales/payments/:id/allocations", ...manage, validate(paymentAllocateSchema), asyncHandler(async (req, res) => success(res, await payments.allocatePayment(req.params.id, req.body, staffId(req)))));
 router.post("/sales/payments/:id/void", ...manage, validate(paymentVoidSchema), asyncHandler(async (req, res) => success(res, await payments.voidPayment(req.params.id, req.body.reason, staffId(req)))));

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { mutate as mutateGlobal } from "swr";
 import { usePayment, useEvents } from "@/lib/hooks";
+import { companyName } from "@/lib/company";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, todayIST } from "@/lib/format";
@@ -45,7 +46,7 @@ function PaymentView() {
 
   return (
     <>
-      <PageHead kicker={<><Link href="/payments" className="hover:text-white">Payments</Link> · <Link href={`/clients/view?id=${p.client.id}`} className="hover:text-white">{p.client.companyName}</Link></> as unknown as string} title={<><span className="font-mono">{p.number}</span> <StatusPill status={p.status} /></>}>
+      <PageHead kicker={<><Link href="/payments" className="hover:text-white">Payments</Link> · {companyName(p.companyKey)} · <Link href={`/clients/view?id=${p.client.id}`} className="hover:text-white">{p.client.companyName}</Link></> as unknown as string} title={<><span className="font-mono">{p.number}</span> <StatusPill status={p.status} /></>}>
         {live && p.unallocatedPaise > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("refund")}>Refund</button>}
         {live && liveRefunds.length === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("void")}>Void receipt</button>}
       </PageHead>

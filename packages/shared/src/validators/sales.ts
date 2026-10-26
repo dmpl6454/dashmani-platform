@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { safeString, normalizedEmail } from "../utils/sanitize";
 import { DEFAULT_GST_RATE_BP, DEFAULT_SAC, GST_STATE_CODES, TAX_MODES } from "../sales/gst";
+import { COMPANY_KEYS } from "../sales/companies";
 
 // sales.digitalsukoon.com — shared by the API (input validation) and the portal (forms).
 // Import BY PATH from the frontend ("@dashmani/shared/src/validators/sales"), never via the barrel.
@@ -86,6 +87,8 @@ export const sellerProfileSchema = z.object({
   stateCode: stateCodeSchema.optional().nullable(),
   pincode: optionalText(10),
   email: normalizedEmail.optional().nullable(),
+  /** Further billing addresses printed beside `email` (e.g. finance@ next to accounts@). */
+  billingEmails: z.array(normalizedEmail).max(4).default([]),
   phone: optionalText(30),
   website: optionalText(200),
   bankName: optionalText(120),
@@ -171,7 +174,11 @@ export const lineItemSchema = z.object({
 });
 export type LineItemInput = z.infer<typeof lineItemSchema>;
 
+/** Which of our companies bills the document (fixed once the document exists). */
+export const companyKeySchema = z.enum(COMPANY_KEYS).default("dspl");
+
 const documentBase = {
+  companyKey: companyKeySchema,
   clientId: z.string().uuid(),
   title: safeString.pipe(z.string().min(2).max(200)),
   campaignType: z.enum(SALES_CAMPAIGN_TYPES).default("brand"),
@@ -212,6 +219,7 @@ export const invoiceLineSchema = z.object({
 });
 
 export const invoiceUpsertSchema = z.object({
+  companyKey: companyKeySchema,
   clientId: z.string().uuid(),
   kind: z.enum(INVOICE_KINDS).default("tax_invoice"),
   orderId: z.string().uuid().optional().nullable(),
@@ -240,6 +248,7 @@ export const invoiceCancelSchema = z.object({ reason: safeString.pipe(z.string()
 
 export const paymentCreateSchema = z
   .object({
+    companyKey: companyKeySchema,
     clientId: z.string().uuid(),
     amountPaise: paise,
     tdsPaise: paise.default(0),

@@ -502,7 +502,11 @@ input[type="date"].input { color-scheme: dark; }
 .form-status a { color: #fff; text-decoration: underline; }
 
 /* Footer ticker */
-.footer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; border-top: 2px solid var(--divider); font-size: 13px; }
+.footer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: stretch; border-top: 2px solid var(--divider); font-size: 13px; }
+/* The other subdomains, one row: clients book, creators join, candidates apply, staff sign in. */
+.footer-links { display: flex; align-items: center; gap: 18px; padding: 0 18px; border-left: 2px solid var(--divider); white-space: nowrap; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.footer-links a { color: var(--light); text-decoration: none; }
+.footer-links a:hover, .footer-links a:focus-visible { color: var(--accent); }
 .live-tag { background: var(--accent); padding: 12px 18px; font-weight: 800; letter-spacing: 0.1em; }
 .ticker { overflow: hidden; white-space: nowrap; display: flex; align-items: center; min-width: 0; }
 .ticker-track { display: inline-flex; gap: 40px; padding-right: 40px; animation: ds-tick 40s linear infinite; }
@@ -532,6 +536,7 @@ input[type="date"].input { color-scheme: dark; }
   .strip { display: none; }
   .tabs { display: grid; }
   .footer { grid-template-columns: auto minmax(0, 1fr); }
+  .footer-links { grid-column: 1 / -1; border-left: 0; border-top: 2px solid var(--divider); justify-content: center; padding: 10px 18px; flex-wrap: wrap; gap: 12px 18px; }
   .tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .tile:nth-child(n + 49) { display: none; }
   .svc-btn { grid-template-columns: 32px minmax(0, 1fr) 22px; gap: 8px 12px; }

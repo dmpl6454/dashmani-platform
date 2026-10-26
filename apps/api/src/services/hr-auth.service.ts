@@ -115,7 +115,7 @@ export async function registerEmployee(data: {
 // ===== Sign in with Google =====
 
 /** Mint the HR session for a user row — shared by password login and Google sign-in. */
-async function issueHrSession(user: {
+export async function issueHrSession(user: {
   id: string;
   name: string;
   email: string;

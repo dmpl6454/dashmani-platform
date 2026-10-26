@@ -55,6 +55,20 @@ export default function LoginPage() {
   const formRef = useRef<HTMLDivElement>(null);
   const isMac = useIsMac();
 
+  // Arriving from the HR or sales portal with a one-time handoff code (#handoff=, a fragment so it
+  // never reaches a server log): exchange it for a session here and go straight in. A used or
+  // expired code falls back to the form.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.hash.slice(1)).get("handoff") ?? new URLSearchParams(window.location.search).get("handoff");
+    if (!code) return;
+    window.history.replaceState(null, "", "/login");
+    setSubmitState("loading");
+    apiFetch<any>("/auth/handoff/exchange", { method: "POST", body: JSON.stringify({ code }) })
+      .then((res) => { setSubmitState("success"); adoptSession(res.data); })
+      .catch((err: any) => { setError(err?.message || "That sign-in link has expired — sign in below."); setSubmitState("idle"); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const emailValid = email.length > 0 && emailOk(email);
   const emailErr = emailBlurred && email && !emailOk(email) ? "Use a valid email"
     : emailBlurred && !email ? "Email is required" : null;
@@ -108,6 +122,7 @@ export default function LoginPage() {
           <a href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Studio</a>
           <a href="https://client.digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Clients</a>
           <a href="https://hr.digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">HR</a>
+          <a href="https://sales.digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Sales</a>
           <a href="https://jobs.digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Careers</a>
         </nav>
         <div className="flex items-center gap-3">

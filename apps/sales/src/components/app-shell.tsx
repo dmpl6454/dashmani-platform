@@ -3,8 +3,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { PortalSwitcher } from "./portal-switcher";
 
-// The signed-in frame: brand, the eight sections and sign-out. Nav wraps rather than scrolls so
+// The signed-in frame: brand, the eight sections, the portal switcher and sign-out. Nav wraps rather than scrolls so
 // nothing overflows at 390px.
 const NAV = [
   { href: "/dashboard", label: "Dashboard" },
@@ -48,6 +49,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-sm font-bold truncate max-w-[220px]">{user?.name}</span>
               <span className="text-[11px] uppercase tracking-[0.1em] text-ink-3">{user?.roles?.join(" · ")}</span>
             </div>
+            <PortalSwitcher />
             <button type="button" onClick={logout} className="btn btn-ghost btn-sm" aria-label="Sign out">
               <LogOut size={14} aria-hidden /> <span className="hidden sm:inline">Sign out</span>
             </button>

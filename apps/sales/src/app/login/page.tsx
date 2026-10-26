@@ -3,7 +3,8 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, ArrowRight, Check } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { hasSession } from "@/lib/api";
+import { apiFetch, hasSession } from "@/lib/api";
+import type { StaffSession } from "@/lib/types";
 import { errorSentence } from "@/lib/messages";
 import { safeNext } from "@/lib/safe-next";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -15,7 +16,7 @@ import { AuthFallback, AuthField, AuthShell } from "@/components/auth/shared";
 const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 function LoginForm() {
-  const { login } = useAuth();
+  const { login, adoptSession } = useAuth();
   const router = useRouter();
   useSearchParams(); // keep ?next= reactive under the Suspense boundary
   const hydrated = useHydrated();
@@ -26,6 +27,17 @@ function LoginForm() {
   const [state, setState] = useState<"idle" | "loading" | "success">("idle");
 
   useEffect(() => {
+    // Arriving from the staff or HR portal with a one-time handoff code (#handoff=): exchange it
+    // for a sales session and go straight in. A used or expired code falls back to the form.
+    const code = new URLSearchParams(window.location.hash.slice(1)).get("handoff") ?? new URLSearchParams(window.location.search).get("handoff");
+    if (code) {
+      window.history.replaceState(null, "", "/login");
+      setState("loading");
+      apiFetch<StaffSession>("/auth/handoff/exchange", { method: "POST", body: JSON.stringify({ code }) })
+        .then((res) => { setState("success"); adoptSession(res.data); })
+        .catch((err) => { setError(errorSentence(err, "That sign-in link has expired — sign in below.")); setState("idle"); });
+      return;
+    }
     if (hasSession()) router.replace(safeNext() ?? "/dashboard");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -73,7 +85,7 @@ function LoginForm() {
           {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
           <button type="submit" disabled={state !== "idle" || !hydrated} className="auth-btn" aria-live="polite">
             {state === "idle" && (<><span>Sign in</span><ArrowRight size={17} /></>)}
-            {state === "loading" && (<><span className="auth-spinner" aria-hidden /><span>One moment…</span></>)}
+            {state === "loading" && (<><span className="auth-spinner" aria-hidden /><span>Signing you in…</span></>)}
             {state === "success" && (<><Check size={18} strokeWidth={3} /><span>Opening…</span></>)}
           </button>
         </form>

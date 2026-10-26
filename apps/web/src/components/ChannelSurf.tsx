@@ -705,6 +705,12 @@ export default function ChannelSurf() {
             ))}
           </div>
         </div>
+        <nav className="footer-links" aria-label="Portals">
+          <a href="https://client.digitalsukoon.com">Client portal</a>
+          <a href="https://creators.digitalsukoon.com">Creators</a>
+          <a href="https://jobs.digitalsukoon.com">Careers</a>
+          <a href="https://portal.digitalsukoon.com">Staff</a>
+        </nav>
         <span className="views" suppressHydrationWarning>
           {live.toLocaleString("en-IN")} views since you tuned in
         </span>

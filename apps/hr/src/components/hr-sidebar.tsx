@@ -11,6 +11,7 @@ import {
   LogOut, Menu, X as CloseIcon, SquareKanban,
 } from "lucide-react";
 import { usePipelineBootstrap } from "@/lib/pipeline-swr";
+import { PortalSwitcherRail } from "./portal-switcher";
 
 type NavItem = { href: string; label: string; icon: React.ElementType; group?: string };
 
@@ -191,6 +192,8 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
 
       {/* Footer */}
       <div className="px-2 py-3 shrink-0 space-y-0.5" style={{ borderTop: "2px solid rgba(26,26,26,0.07)" }}>
+        {/* Other portals — the staff and sales portals open already signed in; public sites as links */}
+        <PortalSwitcherRail expanded={expanded} />
         {onCollapse && (
           <button onClick={onCollapse}
             className={`w-full flex items-center ${expanded ? "gap-2 px-3" : "justify-center px-0"} h-9 rounded-xl text-[12px] font-medium text-ink-3 hover:bg-muted/80 hover:text-ink transition-colors`}>

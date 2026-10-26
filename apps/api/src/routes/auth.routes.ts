@@ -4,7 +4,8 @@ import { authenticate } from "../middleware/auth";
 import { authValidators } from "@dashmani/shared";
 import * as authService from "../services/auth.service";
 import { googleClientId, googleSignInEnabled } from "../services/google-id-token";
-import { success } from "../utils/response";
+import { success, error } from "../utils/response";
+import * as handoff from "../services/portal-handoff.service";
 import { prisma } from "@dashmani/db";
 import { z } from "zod";
 import { safeString } from "@dashmani/shared";
@@ -112,6 +113,44 @@ router.put("/auth/me", authenticate, async (req: Request, res: Response, next: N
       select: { id: true, name: true, email: true, profileImageUrl: true },
     });
     return success(res, updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Connecting the portals ────────────────────────────────────────────────────────────────
+// Staff tokens only (employee or hr): a client token verifies in `authenticate` too (same
+// secret — see require-internal-user.ts), so it is refused here by type.
+function requireStaffToken(req: Request, res: Response, next: NextFunction) {
+  const type = req.user?.type;
+  if (type !== "employee" && type !== "hr") return error(res, "FORBIDDEN", "Staff access only", 403);
+  next();
+}
+const handoffTargetSchema = z.object({ target: z.enum(["internal", "hr", "sales"]) });
+const handoffCodeSchema = z.object({ code: z.string().regex(/^[0-9a-f]{64}$/, "Invalid code") });
+
+// GET /auth/portals — the switcher's directory: which staff portals this account may enter, and the public sites.
+router.get("/auth/portals", authenticate, requireStaffToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    return success(res, await handoff.listPortals(req.user!));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/handoff { target } — a one-time 60 s code, returned as the target's /login#handoff= URL.
+router.post("/auth/handoff", authenticate, requireStaffToken, validate(handoffTargetSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    return success(res, await handoff.createHandoff(req.user!, req.body.target));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/handoff/exchange { code } — the target portal's login page turns the code into its own session.
+router.post("/auth/handoff/exchange", validate(handoffCodeSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    return success(res, await handoff.exchangeHandoff(req.body.code));
   } catch (err) {
     next(err);
   }

@@ -42,6 +42,13 @@
       "runtimeArgs": ["next", "dev", "--port", "3001"],
       "port": 3001,
       "cwd": "apps/client"
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--port", "3004"],
+      "port": 3004,
+      "cwd": "apps/web"
     }
   ]
 }

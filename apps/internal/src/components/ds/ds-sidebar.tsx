@@ -10,6 +10,7 @@ import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { primaryNav, moreNav, hrNav, type NavItem } from "@/components/sidebar";
 import { useAuth } from "@/lib/auth";
 import { isHrOnly } from "@/lib/roles";
+import { PortalSwitcher } from "@/components/portal-switcher";
 
 export function DsSidebar() {
   const pathname = usePathname();
@@ -187,6 +188,9 @@ export function DsSidebar() {
           )}
           </>}
         </nav>
+
+        {/* Other portals — HR and Sales open already signed in; the public sites as links */}
+        <PortalSwitcher collapsed={!expanded} />
 
         {!mobile && (
           <div className="shrink-0 border-t border-ds-line p-2">

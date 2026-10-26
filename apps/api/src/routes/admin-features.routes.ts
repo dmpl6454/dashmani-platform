@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
 import { requirePermission } from "../middleware/rbac";
+import { guardRoleAssignment, guardTargetUser, requireAdminOrHrRole } from "../middleware/role-guard";
 import { success } from "../utils/response";
 import { hashPassword } from "../utils/password";
 import { generateOfferLetterSchema, safeString, todayIST, istMidnight } from "@dashmani/shared";
@@ -585,7 +586,7 @@ router.get("/admin/employees/:id/profile-data", authenticate, requirePermission(
   } catch (err) { next(err); }
 });
 
-router.put("/admin/employees/:id/profile-data", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+router.put("/admin/employees/:id/profile-data", authenticate, requirePermission("employees", "edit"), guardTargetUser("id"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { prisma } = require("@dashmani/db");
     const {
@@ -762,7 +763,7 @@ router.delete("/admin/jobs/:id", authenticate, requirePermission("employees", "e
 
 // ===== Admin Update Job Description =====
 
-router.put("/admin/employees/:id/job-description", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+router.put("/admin/employees/:id/job-description", authenticate, requirePermission("employees", "edit"), guardTargetUser("id"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { prisma } = require("@dashmani/db");
     const profile = await prisma.employeeProfile.upsert({
@@ -1128,7 +1129,7 @@ router.get("/admin/daily-reports/status", authenticate, requirePermission("emplo
       where: {
         status: "ACTIVE",
         deletedAt: null,
-        roles: { some: { role: { name: { notIn: ["Super Admin", "Admin"] } } } },
+        roles: { some: { role: { name: { notIn: ["Super Admin", "Admin", "HR Manager"] } } } },
       },
       select: { id: true, name: true, email: true },
       orderBy: { name: "asc" },
@@ -1206,7 +1207,7 @@ router.delete("/admin/internships/:id", authenticate, requirePermission("employe
 // ===== Admin User Management =====
 
 // POST /admin/users/create — directly create a new internal admin user (Super Admin only)
-router.post("/admin/users/create", authenticate, requirePermission("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
+router.post("/admin/users/create", authenticate, requirePermission("employees", "create"), guardRoleAssignment, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { name, password, roleIds, designation, salary } = req.body;
     const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : req.body.email;
@@ -1249,7 +1250,7 @@ router.post("/admin/users/create", authenticate, requirePermission("employees", 
 });
 
 // POST /admin/users/invite — send invite email to a new admin
-router.post("/admin/users/invite", authenticate, requirePermission("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
+router.post("/admin/users/invite", authenticate, requirePermission("employees", "create"), guardRoleAssignment, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { roleIds, designation } = req.body;
     const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : req.body.email;
@@ -1503,7 +1504,7 @@ router.post("/admin/leave-requests/bulk", authenticate, requirePermission("emplo
 // ===== Announcements =====
 
 // POST /admin/announcements — broadcast a message to all active employees (or a specific team)
-router.post("/admin/announcements", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+router.post("/admin/announcements", authenticate, requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { title, message, orgUnitId } = req.body as { title?: string; message?: string; orgUnitId?: string };
     if (!title?.trim() || !message?.trim()) {
@@ -1529,7 +1530,7 @@ router.post("/admin/announcements", authenticate, requireAdminRole, async (req: 
 });
 
 // GET /admin/announcements — paginated history of sent announcements
-router.get("/admin/announcements", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/announcements", authenticate, requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const page = parseInt(String(req.query.page ?? "1")) || 1;
     const limit = parseInt(String(req.query.limit ?? "20")) || 20;

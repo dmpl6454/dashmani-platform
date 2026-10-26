@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { homePathFor } from "@/lib/roles";
 import { clearSwrCache } from "@/lib/swr-cache";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
 import { BoxesLoader } from "@/components/boxes-loader";
@@ -63,7 +64,7 @@ function AdminSignupForm() {
       localStorage.setItem("refreshToken", res.data.refreshToken);
       localStorage.setItem("user", JSON.stringify(res.data.user));
       void clearSwrCache(); // a new identity: drop any earlier user's cached data (lib/swr-cache.ts)
-      router.push("/dashboard");
+      router.push(homePathFor(res.data.user));
     } catch (err: any) {
       setError(err.message || "Signup failed");
       setShake(true);

@@ -7,7 +7,7 @@ import {
   Briefcase, FolderOpen, FileEdit, TrendingUp, FileText, UserPlus, Megaphone,
   ChevronLeft, ChevronRight, Wallet, FileSignature, Calendar, BriefcaseBusiness,
   Bug, Sparkles, Laptop, GraduationCap, AlertCircle, Settings, LayoutGrid,
-  Menu, X as CloseIcon, CalendarOff, ClipboardList, Search, Receipt, ShoppingBag, BadgeCheck,
+  Menu, X as CloseIcon, CalendarOff, ClipboardList, Search, Receipt, ShoppingBag, BadgeCheck, Banknote,
 } from "lucide-react";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useState, useEffect } from "react";
@@ -44,12 +44,38 @@ export const primaryNav = [
 
 /* ── More section items (3-col grid) ── */
 export const moreNav = [
+  { href: "/salary-slips",  label: "Salary Slips",  icon: Banknote        },
   { href: "/offer-letters", label: "Offer Letters", icon: FileSignature   },
   { href: "/holidays",      label: "Holiday Calendar", icon: Calendar      },
   { href: "/jobs",          label: "Job Listings",  icon: BriefcaseBusiness },
   { href: "/auto-teams",    label: "Auto Teams",    icon: UserPlus        },
   { href: "/internships",   label: "Internships",   icon: GraduationCap   },
   { href: "/settings",      label: "Settings",      icon: Settings        },
+];
+
+/* ── HR-only portal nav — what an HR Manager (without Admin) sees. lib/roles.ts
+   holds the matching route allowlist; keep the two in step. ── */
+export type NavItem = {
+  href: string; label: string; icon: typeof Users; group: string | null; badgeKey?: "pendingEmployees";
+};
+
+export const hrNav: NavItem[] = [
+  { href: "/hr",            label: "HR Home",          icon: LayoutDashboard,   group: null },
+  { href: "/employees",     label: "Employees",        icon: Users,             group: "People" },
+  { href: "/attendance",    label: "Attendance",       icon: Clock,             group: null },
+  { href: "/leave",         label: "Leave",            icon: CalendarOff,       group: null },
+  { href: "/approvals",     label: "Approvals",        icon: CheckSquare,       group: null },
+  { href: "/holidays",      label: "Holiday Calendar", icon: Calendar,          group: null },
+  { href: "/salary-slips",  label: "Salary Slips",     icon: Banknote,          group: "Payroll & Letters" },
+  { href: "/offer-letters", label: "Offer Letters",    icon: FileSignature,     group: null },
+  { href: "/ai-assistant",  label: "AI Assistant",     icon: Sparkles,          group: null },
+  { href: "/jobs",          label: "Job Listings",     icon: BriefcaseBusiness, group: "Hiring" },
+  { href: "/internships",   label: "Internships",      icon: GraduationCap,     group: null },
+  { href: "/expenses",      label: "Expense Claims",   icon: Wallet,            group: "Workplace" },
+  { href: "/devices",       label: "Assigned Devices", icon: Laptop,            group: null },
+  { href: "/complaints",    label: "Complaints",       icon: AlertCircle,       group: null },
+  { href: "/announcements", label: "Announcements",    icon: Megaphone,         group: null },
+  { href: "/settings",      label: "Settings",         icon: Settings,          group: "Account" },
 ];
 
 export function Sidebar() {

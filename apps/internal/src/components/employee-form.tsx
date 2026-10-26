@@ -2,6 +2,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { isAdminUser, isAdminGrantOnlyRoleName } from "@/lib/roles";
 
 // Premium dark ("ds") styling — same field/button idiom as /devices and /settings.
 const LABEL = "block text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3 mb-[7px]";
@@ -31,6 +33,10 @@ interface EmployeeFormProps {
 export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeFormProps) {
   const router = useRouter();
   const isEdit = !!employee;
+  // Only an Admin may grant Super Admin / Admin / HR Manager / Sales — the API refuses it
+  // otherwise (middleware/role-guard.ts), so an HR Manager is not offered them.
+  const { user } = useAuth();
+  const assignableRoles = isAdminUser(user) ? roles : roles.filter((r: any) => !isAdminGrantOnlyRoleName(r?.name));
   const [teams, setTeams] = useState<any[]>([]);
   const [form, setForm] = useState({
     name: employee?.name || "",
@@ -208,7 +214,7 @@ export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeForm
           <div>
             <span className={LABEL}>Roles</span>
             <div className="flex flex-wrap gap-2">
-              {roles.map((role: any) => {
+              {assignableRoles.map((role: any) => {
                 const active = form.roleIds.includes(role.id);
                 const isLast = active && form.roleIds.length === 1;
                 return (

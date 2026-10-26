@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { guardRoleAssignment, guardTargetUser } from "../middleware/role-guard";
 import { validate } from "../middleware/validate";
 import { auditLog } from "../middleware/audit-log";
 import { employeeValidators } from "@dashmani/shared";
@@ -38,21 +39,21 @@ router.get("/employees/:id/accounts", authenticate, requirePermission("employees
   } catch (err) { next(err); }
 });
 
-router.post("/employees", authenticate, requirePermission("employees", "create"), validate(employeeValidators.createEmployeeSchema), auditLog("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
+router.post("/employees", authenticate, requirePermission("employees", "create"), guardRoleAssignment, validate(employeeValidators.createEmployeeSchema), auditLog("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const employee = await employeeService.createEmployee(req.body);
     return success(res, employee, undefined, 201);
   } catch (err) { next(err); }
 });
 
-router.put("/employees/:id", authenticate, requirePermission("employees", "edit"), validate(employeeValidators.updateEmployeeSchema), auditLog("employees", "update"), async (req: Request, res: Response, next: NextFunction) => {
+router.put("/employees/:id", authenticate, requirePermission("employees", "edit"), guardTargetUser("id"), guardRoleAssignment, validate(employeeValidators.updateEmployeeSchema), auditLog("employees", "update"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const employee = await employeeService.updateEmployee(req.params.id, req.body);
     return success(res, employee);
   } catch (err) { next(err); }
 });
 
-router.delete("/employees/:id", authenticate, requirePermission("employees", "delete"), auditLog("employees", "delete"), async (req: Request, res: Response, next: NextFunction) => {
+router.delete("/employees/:id", authenticate, requirePermission("employees", "delete"), guardTargetUser("id"), auditLog("employees", "delete"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     await employeeService.softDeleteEmployee(req.params.id);
     return success(res, { message: "Employee deactivated" });

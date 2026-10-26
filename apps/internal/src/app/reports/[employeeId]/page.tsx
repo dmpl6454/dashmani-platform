@@ -5,6 +5,7 @@ import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays } 
 import { useAdminReports, useEmployeeReportStats } from "@/lib/hooks/use-reports";
 import { useEmployee } from "@/lib/hooks/use-employees";
 import { UserAvatar } from "@/components/user-avatar";
+import { InstagramInline } from "@/components/instagram-inline";
 import { DsRangeFilters, presetStart, todayISO, rangeLabel } from "../_range";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -269,21 +270,23 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
 
                 <div className="border-t border-ds-line py-1.5">
                   {(report.links ?? []).map((link: any, i: number) => (
-                    <div key={link.id ?? i} className="flex items-center gap-3 min-h-[40px] py-1.5 px-[22px] text-[12.5px] hover:bg-[color:var(--hx-0A1620)] transition-colors">
-                      <PlatformBadge platform={link.platform} />
-                      <a
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 min-w-0 overflow-hidden flex items-center gap-2 group/url"
-                        title={link.url}
-                      >
-                        {link.accountName && (
-                          <span className="font-semibold text-ds-t5 truncate min-w-0 max-w-[45%] sm:max-w-[200px] group-hover/url:text-ds-gold transition-colors">{link.accountName}</span>
-                        )}
-                        <span className="min-w-0 truncate text-ds-t3 group-hover/url:text-ds-gold group-hover/url:underline">{link.url}</span>
-                      </a>
-                    </div>
+                    <InstagramInline key={link.id ?? i} url={link.url} rowClassName="flex items-center gap-1 pr-[22px] min-w-0">
+                      <div className="flex items-center gap-3 min-h-[40px] py-1.5 px-[22px] text-[12.5px] hover:bg-[color:var(--hx-0A1620)] transition-colors">
+                        <PlatformBadge platform={link.platform} />
+                        <a
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 min-w-0 overflow-hidden flex items-center gap-2 group/url"
+                          title={link.url}
+                        >
+                          {link.accountName && (
+                            <span className="font-semibold text-ds-t5 truncate min-w-0 max-w-[45%] sm:max-w-[200px] group-hover/url:text-ds-gold transition-colors">{link.accountName}</span>
+                          )}
+                          <span className="min-w-0 truncate text-ds-t3 group-hover/url:text-ds-gold group-hover/url:underline">{link.url}</span>
+                        </a>
+                      </div>
+                    </InstagramInline>
                   ))}
                 </div>
               </div>

@@ -5,3 +5,4 @@ export { Badge, type BadgeProps } from "./components/badge";
 export { StatCard } from "./components/stat-card";
 export { cn } from "./lib/utils";
 export { ConfirmDialog } from "./components/confirm-dialog";
+export { InstagramEmbed, type InstagramEmbedProps } from "./components/instagram-embed";

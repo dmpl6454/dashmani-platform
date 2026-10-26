@@ -1,7 +1,7 @@
 import { prisma } from "@dashmani/db";
 import type { NotificationType } from "@dashmani/db";
 import { NOTIFICATION_AUDIENCE } from "./notification-routing";
-import { todayIST, istMidnight } from "@dashmani/shared";
+import { todayIST, istMidnight, HR_MANAGER_ROLE_NAME } from "@dashmani/shared";
 
 /**
  * Route a notification to the correct audience(s) based on type.
@@ -27,6 +27,18 @@ export async function dispatchNotification(opts: {
       select: { id: true },
     });
     admins.forEach((a) => userIds.add(a.id));
+  }
+
+  if (audiences.includes("HR")) {
+    const hr = await prisma.user.findMany({
+      where: {
+        status: "ACTIVE",
+        deletedAt: null,
+        roles: { some: { role: { name: HR_MANAGER_ROLE_NAME } } },
+      },
+      select: { id: true },
+    });
+    hr.forEach((u) => userIds.add(u.id));
   }
 
   if (audiences.includes("RECIPIENT") && opts.recipientUserId) {

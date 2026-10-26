@@ -8,6 +8,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { DsSidebar } from "@/components/ds/ds-sidebar";
 import { DsTopNav } from "@/components/ds/ds-topnav";
 import { isDsRoute } from "@/lib/ds-routes";
+import { canAccessPath, homePathFor } from "@/lib/roles";
 import { BoxesLoader } from "@/components/boxes-loader";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
@@ -55,6 +56,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
   }, [isLoading, user, isPublicPage, router]);
 
+  // The HR-only portal (an HR Manager without Admin — lib/roles.ts) serves only HR
+  // pages; anything else, typed or bookmarked, goes to the HR home. Navigation only:
+  // the API refuses those routes to that role regardless.
+  const pathAllowed = isPublicPage || !user || canAccessPath(user, pathname);
+  useEffect(() => {
+    if (!isLoading && user && !pathAllowed) router.replace(homePathFor(user));
+  }, [isLoading, user, pathAllowed, router]);
+
   /* Global Ctrl+K / Cmd+K handler — not on full-bleed routes, which render no
      CommandPalette; without this the shortcut would toggle state nothing consumes
      and swallow the browser's own Cmd+K. */
@@ -79,7 +88,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // navigation is client-side, so the cache survives a user switch. lib/swr-cache.ts.
     void clearSwrCache();
     setUser(session.user);
-    router.push("/dashboard");
+    router.push(homePathFor(session.user));
   }, [router]);
 
   const login = useCallback(async (email: string, password: string, rememberMe = false) => {
@@ -118,7 +127,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     );
   }
 
-  if (!user && !isPublicPage) {
+  if ((!user && !isPublicPage) || !pathAllowed) {
     // useEffect above handles the redirect — just show spinner while it fires.
     return (
       <html lang="en" suppressHydrationWarning>

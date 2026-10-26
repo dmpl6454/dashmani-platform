@@ -19,7 +19,9 @@ function todayDate(): Date {
 export const employeeWhere = {
   status: "ACTIVE" as const,
   deletedAt: null,
-  roles: { some: { role: { name: { notIn: ["Super Admin", "Admin"] } } } },
+  // HR Manager is a management role like Admin: someone whose ONLY role it is
+  // is not counted as an employee (with an Employee role as well, they are).
+  roles: { some: { role: { name: { notIn: ["Super Admin", "Admin", "HR Manager"] } } } },
 };
 
 export async function getOverviewStats(linkStartDate?: string, linkEndDate?: string) {

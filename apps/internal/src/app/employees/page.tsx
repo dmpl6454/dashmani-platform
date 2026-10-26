@@ -5,6 +5,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { Users, CheckSquare, UserPlus, Clock, Search, BarChart3, Plus } from "lucide-react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { useAuth } from "@/lib/auth";
+import { isAdminUser } from "@/lib/roles";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { API_BASE } from "@/lib/api";
 import { toTitleCase } from "@dashmani/shared";
@@ -19,7 +21,7 @@ const STATUS: Record<string, { label: string; color: string }> = {
 };
 // Role chip colours (mockup palette, mapped onto the portal's real roles).
 const ROLE_COLOR: Record<string, string> = {
-  "Super Admin": "var(--hx-E9BD62)", Admin: "var(--hx-E9BD62)", "Team Lead": "var(--hx-9B7EDE)",
+  "Super Admin": "var(--hx-E9BD62)", Admin: "var(--hx-E9BD62)", "HR Manager": "var(--hx-E9BD62)", "Team Lead": "var(--hx-9B7EDE)",
   "Senior Employee": "var(--hx-00D7A0)", Employee: "var(--hx-238BFF)", HR: "var(--hx-FB7185)", Designer: "var(--hx-EC42B7)", Editor: "var(--hx-00D7A0)",
 };
 const ROLE_FALLBACK = ["var(--hx-238BFF)", "var(--hx-00D7A0)", "var(--hx-9B7EDE)", "var(--hx-EC42B7)", "var(--hx-FB7185)"];
@@ -34,6 +36,7 @@ const GRID = "grid [grid-template-columns:minmax(200px,1.6fr)_minmax(180px,1.4fr
 
 export default function EmployeesPage() {
   usePageTitle("Employees");
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusKey>("ALL");
   const [viewTab, setViewTab] = useState<ViewTab>("active");
@@ -75,9 +78,11 @@ export default function EmployeesPage() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Link href="/employees/add-admin" className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-line4 hover:text-ds-text">
-            <Plus className="h-3.5 w-3.5" /> Add Admin
-          </Link>
+          {isAdminUser(user) && (
+            <Link href="/employees/add-admin" className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-line4 hover:text-ds-text">
+              <Plus className="h-3.5 w-3.5" /> Add Admin
+            </Link>
+          )}
           <Link href="/employees/new" className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-[6px] border border-ds-gold bg-ds-gold/[.14] text-ds-gold text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-ds-gold/[.22] hover:text-ds-gold2">
             <Plus className="h-3.5 w-3.5" /> Add Employee
           </Link>

@@ -25,6 +25,10 @@
 const INSTAGRAM_HOST = "instagram.com";
 
 export function extractInstagramShortcode(rawUrl: string | null | undefined): string | null {
+  return parseInstagramPost(rawUrl)?.code ?? null;
+}
+
+function parseInstagramPost(rawUrl: string | null | undefined): { kind: string; code: string } | null {
   if (!rawUrl) return null;
 
   let url: URL;
@@ -43,11 +47,11 @@ export function extractInstagramShortcode(rawUrl: string | null | undefined): st
   // /reel/CODE, /reels/CODE, /p/CODE, /tv/CODE — also matches the
   // /<username>/reel/CODE form because the match isn't anchored to the start.
   // Pull the raw segment first, then validate its shape.
-  const m = url.pathname.match(/\/(?:reel|reels|p|tv)\/([^/?#]+)/i);
-  if (!m || !m[1]) return null;
+  const m = url.pathname.match(/\/(reel|reels|p|tv)\/([^/?#]+)/i);
+  if (!m || !m[2]) return null;
 
-  const code = m[1];
-  return isValidShortcode(code) ? code : null;
+  const code = m[2];
+  return isValidShortcode(code) ? { kind: m[1].toLowerCase(), code } : null;
 }
 
 function isValidShortcode(code: string): boolean {
@@ -55,4 +59,20 @@ function isValidShortcode(code: string): boolean {
   // ~11 chars but length varies, so we validate the charset and a sane length
   // bound rather than a fixed length. CASE PRESERVED by the caller.
   return /^[A-Za-z0-9_-]{1,30}$/.test(code);
+}
+
+/**
+ * The framable player page for an Instagram post / reel URL, or null when the URL is not
+ * one. Instagram's `/embed/` pages are served without X-Frame-Options, so an <iframe>
+ * pointed here plays the reel in place (the post page itself refuses to be framed).
+ *
+ * Reels keep the `/reel/` path (`/reels/` folds into it), posts `/p/`, IGTV `/tv/`; the
+ * shortcode is parsed exactly as extractInstagramShortcode does, so it is validated and
+ * case-preserved, and the `?igsh=` share token is gone.
+ */
+export function instagramEmbedUrl(rawUrl: string | null | undefined): string | null {
+  const post = parseInstagramPost(rawUrl);
+  if (!post) return null;
+  const path = post.kind === "reel" || post.kind === "reels" ? "reel" : post.kind;
+  return `https://www.instagram.com/${path}/${post.code}/embed/`;
 }

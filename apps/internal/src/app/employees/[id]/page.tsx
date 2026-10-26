@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { PlatformIcon } from "@/lib/platform-icon";
 import { useAuth } from "@/lib/auth";
+import { isHrOnly, isPrivilegedRoleName } from "@/lib/roles";
 import { useRouter } from "next/navigation";
 import { formatStatus } from "@dashmani/shared";
 import { BoxesLoader } from "@/components/boxes-loader";
@@ -231,6 +232,11 @@ export default function EmployeeDetailPage() {
 
   const callerRoles = (currentUser?.roles ?? []).map((r) => r.toLowerCase());
   const isAdminOrSuperAdmin = callerRoles.includes("super admin") || callerRoles.includes("admin");
+  // An HR Manager (without Admin) may not change an Admin, Super Admin or HR Manager
+  // account — the API refuses it (middleware/role-guard.ts), so the form is not offered.
+  const hrOnly = isHrOnly(currentUser);
+  const targetProtected = !isAdminOrSuperAdmin
+    && (employee?.roles ?? []).some((r: any) => isPrivilegedRoleName(r?.name ?? r?.role?.name));
 
   async function handleDeleteEmployee() {
     if (!confirm(`Are you sure you want to delete ${employee.name}? This action cannot be undone.`)) return;
@@ -317,12 +323,14 @@ export default function EmployeeDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 sm:shrink-0">
+          {!hrOnly && (
           <Link
-            href={`/employees/${id}/performance`}
-            className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-[6px] border border-ds-gold bg-ds-gold/[.14] text-ds-gold text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-ds-gold/[.22] hover:text-ds-gold2"
-          >
-            <BarChart3 className="h-3.5 w-3.5" /> Performance
-          </Link>
+              href={`/employees/${id}/performance`}
+              className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-[6px] border border-ds-gold bg-ds-gold/[.14] text-ds-gold text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-ds-gold/[.22] hover:text-ds-gold2"
+            >
+              <BarChart3 className="h-3.5 w-3.5" /> Performance
+            </Link>
+          )}
           {isAdminOrSuperAdmin && (
             <button
               onClick={handleDeleteEmployee}
@@ -389,7 +397,13 @@ export default function EmployeeDetailPage() {
         <div className="space-y-5">
           {/* Employee Form (edit basic info) */}
           <div className="max-w-2xl">
-            <EmployeeForm employee={employee} roles={roles} profile={profile} onSaved={() => { mutateEmployee(); mutateProfile(); showSuccess("Employee updated."); }} />
+            {targetProtected ? (
+              <div className={`${CARD} p-5 text-[13px] text-ds-t2`}>
+                This is an Admin, Super Admin or HR Manager account. Only an Admin can edit it.
+              </div>
+            ) : (
+              <EmployeeForm employee={employee} roles={roles} profile={profile} onSaved={() => { mutateEmployee(); mutateProfile(); showSuccess("Employee updated."); }} />
+            )}
           </div>
 
           {/* Role Management — admin/super-admin only */}

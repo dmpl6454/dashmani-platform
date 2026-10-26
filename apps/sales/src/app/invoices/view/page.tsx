@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { mutate as mutateGlobal } from "swr";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -39,6 +39,9 @@ function InvoiceView() {
   const [creditPaise, setCreditPaise] = useState(0);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   const [taxQuestion, setTaxQuestion] = useState<string | null>(null);
+  // Same route, new ?id= (e.g. after "Convert to tax invoice"): the component is reused, so an
+  // open dialog would carry over onto the other invoice. Close everything when the id changes.
+  useEffect(() => { setModal(null); setTaxQuestion(null); }, [id]);
   if (!id) return <Empty title="No invoice selected." action={<Link href="/invoices" className="btn">Back to invoices</Link>} />;
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading || !inv) return <Loading />;
@@ -83,6 +86,7 @@ function InvoiceView() {
     try {
       const res = await apiFetch<{ id: string }>(`/sales/invoices/${id}/convert`, { method: "POST" });
       await refresh();
+      setModal(null);
       router.push(`/invoices/view?id=${res.data.id}`);
     } catch (err) { fail(err); }
   }

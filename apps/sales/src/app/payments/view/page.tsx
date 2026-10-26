@@ -49,7 +49,7 @@ function PaymentView() {
         {live && p.unallocatedPaise > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("refund")}>Refund</button>}
         {live && liveRefunds.length === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("void")}>Void receipt</button>}
       </PageHead>
-      {!live && <div className="card border-danger p-3 text-sm mb-4">Voided{p.voidedAt ? ` on ${fmtDate(p.voidedAt.slice(0, 10))}` : ""}{p.voidReason ? ` — ${p.voidReason}` : ""}. The number stays on record; this receipt no longer pays anything.</div>}
+      {!live && <div className="card border-danger p-3 text-sm mb-4">Voided{p.voidedAt ? ` on ${fmtDate(p.voidedAt)}` : ""}{p.voidReason ? ` — ${p.voidReason}` : ""}. The number stays on record; this receipt no longer pays anything.</div>}
       {live && liveRefunds.length > 0 && <p className="text-xs text-ink-3 mb-4">To void this receipt, cancel its refunds first.</p>}
 
       <div className="grid lg:grid-cols-3 gap-4 mb-6">

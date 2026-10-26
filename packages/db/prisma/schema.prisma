@@ -478,6 +478,7 @@ model Client {
   salesInvoices    SalesInvoice[]
   salesPayments    SalesPayment[]
   salesCreditNotes SalesCreditNote[]
+  salesRefunds     SalesRefund[]
 
   @@map("clients")
 }
@@ -2940,12 +2941,17 @@ model SalesInvoice {
   paidAt            DateTime? @map("paid_at")
   cancelledAt       DateTime? @map("cancelled_at")
   cancelReason      String?   @map("cancel_reason") @db.VarChar(300)
+  /// A tax invoice made from a proforma: the proforma it replaces. Issuing moves the proforma's
+  /// payments onto this invoice and cancels the proforma.
+  convertedFromId   String?   @map("converted_from_id")
   createdById       String    @map("created_by_id")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
   client      Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   order       SalesOrder?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  convertedFrom SalesInvoice?          @relation("ProformaConversion", fields: [convertedFromId], references: [id], onDelete: SetNull)
+  conversions   SalesInvoice[]         @relation("ProformaConversion")
   items       SalesInvoiceItem[]
   allocations SalesPaymentAllocation[]
   creditNotes SalesCreditNote[]
@@ -2953,6 +2959,7 @@ model SalesInvoice {
   @@index([clientId])
   @@index([status, dueDate])
   @@index([issueDate])
+  @@index([convertedFromId])
   @@map("sales_invoices")
 }
 
@@ -2989,13 +2996,46 @@ model SalesPayment {
   bankName     String?  @map("bank_name") @db.VarChar(120)
   notes        String?  @db.Text
   recordedById String   @map("recorded_by_id")
+  /// recorded | voided — a voided receipt keeps its number; its allocations stop counting.
+  status       String    @default("recorded") @db.VarChar(16)
+  voidedAt     DateTime? @map("voided_at")
+  voidReason   String?   @map("void_reason") @db.VarChar(300)
+  voidedById   String?   @map("voided_by_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
   client      Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   allocations SalesPaymentAllocation[]
+  refunds     SalesRefund[]
 
   @@index([clientId, paidOn])
   @@map("sales_payments")
+}
+
+/// Money paid back to a client out of a receipt's unallocated amount (an advance not used, or the
+/// excess a credit note released from a paid invoice). Numbered RF/26-27/0001 per financial year.
+model SalesRefund {
+  id          String    @id @default(uuid())
+  number      String    @unique @db.VarChar(32)
+  paymentId   String    @map("payment_id")
+  clientId    String    @map("client_id")
+  amountPaise Int       @map("amount_paise")
+  /// bank_transfer | upi | cheque | cash | razorpay | other
+  mode        String    @db.VarChar(16)
+  reference   String?   @db.VarChar(120)
+  refundedOn  DateTime  @map("refunded_on") @db.Date
+  notes       String?   @db.Text
+  /// issued | cancelled
+  status      String    @default("issued") @db.VarChar(16)
+  cancelledAt DateTime? @map("cancelled_at")
+  createdById String    @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  payment SalesPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  client  Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@index([clientId, refundedOn])
+  @@map("sales_refunds")
 }
 
 model SalesPaymentAllocation {

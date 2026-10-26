@@ -73,12 +73,14 @@ export async function getInvoice(id: string) {
       client: clientBrief,
       items: { orderBy: { position: "asc" } },
       order: { select: { id: true, number: true, title: true } },
-      allocations: { include: { payment: { select: { id: true, number: true, mode: true, reference: true, paidOn: true, amountPaise: true, tdsPaise: true } } }, orderBy: { createdAt: "asc" } },
+      allocations: { include: { payment: { select: { id: true, number: true, mode: true, reference: true, paidOn: true, amountPaise: true, tdsPaise: true, status: true } } }, orderBy: { createdAt: "asc" } },
       creditNotes: { orderBy: { createdAt: "asc" } },
+      convertedFrom: { select: { id: true, number: true } },
+      conversions: { select: { id: true, number: true, status: true }, orderBy: { createdAt: "asc" } },
     },
   });
   if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
-  const { client, items, order, allocations, creditNotes, ...row } = inv;
+  const { client, items, order, allocations, creditNotes, convertedFrom, conversions, ...row } = inv;
   return {
     ...deriveInvoice(row, todayIST()),
     sellerSnapshot: row.sellerSnapshot,
@@ -92,6 +94,8 @@ export async function getInvoice(id: string) {
     placeOfSupplyCode: row.placeOfSupplyCode,
     client,
     order,
+    convertedFrom,
+    conversions,
     items,
     allocations: allocations.map((a) => ({ ...a, payment: { ...a.payment, paidOn: dateToDay(a.payment.paidOn) } })),
     creditNotes: creditNotes.map((c) => ({ ...c, issueDate: dateToDay(c.issueDate) })),
@@ -122,7 +126,7 @@ function invoiceTotals(lines: Array<{ quantity: number; unitPricePaise: number; 
   };
 }
 
-export async function createInvoice(input: InvoiceUpsertInput, actorId: string) {
+export async function createInvoice(input: InvoiceUpsertInput, actorId: string, link: { convertedFromId?: string } = {}) {
   const tax = await resolveDocumentTax(input.clientId, input);
   const lines = invoiceLines(input.items, tax.seller.defaultSac);
   const totals = invoiceTotals(lines, input.discountPaise, tax);
@@ -141,6 +145,7 @@ export async function createInvoice(input: InvoiceUpsertInput, actorId: string) 
       notes: input.notes ?? null,
       terms: input.terms ?? tax.seller.terms ?? null,
       internalNotes: input.internalNotes ?? null,
+      convertedFromId: link.convertedFromId ?? null,
       createdById: actorId,
       items: { create: lines },
     },
@@ -204,7 +209,8 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
   const taken = new Set(onInvoices.map((r) => r.orderItemId));
   const remaining = billable.filter((it) => !taken.has(it.id));
   if (!remaining.length) {
-    throw new AppError(409, "ORDER_ALREADY_INVOICED", `Every line of ${order.number} is already on ${onInvoices[0]?.invoice.number ?? "a draft invoice"} — open that invoice instead`);
+    const on = onInvoices[0]?.invoice.number ?? null;
+    throw new AppError(409, "ORDER_ALREADY_INVOICED", `Every line of ${order.number} is already on ${on ?? "a draft invoice"} — ${on?.startsWith("PI/") ? "convert that proforma to a tax invoice instead" : "open that invoice instead"}`);
   }
   return createInvoice(
     {
@@ -333,13 +339,13 @@ export async function issueInvoice(
       await tx.$queryRaw`SELECT id FROM sales_orders WHERE id = ${inv.orderId} FOR UPDATE`;
       const lineIds = inv.items.map((it) => it.orderItemId).filter((x): x is string => !!x);
       const clash = lineIds.length
-        ? await tx.salesInvoiceItem.findFirst({ where: { orderItemId: { in: lineIds }, invoiceId: { not: id }, invoice: { status: { in: ["issued", "paid"] } } }, select: { invoice: { select: { number: true } } } })
+        ? await tx.salesInvoiceItem.findFirst({ where: { orderItemId: { in: lineIds }, invoiceId: { not: id }, invoice: { kind: "tax_invoice", status: { in: ["issued", "paid"] } } }, select: { invoice: { select: { number: true } } } })
         : null;
       if (clash) throw new AppError(409, "ORDER_ALREADY_INVOICED", `Lines on this draft are already billed on ${clash.invoice.number} — delete this draft or remove those lines`);
     }
     if (inv.campaignBookingId) {
       await tx.$queryRaw`SELECT id FROM campaign_bookings WHERE id = ${inv.campaignBookingId} FOR UPDATE`;
-      const clash = await tx.salesInvoice.findFirst({ where: { campaignBookingId: inv.campaignBookingId, id: { not: id }, status: { in: ["issued", "paid"] } }, select: { number: true } });
+      const clash = await tx.salesInvoice.findFirst({ where: { campaignBookingId: inv.campaignBookingId, id: { not: id }, kind: "tax_invoice", status: { in: ["issued", "paid"] } }, select: { number: true } });
       if (clash) throw new AppError(409, "BOOKING_ALREADY_INVOICED", `This booking is already billed on ${clash.number} — delete this draft`);
     }
 
@@ -382,6 +388,33 @@ export async function issueInvoice(
     });
     const taxNote = !taxChanged ? "" : recompute ? ` · GST updated to ${TAX_MODE_LABELS[expectedMode]}` : ` · GST kept as drafted (${TAX_MODE_LABELS[storedMode]})`;
     await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "issued", fromStatus: "draft", toStatus: "issued", note: `${number}${taxNote}` });
+
+    // A tax invoice converted from a proforma takes over the proforma's payments; the proforma is
+    // then cancelled ("Converted to …"), so the money is counted once, on the real bill. Anything
+    // the payments exceed this invoice by goes back to the receipts as unapplied credit.
+    if (inv.convertedFromId) {
+      await lockInvoices(tx, [inv.convertedFromId]);
+      const pf = await tx.salesInvoice.findUnique({ where: { id: inv.convertedFromId }, select: { id: true, number: true, kind: true, status: true } });
+      if (pf && pf.kind === "proforma" && pf.status !== "cancelled") {
+        const moving = await tx.salesPaymentAllocation.findMany({ where: { invoiceId: pf.id } });
+        for (const a of moving) {
+          const already = await tx.salesPaymentAllocation.findUnique({ where: { paymentId_invoiceId: { paymentId: a.paymentId, invoiceId: id } } });
+          if (already) {
+            await tx.salesPaymentAllocation.update({ where: { id: already.id }, data: { amountPaise: { increment: a.amountPaise }, tdsPaise: { increment: a.tdsPaise } } });
+            await tx.salesPaymentAllocation.delete({ where: { id: a.id } });
+          } else {
+            await tx.salesPaymentAllocation.update({ where: { id: a.id }, data: { invoiceId: id } });
+          }
+        }
+        await releaseExcess(tx, id, actorId);
+        await recomputeSettlement(tx, id);
+        await tx.salesInvoice.update({
+          where: { id: pf.id },
+          data: { status: "cancelled", cancelledAt: new Date(), cancelReason: `Converted to tax invoice ${number}`, paidPaise: 0, tdsPaise: 0, creditedPaise: 0, paidAt: null },
+        });
+        await logSalesEvent(tx, { entityType: "invoice", entityId: pf.id, actorId, action: "converted", fromStatus: pf.status, toStatus: "cancelled", note: `Converted to ${number}${moving.length ? ` · ${moving.length} payment(s) moved` : ""}` });
+      }
+    }
   });
   return getInvoice(id);
 }
@@ -427,7 +460,8 @@ export async function markInvoiceSent(id: string, actorId: string) {
  */
 export async function recomputeSettlement(tx: Tx, invoiceId: string): Promise<void> {
   const [alloc, credits, inv] = await Promise.all([
-    tx.salesPaymentAllocation.aggregate({ where: { invoiceId }, _sum: { amountPaise: true, tdsPaise: true } }),
+    // A voided receipt's allocations stay on record but no longer settle anything.
+    tx.salesPaymentAllocation.aggregate({ where: { invoiceId, payment: { status: "recorded" } }, _sum: { amountPaise: true, tdsPaise: true } }),
     tx.salesCreditNote.aggregate({ where: { invoiceId, status: "issued" }, _sum: { totalPaise: true } }),
     tx.salesInvoice.findUnique({ where: { id: invoiceId }, select: { status: true, totalPaise: true, paidAt: true } }),
   ]);
@@ -446,4 +480,70 @@ export async function recomputeSettlement(tx: Tx, invoiceId: string): Promise<vo
       paidAt: settled ? (inv.paidAt ?? new Date()) : null,
     },
   });
+}
+
+const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * If an invoice is settled beyond its total (a credit note after it was paid, or a converted
+ * proforma's payments exceeding the tax invoice), give the excess back to the receipts it came
+ * from — newest allocation first, cash before TDS — so it shows as the client's unapplied credit
+ * (apply it to another invoice, or refund it). Call under the invoice lock, then recomputeSettlement.
+ */
+export async function releaseExcess(tx: Tx, invoiceId: string, actorId: string): Promise<number> {
+  const inv = await tx.salesInvoice.findUnique({ where: { id: invoiceId }, select: { totalPaise: true, number: true } });
+  if (!inv) return 0;
+  const [allocs, credits] = await Promise.all([
+    tx.salesPaymentAllocation.findMany({ where: { invoiceId, payment: { status: "recorded" } }, orderBy: { createdAt: "desc" }, include: { payment: { select: { id: true, number: true } } } }),
+    tx.salesCreditNote.aggregate({ where: { invoiceId, status: "issued" }, _sum: { totalPaise: true } }),
+  ]);
+  let excess = allocs.reduce((s, a) => s + a.amountPaise + a.tdsPaise, 0) + (credits._sum.totalPaise ?? 0) - inv.totalPaise;
+  let released = 0;
+  for (const a of allocs) {
+    if (excess <= 0) break;
+    const cash = Math.min(a.amountPaise, excess);
+    const tds = Math.min(a.tdsPaise, excess - cash);
+    if (cash + tds === 0) continue;
+    excess -= cash + tds;
+    released += cash + tds;
+    if (a.amountPaise === cash && a.tdsPaise === tds) await tx.salesPaymentAllocation.delete({ where: { id: a.id } });
+    else await tx.salesPaymentAllocation.update({ where: { id: a.id }, data: { amountPaise: { decrement: cash }, tdsPaise: { decrement: tds } } });
+    await logSalesEvent(tx, { entityType: "payment", entityId: a.payment.id, actorId, action: "allocation_released", note: `${rupees(cash + tds)} back from ${inv.number ?? "an invoice"}` });
+  }
+  if (released) await logSalesEvent(tx, { entityType: "invoice", entityId: invoiceId, actorId, action: "excess_released", note: `${rupees(released)} returned to the receipts as unapplied credit` });
+  return released;
+}
+
+/**
+ * Turn an issued proforma into a draft TAX invoice with the same lines, client and GST. Issuing
+ * that draft takes the next tax-invoice serial, moves the proforma's payments onto it and cancels
+ * the proforma ("Converted to …"). One live conversion per proforma.
+ */
+export async function convertProforma(id: string, actorId: string) {
+  const pf = await prisma.salesInvoice.findUnique({ where: { id }, include: { items: { orderBy: { position: "asc" } } } });
+  if (!pf) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+  if (pf.kind !== "proforma") throw new AppError(409, "NOT_PROFORMA", "Only a proforma can be converted to a tax invoice");
+  if (pf.status !== "issued" && pf.status !== "paid") throw new AppError(409, "BAD_TRANSITION", `A ${pf.status} proforma cannot be converted`);
+  const existing = await prisma.salesInvoice.findFirst({ where: { convertedFromId: id, status: { not: "cancelled" } }, select: { id: true, number: true } });
+  if (existing) throw new AppError(409, "ALREADY_CONVERTED", `This proforma is already on ${existing.number ?? "a draft tax invoice"} — open that invoice instead`);
+  const draft = await createInvoice(
+    {
+      clientId: pf.clientId,
+      kind: "tax_invoice",
+      orderId: pf.orderId,
+      campaignBookingId: pf.campaignBookingId,
+      placeOfSupplyCode: pf.placeOfSupplyCode,
+      taxMode: pf.taxMode as TaxMode,
+      gstRateBp: pf.gstRateBp,
+      discountPaise: pf.discountPaise,
+      notes: `Against proforma ${pf.number}${pf.notes ? ` — ${pf.notes}` : ""}`,
+      terms: pf.terms,
+      internalNotes: pf.internalNotes,
+      items: pf.items.map((it) => ({ description: it.description, sac: it.sac, quantity: it.quantity, unitPricePaise: it.unitPricePaise, discountPaise: it.discountPaise, orderItemId: it.orderItemId })),
+    },
+    actorId,
+    { convertedFromId: pf.id },
+  );
+  await logSalesEvent(prisma, { entityType: "invoice", entityId: pf.id, actorId, action: "conversion_drafted", note: "Draft tax invoice created" });
+  return draft;
 }

@@ -232,6 +232,19 @@ export const paymentAllocateSchema = z
   .refine((p) => new Set(p.allocations.map((a) => a.invoiceId)).size === p.allocations.length, { message: "List each invoice once", path: ["allocations"] });
 export type PaymentAllocateInput = z.infer<typeof paymentAllocateSchema>;
 
+/** Void a receipt recorded by mistake (a bounced cheque, a wrong amount): it keeps its number; its allocations stop counting. */
+export const paymentVoidSchema = z.object({ reason: safeString.pipe(z.string().min(3).max(300)) });
+
+/** Money paid back to the client out of a receipt's unallocated cash. */
+export const refundCreateSchema = z.object({
+  amountPaise: paise.refine((v) => v > 0, "Enter the amount refunded"),
+  mode: z.enum(PAYMENT_MODES),
+  reference: optionalText(120),
+  refundedOn: day,
+  notes: optionalText(2000),
+});
+export type RefundCreateInput = z.infer<typeof refundCreateSchema>;
+
 export const creditNoteCreateSchema = z.object({
   invoiceId: z.string().uuid(),
   reason: safeString.pipe(z.string().min(3).max(300)),

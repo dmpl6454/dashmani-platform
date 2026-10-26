@@ -29,7 +29,7 @@ export function istMidnight(day: string): Date {
   return new Date(Date.parse(`${day}T00:00:00.000Z`) - IST_OFFSET_MS);
 }
 
-export type NumberKind = "invoice" | "proforma" | "quote" | "order" | "credit_note" | "receipt";
+export type NumberKind = "invoice" | "proforma" | "quote" | "order" | "credit_note" | "receipt" | "refund";
 
 /** GST documents: their numbers must stay within 16 characters (CGST Rules, rule 46(b)). */
 const GST_NUMBERED: ReadonlySet<NumberKind> = new Set(["invoice", "credit_note"]);

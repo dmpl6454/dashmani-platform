@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { mutate as mutateGlobal } from "swr";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -31,7 +31,7 @@ function InvoiceView() {
   const router = useRouter();
   const { data: inv, error, isLoading, mutate } = useInvoice(id);
   const { data: events, mutate: mutateEvents } = useEvents("invoice", id);
-  const [modal, setModal] = useState<null | "issue" | "cancel" | "credit" | "delete" | "apply">(null);
+  const [modal, setModal] = useState<null | "issue" | "cancel" | "credit" | "delete" | "apply" | "convert">(null);
   const { data: receipts, mutate: mutateReceipts } = useClientReceipts(inv?.clientId);
   const [issueDate, setIssueDate] = useState(todayIST());
   const [dueDate, setDueDate] = useState("");
@@ -39,6 +39,9 @@ function InvoiceView() {
   const [creditPaise, setCreditPaise] = useState(0);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   const [taxQuestion, setTaxQuestion] = useState<string | null>(null);
+  // Same route, new ?id= (e.g. after "Convert to tax invoice"): the component is reused, so an
+  // open dialog would carry over onto the other invoice. Close everything when the id changes.
+  useEffect(() => { setModal(null); setTaxQuestion(null); }, [id]);
   if (!id) return <Empty title="No invoice selected." action={<Link href="/invoices" className="btn">Back to invoices</Link>} />;
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading || !inv) return <Loading />;
@@ -79,12 +82,25 @@ function InvoiceView() {
       setToast({ message: `Applied ${p.data.number} to this invoice.`, tone: "ok" });
     } catch (err) { fail(err); }
   }
+  async function convert() {
+    try {
+      const res = await apiFetch<{ id: string }>(`/sales/invoices/${id}/convert`, { method: "POST" });
+      await refresh();
+      setModal(null);
+      router.push(`/invoices/view?id=${res.data.id}`);
+    } catch (err) { fail(err); }
+  }
+  async function creditNotePdf(cnId: string, number: string) {
+    try { const { blob, filename } = await apiFetchBlob(`/sales/credit-notes/${cnId}/pdf`); downloadBlob(blob, filename ?? `${number}.pdf`); } catch (err) { fail(err); }
+  }
   async function markSent() {
     try { await apiFetch(`/sales/invoices/${id}/sent`, { method: "POST" }); await refresh(); setToast({ message: "Marked as sent.", tone: "ok" }); } catch (err) { fail(err); }
   }
   const ds = inv.derivedStatus;
   // Receipts of this client with money not yet applied to any invoice (advances, part-used payments).
   const advances = (receipts ?? []).map(unallocatedOf).filter((r) => r.amountPaise + r.tdsPaise > 0);
+  // A proforma converts once; the tax invoice made from it (draft or issued) is its live conversion.
+  const liveConversion = inv.conversions?.find((c) => c.status !== "cancelled") ?? null;
   const open = ds === "issued" || ds === "partially_paid" || ds === "overdue";
   const pct = (bp: number) => `${bp / 100}%`;
   return (
@@ -96,11 +112,14 @@ function InvoiceView() {
         {open && !inv.sentAt && <button type="button" className="btn btn-ghost" onClick={markSent}>Mark sent</button>}
         {open && <Link href={`/payments/record?clientId=${inv.clientId}&invoiceId=${inv.id}`} className="btn">Record payment</Link>}
         {open && advances.length > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("apply")}>Apply a receipt</button>}
+        {inv.kind === "proforma" && (open || ds === "paid") && !liveConversion && <button type="button" className="btn" onClick={() => setModal("convert")}>Convert to tax invoice</button>}
         {(open || ds === "paid") && inv.kind === "tax_invoice" && <button type="button" className="btn btn-ghost" onClick={() => setModal("credit")}>Credit note</button>}
         {open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("cancel")}>Cancel</button>}
         {ds === "draft" && <button type="button" className="btn btn-ghost" onClick={() => setModal("delete")}>Delete draft</button>}
       </PageHead>
       {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; nothing can be edited after that.</div>}
+      {inv.convertedFrom && <div className="card p-3 text-sm mb-4">Made from proforma <Link href={`/invoices/view?id=${inv.convertedFrom.id}`} className="font-mono hover:text-indigo-light">{inv.convertedFrom.number}</Link>. Issuing it moves the proforma&apos;s payments onto this invoice and retires the proforma.</div>}
+      {liveConversion && <div className="card p-3 text-sm mb-4">Converted to <Link href={`/invoices/view?id=${liveConversion.id}`} className="font-mono hover:text-indigo-light">{liveConversion.number ?? "a draft tax invoice"}</Link>{liveConversion.number ? "" : " — issue it to move this proforma's payments across"}.</div>}
       {ds === "cancelled" && <div className="card border-danger p-3 text-sm mb-4">Cancelled{inv.cancelReason ? ` — ${inv.cancelReason}` : ""}. The number is kept on record and never reused.</div>}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 grid gap-4">
@@ -138,8 +157,8 @@ function InvoiceView() {
             <section className="card p-4 text-sm">
               <h2 className="font-bold mb-2">Settlement</h2>
               <ul className="divide-y divide-rule">
-                {inv.allocations.map((a) => <li key={a.id} className="py-2 flex flex-wrap justify-between gap-2"><span><span className="font-mono">{a.payment.number}</span> · {titleCase(a.payment.mode)}{a.payment.reference ? ` · ${a.payment.reference}` : ""} · {fmtDate(a.payment.paidOn)}</span><span><Money paise={a.amountPaise} />{a.tdsPaise ? <span className="text-ink-3"> + TDS <Money paise={a.tdsPaise} /></span> : null}</span></li>)}
-                {inv.creditNotes.map((c) => <li key={c.id} className="py-2 flex flex-wrap justify-between gap-2"><span><span className="font-mono">{c.number}</span> · {c.reason} · {fmtDate(c.issueDate)} <StatusPill status={c.status} /></span><span>− <Money paise={c.totalPaise} /></span></li>)}
+                {inv.allocations.map((a) => <li key={a.id} className={`py-2 flex flex-wrap justify-between gap-2 ${a.payment.status === "voided" ? "line-through text-ink-3" : ""}`}><span><Link href={`/payments/view?id=${a.payment.id}`} className="font-mono hover:text-indigo-light">{a.payment.number}</Link>{a.payment.status === "voided" ? " (voided)" : ""} · {titleCase(a.payment.mode)}{a.payment.reference ? ` · ${a.payment.reference}` : ""} · {fmtDate(a.payment.paidOn)}</span><span><Money paise={a.amountPaise} />{a.tdsPaise ? <span className="text-ink-3"> + TDS <Money paise={a.tdsPaise} /></span> : null}</span></li>)}
+                {inv.creditNotes.map((c) => <li key={c.id} className="py-2 flex flex-wrap justify-between gap-2"><span><span className="font-mono">{c.number}</span> · {c.reason} · {fmtDate(c.issueDate)} <StatusPill status={c.status} /> <button type="button" className="btn btn-ghost btn-sm" onClick={() => creditNotePdf(c.id, c.number)}><Download size={12} /> PDF</button></span><span>− <Money paise={c.totalPaise} /></span></li>)}
               </ul>
             </section>
           )}
@@ -155,6 +174,7 @@ function InvoiceView() {
       {modal === "cancel" && <Confirm title="Cancel this invoice?" danger confirmLabel="Cancel invoice" onConfirm={() => cancel()} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>The number stays on record as cancelled; issue a new invoice if needed.</p><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Duplicate / wrong client / …" /></Field></div>} />}
       {modal === "delete" && <Confirm title="Delete this draft?" danger confirmLabel="Delete" onConfirm={() => cancel("Draft deleted")} onClose={() => setModal(null)} />}
       {modal === "credit" && <Confirm title="Issue a credit note" confirmLabel="Issue credit note" onConfirm={credit} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>Reduces what the client owes on <span className="font-mono">{inv.number}</span>; GST is credited at the invoice&apos;s rate.</p><Field label="Taxable amount to credit"><MoneyInput paise={creditPaise} onChange={setCreditPaise} /></Field><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="One reel cancelled" /></Field></div>} />}
+      {modal === "convert" && <Confirm title="Convert to a tax invoice?" confirmLabel="Create draft tax invoice" onConfirm={convert} onClose={() => setModal(null)} body={<p>A draft tax invoice is made with the same lines and GST. When you issue it, it takes the next tax-invoice number, the payments on this proforma move onto it, and this proforma is retired.</p>} />}
       {modal === "apply" && <ApplyReceipt receipts={advances} balancePaise={inv.balancePaise} onApply={applyReceipt} onClose={() => setModal(null)} />}
       {taxQuestion && <TaxChoice message={taxQuestion} onChoose={issue} onClose={() => setTaxQuestion(null)} />}
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
@@ -185,9 +205,10 @@ function TaxChoice({ message, onChoose, onClose }: { message: string; onChoose: 
 }
 
 type Advance = { id: string; number: string; paidOn: string | null; amountPaise: number; tdsPaise: number };
+/** What a receipt still has to apply — computed by the API (allocations, refunds; nothing on a voided receipt). */
 function unallocatedOf(p: Payment): Advance {
-  const used = p.allocations.reduce((a, x) => ({ amount: a.amount + x.amountPaise, tds: a.tds + x.tdsPaise }), { amount: 0, tds: 0 });
-  return { id: p.id, number: p.number, paidOn: p.paidOn, amountPaise: p.amountPaise - used.amount, tdsPaise: p.tdsPaise - used.tds };
+  const live = p.status === "recorded";
+  return { id: p.id, number: p.number, paidOn: p.paidOn, amountPaise: live ? p.unallocatedPaise : 0, tdsPaise: live ? p.unallocatedTdsPaise : 0 };
 }
 
 function ApplyReceipt({ receipts, balancePaise, onApply, onClose }: { receipts: Advance[]; balancePaise: number; onApply: (paymentId: string, amountPaise: number, tdsPaise: number) => Promise<void>; onClose: () => void }) {

@@ -15,6 +15,8 @@ const STATUS_TONE: Record<string, string> = {
   declined: "border-danger text-danger",
   expired: "border-attention text-attention",
   converted: "border-success text-success",
+  recorded: "border-success text-success",
+  voided: "border-danger text-danger",
   confirmed: "border-indigo-light text-indigo-light",
   in_progress: "border-attention text-attention",
   delivered: "border-success text-success",

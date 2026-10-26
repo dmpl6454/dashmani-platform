@@ -9,6 +9,8 @@ import {
   orderUpsertSchema,
   paymentAllocateSchema,
   paymentCreateSchema,
+  paymentVoidSchema,
+  refundCreateSchema,
   quoteUpsertSchema,
   salesClientCreateSchema,
   sellerProfileSchema,
@@ -28,7 +30,7 @@ import * as docs from "../services/sales/documents.service";
 import * as invoices from "../services/sales/invoices.service";
 import * as payments from "../services/sales/payments.service";
 import { getSalesDashboard } from "../services/sales/dashboard.service";
-import { renderInvoicePdf } from "../services/sales/pdf.service";
+import { renderCreditNotePdf, renderInvoicePdf } from "../services/sales/pdf.service";
 
 // sales.digitalsukoon.com — staff only. `sales.view` reads; `sales.manage` writes (the Sales
 // role and both admin roles hold both, see packages/db/prisma/seed.ts). Every money action is
@@ -100,6 +102,8 @@ router.get("/sales/invoices/:id", ...view, asyncHandler(async (req, res) => succ
 router.put("/sales/invoices/:id", ...manage, validate(invoiceUpsertSchema), asyncHandler(async (req, res) => success(res, await invoices.updateInvoice(req.params.id, req.body, staffId(req)))));
 router.post("/sales/invoices/:id/issue", ...manage, validate(invoiceIssueSchema), asyncHandler(async (req, res) => success(res, await invoices.issueInvoice(req.params.id, req.body, staffId(req)))));
 router.post("/sales/invoices/:id/cancel", ...manage, validate(invoiceCancelSchema), asyncHandler(async (req, res) => success(res, await invoices.cancelInvoice(req.params.id, req.body.reason, staffId(req)))));
+// An issued proforma → a draft tax invoice with the same lines; issuing it moves the proforma's payments across.
+router.post("/sales/invoices/:id/convert", ...manage, asyncHandler(async (req, res) => success(res, await invoices.convertProforma(req.params.id, staffId(req)), undefined, 201)));
 router.post("/sales/invoices/:id/sent", ...manage, asyncHandler(async (req, res) => success(res, await invoices.markInvoiceSent(req.params.id, staffId(req)))));
 router.get("/sales/invoices/:id/pdf", ...view, asyncHandler(async (req, res) => {
   const inv = await invoices.getInvoice(req.params.id);
@@ -116,7 +120,18 @@ router.get("/sales/invoices/:id/pdf", ...view, asyncHandler(async (req, res) => 
 router.get("/sales/payments", ...view, asyncHandler(async (req, res) => success(res, await payments.listPayments({ clientId: str(req.query.clientId), q: str(req.query.q), from: str(req.query.from), to: str(req.query.to) }))));
 router.post("/sales/payments", ...manage, validate(paymentCreateSchema), asyncHandler(async (req, res) => success(res, await payments.createPayment(req.body, staffId(req)), undefined, 201)));
 router.post("/sales/payments/:id/allocations", ...manage, validate(paymentAllocateSchema), asyncHandler(async (req, res) => success(res, await payments.allocatePayment(req.params.id, req.body, staffId(req)))));
+router.post("/sales/payments/:id/void", ...manage, validate(paymentVoidSchema), asyncHandler(async (req, res) => success(res, await payments.voidPayment(req.params.id, req.body.reason, staffId(req)))));
+router.post("/sales/payments/:id/refunds", ...manage, validate(refundCreateSchema), asyncHandler(async (req, res) => success(res, await payments.createRefund(req.params.id, req.body, staffId(req)), undefined, 201)));
+router.post("/sales/refunds/:id/cancel", ...manage, asyncHandler(async (req, res) => success(res, await payments.cancelRefund(req.params.id, staffId(req)))));
 router.get("/sales/payments/:id", ...view, asyncHandler(async (req, res) => success(res, await payments.getPayment(req.params.id))));
+router.get("/sales/credit-notes/:id/pdf", ...view, asyncHandler(async (req, res) => {
+  const cn = await payments.getCreditNote(req.params.id);
+  const pdf = await renderCreditNotePdf(cn);
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${req.query.inline === "1" ? "inline" : "attachment"}; filename="${cn.number.replace(/[^\w.-]+/g, "-")}.pdf"`);
+  res.setHeader("Cache-Control", "no-store");
+  return res.send(pdf);
+}));
 router.get("/sales/credit-notes", ...view, asyncHandler(async (req, res) => success(res, await payments.listCreditNotes({ invoiceId: str(req.query.invoiceId), clientId: str(req.query.clientId) }))));
 router.post("/sales/credit-notes", ...manage, validate(creditNoteCreateSchema), asyncHandler(async (req, res) => success(res, await payments.createCreditNote(req.body, staffId(req)), undefined, 201)));
 router.post("/sales/credit-notes/:id/cancel", ...manage, asyncHandler(async (req, res) => { await payments.cancelCreditNote(req.params.id, staffId(req)); return success(res, { cancelled: true }); }));

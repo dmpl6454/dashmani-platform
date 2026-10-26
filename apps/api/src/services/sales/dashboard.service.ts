@@ -22,14 +22,14 @@ export async function getSalesDashboard() {
   const monthStart = dayToDate(month.from);
   const monthEnd = dayToDate(month.to);
 
-  const [issuedFy, openInvoices, paymentsFy, paymentsMonth, quotes, orders, topClientRows, platformRows, recent, allOrders] = await Promise.all([
+  const [issuedFy, openInvoices, paymentsFy, paymentsMonth, quotes, orders, topClientRows, platformRows, recent, allOrders, refundsFy, refundsMonth] = await Promise.all([
     prisma.salesInvoice.findMany({
       where: { kind: "tax_invoice", status: { in: ["issued", "paid"] }, issueDate: { gte: fyStart, lt: fyEndExclusive } },
       select: { totalPaise: true, taxablePaise: true, issueDate: true, clientId: true },
     }),
     prisma.salesInvoice.findMany({ where: { status: "issued" }, select: invoiceSummarySelect }),
-    prisma.salesPayment.aggregate({ where: { paidOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true, tdsPaise: true }, _count: true }),
-    prisma.salesPayment.aggregate({ where: { paidOn: { gte: monthStart, lt: monthEnd } }, _sum: { amountPaise: true }, _count: true }),
+    prisma.salesPayment.aggregate({ where: { status: "recorded", paidOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true, tdsPaise: true }, _count: true }),
+    prisma.salesPayment.aggregate({ where: { status: "recorded", paidOn: { gte: monthStart, lt: monthEnd } }, _sum: { amountPaise: true }, _count: true }),
     prisma.salesQuote.groupBy({ by: ["status"], _count: true, _sum: { totalPaise: true } }),
     prisma.salesOrder.groupBy({ by: ["status"], _count: true, _sum: { totalPaise: true } }),
     prisma.salesInvoice.groupBy({
@@ -49,6 +49,8 @@ export async function getSalesDashboard() {
     prisma.salesEvent.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
     // Every non-cancelled, non-draft order with its deal day: the "sales by financial year" table.
     prisma.salesOrder.findMany({ where: { status: { in: ["confirmed", "in_progress", "delivered", "closed"] } }, select: { totalPaise: true, startDate: true, createdAt: true, status: true } }),
+    prisma.salesRefund.aggregate({ where: { status: "issued", payment: { status: "recorded" }, refundedOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true } }),
+    prisma.salesRefund.aggregate({ where: { status: "issued", payment: { status: "recorded" }, refundedOn: { gte: monthStart, lt: monthEnd } }, _sum: { amountPaise: true } }),
   ]);
 
   const clients = topClientRows.length
@@ -101,9 +103,10 @@ export async function getSalesDashboard() {
     invoicedFyPaise: sum(issuedFy.map((i) => i.totalPaise)),
     invoicedFyCount: issuedFy.length,
     invoicedMonthPaise: sum(issuedFy.filter((i) => inMonth(i.issueDate)).map((i) => i.totalPaise)),
-    collectedFyPaise: paymentsFy._sum.amountPaise ?? 0,
+    // Voided receipts never count; refunds paid back in the period come off what was collected.
+    collectedFyPaise: (paymentsFy._sum.amountPaise ?? 0) - (refundsFy._sum.amountPaise ?? 0),
     tdsFyPaise: paymentsFy._sum.tdsPaise ?? 0,
-    collectedMonthPaise: paymentsMonth._sum.amountPaise ?? 0,
+    collectedMonthPaise: (paymentsMonth._sum.amountPaise ?? 0) - (refundsMonth._sum.amountPaise ?? 0),
     outstandingPaise: sum(outstanding.map((i) => i.balancePaise)),
     outstandingCount: outstanding.length,
     overduePaise: sum(overdue.map((i) => i.balancePaise)),

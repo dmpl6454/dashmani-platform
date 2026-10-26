@@ -15,7 +15,7 @@ export interface InventoryOffer { rateCardId: string; format: string; pricePaise
 export interface InventoryChannel {
   targetType: "meta_asset" | "social_account"; targetId: string; platform: string; name: string; handle: string | null; pictureUrl: string | null;
   followers: number | null; views28d: number | null; engagements28d: number | null; engagementRatePct: number | null; category: string | null;
-  profileUrl: string | null; bookable: boolean; offers: InventoryOffer[];
+  profileUrl: string | null; bookable: boolean; inCatalogue: boolean; offers: InventoryOffer[];
 }
 
 export interface BillingProfile {

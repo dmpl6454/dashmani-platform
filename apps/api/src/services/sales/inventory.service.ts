@@ -1,13 +1,16 @@
 import { prisma } from "@dashmani/db";
-import { listBookableTargets, type CatalogueTarget } from "../campaign/rate-card.service";
+import { getCatalogue, listBookableTargets, type CatalogueTarget } from "../campaign/rate-card.service";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 
-// The sellable inventory for the sales team: EVERY channel on every platform — the connected
-// Meta assets and YouTube channels the client catalogue already knows (listBookableTargets,
-// duplicates suppressed), plus every other active social_accounts row (Snapchat, X, the Pages
-// and IG accounts that are tracked but not connected) — each with its live numbers and
-// whatever rate cards exist. Unlike the client catalogue this is staff-only and lists channels
-// WITHOUT a price too, so a quote can be built for any of them at a negotiated price.
+// The sellable inventory for the sales team, in two layers:
+//  1. the CLIENT CATALOGUE — exactly what client.digitalsukoon.com lists under Campaigns: the
+//     bookable channels that carry at least one active, platform-valid price. It comes from the
+//     same getCatalogue() the client portal is served from, so the two lists can never disagree
+//     (same channels, same formats, same prices, same categories). The Inventory page opens on it.
+//  2. every other channel — connected Meta assets and YouTube channels without a price, plus
+//     every other active social_accounts row (Snapchat, X, the Pages and IG accounts that are
+//     tracked but not connected) — with its live numbers but no price, so a quote can still be
+//     built for it at a negotiated price. `inCatalogue` tells the two layers apart.
 
 export interface InventoryOffer {
   rateCardId: string;
@@ -31,8 +34,11 @@ export interface InventoryChannel {
   engagementRatePct: number | null;
   category: string | null;
   profileUrl: string | null;
-  /** True when the channel is in the client catalogue (connected / tracked and priced). */
+  /** True when the channel is connected / tracked by the campaign catalogue (a Meta asset or a YouTube channel). */
   bookable: boolean;
+  /** True when the client portal lists it: bookable AND at least one active, platform-valid price. */
+  inCatalogue: boolean;
+  /** For a catalogue channel: the client portal's offers (all active). Otherwise the rate-card rows it has, none active. */
   offers: InventoryOffer[];
 }
 
@@ -42,7 +48,7 @@ export function invalidateInventoryCache(): void {
   memo.clear();
 }
 
-function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "category" | "bookable"> {
+function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "category" | "bookable" | "inCatalogue"> {
   return {
     targetType: t.targetType,
     targetId: t.targetId,
@@ -60,7 +66,8 @@ function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "c
 
 export async function listInventory(): Promise<InventoryChannel[]> {
   return memo.memo("all", async () => {
-    const [targets, cards, accounts] = await Promise.all([
+    const [catalogue, targets, cards, accounts] = await Promise.all([
+      getCatalogue(),
       listBookableTargets(),
       prisma.campaignRateCard.findMany(),
       prisma.socialAccount.findMany({
@@ -76,12 +83,15 @@ export async function listInventory(): Promise<InventoryChannel[]> {
         },
       }),
     ]);
+    const listed = new Map(catalogue.map((e) => [`${e.targetType}:${e.targetId}`, e]));
+    // Rate-card rows of channels OUTSIDE the catalogue (withdrawn prices, or a format the platform
+    // does not take). Kept on the row as inactive so staff can see a price once existed.
     const byTarget = new Map<string, InventoryOffer[]>();
     for (const c of cards) {
       const k = `${c.targetType}:${c.targetId}`;
       byTarget.set(k, [
         ...(byTarget.get(k) ?? []),
-        { rateCardId: c.id, format: c.format, pricePaise: c.pricePaise, entertainmentPricePaise: c.entertainmentPricePaise, audioAddonPaise: c.audioAddonPaise, active: c.active },
+        { rateCardId: c.id, format: c.format, pricePaise: c.pricePaise, entertainmentPricePaise: c.entertainmentPricePaise, audioAddonPaise: c.audioAddonPaise, active: false },
       ]);
     }
     const categoryFor = (k: string) => cards.find((c) => `${c.targetType}:${c.targetId}` === k && c.category)?.category ?? null;
@@ -91,7 +101,12 @@ export async function listInventory(): Promise<InventoryChannel[]> {
     for (const t of targets) {
       const k = `${t.targetType}:${t.targetId}`;
       if (t.targetType === "social_account") seenSocial.add(t.targetId);
-      out.push({ ...fromCatalogue(t), category: categoryFor(k), bookable: true, offers: byTarget.get(k) ?? [] });
+      const e = listed.get(k);
+      if (e) {
+        out.push({ ...fromCatalogue(t), category: e.category, bookable: true, inCatalogue: true, offers: e.offers.map((o) => ({ ...o, active: true })) });
+      } else {
+        out.push({ ...fromCatalogue(t), category: categoryFor(k), bookable: true, inCatalogue: false, offers: byTarget.get(k) ?? [] });
+      }
     }
     for (const a of accounts) {
       // A tracked Page / IG account that is ALSO a live connected asset is already listed above.
@@ -111,10 +126,12 @@ export async function listInventory(): Promise<InventoryChannel[]> {
         category: categoryFor(k),
         profileUrl: a.profileUrl ?? null,
         bookable: false,
+        inCatalogue: false,
         offers: byTarget.get(k) ?? [],
       });
     }
-    out.sort((x, y) => (y.followers ?? -1) - (x.followers ?? -1) || x.name.localeCompare(y.name));
+    // Catalogue channels first (the client portal's own order), then the rest by reach.
+    out.sort((x, y) => Number(y.inCatalogue) - Number(x.inCatalogue) || (y.followers ?? -1) - (x.followers ?? -1) || x.name.localeCompare(y.name));
     return out;
   });
 }

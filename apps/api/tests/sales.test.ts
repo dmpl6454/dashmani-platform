@@ -9,6 +9,8 @@ import app from "../src/app";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
 import { computeTotals, documentNumber, financialYear, numberInWords, rupeesInWords, taxModeFor, todayIST } from "@dashmani/shared";
 import { invalidateInventoryCache } from "../src/services/sales/inventory.service";
+import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.service";
+import jwt from "jsonwebtoken";
 
 const SELLER = {
   legalName: "Dashmani Media Private Limited", gstin: "27AAACD1234E1Z5", pan: "AAACD1234E", addressLine1: "Andheri West", city: "Mumbai",
@@ -122,14 +124,37 @@ describe("sales API", () => {
     expect(saved.body.data.profile.gstin).toBe("27AAACD1234E1Z5");
   });
 
-  it("lists every active channel as inventory, priced or not", async () => {
+  it("lists the client catalogue first, then every other active channel without a price", async () => {
     const platform = await prisma.platform.create({ data: { name: "Snapchat", slug: "snapchat" } });
     await prisma.socialAccount.create({ data: { handle: "bollywoodsociety", displayName: "Bollywood Society", platformId: platform.id, followerCount: 147_300, status: "ACTIVE" } });
+    // Two connected Instagram accounts: one priced (= in the client catalogue), one not.
+    const conn = await prisma.metaConnection.create({ data: { metaUserId: "mu-sales", connectedById: salesUserId, status: "ACTIVE" } });
+    const priced = await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "INSTAGRAM_ACCOUNT", metaId: "9001", name: "Paparazzi Feed", username: "paparazzifeed", followerCount: 2_000_000 } });
+    const unpriced = await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "INSTAGRAM_ACCOUNT", metaId: "9002", name: "Filme Flicks", username: "filmeflicks", followerCount: 9_000_000 } });
+    await prisma.campaignRateCard.createMany({
+      data: [
+        { targetType: "meta_asset", targetId: priced.id, platform: "instagram", format: "reel", pricePaise: 150_000, entertainmentPricePaise: 180_000, category: "Bollywood" },
+        { targetType: "meta_asset", targetId: priced.id, platform: "instagram", format: "story", pricePaise: 40_000, active: false },
+      ],
+    });
+    invalidateCatalogueCache();
     invalidateInventoryCache();
     const res = await request(app).get("/v1/sales/inventory").set(auth(salesToken));
     expect(res.status).toBe(200);
-    const row = res.body.data.find((c: { handle: string }) => c.handle === "bollywoodsociety");
-    expect(row).toMatchObject({ platform: "snapchat", followers: 147_300, bookable: false, offers: [] });
+    const rows: Array<{ handle: string; inCatalogue: boolean; bookable: boolean; category: string | null; offers: Array<{ format: string; active: boolean; pricePaise: number }> }> = res.body.data;
+    // The client portal's list comes first — same offers, only the active ones.
+    expect(rows[0]).toMatchObject({ handle: "paparazzifeed", inCatalogue: true, bookable: true, category: "Bollywood" });
+    expect(rows[0].offers).toEqual([expect.objectContaining({ format: "reel", pricePaise: 150_000, entertainmentPricePaise: 180_000, active: true })]);
+    // A connected account without an active price is bookable but not in the catalogue; its reach does not move it up.
+    expect(rows.find((c) => c.handle === "filmeflicks")).toMatchObject({ inCatalogue: false, bookable: true, offers: [] });
+    expect(rows.findIndex((c) => c.handle === "filmeflicks")).toBeGreaterThan(0);
+    // A tracked-only channel on another platform is listed too, priced or not.
+    expect(rows.find((c) => c.handle === "bollywoodsociety")).toMatchObject({ platform: "snapchat", followers: 147_300, bookable: false, inCatalogue: false, offers: [] });
+    // Exactly what the client portal serves, in the same order.
+    const clientToken = jwt.sign({ userId: clientMh, email: "mh@client.test", roles: [], type: "client" }, process.env.JWT_SECRET || "dev-secret", { expiresIn: "15m" });
+    const cat = await request(app).get("/v1/client/campaigns/catalogue").set(auth(clientToken));
+    expect(cat.status).toBe(200);
+    expect(cat.body.data.map((e: { targetId: string }) => e.targetId)).toEqual(rows.filter((c) => c.inCatalogue).map((c: any) => c.targetId));
   });
 
   it("creates clients without a usable login and keeps billing profiles", async () => {

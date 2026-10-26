@@ -2955,6 +2955,7 @@ model SalesInvoice {
   items       SalesInvoiceItem[]
   allocations SalesPaymentAllocation[]
   creditNotes SalesCreditNote[]
+  einvoice    SalesEInvoice?
 
   @@index([clientId])
   @@index([status, dueDate])
@@ -3075,12 +3076,50 @@ model SalesCreditNote {
   createdById  String    @map("created_by_id")
   createdAt    DateTime  @default(now()) @map("created_at")
 
-  invoice SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
-  client  Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  invoice  SalesInvoice   @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  client   Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  einvoice SalesEInvoice?
 
   @@index([invoiceId])
   @@index([clientId])
   @@map("sales_credit_notes")
+}
+
+/// The e-invoice registration (IRN) of one tax invoice or credit note on the government IRP.
+/// Created when a document that needs one is issued; registered, retried and cancelled by
+/// services/sales/einvoice.service.ts. Never deleted: it is the evidence of what the IRP holds.
+model SalesEInvoice {
+  id            String    @id @default(uuid())
+  /// INV | CRN
+  docType       String    @map("doc_type") @db.VarChar(4)
+  invoiceId     String?   @unique @map("invoice_id")
+  creditNoteId  String?   @unique @map("credit_note_id")
+  /// The supplier GSTIN the document was issued from.
+  gstin         String    @db.VarChar(15)
+  docNumber     String    @map("doc_number") @db.VarChar(32)
+  /// DD/MM/YYYY as reported to the IRP.
+  docDate       String    @map("doc_date") @db.VarChar(10)
+  /// pending | registered | failed | cancelled
+  status        String    @default("pending") @db.VarChar(16)
+  irn           String?   @unique @db.VarChar(64)
+  ackNo         String?   @map("ack_no") @db.VarChar(24)
+  ackDate       DateTime? @map("ack_date")
+  signedQrCode  String?   @map("signed_qr_code") @db.Text
+  signedInvoice String?   @map("signed_invoice") @db.Text
+  /// The INV-01 JSON sent (rebuilt only while the document is unregistered).
+  payload       Json?
+  lastError     String?   @map("last_error") @db.Text
+  attempts      Int       @default(0)
+  cancelReason  String?   @map("cancel_reason") @db.VarChar(100)
+  cancelledAt   DateTime? @map("cancelled_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  invoice    SalesInvoice?    @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  creditNote SalesCreditNote? @relation(fields: [creditNoteId], references: [id], onDelete: Restrict)
+
+  @@index([status])
+  @@map("sales_einvoices")
 }
 
 /// Append-only audit of every sales status change and money action.

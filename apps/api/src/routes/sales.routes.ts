@@ -30,6 +30,7 @@ import * as docs from "../services/sales/documents.service";
 import * as invoices from "../services/sales/invoices.service";
 import * as payments from "../services/sales/payments.service";
 import { getSalesDashboard } from "../services/sales/dashboard.service";
+import { retryEInvoice } from "../services/sales/einvoice.service";
 import { renderCreditNotePdf, renderInvoicePdf } from "../services/sales/pdf.service";
 
 // sales.digitalsukoon.com — staff only. `sales.view` reads; `sales.manage` writes (the Sales
@@ -104,6 +105,9 @@ router.post("/sales/invoices/:id/issue", ...manage, validate(invoiceIssueSchema)
 router.post("/sales/invoices/:id/cancel", ...manage, validate(invoiceCancelSchema), asyncHandler(async (req, res) => success(res, await invoices.cancelInvoice(req.params.id, req.body.reason, staffId(req)))));
 // An issued proforma → a draft tax invoice with the same lines; issuing it moves the proforma's payments across.
 router.post("/sales/invoices/:id/convert", ...manage, asyncHandler(async (req, res) => success(res, await invoices.convertProforma(req.params.id, staffId(req)), undefined, 201)));
+// E-invoice: register again after a failure (asks the IRP first, so it can never double-register).
+router.post("/sales/invoices/:id/einvoice", ...manage, asyncHandler(async (req, res) => { await retryEInvoice({ invoiceId: req.params.id }, staffId(req)); return success(res, await invoices.getInvoice(req.params.id)); }));
+router.post("/sales/credit-notes/:id/einvoice", ...manage, asyncHandler(async (req, res) => success(res, await retryEInvoice({ creditNoteId: req.params.id }, staffId(req)))));
 router.post("/sales/invoices/:id/sent", ...manage, asyncHandler(async (req, res) => success(res, await invoices.markInvoiceSent(req.params.id, staffId(req)))));
 router.get("/sales/invoices/:id/pdf", ...view, asyncHandler(async (req, res) => {
   const inv = await invoices.getInvoice(req.params.id);

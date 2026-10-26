@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import QRCode from "qrcode";
 import { GST_STATE_CODES, TAX_MODE_LABELS, DEFAULT_SAC, rupeesInWords } from "@dashmani/shared";
 import type { InvoiceView, SellerSnapshot, BuyerSnapshot } from "./invoices.service";
 import type { CreditNoteView } from "./payments.service";
@@ -32,7 +33,31 @@ function addressLines(p: { addressLine1?: string | null; addressLine2?: string |
   return lines;
 }
 
-export function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
+
+type EInvoiceView = { status: string; irn: string | null; ackNo: string | null; ackDate: Date | string | null; signedQrCode: string | null } | null | undefined;
+
+/** The e-invoice block: the signed QR, IRN and acknowledgement — or a warning that it is not registered. */
+async function drawEInvoice(doc: PDFKit.PDFDocument, e: EInvoiceView, left: number, width: number): Promise<void> {
+  if (!e || e.status === "cancelled") return;
+  if (e.status !== "registered" || !e.irn) {
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#b00020").text("E-INVOICE NOT YET REGISTERED ON THE IRP — not valid as a GST document until registered", left, doc.y, { width });
+    doc.y += 8;
+    return;
+  }
+  const top = doc.y;
+  if (e.signedQrCode) {
+    const png = await QRCode.toBuffer(e.signedQrCode, { errorCorrectionLevel: "M", margin: 1, width: 240 });
+    doc.image(png, left + width - 86, top, { width: 86, height: 86 });
+  }
+  const ack = e.ackDate ? new Date(e.ackDate) : null;
+  const ackIst = ack ? new Date(ack.getTime() + 330 * 60_000).toISOString().replace("T", " ").slice(0, 16) : "—";
+  doc.font("Helvetica-Bold").fontSize(8.5).fillColor(INK).text("E-INVOICE", left, top, { width: width - 100 });
+  doc.font("Helvetica").fontSize(8).fillColor(INK).text(`IRN: ${e.irn}`, { width: width - 100 });
+  doc.text(`Ack No.: ${e.ackNo ?? "—"}    Ack Date: ${ackIst}`, { width: width - 100 });
+  doc.y = Math.max(doc.y, top + 90) + 6;
+}
+
+export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   const seller = (inv.sellerSnapshot ?? {}) as Partial<SellerSnapshot>;
   const buyer = (inv.buyerSnapshot ?? {}) as Partial<BuyerSnapshot>;
   const title = inv.kind === "proforma" ? "PROFORMA INVOICE" : "TAX INVOICE";
@@ -72,6 +97,7 @@ export function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   doc.moveTo(left, doc.y).lineTo(right, doc.y).strokeColor(RULE).lineWidth(1).stroke();
   doc.y += 12;
 
+  if (inv.kind === "tax_invoice") await drawEInvoice(doc, inv.einvoice, left, width);
   // ── Bill to ─────────────────────────────────────────────────────────────────
   doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("BILL TO", left, doc.y);
   doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(buyer.legalName ?? buyer.companyName ?? "—", { width: width * 0.6 });
@@ -190,7 +216,7 @@ export function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
  * invoice (its frozen snapshots), the note's own serial and date, the invoice it reduces with that
  * invoice's date, the taxable value credited, the tax by type and rate, the total, and a signature.
  */
-export function renderCreditNotePdf(cn: CreditNoteView): Promise<Buffer> {
+export async function renderCreditNotePdf(cn: CreditNoteView): Promise<Buffer> {
   const seller = (cn.invoice.sellerSnapshot ?? {}) as Partial<SellerSnapshot>;
   const buyer = (cn.invoice.buyerSnapshot ?? {}) as Partial<BuyerSnapshot>;
   const doc = new PDFDocument({ size: "A4", margin: PAGE.margin, info: { Title: `CREDIT NOTE ${cn.number}`, Author: seller.legalName ?? "Digital Sukoon" } });
@@ -227,6 +253,7 @@ export function renderCreditNotePdf(cn: CreditNoteView): Promise<Buffer> {
   doc.moveTo(left, doc.y).lineTo(right, doc.y).strokeColor(RULE).lineWidth(1).stroke();
   doc.y += 12;
 
+  await drawEInvoice(doc, cn.einvoice, left, width);
   doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("ISSUED TO", left, doc.y);
   doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(buyer.legalName ?? buyer.companyName ?? cn.client.companyName, { width: width * 0.6 });
   doc.font("Helvetica").fontSize(9).fillColor(INK);

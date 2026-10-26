@@ -4,6 +4,7 @@ import { AppError } from "../../middleware/error-handler";
 import { dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { getSellerOrDefaults } from "./settings.service";
 import { recomputeSettlement, releaseExcess } from "./invoices.service";
+import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueCreditNoteEInvoice, registerEInvoice } from "./einvoice.service";
 
 // Money in and back out. A payment (receipt) is allocated across the client's issued invoices —
 // when it is recorded, or later from its unallocated remainder (an advance). A credit note
@@ -255,6 +256,7 @@ export async function getCreditNote(id: string) {
     include: {
       invoice: { select: { id: true, number: true, issueDate: true, placeOfSupplyCode: true, sellerSnapshot: true, buyerSnapshot: true, items: { select: { sac: true }, take: 1, orderBy: { position: "asc" } } } },
       client: { select: { id: true, companyName: true } },
+      einvoice: { select: { status: true, irn: true, ackNo: true, ackDate: true, signedQrCode: true } },
     },
   });
   if (!cn) throw new AppError(404, "NOT_FOUND", "Credit note not found");
@@ -271,7 +273,7 @@ export async function createCreditNote(input: CreditNoteCreateInput, actorId: st
     await lockInvoices(tx, [input.invoiceId]);
     const inv = await tx.salesInvoice.findUnique({
       where: { id: input.invoiceId },
-      select: { id: true, number: true, clientId: true, status: true, kind: true, taxMode: true, gstRateBp: true, taxablePaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true, sellerSnapshot: true },
+      select: { id: true, number: true, clientId: true, status: true, kind: true, taxMode: true, gstRateBp: true, taxablePaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true, sellerSnapshot: true, buyerSnapshot: true },
     });
     if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
     if (inv.status !== "issued" && inv.status !== "paid") throw new AppError(409, "NOT_ISSUED", "Only an issued invoice can take a credit note");
@@ -301,6 +303,10 @@ export async function createCreditNote(input: CreditNoteCreateInput, actorId: st
     if (note.total <= 0 || note.cgst < 0 || note.sgst < 0 || note.igst < 0) {
       throw new AppError(422, "CREDIT_TOO_SMALL", "That amount rounds to nothing on this invoice — credit a larger amount");
     }
+    // A credit note to a registered buyer is itself an e-invoice document: check before numbering.
+    const buyerSnap = (inv.buyerSnapshot ?? {}) as { gstin?: string | null; country?: string | null };
+    const wantsIrn = needsEInvoice(seller, buyerSnap, issueDate);
+    if (wantsIrn) assertEInvoiceData((inv.sellerSnapshot ?? {}) as object, buyerSnap);
     // A credit note is numbered in the series of the GSTIN that issued the invoice.
     const reg = registrationByGstin(seller, (inv.sellerSnapshot as { gstin?: string | null } | null)?.gstin);
     const number = await nextDocumentNumber(tx, "credit_note", reg.creditNotePrefix, issueDate, reg.scope);
@@ -317,8 +323,9 @@ export async function createCreditNote(input: CreditNoteCreateInput, actorId: st
     await recomputeSettlement(tx, inv.id);
     await logSalesEvent(tx, { entityType: "credit_note", entityId: cn.id, actorId, action: "issued", toStatus: "issued", note: `${number} against ${inv.number}` });
     await logSalesEvent(tx, { entityType: "invoice", entityId: inv.id, actorId, action: "credit_note_issued", note: number });
-    return cn;
+    return { ...cn, einvoiceId: wantsIrn ? await queueCreditNoteEInvoice(tx, cn.id) : null };
   });
+  if (created.einvoiceId) await registerEInvoice(created.einvoiceId, actorId);
   const cn = await prisma.salesCreditNote.findUniqueOrThrow({
     where: { id: created.id },
     include: { invoice: { select: { id: true, number: true } }, client: { select: { id: true, companyName: true } } },
@@ -327,8 +334,9 @@ export async function createCreditNote(input: CreditNoteCreateInput, actorId: st
 }
 
 export async function cancelCreditNote(id: string, actorId: string) {
-  const found = await prisma.salesCreditNote.findUnique({ where: { id }, select: { invoiceId: true } });
+  const found = await prisma.salesCreditNote.findUnique({ where: { id }, select: { invoiceId: true, status: true } });
   if (!found) throw new AppError(404, "NOT_FOUND", "Credit note not found");
+  if (found.status !== "cancelled") await cancelEInvoiceFor({ creditNoteId: id }, "Credit note cancelled", actorId);
   await prisma.$transaction(async (tx) => {
     await lockInvoices(tx, [found.invoiceId]);
     const cn = await tx.salesCreditNote.findUnique({ where: { id }, select: { status: true, invoiceId: true, number: true } });

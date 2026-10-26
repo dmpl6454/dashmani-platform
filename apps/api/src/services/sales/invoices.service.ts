@@ -4,6 +4,7 @@ import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { resolveDocumentTax, type ResolvedTax } from "./documents.service";
 import { getSellerProfile, sellerMissingFields, type SellerProfile } from "./settings.service";
+import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueInvoiceEInvoice, registerEInvoice } from "./einvoice.service";
 
 // GST invoices. A draft has no number and may be edited freely; ISSUING assigns the next
 // serial of the financial year, freezes the seller and buyer as JSON snapshots and the totals
@@ -74,13 +75,14 @@ export async function getInvoice(id: string) {
       items: { orderBy: { position: "asc" } },
       order: { select: { id: true, number: true, title: true } },
       allocations: { include: { payment: { select: { id: true, number: true, mode: true, reference: true, paidOn: true, amountPaise: true, tdsPaise: true, status: true } } }, orderBy: { createdAt: "asc" } },
-      creditNotes: { orderBy: { createdAt: "asc" } },
+      creditNotes: { orderBy: { createdAt: "asc" }, include: { einvoice: { select: { status: true, irn: true, ackNo: true, ackDate: true, lastError: true } } } },
+      einvoice: { select: { id: true, docType: true, gstin: true, status: true, irn: true, ackNo: true, ackDate: true, lastError: true, attempts: true, cancelledAt: true, signedQrCode: true } },
       convertedFrom: { select: { id: true, number: true } },
       conversions: { select: { id: true, number: true, status: true }, orderBy: { createdAt: "asc" } },
     },
   });
   if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
-  const { client, items, order, allocations, creditNotes, convertedFrom, conversions, ...row } = inv;
+  const { client, items, order, allocations, creditNotes, convertedFrom, conversions, einvoice, ...row } = inv;
   return {
     ...deriveInvoice(row, todayIST()),
     sellerSnapshot: row.sellerSnapshot,
@@ -96,6 +98,7 @@ export async function getInvoice(id: string) {
     order,
     convertedFrom,
     conversions,
+    einvoice,
     items,
     allocations: allocations.map((a) => ({ ...a, payment: { ...a.payment, paidOn: dateToDay(a.payment.paidOn) } })),
     creditNotes: creditNotes.map((c) => ({ ...c, issueDate: dateToDay(c.issueDate) })),
@@ -296,6 +299,7 @@ export async function issueInvoice(
   actorId: string,
 ) {
   const seller = await getSellerProfile();
+  let einvoiceId: string | null = null;
   await prisma.$transaction(async (tx) => {
     // Everything is read AFTER the row lock. A second Issue (another tab, a retry) waits here and
     // then finds the invoice issued, so it never takes — and wastes — a serial; an edit saved a
@@ -370,6 +374,11 @@ export async function issueInvoice(
         cgstPaise: t.cgstPaise, sgstPaise: t.sgstPaise, igstPaise: t.igstPaise, roundOffPaise: t.roundOffPaise, totalPaise: t.totalPaise,
       };
     }
+    // E-invoicing: check the data the IRP needs BEFORE a serial is taken.
+    const buyerSnap = buyerSnapshotFor(inv.client as Parameters<typeof buyerSnapshotFor>[0]);
+    const sellerSnap = sellerSnapshotFor(seller, reg);
+    const wantsIrn = inv.kind === "tax_invoice" && needsEInvoice(seller, buyerSnap, issueDate);
+    if (wantsIrn) assertEInvoiceData(sellerSnap, buyerSnap);
     // Proformas are not tax invoices: their own PI series, so the tax-invoice serials stay consecutive.
     const number = inv.kind === "proforma"
       ? await nextDocumentNumber(tx, "proforma", "PI", issueDate)
@@ -383,14 +392,15 @@ export async function issueInvoice(
         issueDate: dayToDate(issueDate),
         dueDate: dayToDate(dueDate),
         issuedAt: new Date(),
-        sellerSnapshot: sellerSnapshotFor(seller, reg) as Prisma.InputJsonValue,
-        buyerSnapshot: buyerSnapshotFor(inv.client as Parameters<typeof buyerSnapshotFor>[0]) as Prisma.InputJsonValue,
+        sellerSnapshot: sellerSnap as Prisma.InputJsonValue,
+        buyerSnapshot: buyerSnap as Prisma.InputJsonValue,
         amountInWords: rupeesInWords(totalPaise),
         terms: inv.terms ?? seller.terms ?? null,
       },
     });
     const taxNote = !taxChanged ? "" : recompute ? ` · GST updated to ${TAX_MODE_LABELS[expectedMode]}` : ` · GST kept as drafted (${TAX_MODE_LABELS[storedMode]})`;
     await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "issued", fromStatus: "draft", toStatus: "issued", note: `${number}${taxNote}` });
+    if (wantsIrn) einvoiceId = await queueInvoiceEInvoice(tx, id);
 
     // A tax invoice converted from a proforma takes over the proforma's payments; the proforma is
     // then cancelled ("Converted to …"), so the money is counted once, on the real bill. Anything
@@ -419,6 +429,9 @@ export async function issueInvoice(
       }
     }
   });
+  // After commit: register on the IRP. A portal failure is recorded on the e-invoice row (visible,
+  // retryable) and never undoes the issued invoice.
+  if (einvoiceId) await registerEInvoice(einvoiceId, actorId);
   return getInvoice(id);
 }
 
@@ -427,6 +440,12 @@ function addDays(day: string, days: number): string {
 }
 
 export async function cancelInvoice(id: string, reason: string, actorId: string) {
+  // A registered IRN is cancelled on the IRP first (24-hour window), and only for an invoice that
+  // could be cancelled at all (issued, nothing settled against it).
+  const pre = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true, paidPaise: true, tdsPaise: true, creditedPaise: true } });
+  if (pre && pre.status !== "draft" && pre.status !== "cancelled" && pre.paidPaise + pre.tdsPaise + pre.creditedPaise === 0) {
+    await cancelEInvoiceFor({ invoiceId: id }, reason, actorId);
+  }
   // Decided under the row lock, so a payment or credit note landing at the same moment either
   // goes first (and the cancel is refused) or finds the invoice cancelled (and is refused).
   const outcome = await prisma.$transaction(async (tx) => {

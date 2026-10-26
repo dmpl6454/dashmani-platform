@@ -10,11 +10,13 @@ export interface SellerProfile {
   defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; terms?: string | null; signatory?: string | null;
   /** Additional GST registrations in other states; a client in that state is billed from it. */
   branches: SellerBranch[];
+  eInvoicing: { enabled: boolean; applicableFrom?: string | null; thirtyDayLimit: boolean };
 }
 export interface SellerBranch {
   label: string; gstin: string; stateCode?: string | null; state?: string | null; addressLine1: string; addressLine2?: string | null; city: string; pincode: string;
   invoicePrefix: string; creditNotePrefix: string;
 }
+export interface EInvoiceBrief { status: "pending" | "registering" | "registered" | "failed" | "cancelled"; irn: string | null; ackNo: string | null; ackDate: string | null; lastError: string | null }
 export interface SellerSettings { profile: SellerProfile; saved: boolean; missing: string[] }
 
 export interface InventoryOffer { rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null; active: boolean }
@@ -64,7 +66,9 @@ export interface Invoice extends DocumentTotals {
   /** The proforma this tax invoice was converted from, and the tax invoices made from this proforma. */
   convertedFrom: { id: string; number: string | null } | null;
   conversions: Array<{ id: string; number: string | null; status: string }>;
-  creditNotes: Array<{ id: string; number: string; status: string; issueDate: string | null; reason: string; totalPaise: number; taxablePaise: number }>;
+  creditNotes: Array<{ id: string; number: string; status: string; issueDate: string | null; reason: string; totalPaise: number; taxablePaise: number; einvoice: EInvoiceBrief | null }>;
+  /** The IRP registration, when this document needs one. */
+  einvoice: (EInvoiceBrief & { id: string; docType: string; gstin: string; attempts: number }) | null;
 }
 export interface InvoiceRow extends DocumentTotals {
   id: string; number: string | null; kind: string; status: string; derivedStatus: DerivedInvoiceStatus; issueDate: string | null; dueDate: string | null;

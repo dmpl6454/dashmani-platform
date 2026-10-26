@@ -1,6 +1,14 @@
 import type { Prisma } from "@dashmani/db";
 import { PAUSABLE_STATUSES, type PayoutStatus } from "./payout-states";
 
+// ⚠️ THE RULE FOR A PERSON'S REVERSE PAUSE (REVERSE_PAUSE_REASON, "A person's Reverse" below, where every door is listed):
+//   The person's pause SURVIVES EVERY STATUS MOVE and is lifted ONLY when the money is back (the payout reaches `reversed`, through
+//   ANY door) or when a person resumes; it is also lifted on the move to `manual_required`, which decideManualFallback allows only once
+//   no money is out (no transfer, a failed one, or the whole of it back). A REFUSAL lands the payout back where the ENGINE decides
+//   (`held` only when Razorpay still holds the money, otherwise parked as Needs attention), STILL PAUSED. A paused PARKED payout is
+//   never released by Resume: it only loses its pause (it is released only if it goes back to held). Every staff-facing sentence about
+//   this pause is held to this rule for the status it is shown on.
+//
 // The ONE rule for pausing a creator's payouts because something on the brand's payment changed
 // (a dispute opened, a refund we did not make appeared). Kept in its own tiny module so the two
 // writers of paused_at for a payment, the dispute handler (route-webhooks.ts) and the refund
@@ -130,27 +138,31 @@ export async function pausePayoutsOfPayment(tx: Tx, razorpayPaymentId: string, s
 // ⚠️ The one pause that is NOT "first reason kept". A person pressed Reverse on a HELD payout because the creator must not be paid
 // (reversePayout's pauseIfRefused). The pause is written in the SAME move as the reversal's claim, so it is on the row whoever finishes
 // the reversal (the click itself, or the worker reading an unknown answer back after a transient error, or a refund's reversal): if
-// Razorpay then refuses, the payout goes back to held still paused and its due release does not go ahead. It REPLACES the reason of a
-// pause already there (a dispute, a suspended creator, a staff pause) and keeps that pause's time, because the other reason's own way out
-// (the dispute closing, the creator reinstated) tells staff to resume, and a resume here releases money a person asked to take back.
+// Razorpay then refuses, the payout lands where the engine decides, STILL PAUSED (the rule below), and its due release does not go ahead.
+// It REPLACES the reason of a pause already there (a dispute, a suspended creator, a staff pause) and keeps that pause's time, because the
+// other reason's own way out (the dispute closing, the creator reinstated) tells staff to resume, and a resume here releases money a person
+// asked to take back.
 // Nothing protective is lost: resume and release re-read disputes, the bank change, the account and the creator themselves and never key
 // on the reason, and the only reason-keyed step (the re-hold of a paused RELEASED payout) cannot reach a payout this pause sits on, which
-// is held. No reversal step reads a pause (the reversal bucket, reversePayout, runReversal, finishReversal, reverseForRefund), so it never
-// stops the money coming back.
+// is never released (a release claim needs an unpaused payout). No reversal step reads a pause (the reversal bucket, reversePayout,
+// runReversal, finishReversal, reverseForRefund), so it never stops the money coming back.
 //
 // ⚠️ THE RULE, stated once here and applied everywhere (every staff-facing sentence about this pause is held to it, per status):
-//  • The person's pause SURVIVES EVERY STATUS MOVE (transition() never touches pausedAt), and is lifted ONLY when the money is back — the
-//    payout reaches `reversed`, through ANY door (the engine's own finish, the fresh-read resolver applyFreshTransfer, Razorpay's event in
-//    route-webhooks) — or when a person resumes. transition() lifts it on EVERY move to `reversed`, so no door can forget it; the webhook's
-//    own move lifts it too. The one other lift is the move to `manual_required`: decideManualFallback lets a payout through only when no
-//    transfer exists, it failed, or the whole of it is back, so nothing is left for the pause to hold, and a payout paid by bank transfer
-//    must not carry it.
+//  • The person's pause SURVIVES EVERY STATUS MOVE (no move writes pausedAt but the lifts named here), and is lifted ONLY when the money is
+//    back — the payout reaches `reversed`, through ANY door (the engine's own finish, the fresh-read resolver applyFreshTransfer, Razorpay's
+//    event in route-webhooks) — or when a person resumes. transition() lifts it on EVERY move to `reversed`, so no door can forget it; the
+//    webhook's own move lifts it too. The one other lift is the move to `manual_required` (also in transition(), every door):
+//    decideManualFallback lets a payout through only when no transfer exists, it failed, or the whole of it is back, so nothing is left for
+//    the pause to hold, and a payout paid by bank transfer must not carry it. It is KEPT on `failed` (it then stops a staff Retry, which
+//    would send the creator a new transfer) and on `void` (terminal: nothing moves from there and no screen shows a finished payout's pause).
 //  • A REFUSAL lands the payout back where the ENGINE decides, still paused: `held` only when Razorpay still holds the money (the prior was
 //    held and the transfer is still on hold and unsettled, decideReversalOutcome); otherwise it is PARKED as `needs_attention`, pause kept
-//    (a refusal after the money was let go, a mismatch, a failed transfer). Nothing re-reads the pause there: the row waits for a person.
+//    (a refusal after the money was let go, a mismatch, a failed transfer). Nothing re-reads the pause there, and such a park waits for a
+//    person (only a held-resolvable or twin park goes back to held on its own, next bullet).
 //  • Resume only lifts the pause. A HELD payout is then released when due (the release gate runs again); a PARKED one is NEVER released by
-//    Resume — it stays parked until a person resolves it (Reverse again takes the money back; "Pay by bank transfer instead" lifts the
-//    pause by the rule above).
+//    Resume — it is released only if it goes back to held (the engine puts a parked payout back in held on its own only when Razorpay shows
+//    the hold back on, or a twin transfer has been cleaned up), else it waits for a person (Reverse again takes the money back; "Pay by bank
+//    transfer instead" lifts the pause by the rule above).
 // The staff UI's words for it are staff-ui.ts PAUSE_REASON / pausedChip / reversePauseResumeNote and the staff service's pendingReverseNote
 // (the helper test holds the two names equal and the sentences to the status they are shown for).
 

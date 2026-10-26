@@ -2750,4 +2750,17 @@ describe("r6 #1: the person's Reverse pause is lifted on EVERY door to reversed,
     expect(await runPayoutJob("resolve_reversal", v.payout.id, { now: T(3) })).toMatchObject({ ok: true, status: "reversed" });
     expect(await reload(v.payout.id)).toMatchObject({ status: "reversed", pausedAt: null, pausedReason: null });
   });
+
+  it("⚠️ the one deliberate keep: a parked row whose transfer then FAILS keeps the person's pause on `failed`, so a staff Retry (a NEW transfer to the creator) waits while it is paused", async () => {
+    const w = await heldAndPaused();
+    fake.transfers.get(w.transferId!)!.onHold = false; // released in the dashboard
+    expect(await recheckHeld(w.payout.id, { now: T(10) })).toMatchObject({ status: "needs_attention", reason: "released_outside_flow" });
+    fake.transfers.get(w.transferId!)!.status = "failed";
+    expect(await confirmHold(w.payout.id, { now: T(20) })).toMatchObject({ status: "failed" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "failed", pausedReason: REVERSE_PAUSE_REASON });
+    const creates = fake.calls.filter(is.createTransfer).length;
+    expect(await retryFailedPayout(w.payout.id, { actor: STAFF, now: T(30) })).toMatchObject({ ok: false, status: "failed", reason: "paused" });
+    expect(fake.calls.filter(is.createTransfer)).toHaveLength(creates);
+    expect(await reload(w.payout.id)).toMatchObject({ status: "failed", pausedReason: REVERSE_PAUSE_REASON });
+  });
 });

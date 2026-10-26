@@ -592,10 +592,10 @@ export function changeSince(before: Snapshot, after: Snapshot, reason?: string):
   // A payout that was paused ALREADY (a dispute, a suspended creator, a staff pause) and that a person's refused Reverse now holds: its pause
   // keeps its time but the reason is the person's (payout-pause.ts), so the resumer is told a Reverse was refused, not the old reason.
   // What Resume then does is the rule's (payout-pause.ts): a HELD payout is released when due; a payout the refusal PARKED (Razorpay had let
-  // the money go) stays parked until a person resolves it, so that sentence never promises a release there.
+  // the money go) is released only if it goes back to held, so that sentence never promises a release there.
   else if (after.pausedAt && before.pausedAt && before.pausedReason !== after.pausedReason && after.pausedReason === REVERSE_PAUSE_REASON) {
     parts.push(
-      `it stays paused, now because a person's Reverse was refused (it was paused: ${pauseText(before.pausedReason)}): press Reverse again to take it back, or resume it only if the creator should be paid after all (${after.status === "held" ? "it is then released when due" : "a parked payout stays with a person"})`,
+      `it stays paused, now because a person's Reverse was refused (it was paused: ${pauseText(before.pausedReason)}): press Reverse again to take it back, or resume it only if the creator should be paid after all (${after.status === "held" ? "it is then released when due" : "a parked payout is released only if it goes back to held"})`,
     );
   }
   if (after.releaseAfter && !before.releaseAfter) parts.push("its release is now scheduled");
@@ -707,13 +707,13 @@ export async function staffReverse(id: string, staffId: string, reason?: string)
   }
   // Scrubbed BEFORE it is cut: cutting first could leave the front of a long number (an account number typed into the reason) unmasked.
   // pauseIfRefused: the person pressed Reverse so that the creator is not paid. A held payout is paused in the same move as the claim, so if
-  // Razorpay refuses, now or when the worker reads an unknown answer back, it goes back to held still paused and its scheduled release does
-  // not go ahead (a reversal before a refund does not ask for this).
+  // Razorpay refuses, now or when the worker reads an unknown answer back, it lands where the engine decides STILL PAUSED (back in held while
+  // Razorpay still holds the money, else parked) and its scheduled release does not go ahead (a reversal before a refund does not ask for this).
   const r = await reversePayout(id, { actor: staffActor(staffId), reason: scrubStaffText(reason?.trim() || "staff").slice(0, 40), pauseIfRefused: true });
   const pending = r.status === "reversal_requested" || r.outcome === "unknown" || r.outcome === "partial" || r.outcome === "waiting";
   // A reversal Razorpay refused has already been rolled back (held again and paused, or parked for a person, with an alert): the refusal says which.
   if (!r.ok && !pending) await refusalAfter("take this payout back", id, cur, r);
-  // One left to the worker: the note says where a refusal would leave it, read off the row (held and paused, or parked unpaused), never assumed.
+  // One left to the worker: the note says where a refusal would leave it, from the row's pause and the prior the engine will decide on, never assumed.
   return done(id, r, pending ? await pendingReverseNote(id, cur) : undefined);
 }
 

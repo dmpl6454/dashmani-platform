@@ -221,8 +221,9 @@ export const statusWord = (status: string) => (STATUS_VIEW[status]?.label ?? for
  * creator_payouts.paused_reason of the pause a PERSON's Reverse puts on a held payout (the engine's payout-pause.ts REVERSE_PAUSE_REASON; the
  * helper test holds the two equal). It is written when the reversal is claimed and replaces any reason already there, so that a Reverse Razorpay
  * refuses leaves the payout paused under the person's reason, whoever finished the reversal — back in held while Razorpay still holds the money,
- * else parked as needs_attention (the rule in payout-pause.ts). Resume releases a HELD payout when due; a parked one stays with a person. Every
- * sentence below is for the status it is shown on.
+ * else parked as needs_attention (the rule in payout-pause.ts). Resume releases a HELD payout when due; a parked one is released only if it goes
+ * back to held (the engine can put a parked payout's hold back on its own: a hold that was lifted outside our flow, a twin transfer cleaned up).
+ * Every sentence below is for the status it is shown on.
  */
 export const REVERSE_PAUSE_REASON = "staff_reverse";
 
@@ -233,9 +234,10 @@ const PAUSE_REASON: Record<string, string> = {
   account_suspended: "the creator's payout account was suspended",
   creator_suspended: "the creator was suspended",
   staff: "paused by staff",
-  // Shown on EVERY status ("Paused: …", the Resume dialog's first line), so the release is promised only for a held payout (the rule).
+  // Shown on EVERY status ("Paused: …", the Resume dialog's first line), so it claims nothing a status can contradict: not that Razorpay still
+  // has the money (a parked payout may be one the dashboard took back), and a release only for a held payout (the rule in payout-pause.ts).
   [REVERSE_PAUSE_REASON]:
-    "a person pressed Reverse so the creator is not paid, and Razorpay has not taken the money back (it refused, or has not confirmed it yet): resume it only if the creator should be paid after all, and its release then goes ahead when due if it is held (a parked payout stays with a person until they resolve it)",
+    "a person pressed Reverse so the creator is not paid, and the payout is not recorded as taken back (Razorpay refused, the reversal could not be made, or it is not confirmed yet): resume it only if the creator should be paid after all, and its release then goes ahead when due if it is held (a parked payout is released only if it goes back to held)",
 };
 
 /** Why a payout is paused, in staff words. A reason this page doesn't know is shown as the API wrote it (it is scrubbed, and React escapes it). */
@@ -278,14 +280,19 @@ export function pausedChip(p: { status: string; pausedAt?: string | null; paused
     if (p.pausedReason === REVERSE_PAUSE_REASON) {
       // ⚠️ The rule (payout-pause.ts): the pause survives every move; a refusal lands where the engine decides (back in held while Razorpay still
       // holds the money, else parked as Needs attention), still paused; Resume releases a HELD payout when due and NEVER a parked one. Each
-      // sentence is for the status it is shown on. In flight: the row offers only Resume (actionsFor: the worker is finishing it), and the
-      // prior is not on the row, so both landings are named and nothing to press is promised. Held: Reverse IS rendered, Resume releases.
-      // Parked (needs_attention, the pause kept by the refusal, a mismatch or a dashboard action): Reverse is rendered, Resume only lifts the pause.
+      // sentence is for the status it is shown on, and names only buttons actionsFor renders there. In flight: the row offers only Resume (the
+      // worker is finishing it), and the prior is not on the row, so both landings are named and nothing to press is promised. Held: Reverse IS
+      // rendered, Resume releases when due. Parked (needs_attention: the pause kept by a refusal, a mismatch, a dashboard action or a twin):
+      // Reverse is rendered, Resume only lifts the pause, and a parked payout is released only if it goes back to held (the engine can put the
+      // hold back on its own). Any other status the pause can sit on (failed: the transfer failed after it was parked) offers no Reverse and
+      // releases nothing, so its words name neither.
       if (p.status === "reversal_requested")
-        return { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back; Razorpay has not confirmed it yet and the system is finishing it. If Razorpay refuses, it goes back where it was (held, or parked as Needs attention), still paused. Resume only if the creator should be paid after all." };
+        return { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back; Razorpay has not confirmed it yet and the system is finishing it. If Razorpay refuses, it goes back to held or is parked as Needs attention, still paused. Resume only if the creator should be paid after all." };
       if (p.status === "held")
         return { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back and Razorpay refused (or has not confirmed it yet): it is not released while paused. Resume releases it when due; Reverse again takes it back." };
-      return { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back and Razorpay refused: it is parked for a person and not released while paused. Reverse again takes it back; Resume only lifts the pause, the payout stays parked until a person resolves it." };
+      if (p.status === "needs_attention")
+        return { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back, and it is parked for a person: it is not released while paused. Reverse again takes it back. Resume only lifts the pause: a parked payout is released only if it goes back to held." };
+      return { label: "Paused", holds: true, title: "A person pressed Reverse so the creator is not paid: nothing is released or transferred for it while it is paused. Resume only if the creator should be paid after all." };
     }
     return { label: "Paused", holds: true, title: "Nothing more is released or transferred for it while it is paused." };
   }
@@ -298,15 +305,17 @@ export function pausedChip(p: { status: string; pausedAt?: string | null; paused
  * take the money back instead, per the rule (payout-pause.ts) and the status it is shown on. ⚠️ A reversal still in flight (reversal_requested)
  * offers no Reverse button (actionsFor: the worker is finishing it; only Resume is shown), so that variant names nothing to press, and, the prior
  * not being on the row, promises a release only for the held landing; a held payout offers Reverse and is released when due; a PARKED payout
- * (needs_attention, the pause kept) offers Reverse but Resume releases nothing there. Lives here, not in the page, so the helper test can hold
- * it against actionsFor.
+ * (needs_attention, the pause kept) offers Reverse but Resume releases nothing there (it is released only if it goes back to held); any other
+ * status (failed) offers no Reverse and Resume releases nothing. Lives here, not in the page, so the helper test can hold it against actionsFor.
  */
 export function reversePauseResumeNote(status: string): string {
   if (status === "reversal_requested")
-    return "The reversal is still being finished by the system. Resume only if the creator should be paid after all: if Razorpay refuses the reversal and the payout goes back to held, it is then released when due; a parked payout stays with a person.";
+    return "The reversal is still being finished by the system. Resume only if the creator should be paid after all: if Razorpay refuses the reversal and the payout goes back to held, it is then released when due; a parked payout is released only if it goes back to held.";
   if (status === "held")
     return "A person pressed Reverse on it because the creator must not be paid, and Razorpay refused (or has not confirmed it yet). Resume only if the creator should be paid after all: a held payout whose hold has run out is then released within minutes. To take the money back instead, press Reverse again.";
-  return "A person pressed Reverse on it because the creator must not be paid, and Razorpay refused; the payout is parked for a person. Resume only lifts the pause: nothing is released, and the payout stays parked until a person resolves it. To take the money back, press Reverse again.";
+  if (status === "needs_attention")
+    return "A person pressed Reverse on it because the creator must not be paid, and it is parked for a person. Resume only lifts the pause: nothing is released by it, and a parked payout is released only if it goes back to held. To take the money back instead, press Reverse again.";
+  return "A person pressed Reverse on it because the creator must not be paid. Resume only if the creator should be paid after all: resuming releases nothing by itself.";
 }
 
 // ── Dates ───────────────────────────────────────────────────────────────────────────────────────

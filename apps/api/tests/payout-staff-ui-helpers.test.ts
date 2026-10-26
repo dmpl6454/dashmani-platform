@@ -1001,7 +1001,7 @@ describe("the API's plain-words table for a refusal", () => {
     expect(changeSince(snap({ pausedAt: at, pausedReason: "dispute" }), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON }), "reversal_refused")).toMatch(/^It stays paused, now because a person's Reverse was refused \(it was paused: a dispute on the client's payment\)/);
     // r6: the same take-over whose refusal PARKED the payout (Razorpay had let the money go): the status is named and no release is promised.
     expect(changeSince(snap({ pausedAt: at, pausedReason: "dispute" }), snap({ status: "needs_attention", pausedAt: at, pausedReason: REVERSE_PAUSE_REASON, errorCode: "reversal_refused_after_release" }), "reversal_refused_after_release")).toBe(
-      "Its status is now Needs attention, and it stays paused, now because a person's Reverse was refused (it was paused: a dispute on the client's payment): press Reverse again to take it back, or resume it only if the creator should be paid after all (a parked payout stays with a person): see its history.",
+      "Its status is now Needs attention, and it stays paused, now because a person's Reverse was refused (it was paused: a dispute on the client's payment): press Reverse again to take it back, or resume it only if the creator should be paid after all (a parked payout is released only if it goes back to held): see its history.",
     );
     // The same pause with the same reason is no change at all (the ENDING speaks then).
     expect(changeSince(snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON }), snap({ pausedAt: at, pausedReason: REVERSE_PAUSE_REASON, errorCode: "reversal_refused" }), "reversal_refused")).toBeNull();
@@ -1037,9 +1037,9 @@ describe("the API's plain-words table for a refusal", () => {
     expect(chip).toMatchObject({ label: "Paused", holds: true });
     expect(chip.title).not.toMatch(/Reverse again/);
     // r6 #3: the prior is not on the row (a parked prior re-parks), and Resume IS rendered: both landings are named, nothing is promised unconditionally.
-    expect(chip.title).toBe("A person pressed Reverse to take this payout back; Razorpay has not confirmed it yet and the system is finishing it. If Razorpay refuses, it goes back where it was (held, or parked as Needs attention), still paused. Resume only if the creator should be paid after all.");
+    expect(chip.title).toBe("A person pressed Reverse to take this payout back; Razorpay has not confirmed it yet and the system is finishing it. If Razorpay refuses, it goes back to held or is parked as Needs attention, still paused. Resume only if the creator should be paid after all.");
     expect(chip.title).not.toMatch(/Nothing to press|goes back to held and stays paused/);
-    expect(reversePauseResumeNote("reversal_requested")).toBe("The reversal is still being finished by the system. Resume only if the creator should be paid after all: if Razorpay refuses the reversal and the payout goes back to held, it is then released when due; a parked payout stays with a person.");
+    expect(reversePauseResumeNote("reversal_requested")).toBe("The reversal is still being finished by the system. Resume only if the creator should be paid after all: if Razorpay refuses the reversal and the payout goes back to held, it is then released when due; a parked payout is released only if it goes back to held.");
     expect(reversePauseResumeNote("reversal_requested")).not.toMatch(/Reverse again|then released when due\.$/);
     // A held payout offers Reverse, so its texts keep naming it.
     const held = row({ status: "held", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON, releaseAfter: iso(-H) });
@@ -1056,19 +1056,37 @@ describe("the API's plain-words table for a refusal", () => {
     const chip = pausedChip(parked)!;
     expect(chip).toMatchObject({ label: "Paused", holds: true });
     expect(chip.title).not.toMatch(/Resume releases it when due/);
-    expect(chip.title).toMatch(/^A person pressed Reverse to take this payout back and Razorpay refused: it is parked for a person and not released while paused\. Reverse again takes it back; Resume only lifts the pause, the payout stays parked until a person resolves it\.$/);
+    expect(chip.title).toBe("A person pressed Reverse to take this payout back, and it is parked for a person: it is not released while paused. Reverse again takes it back. Resume only lifts the pause: a parked payout is released only if it goes back to held.");
     expect(reversePauseResumeNote("needs_attention")).not.toMatch(/released within minutes|then released when due/);
-    expect(reversePauseResumeNote("needs_attention")).toMatch(/the payout is parked for a person\. Resume only lifts the pause: nothing is released, and the payout stays parked until a person resolves it\. To take the money back, press Reverse again\.$/);
-    // The status decides, not the code: the same pause kept by a mismatch park or a dashboard action reads the same.
-    for (const errorCode of ["transfer_mismatch", "reversed_outside_flow", "released_outside_flow"]) {
-      expect(pausedChip(row({ status: "needs_attention", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON, errorCode, hasTransfer: true }))!.title, errorCode).toMatch(/stays parked until a person resolves it/);
+    expect(reversePauseResumeNote("needs_attention")).toBe("A person pressed Reverse on it because the creator must not be paid, and it is parked for a person. Resume only lifts the pause: nothing is released by it, and a parked payout is released only if it goes back to held. To take the money back instead, press Reverse again.");
+    // The status decides, not the code: the same pause kept by a mismatch park, a dashboard action or a twin reads the same. (A held-resolvable
+    // or twin park can go back to held ON ITS OWN, which is why no text says it "stays parked until a person resolves it".)
+    for (const errorCode of ["transfer_mismatch", "reversed_outside_flow", "released_outside_flow", "duplicate_transfer", "reversal_failed_state"]) {
+      const r = row({ status: "needs_attention", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON, errorCode, hasTransfer: true });
+      expect(keys(r), errorCode).toEqual(expect.arrayContaining(["reverse", "resume"]));
+      expect(pausedChip(r)!.title, errorCode).toBe(chip.title);
+      expect(pausedChip(r)!.title, errorCode).not.toMatch(/stays parked until|Razorpay refused/);
     }
-    // The pause text itself is shown on every status, so it promises the release only for a held payout.
-    expect(pauseText(REVERSE_PAUSE_REASON)).toMatch(/goes ahead when due if it is held \(a parked payout stays with a person until they resolve it\)$/);
+    // The pause text itself is shown on every status, so it promises the release only for a held payout, and never that Razorpay still has the
+    // money (a payout parked as reversed_outside_flow carries it while the dashboard has in fact taken the money back).
+    expect(pauseText(REVERSE_PAUSE_REASON)).toMatch(/goes ahead when due if it is held \(a parked payout is released only if it goes back to held\)$/);
+    expect(pauseText(REVERSE_PAUSE_REASON)).not.toMatch(/Razorpay has not taken the money back/);
     // The held row keeps its own sentences (Reverse rendered, Resume releases).
     const held = row({ status: "held", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON, releaseAfter: iso(-H) });
     expect(pausedChip(held)!.title).toMatch(/Resume releases it when due; Reverse again takes it back\.$/);
     expect(reversePauseResumeNote("held")).toMatch(/released within minutes/);
+  });
+
+  it("r6 sweep: a FAILED payout keeping the person's pause (its transfer failed after it was parked) offers no Reverse, so neither its chip nor its Resume note names one, nor a release", () => {
+    const failed = row({ status: "failed", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON, errorCode: "transfer_failed", hasTransfer: true, itemStatus: "posted_manual" });
+    expect(keys(failed)).not.toContain("reverse");
+    expect(keys(failed)).toEqual(expect.arrayContaining(["resume", "retry"]));
+    const chip = pausedChip(failed)!;
+    expect(chip).toMatchObject({ label: "Paused", holds: true });
+    expect(chip.title).toBe("A person pressed Reverse so the creator is not paid: nothing is released or transferred for it while it is paused. Resume only if the creator should be paid after all.");
+    expect(chip.title).not.toMatch(/Reverse again|releases it when due|parked/);
+    expect(reversePauseResumeNote("failed")).toBe("A person pressed Reverse on it because the creator must not be paid. Resume only if the creator should be paid after all: resuming releases nothing by itself.");
+    expect(reversePauseResumeNote("failed")).not.toMatch(/Reverse again|released when due|within minutes/);
   });
 });
 

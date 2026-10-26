@@ -1316,7 +1316,7 @@ describe("⚠️ r2 #R11: a refusal never says 'Nothing was changed' when the st
     const q = await get("?filter=paused");
     const row = q.body.data.rows.find((x: { id: string }) => x.id === id);
     expect(row).toMatchObject({ status: "needs_attention", pausedReason: REVERSE_PAUSE_REASON });
-    expect(pausedChip(row)!.title).toMatch(/parked for a person and not released while paused\. Reverse again takes it back; Resume only lifts the pause/);
+    expect(pausedChip(row)!.title).toMatch(/parked for a person: it is not released while paused\. Reverse again takes it back\. Resume only lifts the pause: a parked payout is released only if it goes back to held\./);
     expect(pausedChip(row)!.title).not.toMatch(/Resume releases it when due/);
     // Resume only lifts the pause: an hour on, the parked row is exactly where it was, and nothing was released.
     expect((await post(`/${id}/resume`)).status).toBe(200);

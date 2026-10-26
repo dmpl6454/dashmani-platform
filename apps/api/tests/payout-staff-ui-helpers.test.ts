@@ -63,6 +63,7 @@ import {
   referenceProblem,
   releaseChangeLine,
   releaseOnOf,
+  reversePauseResumeNote,
   sortPayoutsForView,
   splitRefusal,
   statusWord,
@@ -1021,6 +1022,26 @@ describe("the API's plain-words table for a refusal", () => {
     // (the action-matrix test above pins it): lifting the person's own pause there is their explicit second choice, and the dialog says what it does.
     expect(keys(held)).toEqual(expect.arrayContaining(["resume", "reverse"]));
     expect(keys(row({ status: "reversal_requested", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON }))).not.toContain("pause");
+  });
+
+  it("r5 #4: on a reversal still in flight the row offers no Reverse, so neither the chip nor the Resume dialog may say 'press Reverse again'", () => {
+    const inFlight = row({ status: "reversal_requested", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON });
+    // actionsFor: the worker is finishing it, only Resume is shown (the matrix test pins the matrix; this pins WHY the text may not name Reverse).
+    expect(keys(inFlight)).toEqual(["resume"]);
+    expect(keys(inFlight)).not.toContain("reverse");
+    const chip = pausedChip(inFlight)!;
+    expect(chip).toMatchObject({ label: "Paused", holds: true });
+    expect(chip.title).not.toMatch(/Reverse again/);
+    expect(chip.title).toBe("A person pressed Reverse to take this payout back; Razorpay has not confirmed it yet and the system is finishing it. Nothing to press: if Razorpay refuses, it goes back to held and stays paused.");
+    expect(reversePauseResumeNote("reversal_requested")).toBe("The reversal is still being finished by the system. Resume only if the creator should be paid after all: if Razorpay refuses the reversal, the payout is then released when due.");
+    expect(reversePauseResumeNote("reversal_requested")).not.toMatch(/Reverse again/);
+    // A held payout offers Reverse, so its texts keep naming it.
+    const held = row({ status: "held", pausedAt: iso(-H), pausedReason: REVERSE_PAUSE_REASON, releaseAfter: iso(-H) });
+    expect(keys(held)).toContain("reverse");
+    expect(pausedChip(held)!.title).toMatch(/Resume releases it when due; Reverse again takes it back\.$/);
+    expect(reversePauseResumeNote("held")).toMatch(/^A person pressed Reverse on it because the creator must not be paid.*To take the money back instead, press Reverse again\.$/);
+    // Any other pause on a reversal in flight keeps the generic chip.
+    expect(pausedChip(row({ status: "reversal_requested", pausedAt: iso(-H), pausedReason: "dispute" }))!.title).toMatch(/^Nothing more is released/);
   });
 });
 

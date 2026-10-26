@@ -245,9 +245,9 @@ async function transition(a: {
   });
 }
 
-/** An audit row for something that did not change the status (a check, a pause, a refusal worth keeping). */
-async function recordEvent(p: Pick<CreatorPayout, "id" | "bookingId" | "amountPaise">, kind: string, status: string, text: string, actor: PayoutActor = SYSTEM): Promise<void> {
-  await prisma.creatorPayoutEvent.create({
+/** An audit row for something that did not change the status (a check, a pause, a refusal worth keeping). `db`: the transaction to write it in. */
+async function recordEvent(p: Pick<CreatorPayout, "id" | "bookingId" | "amountPaise">, kind: string, status: string, text: string, actor: PayoutActor = SYSTEM, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<void> {
+  await db.creatorPayoutEvent.create({
     data: { payoutId: p.id, bookingId: p.bookingId, kind: kind.slice(0, 40), fromStatus: status, toStatus: status, amountPaise: p.amountPaise, actorType: actor.type, actorId: actor.id ?? null, note: note(text) },
   });
 }
@@ -1616,12 +1616,19 @@ export async function reversePayout(payoutId: string, opts: ReverseOptions): Pro
     const lease = await takeLease(payoutId, ["reversal_requested"], now);
     if (!lease) return result(ctx, p0.status, false, "leased");
     try {
+      if (opts.hooks?.afterClaim) await opts.hooks.afterClaim();
       const prior = await priorStatusOfReversal(p0);
       // A person pressing Reverse on a reversal still in flight (one a refund started, or their own, read back): their intent goes on the row
       // now, exactly as a claim from held would put it, so a refusal that lands later leaves the payout held AND paused.
+      // ⚠️ The lease is ours, but Razorpay's events do not honour it: transfer.processed (route-webhooks applyMove) can move the row to `reversed`
+      // between the lease and this write, and a pause landing on a reversed row is never lifted (backoff is a no-op there, no job reads a reversed
+      // payout again, and "pay by bank transfer instead" would carry it onto manual_required). So the pause is written only to a row STILL
+      // reversal_requested (applyPersonsPause's guard, in the UPDATE's own WHERE), and its audit row lands in the same transaction, or neither does.
       if (pauseOnRefusal && prior === "held") {
-        const put = await applyPersonsPause(prisma, payoutId, { at: now, reason: REVERSE_PAUSE_REASON });
-        if (put.done !== "none") await recordEvent(p0, "pause", "reversal_requested", `Paused by a person's Reverse: if Razorpay refuses the reversal, the payout is held and not released${put.previous ? ` (it was paused: ${put.previous})` : ""}.`, actor);
+        await prisma.$transaction(async (tx) => {
+          const put = await applyPersonsPause(tx, payoutId, { at: now, reason: REVERSE_PAUSE_REASON }, { status: "reversal_requested" });
+          if (put.done !== "none") await recordEvent(p0, "pause", "reversal_requested", `Paused by a person's Reverse: if Razorpay refuses the reversal, the payout is held and not released${put.previous ? ` (it was paused: ${put.previous})` : ""}.`, actor, tx);
+        });
       }
       return await runReversal(ctx, (await loadPayout(payoutId))!, prior, now, actor, why, pauseOnRefusal);
     } finally {

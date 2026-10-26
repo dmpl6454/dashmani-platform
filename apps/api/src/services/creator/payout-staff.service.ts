@@ -668,6 +668,23 @@ export async function staffRetryTransfer(id: string, staffId: string) {
 }
 
 /**
+ * What a person is told when their Reverse is left to the worker (an unknown, partial or waiting answer, or a reversal already in flight). The
+ * second sentence is read off the ROW after the call, never assumed: the person's pause (REVERSE_PAUSE_REASON) is on it only when the prior was
+ * held (written at the claim, or by the in-flight branch for a held prior), and only then does a refusal put the payout back in held and paused.
+ * For a released, settlement_failed or needs_attention prior the engine parks a refusal as needs_attention, UNPAUSED (decideReversalOutcome,
+ * rollbackReversal), and money Razorpay already let go may still settle to the creator: that person must not be told it is held and paused.
+ * `before.status` is checked as well, because a parked payout can still carry the pause from an earlier held-prior reversal (parkMismatch leaves
+ * it on), and a refusal re-parks it rather than putting it back in held.
+ */
+async function pendingReverseNote(id: string, before: Snapshot): Promise<string> {
+  const after = await snapshot(id);
+  const heldAndPaused = after?.pausedReason === REVERSE_PAUSE_REASON && (before?.status === "held" || before?.status === "reversal_requested");
+  return heldAndPaused
+    ? "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically. If Razorpay refuses it, the payout goes back to held and stays paused, so it is not released."
+    : "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically. If Razorpay refuses it, the payout is parked as Needs attention for a person and staff are alerted; money already released may still settle to the creator's bank: press Reverse again or check Razorpay.";
+}
+
+/**
  * Take the creator's share back out of their linked account (explicit amount, read fresh; never "all"). The engine lets a person do this
  * from `needs_attention` too, and for a released or settlement_failed payout (which Razorpay may only allow against the account's floating
  * balance). A reversal Razorpay has not confirmed is not an error: the payout stays reversal_requested and the worker reads it back.
@@ -687,7 +704,8 @@ export async function staffReverse(id: string, staffId: string, reason?: string)
   const pending = r.status === "reversal_requested" || r.outcome === "unknown" || r.outcome === "partial" || r.outcome === "waiting";
   // A reversal Razorpay refused has already been rolled back (held again and paused, or parked for a person, with an alert): the refusal says which.
   if (!r.ok && !pending) await refusalAfter("take this payout back", id, cur, r);
-  return done(id, r, pending ? "The reversal has not been confirmed by Razorpay yet; it is being read back and finished automatically. If Razorpay refuses it, the payout goes back to held and stays paused, so it is not released." : undefined);
+  // One left to the worker: the note says where a refusal would leave it, read off the row (held and paused, or parked unpaused), never assumed.
+  return done(id, r, pending ? await pendingReverseNote(id, cur) : undefined);
 }
 
 /** Staff paid the creator by bank transfer and record its reference. Refused while a transfer could still release money, and for a post that is not live and verified. */

@@ -1,5 +1,5 @@
 import type { Prisma } from "@dashmani/db";
-import { PAUSABLE_STATUSES } from "./payout-states";
+import { PAUSABLE_STATUSES, type PayoutStatus } from "./payout-states";
 
 // The ONE rule for pausing a creator's payouts because something on the brand's payment changed
 // (a dispute opened, a refund we did not make appeared). Kept in its own tiny module so the two
@@ -146,17 +146,25 @@ export const REVERSE_PAUSE_REASON = "staff_reverse";
 /**
  * Put a PERSON's pause on a payout INSIDE the caller's transaction, after the caller has locked the row (its status write): pause it when it
  * is not paused, else keep `pausedAt` and overwrite the reason with this one (the rule above). Returns what it did: "paused" (it was not
- * paused), "replaced" (it was, for `previous`; its time is kept), or "none" (no such row, or already paused with this reason).
+ * paused), "replaced" (it was, for `previous`; its time is kept), or "none" (no such row, already paused with this reason, or the row is no
+ * longer in `guard.status`).
+ *
+ * `guard.status`: write the pause ONLY to a row still in that status, enforced in the UPDATE's own WHERE. For a caller that has not locked the
+ * row's status (reversePayout's in-flight branch works under a lease that Razorpay's events do not honour: transfer.processed can move the row
+ * to `reversed` between the caller's read and this write), a pause landing on the moved row would never be lifted. The status-writing callers
+ * (transition) lock the row first and pass no guard.
  */
-export async function applyPersonsPause(tx: Tx, payoutId: string, pause: { at: Date; reason: string }): Promise<{ done: "paused" | "replaced" | "none"; previous: string | null }> {
-  const had = await tx.creatorPayout.findUnique({ where: { id: payoutId }, select: { pausedAt: true, pausedReason: true } });
+export async function applyPersonsPause(tx: Tx, payoutId: string, pause: { at: Date; reason: string }, guard: { status?: PayoutStatus } = {}): Promise<{ done: "paused" | "replaced" | "none"; previous: string | null }> {
+  const had = await tx.creatorPayout.findUnique({ where: { id: payoutId }, select: { status: true, pausedAt: true, pausedReason: true } });
   if (!had) return { done: "none", previous: null };
+  if (guard.status !== undefined && had.status !== guard.status) return { done: "none", previous: had.pausedReason };
+  const still = guard.status !== undefined ? { status: guard.status } : {};
   if (had.pausedAt === null) {
-    const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedAt: null }, data: { pausedAt: pause.at, pausedReason: pause.reason } });
+    const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedAt: null, ...still }, data: { pausedAt: pause.at, pausedReason: pause.reason } });
     return { done: r.count === 1 ? "paused" : "none", previous: null };
   }
   if (had.pausedReason === pause.reason) return { done: "none", previous: had.pausedReason };
-  const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedAt: { not: null } }, data: { pausedReason: pause.reason } });
+  const r = await tx.creatorPayout.updateMany({ where: { id: payoutId, pausedAt: { not: null }, ...still }, data: { pausedReason: pause.reason } });
   return { done: r.count === 1 ? "replaced" : "none", previous: had.pausedReason };
 }
 

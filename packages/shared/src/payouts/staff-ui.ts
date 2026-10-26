@@ -272,12 +272,28 @@ export function pausedChip(p: { status: string; pausedAt?: string | null; paused
   const h = pauseHold(p);
   if (h === null) return null;
   if (h === "holds") {
-    return p.pausedReason === REVERSE_PAUSE_REASON
-      ? { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back and Razorpay refused (or has not confirmed it yet): it is not released while paused. Resume releases it when due; Reverse again takes it back." }
-      : { label: "Paused", holds: true, title: "Nothing more is released or transferred for it while it is paused." };
+    if (p.pausedReason === REVERSE_PAUSE_REASON) {
+      // ⚠️ While the reversal is in flight the row offers NO Reverse (actionsFor: the worker is finishing it; only Resume), so that title names nothing to press.
+      return p.status === "reversal_requested"
+        ? { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back; Razorpay has not confirmed it yet and the system is finishing it. Nothing to press: if Razorpay refuses, it goes back to held and stays paused." }
+        : { label: "Paused", holds: true, title: "A person pressed Reverse to take this payout back and Razorpay refused (or has not confirmed it yet): it is not released while paused. Resume releases it when due; Reverse again takes it back." };
+    }
+    return { label: "Paused", holds: true, title: "Nothing more is released or transferred for it while it is paused." };
   }
   if (h === "asks_rehold") return { label: "Paused · putting the hold back", holds: false, title: "Already released: the system is asking Razorpay to put the hold back. Until then Razorpay may still settle it." };
   return { label: "Paused · doesn't stop it", holds: false, title: "Already released (or being released): Razorpay settles it whatever the pause says. Reverse takes it back while it is still in the creator's account." };
+}
+
+/**
+ * The gold paragraph of the Resume dialog for a payout carrying a person's Reverse pause (REVERSE_PAUSE_REASON): what Resume does, and how to
+ * take the money back instead. ⚠️ A reversal still in flight (reversal_requested) offers no Reverse button (actionsFor: the worker is finishing
+ * it; only Resume is shown), so that variant names nothing to press; a held payout offers Reverse, and is told to press it. Lives here, not in
+ * the page, so the helper test can hold it against actionsFor.
+ */
+export function reversePauseResumeNote(status: string): string {
+  return status === "reversal_requested"
+    ? "The reversal is still being finished by the system. Resume only if the creator should be paid after all: if Razorpay refuses the reversal, the payout is then released when due."
+    : "A person pressed Reverse on it because the creator must not be paid, and Razorpay refused (or has not confirmed it yet). Resume only if the creator should be paid after all: a held payout whose hold has run out is then released within minutes. To take the money back instead, press Reverse again.";
 }
 
 // ── Dates ───────────────────────────────────────────────────────────────────────────────────────

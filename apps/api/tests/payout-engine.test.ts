@@ -57,7 +57,7 @@ import {
   type StepResult,
 } from "../src/services/creator/payout.service";
 import { ABSENT_CHECK_GAP_MS, requestKeyOf } from "../src/services/creator/payout-policy";
-import { REVERSE_PAUSE_REASON } from "../src/services/creator/payout-pause";
+import { REVERSE_PAUSE_REASON, applyPersonsPause } from "../src/services/creator/payout-pause";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
 import { captureConsole, scanDatabase } from "./payout-privacy";
 
@@ -2632,5 +2632,64 @@ describe("r4 #1/#2: a person's Reverse puts its pause on the row AT THE CLAIM, s
     expect(await runPayoutJob("resolve_reversal", w.payout.id, { now: T(4) })).toMatchObject({ ok: false, status: "held", reason: "reversal_refused" });
     expect(await reload(w.payout.id)).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
     expect((await selectDuePayouts(T(10))).some((d) => d.id === w.payout.id && d.job === "release")).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("r5 #2: a person's Reverse on a reversal in flight writes its pause only to a row STILL reversal_requested, with its audit row or not at all", () => {
+  /** Razorpay's transfer.processed with the whole amount reversed, landed by hand: route-webhooks applyMove ignores the engine's lease. */
+  async function eventFinishesReversal(w: World, at: Date) {
+    const t = fake.transfers.get(w.transferId!)!;
+    t.amountReversed = w.amount;
+    t.status = "reversed";
+    await prisma.creatorPayout.update({ where: { id: w.payout.id }, data: { status: "reversed", reversedAt: at, transferStatus: "reversed", amountReversedPaise: w.amount } });
+  }
+
+  it("⚠️ the event finishes the reversal between the lease and the pause, and the read-back then fails: no pause lands on the reversed row, and no pause event is written", async () => {
+    const w = await releasable();
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    // A refund's reversal claims it (no pauseIfRefused); the read fails; it waits for the worker, unpaused and unleased.
+    expect(await reverseForRefund(w.item.id, { reason: "withdrawn", actor: STAFF, now: T(0) })).toMatchObject({ refundable: false, state: "reversal_pending" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "reversal_requested", pausedAt: null });
+    // The person presses Reverse while it is in flight; Razorpay's event lands right after the lease, before the pause; the engine's own read then fails.
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    const r = await reversePayout(w.payout.id, { reason: "not their post", actor: STAFF, pauseIfRefused: true, now: T(1), hooks: { afterClaim: () => eventFinishesReversal(w, T(1)) } });
+    expect(r).toMatchObject({ ok: false, outcome: "unknown" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "reversed", pausedAt: null, pausedReason: null });
+    expect((await eventsOf(w.payout.id)).some((e) => e.kind === "pause")).toBe(false);
+    expect(fake.calls.filter(is.createReversal)).toHaveLength(0);
+    // Nothing stale is carried on: "pay by bank transfer instead" lands on an unpaused row.
+    expect(await requireManualPayment(w.payout.id, { actor: STAFF, reason: "pay by bank transfer", now: T(2) })).toMatchObject({ ok: true, status: "manual_required" });
+    expect(await reload(w.payout.id)).toMatchObject({ status: "manual_required", pausedAt: null, pausedReason: null });
+  });
+
+  it("the row still in flight at the pause is paused as before, and the event that finishes it afterwards finds the lift it needs", async () => {
+    const w = await releasable();
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    expect(await reverseForRefund(w.item.id, { reason: "withdrawn", actor: STAFF, now: T(0) })).toMatchObject({ refundable: false, state: "reversal_pending" });
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    let seenAtHook: string | null = null;
+    expect(await reversePayout(w.payout.id, { reason: "not their post", actor: STAFF, pauseIfRefused: true, now: T(1), hooks: { afterClaim: async () => void (seenAtHook = (await reload(w.payout.id)).status) } })).toMatchObject({ outcome: "unknown", status: "reversal_requested" });
+    expect(seenAtHook).toBe("reversal_requested");
+    const p = await reload(w.payout.id);
+    expect(p).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
+    expect(p.pausedAt?.getTime()).toBe(T(1).getTime());
+    expect((await eventsOf(w.payout.id)).filter((e) => e.kind === "pause")).toHaveLength(1);
+  });
+
+  it("the guard itself: applyPersonsPause with a status guard writes nothing to a row in another status, paused or not, and pauses a matching one as before", async () => {
+    const unpaused = await mkWorld({ payoutStatus: "reversed" });
+    expect(await applyPersonsPause(prisma, unpaused.payout.id, { at: T(0), reason: REVERSE_PAUSE_REASON }, { status: "reversal_requested" })).toMatchObject({ done: "none" });
+    expect(await reload(unpaused.payout.id)).toMatchObject({ pausedAt: null, pausedReason: null });
+    // A staff pause (or a dispute's) on a reversed payout is inert and is left exactly as it is: not replaced by the person's reason.
+    const paused = await mkWorld({ payoutStatus: "reversed", paused: true });
+    expect(await applyPersonsPause(prisma, paused.payout.id, { at: T(0), reason: REVERSE_PAUSE_REASON }, { status: "reversal_requested" })).toMatchObject({ done: "none" });
+    expect(await reload(paused.payout.id)).toMatchObject({ pausedReason: "staff" });
+    const inFlight = await mkWorld({ payoutStatus: "reversal_requested" });
+    expect(await applyPersonsPause(prisma, inFlight.payout.id, { at: T(0), reason: REVERSE_PAUSE_REASON }, { status: "reversal_requested" })).toMatchObject({ done: "paused" });
+    expect(await reload(inFlight.payout.id)).toMatchObject({ pausedReason: REVERSE_PAUSE_REASON });
+    const inFlightPaused = await mkWorld({ payoutStatus: "reversal_requested", paused: true });
+    expect(await applyPersonsPause(prisma, inFlightPaused.payout.id, { at: T(0), reason: REVERSE_PAUSE_REASON }, { status: "reversal_requested" })).toMatchObject({ done: "replaced", previous: "staff" });
+    expect(await reload(inFlightPaused.payout.id)).toMatchObject({ pausedReason: REVERSE_PAUSE_REASON });
   });
 });

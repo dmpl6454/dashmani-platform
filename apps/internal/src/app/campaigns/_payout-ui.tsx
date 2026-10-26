@@ -7,7 +7,7 @@ import { PAYOUTS_BASE, isUnconfirmed, runPayoutAction, usePayoutDetail, type Pay
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, ErrorBar, INPUT, Pill, fmtWhen, rupees } from "./_ds";
 import {
   RELEASE_SWITCH_TEXT, REVERSE_PAUSE_REASON, actionsFor, actorWord, buildTimeline, eventTitle, isLiveItem, manualNeedsReverseFirst, payoutHint, payoutStatusView, pauseEffect, pausedChip, pauseText, referenceProblem,
-  splitRefusal, statusWord, transferIdProblem,
+  reversePauseResumeNote, splitRefusal, statusWord, transferIdProblem,
   type PayoutActionKey, type PayoutActionView, type StepState, type TimelineStep,
 } from "./_payout";
 
@@ -288,11 +288,8 @@ export function dialogFor(key: PayoutActionKey, row: PayoutRow): DialogSpec {
         body: (
           <>
             <p>It was paused: {pauseText(row.pausedReason)}.</p>
-            {row.pausedReason === REVERSE_PAUSE_REASON && (
-              <p className="text-ds-gold">
-                A person pressed Reverse on it because the creator must not be paid, and Razorpay refused (or has not confirmed it yet). Resume only if the creator should be paid after all: a held payout whose hold has run out is then released within minutes. To take the money back instead, press Reverse again.
-              </p>
-            )}
+            {/* A reversal still in flight offers no Reverse button (actionsFor), so its paragraph names nothing to press: the text is the shared helper's. */}
+            {row.pausedReason === REVERSE_PAUSE_REASON && <p className="text-ds-gold">{reversePauseResumeNote(row.status)}</p>}
             <p>Resuming does not release it by itself. It is released only when every check passes, after the hold: the post verified, no dispute open, no bank change pending, releases switched on. The system refuses to resume while a dispute is still open.</p>
           </>
         ),

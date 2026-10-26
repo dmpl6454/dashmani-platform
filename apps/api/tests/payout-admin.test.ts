@@ -1225,6 +1225,61 @@ describe("⚠️ r2 #R11: a refusal never says 'Nothing was changed' when the st
     expect(fake.count((x) => is.setHold(x, false))).toBe(0);
   });
 
+  it("⚠️ r5 #1/#3: the same unconfirmed Reverse on a RELEASED payout is not told 'held and stays paused': the note says Needs attention, and the worker's refusal parks it UNPAUSED", async () => {
+    const { c, id } = await releasable();
+    expect((await post(`/${id}/release-now`)).status).toBe(200);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "released", pausedAt: null });
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    const res = await post(`/${id}/reverse`, { reason: "dispute opened" });
+    expect(res.status).toBe(200);
+    expect(res.body.data.result).toMatchObject({ ok: false, outcome: "unknown" });
+    // The claim pauses a HELD prior only, so nothing paused this one: the note must not promise a pause or a return to held, and must say where
+    // a refusal really leaves it and that the released money may still settle.
+    expect(res.body.data.result.note).toMatch(
+      /finished automatically\. If Razorpay refuses it, the payout is parked as Needs attention for a person and staff are alerted; money already released may still settle to the creator's bank: press Reverse again or check Razorpay\.$/,
+    );
+    expect(res.body.data.result.note).not.toMatch(/goes back to held|stays paused|so it is not released/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "reversal_requested", pausedAt: null, pausedReason: null });
+    // Pressed again while it is in flight (the in-flight branch, prior released): still no pause on the row, so still the same honest note.
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    const again = await post(`/${id}/reverse`, { reason: "dispute opened" });
+    expect(again.status).toBe(200);
+    expect(again.body.data.result.note).toMatch(/parked as Needs attention for a person/);
+    expect(again.body.data.result.note).not.toMatch(/goes back to held|stays paused/);
+    expect(await payoutOf(c.id)).toMatchObject({ status: "reversal_requested", pausedAt: null });
+    // The worker finishes it (no actor) and Razorpay refuses: parked for a person, unpaused, exactly as the note said, and staff are emailed.
+    vi.mocked(notifyAdminByEmail).mockClear();
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    await runCreatorPayoutsTick({ now: new Date(Date.now() + 3 * MIN) });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "reversal_refused_after_release", pausedAt: null, pausedReason: null });
+    expect((await events(id)).some((e) => e.kind === "pause")).toBe(false);
+    expect(fake.count((x) => is.setHold(x, true))).toBe(0); // nothing re-held the released transfer: it may still settle, as the note says
+    await flushPayoutAlertsForTests();
+    expect(vi.mocked(notifyAdminByEmail).mock.calls.map((m) => String(m[0]))).toContain("Creator payout reversal FAILED");
+  });
+
+  it("r5 #1: a PARKED payout that still carries the person's pause from an earlier refusal is not told 'back to held' either: a refusal re-parks it", async () => {
+    const w = await paid({ pages: [{}] });
+    const c = w.creators[0];
+    const id = await idOf(c.id);
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    expect((await post(`/${id}/reverse`, { reason: "withdrawn" })).status).toBe(409); // held again, paused by the person's Reverse
+    expect(await payoutOf(c.id)).toMatchObject({ status: "held", pausedReason: REVERSE_PAUSE_REASON });
+    // A later mismatch parks it (parkMismatch leaves the pause on): the row is needs_attention AND carries the person's pause.
+    await setPayout(c.id, { status: "needs_attention", errorCode: "transfer_mismatch", lastError: "parked" });
+    fake.intercept({ match: is.fetchTransfer, mode: "reject", status: 500 });
+    const res = await post(`/${id}/reverse`, { reason: "withdrawn" });
+    expect(res.status).toBe(200);
+    expect(res.body.data.result).toMatchObject({ ok: false, outcome: "unknown" });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "reversal_requested", pausedReason: REVERSE_PAUSE_REASON });
+    // The pause IS on the row, but the prior was not held: a refusal parks it again, so the note must not say it goes back to held.
+    expect(res.body.data.result.note).toMatch(/parked as Needs attention for a person/);
+    expect(res.body.data.result.note).not.toMatch(/goes back to held/);
+    fake.intercept({ match: is.createReversal, mode: "reject", status: 400 });
+    await runCreatorPayoutsTick({ now: new Date(Date.now() + 3 * MIN) });
+    expect(await payoutOf(c.id)).toMatchObject({ status: "needs_attention", errorCode: "reversal_refused_after_release" });
+  });
+
   it("r3 #6 / r4 #2: a payout paused already keeps its pause's TIME when a Reverse is refused, but the reason becomes the person's, and the refusal says so", async () => {
     const w = await paid({ pages: [{}] });
     const c = w.creators[0];

@@ -27,7 +27,8 @@ beforeEach(async () => {
   const superAdmin = await createTestRole("Super Admin", ADMIN_PERMS);
   const hr = await createTestRole(DEFAULT_ROLES.HR_MANAGER.name, DEFAULT_ROLES.HR_MANAGER.permissions.map((p) => ({ ...p })));
   const employee = await createTestRole("Employee", [{ resource: "employees", action: "view", scope: "own" }]);
-  roleIds = { admin: admin.id, superAdmin: superAdmin.id, hr: hr.id, employee: employee.id };
+  const sales = await createTestRole("Sales", [{ resource: "clients", action: "view", scope: "global" }]);
+  roleIds = { admin: admin.id, superAdmin: superAdmin.id, hr: hr.id, employee: employee.id, sales: sales.id };
 
   const hrUser = await createTestUser({ roleNames: ["HR Manager"] });
   hrToken = generateToken(hrUser.id, hrUser.email, ["HR Manager"]);
@@ -69,7 +70,7 @@ describe("HR Manager — HR features", () => {
 });
 
 describe("HR Manager — cannot reach admins", () => {
-  for (const which of ["admin", "superAdmin", "hr"] as const) {
+  for (const which of ["admin", "superAdmin", "hr", "sales"] as const) {
     it(`cannot create a user with the ${which} role`, async () => {
       const res = await request(app).post("/v1/employees").set(auth(hrToken)).send(newEmployee(roleIds[which]));
       expect(res.status).toBe(403);
@@ -106,6 +107,12 @@ describe("HR Manager — cannot reach admins", () => {
     const after = await prisma.user.findUnique({ where: { id: target.id } });
     expect(after?.status).toBe("ACTIVE");
     expect(after?.deletedAt).toBeNull();
+  });
+
+  it("can still edit a Sales employee's record (only granting Sales is admin-only)", async () => {
+    const target = await createTestUser({ roleNames: ["Sales"] });
+    const res = await request(app).put(`/v1/employees/${target.id}`).set(auth(hrToken)).send({ name: "Renamed Seller" });
+    expect(res.status).toBe(200);
   });
 
   it("cannot change role assignments directly", async () => {

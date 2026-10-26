@@ -12,7 +12,7 @@ async function main() {
       permissions: [
         "employees", "teams", "tasks", "accounts", "reports",
         "attendance", "roles", "settings", "clients", "content",
-        "messages", "billing", "analytics",
+        "messages", "billing", "analytics", "sales",
       ].flatMap((resource) =>
         ["view", "create", "edit", "delete", "approve", "export", "manage"].map((action) => ({
           resource, action, scope: "global",
@@ -25,7 +25,7 @@ async function main() {
       isSystemRole: true,
       permissions: [
         "employees", "teams", "tasks", "accounts", "reports",
-        "attendance", "clients", "content", "messages", "analytics",
+        "attendance", "clients", "content", "messages", "analytics", "sales",
       ].flatMap((resource) =>
         ["view", "create", "edit", "delete", "approve", "export", "manage"].map((action) => ({
           resource, action, scope: "global",
@@ -46,6 +46,20 @@ async function main() {
         ),
         { resource: "teams", action: "view", scope: "global" },
         { resource: "roles", action: "view", scope: "global" },
+      ],
+    },
+    {
+      // sales.digitalsukoon.com (2026-10-26): quotes, orders, GST invoices, payments. Admins
+      // hold the same `sales` grants through their resource lists above.
+      name: "Sales",
+      description: "Sales portal: inventory, quotes, orders, invoices and payments",
+      isSystemRole: true,
+      permissions: [
+        ...["view", "create", "edit", "export", "manage"].map((action) => ({ resource: "sales", action, scope: "global" })),
+        { resource: "clients", action: "view", scope: "global" },
+        { resource: "clients", action: "create", scope: "global" },
+        { resource: "clients", action: "edit", scope: "global" },
+        { resource: "accounts", action: "view", scope: "global" },
       ],
     },
     {

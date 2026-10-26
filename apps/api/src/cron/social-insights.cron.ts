@@ -125,9 +125,10 @@ interface SweepRow {
 // tail by whether each link's LATEST metric was `ok`, to retry the coverage gap first. That
 // required a `DISTINCT ON (link_id)` over link_metrics per provider per run, and link_metrics
 // is 3.99M rows / 1266MB on prod: measured 9.8s with ~142MB of temp spill and ~1.25GB of heap
-// reads for one slug, ~5GB of churn per run across four — which evicts the 418MB
-// link_metrics_emp_url_fetched_ok_v2_idx that the /reports fast path depends on staying warm
-// (the whole basis of PR #104's 14.5s -> 1.3s index-only scan). Cheaper query shapes still
+// reads for one slug, ~5GB of churn per run across four — which at the time evicted the
+// link_metrics_emp_url_fetched_ok_v2_idx the /reports fast path depended on staying warm
+// (the basis of PR #104's 14.5s -> 1.3s index-only scan; since 2026-09-18 those reads come
+// from link_metrics_latest and no live query uses that index). Cheaper query shapes still
 // seq-scanned (4.0s best case). And it bought almost nothing: the older tail is already
 // ~85% unresolved on the platforms that matter (FB 23,578 unresolved vs 4,453 settled; IG
 // 44,662 vs 7,820) and 100% settled on YouTube, so a 3:1 weighting actually gave settled

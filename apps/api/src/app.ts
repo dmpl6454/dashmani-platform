@@ -54,6 +54,8 @@ app.use(cors({
     process.env.JOBS_APP_URL || "http://localhost:3003",
     // Creator portal (apps/creators, creators.digitalsukoon.com).
     process.env.CREATORS_APP_URL || "http://localhost:3005",
+    // Sales portal (apps/sales, sales.digitalsukoon.com — static export served by nginx).
+    process.env.SALES_APP_URL || "http://localhost:3006",
     // Public marketing site (apps/web, served as static files by nginx) — posts the
     // CH 06 contact form to /v1/public/enquiries.
     ...(process.env.WEBSITE_ORIGINS || "https://digitalsukoon.com,https://www.digitalsukoon.com,http://localhost:3004")

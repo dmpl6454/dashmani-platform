@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { isAdminUser, isPrivilegedRoleName } from "@/lib/roles";
+import { isAdminUser, isAdminGrantOnlyRoleName } from "@/lib/roles";
 
 // Premium dark ("ds") styling — same field/button idiom as /devices and /settings.
 const LABEL = "block text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3 mb-[7px]";
@@ -33,10 +33,10 @@ interface EmployeeFormProps {
 export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeFormProps) {
   const router = useRouter();
   const isEdit = !!employee;
-  // Only an Admin may grant Super Admin / Admin / HR Manager — the API refuses it
+  // Only an Admin may grant Super Admin / Admin / HR Manager / Sales — the API refuses it
   // otherwise (middleware/role-guard.ts), so an HR Manager is not offered them.
   const { user } = useAuth();
-  const assignableRoles = isAdminUser(user) ? roles : roles.filter((r: any) => !isPrivilegedRoleName(r?.name));
+  const assignableRoles = isAdminUser(user) ? roles : roles.filter((r: any) => !isAdminGrantOnlyRoleName(r?.name));
   const [teams, setTeams] = useState<any[]>([]);
   const [form, setForm] = useState({
     name: employee?.name || "",

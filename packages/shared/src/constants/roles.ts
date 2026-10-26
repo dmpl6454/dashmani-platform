@@ -101,3 +101,10 @@ export const PRIVILEGED_ROLE_NAMES: readonly string[] = [
   DEFAULT_ROLES.ADMIN.name,
   DEFAULT_ROLES.HR_MANAGER.name,
 ];
+
+/**
+ * Roles only an Admin / Super Admin may GRANT: the privileged roles above plus
+ * "Sales" (sales portal + client records). An HR Manager can still edit a Sales
+ * employee's record — only handing the role out is admin-only.
+ */
+export const ADMIN_GRANT_ONLY_ROLE_NAMES: readonly string[] = [...PRIVILEGED_ROLE_NAMES, "Sales"];

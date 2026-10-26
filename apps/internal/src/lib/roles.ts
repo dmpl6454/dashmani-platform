@@ -35,6 +35,11 @@ export function isPrivilegedRoleName(name: string | null | undefined): boolean {
   return PRIVILEGED.has(String(name ?? "").toLowerCase());
 }
 
+/** Roles only an Admin may GRANT — the privileged ones plus Sales (ADMIN_GRANT_ONLY_ROLE_NAMES). */
+export function isAdminGrantOnlyRoleName(name: string | null | undefined): boolean {
+  return isPrivilegedRoleName(name) || String(name ?? "").toLowerCase() === "sales";
+}
+
 /** Where a user lands after sign-in. */
 export function homePathFor(user: MaybeUser): string {
   return isHrOnly(user) ? "/hr" : "/dashboard";

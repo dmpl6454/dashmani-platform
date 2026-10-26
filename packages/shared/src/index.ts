@@ -71,6 +71,9 @@ export * as taskValidators from "./validators/task";
 export * as accountValidators from "./validators/account";
 export * as clientValidators from "./validators/client";
 export * as creatorValidators from "./validators/creator";
+// sales.digitalsukoon.com (2026-10-26): validators + GST arithmetic (frontends import these by path).
+export * from "./validators/sales";
+export * from "./sales/gst";
 export * as contentValidators from "./validators/content";
 export * as offerLetterValidators from "./validators/offer-letter";
 export { generateOfferLetterSchema } from "./validators/offer-letter";

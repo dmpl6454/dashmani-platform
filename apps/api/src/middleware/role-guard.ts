@@ -8,7 +8,7 @@
  * Super Admin, or deactivate or demote an Admin. These guards close that:
  *
  *  - guardRoleAssignment: a non-admin may not grant a privileged role
- *    (Super Admin, Admin, HR Manager).
+ *    (Super Admin, Admin, HR Manager) or Sales (client records).
  *  - guardTargetUser: a non-admin may not change an account that holds one.
  *
  * Admin / Super Admin are unaffected. "Admin" is read from the DATABASE, not the
@@ -17,7 +17,7 @@
  */
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "@dashmani/db";
-import { DEFAULT_ROLES, PRIVILEGED_ROLE_NAMES, HR_MANAGER_ROLE_NAME } from "@dashmani/shared";
+import { DEFAULT_ROLES, PRIVILEGED_ROLE_NAMES, ADMIN_GRANT_ONLY_ROLE_NAMES, HR_MANAGER_ROLE_NAME } from "@dashmani/shared";
 import { asyncHandler } from "../utils/async-handler";
 import { AppError } from "./error-handler";
 
@@ -30,20 +30,20 @@ export async function actorIsAdmin(userId: string): Promise<boolean> {
   return n > 0;
 }
 
-/** Throws 403 when a non-admin tries to grant Super Admin, Admin or HR Manager. */
+/** Throws 403 when a non-admin tries to grant Super Admin, Admin, HR Manager or Sales. */
 export async function assertAssignableRoles(actorId: string, roleIds: unknown): Promise<void> {
   if (!Array.isArray(roleIds) || roleIds.length === 0) return;
   const ids = roleIds.filter((r): r is string => typeof r === "string");
   if (ids.length === 0) return;
   if (await actorIsAdmin(actorId)) return;
   const privileged = await prisma.role.count({
-    where: { id: { in: ids }, name: { in: [...PRIVILEGED_ROLE_NAMES] } },
+    where: { id: { in: ids }, name: { in: [...ADMIN_GRANT_ONLY_ROLE_NAMES] } },
   });
   if (privileged > 0) {
     throw new AppError(
       403,
       "ROLE_NOT_ASSIGNABLE",
-      "Only an Admin can grant the Super Admin, Admin or HR Manager role",
+      "Only an Admin can grant the Super Admin, Admin, HR Manager or Sales role",
     );
   }
 }

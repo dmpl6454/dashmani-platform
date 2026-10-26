@@ -106,6 +106,48 @@ export const CASE_STUDIES: CaseStudy[] = [
     reelUrl: "",
     video: { src: "/work/bonkers-corner.mp4", poster: "/work/bonkers-corner.jpg" },
   },
+  {
+    brand: "Crocs",
+    campaign: "Brand integration",
+    tag: "Brand",
+    reelUrl: "",
+    video: { src: "/work/crocs.mp4", poster: "/work/crocs.jpg" },
+  },
+  {
+    brand: "U.S. Polo Assn.",
+    campaign: "Event amplification",
+    tag: "Event",
+    reelUrl: "",
+    video: { src: "/work/us-polo-assn.mp4", poster: "/work/us-polo-assn.jpg" },
+  },
+  {
+    brand: "Nutella",
+    campaign: "Brand integration",
+    tag: "Brand",
+    reelUrl: "",
+    video: { src: "/work/nutella.mp4", poster: "/work/nutella.jpg" },
+  },
+  {
+    brand: "Rungta Steel",
+    campaign: "Brand integration",
+    tag: "Brand",
+    reelUrl: "",
+    video: { src: "/work/rungta-steel.mp4", poster: "/work/rungta-steel.jpg", landscape: true },
+  },
+  {
+    brand: "Denver",
+    campaign: "Brand integration",
+    tag: "Brand",
+    reelUrl: "",
+    video: { src: "/work/denver.mp4", poster: "/work/denver.jpg", landscape: true },
+  },
+  {
+    brand: "Candere",
+    campaign: "Brand integration",
+    tag: "Brand",
+    reelUrl: "",
+    video: { src: "/work/candere.mp4", poster: "/work/candere.jpg" },
+  },
 ];
 
 /**
@@ -128,16 +170,34 @@ export function instagramEmbedUrl(url: string): string | null {
 // turns into a solid blob in white). `colour` is the brand colour the tile glows with on
 // hover — pick one that is visible on black. `tall: true` gives a portrait logo more height;
 // `wide: true` lets a long, thin wordmark use more of the tile so its small text stays readable.
-export type Client = { name: string; logo: string; sector: string; colour: string; mono?: boolean; tall?: boolean; wide?: boolean };
+// `via` says how the work came to us: "direct" (the brand booked us itself) or "agency" (the
+// brand's campaign reached us through an agency partner). The Clients channel shows the two
+// as separate groups, so the page never implies a direct relationship that was not.
+export type Client = {
+  name: string;
+  logo: string;
+  sector: string;
+  colour: string;
+  via: "direct" | "agency";
+  mono?: boolean;
+  tall?: boolean;
+  wide?: boolean;
+};
 
 export const CLIENTS: Client[] = [
-  { name: "adidas", logo: "/clients/adidas.svg", sector: "Sportswear", colour: "#4d7cff" },
-  { name: "Crocs", logo: "/clients/crocs.svg", sector: "Footwear", colour: "#7cc242" },
-  { name: "Rungta Steel", logo: "/clients/rungta-steel.png", sector: "Steel", colour: "#e4252c" },
-  { name: "T-Series", logo: "/clients/t-series.svg", sector: "Music", colour: "#ff3b3b", tall: true, mono: false },
-  { name: "U.S. Polo Assn.", logo: "/clients/us-polo-assn.png", sector: "Apparel", colour: "#5b7fd6", wide: true },
-  { name: "Nutella", logo: "/clients/nutella.svg", sector: "Food", colour: "#d8343a" },
-  { name: "Denver", logo: "/clients/denver.png", sector: "Grooming", colour: "#d4ab62" },
+  { name: "adidas", logo: "/clients/adidas.svg", sector: "Sportswear", colour: "#4d7cff", via: "direct" },
+  { name: "Crocs", logo: "/clients/crocs.svg", sector: "Footwear", colour: "#7cc242", via: "direct" },
+  { name: "Rungta Steel", logo: "/clients/rungta-steel.png", sector: "Steel", colour: "#e4252c", via: "direct" },
+  { name: "T-Series", logo: "/clients/t-series.svg", sector: "Music", colour: "#ff3b3b", via: "direct", tall: true, mono: false },
+  { name: "U.S. Polo Assn.", logo: "/clients/us-polo-assn.png", sector: "Apparel", colour: "#5b7fd6", via: "direct", wide: true },
+  { name: "Nutella", logo: "/clients/nutella.svg", sector: "Food", colour: "#d8343a", via: "direct" },
+  { name: "Denver", logo: "/clients/denver.png", sector: "Grooming", colour: "#d4ab62", via: "direct" },
+  { name: "Bonkers Corner", logo: "/clients/bonkers-corner.png", sector: "Fashion", colour: "#ff6b3d", via: "direct" },
+  { name: "Reliance", logo: "/clients/reliance.png", sector: "Conglomerate", colour: "#c9a24b", via: "direct", wide: true },
+  { name: "Candere", logo: "/clients/candere.svg", sector: "Jewellery", colour: "#19b6c9", via: "direct", wide: true },
+  { name: "Jio", logo: "/clients/jio.svg", sector: "Telecom", colour: "#3d6bff", via: "agency", mono: false, tall: true },
+  { name: "Adani", logo: "/clients/adani.svg", sector: "Infrastructure", colour: "#8e44ad", via: "agency" },
+  { name: "KFC", logo: "/clients/kfc.svg", sector: "Food", colour: "#e4002b", via: "agency" },
 ];
 
 export const LOGOS = ["Movified", "Total Filmi", "Bollywood Society", "Bollywood Chronicle", "Bollywood Paparazzi", "Paparazzzee", "Crazy 4 TV", "Dubai Paps"];

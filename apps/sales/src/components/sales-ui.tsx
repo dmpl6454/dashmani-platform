@@ -28,12 +28,27 @@ const STATUS_TONE: Record<string, string> = {
   overdue: "border-danger text-danger",
   pending: "border-border text-ink-3",
   scheduled: "border-indigo-light text-indigo-light",
+  // campaign bookings / their posts
+  awaiting_payment: "border-border text-ink-3",
+  paid_pending_review: "border-attention text-attention",
+  changes_requested: "border-attention text-attention",
+  approved: "border-indigo-light text-indigo-light",
+  publishing: "border-indigo-light text-indigo-light",
+  completed: "border-success text-success",
+  partially_published: "border-attention text-attention",
+  rejected: "border-danger text-danger",
+  refunded: "border-danger text-danger",
+  failed: "border-danger text-danger",
+  published: "border-success text-success",
+  posted_manual: "border-success text-success",
+  manual_pending: "border-indigo-light text-indigo-light",
+  queued: "border-indigo-light text-indigo-light",
 };
 
-export function StatusPill({ status }: { status: string }) {
+export function StatusPill({ status, label }: { status: string; label?: string }) {
   return (
     <span className={`inline-block px-2 py-0.5 border text-[11px] uppercase tracking-[0.08em] whitespace-nowrap ${STATUS_TONE[status] ?? "border-border text-ink-3"}`}>
-      {status.replace(/_/g, " ")}
+      {label ?? status.replace(/_/g, " ")}
     </span>
   );
 }

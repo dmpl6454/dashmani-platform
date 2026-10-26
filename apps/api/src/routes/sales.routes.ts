@@ -33,6 +33,7 @@ import * as docs from "../services/sales/documents.service";
 import * as invoices from "../services/sales/invoices.service";
 import * as payments from "../services/sales/payments.service";
 import { getSalesDashboard } from "../services/sales/dashboard.service";
+import { getBooking, listBookings } from "../services/sales/bookings.service";
 import { retryEInvoice } from "../services/sales/einvoice.service";
 import { renderCreditNotePdf, renderInvoicePdf } from "../services/sales/pdf.service";
 
@@ -82,6 +83,11 @@ router.post("/sales/clients", ...manage, validate(salesClientCreateSchema), asyn
 router.get("/sales/clients/:id", ...view, asyncHandler(async (req, res) => success(res, await getSalesClient(req.params.id))));
 router.put("/sales/clients/:id/billing", ...manage, validate(clientBillingProfileSchema), asyncHandler(async (req, res) => success(res, await upsertClientBilling(req.params.id, req.body, staffId(req)))));
 router.get("/sales/clients/:id/statement", ...view, asyncHandler(async (req, res) => success(res, await getClientStatement(req.params.id, companyQuery(req)))));
+
+// ── Campaign bookings (client self-serve, reviewed in the staff portal) — read-only here ──
+
+router.get("/sales/bookings", ...view, asyncHandler(async (req, res) => success(res, await listBookings({ stage: str(req.query.stage), q: str(req.query.q), clientId: str(req.query.clientId) }))));
+router.get("/sales/bookings/:id", ...view, asyncHandler(async (req, res) => success(res, await getBooking(req.params.id))));
 
 // ── Quotes ──────────────────────────────────────────────────────────────────────
 

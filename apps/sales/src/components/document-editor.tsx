@@ -8,7 +8,7 @@ import { errorSentence } from "@/lib/messages";
 import { fmtCompact, fmtInr } from "@/lib/format";
 import type { InventoryChannel, LineItem, Order, Quote, TaxMode } from "@/lib/sales-types";
 import { Field, Loading, Money, MoneyInput, Toast, platformLabel, titleCase } from "@/components/sales-ui";
-import { computeTotals, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
+import { computeTotals, registrationFor, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 
 // One editor for quotes and orders: the same lines, the same tax resolution, live totals from
 // the shared GST arithmetic (the API recomputes everything on save; this is for the eyes).
@@ -52,7 +52,7 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
   useEffect(() => { if (initial) setForm(fromDoc(initial, clientIdPreset)); }, [initial, clientIdPreset]);
 
   const client = clients?.find((c) => c.id === form.clientId);
-  const autoMode = taxModeFor(seller?.profile.stateCode, client?.billingProfile?.stateCode, client?.billingProfile?.country ?? "IN");
+  const autoMode = taxModeFor(seller ? registrationFor(seller.profile, client?.billingProfile?.stateCode).stateCode : null, client?.billingProfile?.stateCode, client?.billingProfile?.country ?? "IN");
   const taxMode: TaxMode = form.taxMode === "auto" ? autoMode : form.taxMode;
   const totals = useMemo(() => computeTotals({ lines: form.items, discountPaise: form.discountPaise, taxMode, gstRateBp: form.gstRateBp, roundToRupee: false }), [form.items, form.discountPaise, taxMode, form.gstRateBp]);
   const setItem = (i: number, patch: Partial<LineItem>) => setForm((f) => ({ ...f, items: f.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) }));

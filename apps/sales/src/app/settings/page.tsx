@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { isAdminUser } from "@/lib/access";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
-import type { SellerProfile } from "@/lib/sales-types";
+import type { SellerBranch, SellerProfile } from "@/lib/sales-types";
 import { Field, LoadError, Loading, PageHead, Toast } from "@/components/sales-ui";
 import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 
@@ -15,8 +15,9 @@ import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 const EMPTY: SellerProfile = {
   legalName: "", tradeName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "27", pincode: "", email: "", phone: "", website: "",
   bankName: "", accountName: "", accountNumber: "", ifsc: "", upiId: "", invoicePrefix: "DS", quotePrefix: "Q", orderPrefix: "SO", creditNotePrefix: "CN", receiptPrefix: "RCPT",
-  defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, terms: "", signatory: "",
+  defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, terms: "", signatory: "", branches: [],
 };
+const EMPTY_BRANCH: SellerBranch = { label: "", gstin: "", stateCode: "", state: "", addressLine1: "", addressLine2: "", city: "", pincode: "", invoicePrefix: "", creditNotePrefix: "" };
 
 const LABELS: Record<string, string> = { legalName: "legal name", gstin: "GSTIN", addressLine1: "address", city: "city", stateCode: "state", pincode: "PIN code" };
 
@@ -41,6 +42,7 @@ export default function SettingsPage() {
     try {
       const body: Record<string, unknown> = { ...form };
       for (const k of Object.keys(body)) if (body[k] === "") body[k] = null;
+      body.branches = (form.branches ?? []).map((b) => Object.fromEntries(Object.entries(b).map(([k, v]) => [k, v === "" ? null : v])));
       const res = await apiFetch<{ profile: SellerProfile; missing: string[] }>("/sales/settings/seller", { method: "PUT", body: JSON.stringify(body) });
       await mutate();
       setToast({ message: res.data.missing.length ? `Saved. Still needed for tax invoices: ${res.data.missing.map((m) => LABELS[m] ?? m).join(", ")}.` : "Saved. Tax invoices can be issued.", tone: "ok" });
@@ -61,7 +63,7 @@ export default function SettingsPage() {
        <fieldset disabled={!canEdit} className="grid gap-6 min-w-0 border-0 p-0 m-0">
         <section className="card p-4 grid sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Identity</h2>
-          <Field label="Legal name" className="sm:col-span-2">{text("legalName", "Dashmani Media Private Limited")}</Field>
+          <Field label="Legal name" className="sm:col-span-2">{text("legalName", "Digital Sukoon Private Limited")}</Field>
           <Field label="Trade name (optional)">{text("tradeName", "Digital Sukoon")}</Field>
           <Field label="GSTIN" hint="15 characters; the first two are the state code.">{text("gstin", "27AAACD1234E1Z5")}</Field>
           <Field label="PAN">{text("pan", "AAACD1234E")}</Field>
@@ -82,6 +84,27 @@ export default function SettingsPage() {
           <Field label="Email on invoices">{text("email", "accounts@digitalsukoon.com")}</Field>
           <Field label="Phone on invoices">{text("phone")}</Field>
           <Field label="Website">{text("website", "https://digitalsukoon.com")}</Field>
+        </section>
+        <section className="card p-4 grid gap-4">
+          <div className="flex items-center justify-between gap-3"><h2 className="font-bold">Other GST registrations</h2><button type="button" className="btn btn-ghost btn-sm" onClick={() => set("branches", [...(form.branches ?? []), { ...EMPTY_BRANCH }] as never)}>Add registration</button></div>
+          <p className="text-xs text-ink-3">The address above is the principal registration. A client in a state listed here is billed from that GSTIN (CGST + SGST), with its own invoice and credit-note numbers; every other client is billed from the principal one.</p>
+          {(form.branches ?? []).map((b, i) => {
+            const setB = (k: keyof SellerBranch, v: string) => set("branches", form.branches.map((x, j) => (j === i ? { ...x, [k]: v } : x)) as never);
+            const t = (k: keyof SellerBranch, ph = "") => <input className="input" value={(b[k] as string) ?? ""} placeholder={ph} onChange={(e) => setB(k, e.target.value)} />;
+            return (
+              <div key={i} className="border border-border p-3 grid sm:grid-cols-2 gap-3">
+                <Field label="Label">{t("label", "Gurugram")}</Field>
+                <Field label="GSTIN" hint="The state is taken from its first two digits.">{t("gstin", "06AAKCD3352K1ZJ")}</Field>
+                <Field label="Address line 1" className="sm:col-span-2">{t("addressLine1")}</Field>
+                <Field label="Address line 2" className="sm:col-span-2">{t("addressLine2")}</Field>
+                <Field label="City">{t("city")}</Field>
+                <Field label="PIN code">{t("pincode")}</Field>
+                <Field label="Invoice prefix" hint="Up to 5; different from every other registration">{t("invoicePrefix", "DSHR")}</Field>
+                <Field label="Credit note prefix">{t("creditNotePrefix", "CNHR")}</Field>
+                <div className="sm:col-span-2"><button type="button" className="btn btn-ghost btn-sm" onClick={() => set("branches", form.branches.filter((_, j) => j !== i) as never)}>Remove this registration</button></div>
+              </div>
+            );
+          })}
         </section>
         <section className="card p-4 grid sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Bank details (printed on invoices)</h2>

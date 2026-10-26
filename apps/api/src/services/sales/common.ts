@@ -39,9 +39,10 @@ const GST_NUMBERED: ReadonlySet<NumberKind> = new Set(["invoice", "credit_note"]
  * transaction, so the FOR UPDATE row lock holds until the document is committed and two staff
  * issuing at once can never share or skip a number.
  */
-export async function nextDocumentNumber(tx: Tx, kind: NumberKind, prefix: string, day: string): Promise<string> {
+export async function nextDocumentNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null = null): Promise<string> {
   const fy = financialYear(day);
-  const key = `${kind}:${fy.label}`;
+  // GST numbers run per GSTIN: an additional registration gets its own series (scope = its GSTIN).
+  const key = scope ? `${kind}@${scope}:${fy.label}` : `${kind}:${fy.label}`;
   await tx.$executeRaw`INSERT INTO sales_sequences ("key", "next", "updated_at") VALUES (${key}, 1, now()) ON CONFLICT ("key") DO NOTHING`;
   const rows = await tx.$queryRaw<Array<{ next: number }>>`SELECT "next" FROM sales_sequences WHERE "key" = ${key} FOR UPDATE`;
   const serial = rows[0]?.next ?? 1;

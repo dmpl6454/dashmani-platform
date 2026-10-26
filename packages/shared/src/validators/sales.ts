@@ -106,6 +106,16 @@ export const sellerProfileSchema = z.object({
   signatory: optionalText(120),
   /** Further GST registrations (e.g. a Haryana GSTIN beside the principal Maharashtra one). */
   branches: z.array(sellerBranchSchema).max(10).default([]),
+  /**
+   * E-invoicing (IRN) on the government IRP. When on, every B2B / SEZ / export tax invoice and its
+   * credit notes dated from `applicableFrom` are registered at issue. `thirtyDayLimit`: AATO of
+   * ₹10 crore or more — documents older than 30 days can no longer be reported.
+   */
+  eInvoicing: z.object({
+    enabled: z.boolean().default(false),
+    applicableFrom: day.optional().nullable(),
+    thirtyDayLimit: z.boolean().default(false),
+  }).default({}),
 }).superRefine(checkGstinState).superRefine((v, ctx) => {
   // Each registration bills its own state and numbers its own series; numbers are unique
   // platform-wide, so prefixes may not repeat either.

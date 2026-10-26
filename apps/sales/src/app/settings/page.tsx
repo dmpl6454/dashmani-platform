@@ -16,6 +16,7 @@ const EMPTY: SellerProfile = {
   legalName: "", tradeName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "27", pincode: "", email: "", phone: "", website: "",
   bankName: "", accountName: "", accountNumber: "", ifsc: "", upiId: "", invoicePrefix: "DS", quotePrefix: "Q", orderPrefix: "SO", creditNotePrefix: "CN", receiptPrefix: "RCPT",
   defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, terms: "", signatory: "", branches: [],
+  eInvoicing: { enabled: false, applicableFrom: null, thirtyDayLimit: false },
 };
 const EMPTY_BRANCH: SellerBranch = { label: "", gstin: "", stateCode: "", state: "", addressLine1: "", addressLine2: "", city: "", pincode: "", invoicePrefix: "", creditNotePrefix: "" };
 
@@ -105,6 +106,19 @@ export default function SettingsPage() {
               </div>
             );
           })}
+        </section>
+        <section className="card p-4 grid sm:grid-cols-3 gap-4">
+          <h2 className="font-bold sm:col-span-3">E-invoicing (IRN)</h2>
+          <p className="text-xs text-ink-3 sm:col-span-3">When on, every tax invoice to a GST-registered client, SEZ unit or overseas client — and its credit notes — is registered on the government IRP at issue; the PDF carries the IRN and signed QR. Mandatory once aggregate turnover crossed ₹5 crore in any year since 2017-18: confirm with your CA. Needs the IRP connection (API credentials) on the server.</p>
+          <Field label="E-invoicing">
+            <select className="input" value={form.eInvoicing?.enabled ? "on" : "off"} onChange={(e) => set("eInvoicing", { ...form.eInvoicing, enabled: e.target.value === "on" } as never)}><option value="off">Off</option><option value="on">On — register at issue</option></select>
+          </Field>
+          <Field label="Applies to documents dated from" hint="Blank = every document issued while it is on">
+            <input className="input" type="date" value={form.eInvoicing?.applicableFrom ?? ""} onChange={(e) => set("eInvoicing", { ...form.eInvoicing, applicableFrom: e.target.value || null } as never)} />
+          </Field>
+          <Field label="30-day reporting limit" hint="AATO ₹10 crore or more">
+            <select className="input" value={form.eInvoicing?.thirtyDayLimit ? "yes" : "no"} onChange={(e) => set("eInvoicing", { ...form.eInvoicing, thirtyDayLimit: e.target.value === "yes" } as never)}><option value="no">No</option><option value="yes">Yes — refuse documents older than 30 days</option></select>
+          </Field>
         </section>
         <section className="card p-4 grid sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Bank details (printed on invoices)</h2>

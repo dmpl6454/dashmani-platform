@@ -107,7 +107,9 @@ describe("billing follow-ups", () => {
 
   it("prints a credit note PDF", async () => {
     const i = await issued();
-    const cn = (await api().post("/v1/sales/credit-notes").set(auth(token)).send({ invoiceId: i.id, reason: "Placement not delivered", taxablePaise: 100_000 })).body.data;
+    const made = await api().post("/v1/sales/credit-notes").set(auth(token)).send({ invoiceId: i.id, reason: "Placement not delivered", taxablePaise: 100_000 });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const cn = made.body.data;
     const pdf = await api().get(`/v1/sales/credit-notes/${cn.id}/pdf`).set(auth(token)).buffer(true).parse((res, cb) => { const chunks: Buffer[] = []; res.on("data", (c: Buffer) => chunks.push(c)); res.on("end", () => cb(null, Buffer.concat(chunks))); });
     expect(pdf.status).toBe(200);
     expect(pdf.headers["content-type"]).toContain("application/pdf");

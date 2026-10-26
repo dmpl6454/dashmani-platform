@@ -2,7 +2,7 @@ import { prisma } from "@dashmani/db";
 import { beforeEach, afterAll } from "vitest";
 
 const TRUNCATE_SQL = `
-    TRUNCATE TABLE sales_events, sales_credit_notes, sales_payment_allocations, sales_payments, sales_invoice_items, sales_invoices, sales_order_items, sales_orders, sales_quote_items, sales_quotes, sales_sequences, client_billing_profiles,
+    TRUNCATE TABLE sales_einvoices, sales_refunds, sales_events, sales_credit_notes, sales_payment_allocations, sales_payments, sales_invoice_items, sales_invoices, sales_order_items, sales_orders, sales_quote_items, sales_quotes, sales_sequences, client_billing_profiles,
       pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state,
       meta_deletion_requests, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators,
       campaign_media_renders, campaign_booking_events, campaign_payments, campaign_booking_items, campaign_media, campaign_bookings, campaign_rate_cards, razorpay_webhook_events,

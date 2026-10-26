@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { useClientReceipts, useEvents, useInvoice } from "@/lib/hooks";
-import type { Payment } from "@/lib/sales-types";
+import type { Invoice, Payment } from "@/lib/sales-types";
 import { ApiError, apiFetch, apiFetchBlob, downloadBlob } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, todayIST } from "@/lib/format";
@@ -93,6 +93,9 @@ function InvoiceView() {
   async function creditNotePdf(cnId: string, number: string) {
     try { const { blob, filename } = await apiFetchBlob(`/sales/credit-notes/${cnId}/pdf`); downloadBlob(blob, filename ?? `${number}.pdf`); } catch (err) { fail(err); }
   }
+  async function retryEInvoice(path: string) {
+    try { await apiFetch(path, { method: "POST" }); await refresh(); setToast({ message: "Sent to the IRP again.", tone: "ok" }); } catch (err) { fail(err); }
+  }
   async function markSent() {
     try { await apiFetch(`/sales/invoices/${id}/sent`, { method: "POST" }); await refresh(); setToast({ message: "Marked as sent.", tone: "ok" }); } catch (err) { fail(err); }
   }
@@ -118,6 +121,7 @@ function InvoiceView() {
         {ds === "draft" && <button type="button" className="btn btn-ghost" onClick={() => setModal("delete")}>Delete draft</button>}
       </PageHead>
       {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; nothing can be edited after that.</div>}
+      {inv.einvoice && inv.einvoice.status !== "cancelled" && <EInvoicePanel e={inv.einvoice} onRetry={() => retryEInvoice(`/sales/invoices/${inv.id}/einvoice`)} />}
       {inv.convertedFrom && <div className="card p-3 text-sm mb-4">Made from proforma <Link href={`/invoices/view?id=${inv.convertedFrom.id}`} className="font-mono hover:text-indigo-light">{inv.convertedFrom.number}</Link>. Issuing it moves the proforma&apos;s payments onto this invoice and retires the proforma.</div>}
       {liveConversion && <div className="card p-3 text-sm mb-4">Converted to <Link href={`/invoices/view?id=${liveConversion.id}`} className="font-mono hover:text-indigo-light">{liveConversion.number ?? "a draft tax invoice"}</Link>{liveConversion.number ? "" : " — issue it to move this proforma's payments across"}.</div>}
       {ds === "cancelled" && <div className="card border-danger p-3 text-sm mb-4">Cancelled{inv.cancelReason ? ` — ${inv.cancelReason}` : ""}. The number is kept on record and never reused.</div>}
@@ -158,7 +162,7 @@ function InvoiceView() {
               <h2 className="font-bold mb-2">Settlement</h2>
               <ul className="divide-y divide-rule">
                 {inv.allocations.map((a) => <li key={a.id} className={`py-2 flex flex-wrap justify-between gap-2 ${a.payment.status === "voided" ? "line-through text-ink-3" : ""}`}><span><Link href={`/payments/view?id=${a.payment.id}`} className="font-mono hover:text-indigo-light">{a.payment.number}</Link>{a.payment.status === "voided" ? " (voided)" : ""} · {titleCase(a.payment.mode)}{a.payment.reference ? ` · ${a.payment.reference}` : ""} · {fmtDate(a.payment.paidOn)}</span><span><Money paise={a.amountPaise} />{a.tdsPaise ? <span className="text-ink-3"> + TDS <Money paise={a.tdsPaise} /></span> : null}</span></li>)}
-                {inv.creditNotes.map((c) => <li key={c.id} className="py-2 flex flex-wrap justify-between gap-2"><span><span className="font-mono">{c.number}</span> · {c.reason} · {fmtDate(c.issueDate)} <StatusPill status={c.status} /> <button type="button" className="btn btn-ghost btn-sm" onClick={() => creditNotePdf(c.id, c.number)}><Download size={12} /> PDF</button></span><span>− <Money paise={c.totalPaise} /></span></li>)}
+                {inv.creditNotes.map((c) => <li key={c.id} className="py-2 flex flex-wrap justify-between gap-2"><span><span className="font-mono">{c.number}</span> · {c.reason} · {fmtDate(c.issueDate)} <StatusPill status={c.status} />{c.einvoice && c.einvoice.status !== "cancelled" && <> <span className={`text-[11px] ${c.einvoice.status === "registered" ? "text-success" : "text-danger"}`}>{c.einvoice.status === "registered" ? "IRN ✓" : `IRN ${c.einvoice.status}`}</span>{c.einvoice.status === "failed" && <button type="button" className="btn btn-ghost btn-sm" onClick={() => retryEInvoice(`/sales/credit-notes/${c.id}/einvoice`)}>Retry</button>}</>} <button type="button" className="btn btn-ghost btn-sm" onClick={() => creditNotePdf(c.id, c.number)}><Download size={12} /> PDF</button></span><span>− <Money paise={c.totalPaise} /></span></li>)}
               </ul>
             </section>
           )}
@@ -241,6 +245,28 @@ function ApplyReceipt({ receipts, balancePaise, onApply, onClose }: { receipts: 
           <button type="button" className="btn" disabled={busy || over || amount + tds <= 0} onClick={async () => { setBusy(true); try { await onApply(pid, amount, tds); } finally { setBusy(false); } }}>{busy ? "Applying…" : "Apply"}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function EInvoicePanel({ e, onRetry }: { e: NonNullable<Invoice["einvoice"]>; onRetry: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  if (e.status === "registered") {
+    return (
+      <div className="card border-success p-3 text-sm mb-4">
+        <span className="font-bold text-success">E-invoice registered</span> on the IRP · Ack {e.ackNo} · {fmtDate(e.ackDate)}
+        <div className="font-mono text-xs text-ink-3 break-all mt-1">IRN {e.irn}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="card border-danger p-3 text-sm mb-4 flex flex-wrap items-center gap-3 justify-between">
+      <div className="min-w-0">
+        <span className="font-bold text-danger">E-invoice {e.status === "registering" ? "being registered" : e.status === "pending" ? "not registered yet" : "registration failed"}</span>
+        {e.lastError && <span className="text-ink-3"> — {e.lastError}</span>}
+        <div className="text-xs text-ink-3">Not valid as a GST document until registered. Retrying first checks whether the IRP already holds it, so it can never be registered twice.</div>
+      </div>
+      {e.status !== "registering" && <button type="button" className="btn btn-sm" disabled={busy} onClick={async () => { setBusy(true); try { await onRetry(); } finally { setBusy(false); } }}>{busy ? "Sending…" : "Retry now"}</button>}
     </div>
   );
 }

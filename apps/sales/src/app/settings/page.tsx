@@ -15,7 +15,7 @@ import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 // issued until the fields a GST invoice must print are filled in.
 
 const EMPTY: SellerProfile = {
-  legalName: "", tradeName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "27", pincode: "", email: "", phone: "", website: "",
+  legalName: "", tradeName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "27", pincode: "", email: "", billingEmails: [], phone: "", website: "",
   bankName: "", accountName: "", accountNumber: "", ifsc: "", upiId: "", invoicePrefix: "DS", quotePrefix: "Q", orderPrefix: "SO", creditNotePrefix: "CN", receiptPrefix: "RCPT",
   defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, terms: "", signatory: "", branches: [],
   eInvoicing: { enabled: false, applicableFrom: null, thirtyDayLimit: false },
@@ -47,6 +47,7 @@ export default function SettingsPage() {
     try {
       const body: Record<string, unknown> = { ...form };
       for (const k of Object.keys(body)) if (body[k] === "") body[k] = null;
+      body.billingEmails = (form.billingEmails ?? []).filter(Boolean);
       body.branches = (form.branches ?? []).map((b) => Object.fromEntries(Object.entries(b).map(([k, v]) => [k, v === "" ? null : v])));
       const res = await apiFetch<{ profile: SellerProfile; missing: string[] }>(`/sales/settings/seller?company=${company}`, { method: "PUT", body: JSON.stringify(body) });
       await mutate();
@@ -88,6 +89,10 @@ export default function SettingsPage() {
           </Field>
           <Field label="PIN code">{text("pincode", "400053")}</Field>
           <Field label="Email on invoices">{text("email", "accounts@digitalsukoon.com")}</Field>
+          <Field label="More billing emails" hint="Printed beside the email above. Separate with commas.">
+            <input className="input" value={(form.billingEmails ?? []).join(", ")} placeholder="finance@digitalsukoon.com"
+              onChange={(e) => setForm((f) => ({ ...f, billingEmails: e.target.value.split(",").map((x) => x.trim()) }))} />
+          </Field>
           <Field label="Phone on invoices">{text("phone")}</Field>
           <Field label="Website">{text("website", "https://digitalsukoon.com")}</Field>
         </section>

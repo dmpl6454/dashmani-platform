@@ -63,6 +63,11 @@ describe("Second billing company", () => {
     const gstin = await save("dmpl", { ...DMPL, gstin: DSPL.gstin });
     expect(gstin.status).toBe(409);
     expect((await save("dmpl", DMPL)).status).toBe(200);
+    // Further billing emails are kept, normalised, and print beside the main one.
+    const withEmails = await save("dspl", { ...DSPL, email: "Accounts@digitalsukoon.com", billingEmails: ["finance@digitalsukoon.com"] });
+    expect(withEmails.status).toBe(200);
+    expect(withEmails.body.data.profile).toMatchObject({ email: "accounts@digitalsukoon.com", billingEmails: ["finance@digitalsukoon.com"] });
+    expect((await save("dspl", { ...DSPL, billingEmails: ["not-an-email"] })).status).toBe(400);
     // Saving one company never touches the other.
     const dspl = await request(app).get("/v1/sales/settings/seller").set(auth(token));
     expect(dspl.body.data.profile).toMatchObject({ legalName: DSPL.legalName, bankName: "DSPL Bank" });
@@ -76,6 +81,10 @@ describe("Second billing company", () => {
     expect(dm.sellerSnapshot).toMatchObject({ legalName: "Dashmani Media Private Limited", gstin: DMPL.gstin, bankName: "DMPL Bank", accountNumber: "222222" });
     const ds = await issued("dspl");
     expect(ds).toMatchObject({ companyKey: "dspl", number: `DS/${fy}/0001` });
+    const pdf = await request(app).get(`/v1/sales/invoices/${ds.id}/pdf`).set(auth(token)).buffer(true).parse((res, cb) => { const c: Buffer[] = []; res.on("data", (d: Buffer) => c.push(d)); res.on("end", () => cb(null, Buffer.concat(c))); });
+    expect(pdf.status).toBe(200);
+    // Both companies have a logo, so each PDF embeds one image (no e-invoice QR here).
+    expect((pdf.body as Buffer).toString("latin1")).toMatch(/\/Subtype \/Image/);
     expect(ds.sellerSnapshot).toMatchObject({ legalName: DSPL.legalName, bankName: "DSPL Bank" });
     expect((await issued("dmpl", "proforma")).number).toBe(`DMPI/${fy}/0001`);
     expect((await issued("dspl", "proforma")).number).toBe(`PI/${fy}/0001`);

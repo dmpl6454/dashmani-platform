@@ -40,4 +40,4 @@ export const companyOfDoc = (d: { companyKey?: string | null } | null | undefine
 export const companyName = (k: string | null | undefined) => SALES_COMPANIES[isCompanyKey(k) ? k : DEFAULT_COMPANY].name;
 
 /** Each company's mark for the header (files in apps/sales/public). */
-export const COMPANY_LOGO: Record<CompanyKey, string> = { dspl: "/logo-mark.svg", dmpl: "/logo-dmpl.png" };
+export const COMPANY_LOGO: Record<CompanyKey, string> = { dspl: "/logo-dspl.png", dmpl: "/logo-dmpl.png" };

@@ -104,7 +104,8 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   for (const line of addressLines(seller)) doc.text(line, { width: col.w });
   if (seller.gstin) doc.text(`GSTIN: ${seller.gstin}`, { width: col.w });
   if (seller.pan) doc.text(`PAN: ${seller.pan}`, { width: col.w });
-  if (seller.email || seller.phone) doc.text([seller.email, seller.phone].filter(Boolean).join(" · "), { width: col.w });
+  const contact = [...new Set([seller.email, ...(seller.billingEmails ?? [])].filter(Boolean))];
+  if (contact.length || seller.phone) doc.text([...contact, seller.phone].filter(Boolean).join(" · "), { width: col.w });
   const headerBottom = Math.max(doc.y, col.logoBottom);
 
   doc.font("Helvetica-Bold").fontSize(18).fillColor(INK).text(title, left + width * 0.6, PAGE.margin, { width: width * 0.4, align: "right" });

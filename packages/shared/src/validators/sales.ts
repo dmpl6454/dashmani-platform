@@ -87,6 +87,8 @@ export const sellerProfileSchema = z.object({
   stateCode: stateCodeSchema.optional().nullable(),
   pincode: optionalText(10),
   email: normalizedEmail.optional().nullable(),
+  /** Further billing addresses printed beside `email` (e.g. finance@ next to accounts@). */
+  billingEmails: z.array(normalizedEmail).max(4).default([]),
   phone: optionalText(30),
   website: optionalText(200),
   bankName: optionalText(120),

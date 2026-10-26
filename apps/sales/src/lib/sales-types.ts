@@ -4,7 +4,7 @@ export type TaxMode = "intra" | "inter" | "none";
 export interface SellerProfile {
   legalName: string; tradeName?: string | null; gstin?: string | null; pan?: string | null;
   addressLine1?: string | null; addressLine2?: string | null; city?: string | null; state?: string | null; stateCode?: string | null; pincode?: string | null;
-  email?: string | null; phone?: string | null; website?: string | null;
+  email?: string | null; billingEmails?: string[]; phone?: string | null; website?: string | null;
   bankName?: string | null; accountName?: string | null; accountNumber?: string | null; ifsc?: string | null; upiId?: string | null;
   invoicePrefix: string; quotePrefix: string; orderPrefix: string; creditNotePrefix: string; receiptPrefix: string;
   defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; terms?: string | null; signatory?: string | null;

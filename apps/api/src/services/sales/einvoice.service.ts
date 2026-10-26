@@ -1,5 +1,5 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { todayIST } from "@dashmani/shared";
+import { DEFAULT_COMPANY, isCompanyKey, todayIST, type CompanyKey } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { dateToDay, logSalesEvent, type Tx } from "./common";
 import { getSellerOrDefaults, type SellerProfile } from "./settings.service";
@@ -197,6 +197,14 @@ const istInstant = (s: string) => {
  * IRP twice at once; a retry asks the IRP for the document before generating again. Never throws
  * for an IRP failure — the row records it — so issuing is not undone by a portal outage.
  */
+/** The company whose document this registration is (a credit note's is its invoice's). */
+async function companyOfEInvoice(row: { invoiceId: string | null; creditNoteId: string | null }): Promise<CompanyKey> {
+  const inv = row.invoiceId
+    ? await prisma.salesInvoice.findUnique({ where: { id: row.invoiceId }, select: { companyKey: true } })
+    : await prisma.salesCreditNote.findUnique({ where: { id: row.creditNoteId! }, select: { invoice: { select: { companyKey: true } } } }).then((c) => c?.invoice ?? null);
+  return isCompanyKey(inv?.companyKey) ? inv.companyKey : DEFAULT_COMPANY;
+}
+
 export async function registerEInvoice(id: string, actorId: string | null = null): Promise<EInvoiceRow | null> {
   const staleClaim = new Date(Date.now() - 2 * 60_000);
   const claimed = await prisma.salesEInvoice.updateMany({
@@ -213,7 +221,7 @@ export async function registerEInvoice(id: string, actorId: string | null = null
   };
   const provider = getIrpProvider();
   if (!provider) return fail("E-invoicing is switched on, but no IRP connection is configured yet (EINVOICE_PROVIDER and the e-invoice API credentials). The document stays unregistered until then.");
-  const seller = await getSellerOrDefaults();
+  const seller = await getSellerOrDefaults(await companyOfEInvoice(row));
   if (seller.eInvoicing?.thirtyDayLimit) {
     const [d, m, y] = row.docDate.split("/");
     const age = (Date.parse(`${todayIST()}T00:00:00Z`) - Date.parse(`${y}-${m}-${d}T00:00:00Z`)) / 86_400_000;

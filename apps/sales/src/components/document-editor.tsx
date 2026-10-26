@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useClients, useInventory, useSeller } from "@/lib/hooks";
+import { companyOfDoc, SALES_COMPANIES, useCompany } from "@/lib/company";
 import { errorSentence } from "@/lib/messages";
 import { fmtCompact, fmtInr } from "@/lib/format";
 import type { InventoryChannel, LineItem, Order, Quote, TaxMode } from "@/lib/sales-types";
@@ -44,7 +45,10 @@ function fromDoc(d: Doc | undefined, clientIdPreset: string | null): FormState {
 export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; initial?: Doc; clientIdPreset: string | null }) {
   const router = useRouter();
   const { data: clients } = useClients();
-  const { data: seller } = useSeller();
+  // A new document is billed by the company the portal is working in; an existing one stays with its own.
+  const { company: current } = useCompany();
+  const companyKey = initial ? companyOfDoc(initial) : current;
+  const { data: seller } = useSeller(companyKey);
   const [form, setForm] = useState<FormState>(() => fromDoc(initial, clientIdPreset));
   const [picker, setPicker] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -74,6 +78,7 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
     setBusy(true);
     try {
       const body: Record<string, unknown> = {
+        companyKey,
         clientId: form.clientId, title: form.title, campaignType: form.campaignType, gstRateBp: form.gstRateBp, discountPaise: form.discountPaise,
         notes: form.notes || null, internalNotes: form.internalNotes || null,
         ...(form.taxMode !== "auto" ? { taxMode: form.taxMode } : {}),
@@ -98,6 +103,9 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
   return (
     <form onSubmit={save} className="grid gap-5">
       <section className="card p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={initial ? "A saved document stays with its company." : "Switch company at the top of the page before saving."}>
+          <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
+        </Field>
         <Field label="Client" className="sm:col-span-2">
           <select className="input" required value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })}>
             <option value="">Choose a client…</option>

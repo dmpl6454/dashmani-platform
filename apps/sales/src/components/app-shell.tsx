@@ -4,8 +4,10 @@ import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PortalSwitcher } from "./portal-switcher";
+import { CompanySwitcher } from "./company-switcher";
+import { useCompany } from "@/lib/company";
 
-// The signed-in frame: brand, the eight sections, the portal switcher and sign-out. Nav wraps rather than scrolls so
+// The signed-in frame: brand, the billing company, the eight sections, the portal switcher and sign-out. Nav wraps rather than scrolls so
 // nothing overflows at 390px.
 const NAV = [
   { href: "/dashboard", label: "Dashboard" },
@@ -21,14 +23,16 @@ const NAV = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()?.replace(/\/+$/, "") || "/";
   const { user, logout } = useAuth();
+  const { info } = useCompany();
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b-2 border-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Link href="/dashboard" className="flex items-center gap-2.5 font-extrabold tracking-tight text-[17px] whitespace-nowrap min-w-0">
             <img src="/logo-mark.svg" alt="" className="w-8 h-8 shrink-0" />
-            <span className="truncate">Digital Sukoon <span className="text-indigo-light">Sales</span></span>
+            <span className="truncate">{info.short} <span className="text-indigo-light">Sales</span></span>
           </Link>
+          <CompanySwitcher />
           <nav aria-label="Sales portal" className="order-3 w-full lg:order-none lg:w-auto flex flex-wrap gap-1">
             {NAV.map((n) => {
               const active = pathname === n.href || pathname.startsWith(`${n.href}/`);
@@ -56,6 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+      <p className="sr-only" aria-live="polite">Billing as {info.name}</p>
       <main className="flex-1 w-full mx-auto max-w-7xl px-4 sm:px-6 py-8 sm:py-10 min-w-0">{children}</main>
       <footer className="border-t-2 border-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-5 text-[13px] text-ink-3">© {new Date().getFullYear()} Digital Sukoon · internal</div>

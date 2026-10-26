@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { mutate } from "swr";
 import { apiFetch } from "@/lib/api";
 import { useClients, useInvoices } from "@/lib/hooks";
+import { isCompanyKey, SALES_COMPANIES, useCompany } from "@/lib/company";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, fmtInr, todayIST } from "@/lib/format";
 import { Field, Loading, Money, MoneyInput, PageHead, StatusPill, Toast } from "@/components/sales-ui";
@@ -18,7 +19,12 @@ function RecordPayment() {
   const router = useRouter();
   const { data: clients } = useClients();
   const [clientId, setClientId] = useState(params.get("clientId") ?? "");
-  const { data: openInvoices } = useInvoices({ status: "outstanding", clientId: clientId || undefined });
+  // The receipt belongs to one company and settles only that company's invoices. Opened from an
+  // invoice, it is the invoice's company (?company=); otherwise the one the portal is working in.
+  const { company: current } = useCompany();
+  const fromLink = params.get("company");
+  const companyKey = isCompanyKey(fromLink) ? fromLink : current;
+  const { data: openInvoices } = useInvoices({ status: "outstanding", clientId: clientId || undefined, company: companyKey });
   const [form, setForm] = useState({ amountPaise: 0, tdsPaise: 0, mode: "bank_transfer", reference: "", paidOn: todayIST(), bankName: "", notes: "" });
   const [alloc, setAlloc] = useState<Record<string, { amountPaise: number; tdsPaise: number }>>({});
   const [busy, setBusy] = useState(false);
@@ -58,7 +64,7 @@ function RecordPayment() {
     if (unallocated < 0 || allocatedTds > form.tdsPaise) { setToast({ message: "Allocated more than was received.", tone: "err" }); return; }
     setBusy(true);
     try {
-      await apiFetch("/sales/payments", { method: "POST", body: JSON.stringify({ clientId, ...form, reference: form.reference || null, bankName: form.bankName || null, notes: form.notes || null, allocations: Object.entries(alloc).filter(([, a]) => a.amountPaise + a.tdsPaise > 0).map(([invoiceId, a]) => ({ invoiceId, ...a })) }) });
+      await apiFetch("/sales/payments", { method: "POST", body: JSON.stringify({ companyKey, clientId, ...form, reference: form.reference || null, bankName: form.bankName || null, notes: form.notes || null, allocations: Object.entries(alloc).filter(([, a]) => a.amountPaise + a.tdsPaise > 0).map(([invoiceId, a]) => ({ invoiceId, ...a })) }) });
       // The invoice view we return to holds this invoice in SWR's cache from before the payment;
       // drop it (and the lists) so the page shows the settled balance, not the stale one.
       await Promise.all([
@@ -78,6 +84,9 @@ function RecordPayment() {
       <PageHead kicker={<Link href="/payments" className="hover:text-white">Payments</Link> as unknown as string} title="Record a payment" />
       <form onSubmit={save} className="grid gap-5">
         <section className="card p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Field label="Received by" className="sm:col-span-2 lg:col-span-4" hint="Only this company's invoices are listed below.">
+            <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
+          </Field>
           <Field label="Client" className="sm:col-span-2"><select className="input" required value={clientId} onChange={(e) => { setClientId(e.target.value); setAlloc({}); }}><option value="">Choose…</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.companyName}{c.outstandingPaise ? ` · ${fmtInr(c.outstandingPaise, { whole: true })} due` : ""}</option>)}</select></Field>
           <Field label="Amount received"><MoneyInput paise={form.amountPaise} onChange={(p) => setForm({ ...form, amountPaise: p })} /></Field>
           <Field label="TDS withheld by client" hint="Counts toward the invoice; never received."><MoneyInput paise={form.tdsPaise} onChange={(p) => setForm({ ...form, tdsPaise: p })} /></Field>

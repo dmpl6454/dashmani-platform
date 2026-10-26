@@ -3,6 +3,7 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEvents, useQuote } from "@/lib/hooks";
+import { companyName } from "@/lib/company";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
@@ -50,7 +51,7 @@ function QuoteView() {
 
   return (
     <>
-      <PageHead kicker={<><Link href="/quotes" className="hover:text-white">Quotes</Link> · <span className="font-mono">{q.number}</span></> as unknown as string} title={<>{q.title} <StatusPill status={status} /></>}>
+      <PageHead kicker={<><Link href="/quotes" className="hover:text-white">Quotes</Link> · {companyName(q.companyKey)} · <span className="font-mono">{q.number}</span></> as unknown as string} title={<>{q.title} <StatusPill status={status} /></>}>
         {(status === "draft" || status === "sent") && <Link href={`/quotes/edit?id=${q.id}`} className="btn btn-light">Edit</Link>}
         {status === "draft" && <button type="button" className="btn" onClick={() => act("send", "Marked as sent.")}>Mark sent</button>}
         {(status === "draft" || status === "sent") && <button type="button" className="btn" onClick={() => act("accept", "Marked as accepted.")}>Mark accepted</button>}

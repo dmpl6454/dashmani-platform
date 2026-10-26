@@ -2762,6 +2762,8 @@ model SalesSequence {
 
 model SalesQuote {
   id                String    @id @default(uuid())
+  /// The billing company (dspl = Digital Sukoon Private Limited, dmpl = Dashmani Media Private Limited).
+  companyKey        String    @default("dspl") @map("company_key") @db.VarChar(8)
   number            String    @unique @db.VarChar(32)
   clientId          String    @map("client_id")
   title             String    @db.VarChar(200)
@@ -2795,6 +2797,7 @@ model SalesQuote {
 
   @@index([clientId])
   @@index([status, createdAt])
+  @@index([companyKey])
   @@map("sales_quotes")
 }
 
@@ -2830,6 +2833,8 @@ model SalesQuoteItem {
 /// The confirmed deal. May come from a quote; may be fulfilled through a campaign booking.
 model SalesOrder {
   id                String    @id @default(uuid())
+  /// The billing company (dspl = Digital Sukoon Private Limited, dmpl = Dashmani Media Private Limited).
+  companyKey        String    @default("dspl") @map("company_key") @db.VarChar(8)
   number            String    @unique @db.VarChar(32)
   clientId          String    @map("client_id")
   quoteId           String?   @unique @map("quote_id")
@@ -2867,6 +2872,7 @@ model SalesOrder {
 
   @@index([clientId])
   @@index([status, createdAt])
+  @@index([companyKey])
   @@map("sales_orders")
 }
 
@@ -2905,6 +2911,8 @@ model SalesOrderItem {
 /// JSON snapshots at issue; the printed document never changes after that.
 model SalesInvoice {
   id                String    @id @default(uuid())
+  /// The billing company (dspl = Digital Sukoon Private Limited, dmpl = Dashmani Media Private Limited).
+  companyKey        String    @default("dspl") @map("company_key") @db.VarChar(8)
   number            String?   @unique @db.VarChar(32)
   /// tax_invoice | proforma
   kind              String    @default("tax_invoice") @db.VarChar(16)
@@ -2961,6 +2969,7 @@ model SalesInvoice {
   @@index([status, dueDate])
   @@index([issueDate])
   @@index([convertedFromId])
+  @@index([companyKey])
   @@map("sales_invoices")
 }
 
@@ -2985,6 +2994,8 @@ model SalesInvoiceItem {
 /// Money received (or withheld as TDS) from a client, allocated across one or more invoices.
 model SalesPayment {
   id           String   @id @default(uuid())
+  /// The billing company (dspl = Digital Sukoon Private Limited, dmpl = Dashmani Media Private Limited).
+  companyKey        String    @default("dspl") @map("company_key") @db.VarChar(8)
   number       String   @unique @db.VarChar(32)
   clientId     String   @map("client_id")
   amountPaise  Int      @map("amount_paise")
@@ -3009,6 +3020,7 @@ model SalesPayment {
   refunds     SalesRefund[]
 
   @@index([clientId, paidOn])
+  @@index([companyKey])
   @@map("sales_payments")
 }
 

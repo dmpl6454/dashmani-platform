@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { financialYear, todayIST } from "@dashmani/shared";
+import { DEFAULT_COMPANY, financialYear, SALES_COMPANIES, todayIST, type CompanyKey } from "@dashmani/shared";
 import { dateToDay, dayToDate, istDayOf, istMidnight } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
 
@@ -13,7 +13,9 @@ function monthRange(day: string): { from: string; to: string } {
   return { from, to: next };
 }
 
-export async function getSalesDashboard() {
+/** One company's books: every figure below is filtered to its documents. */
+export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
+  const c = { companyKey: company };
   const today = todayIST();
   const fy = financialYear(today);
   const month = monthRange(today);
@@ -24,17 +26,17 @@ export async function getSalesDashboard() {
 
   const [issuedFy, openInvoices, paymentsFy, paymentsMonth, quotes, orders, topClientRows, platformRows, recent, allOrders, refundsFy, refundsMonth] = await Promise.all([
     prisma.salesInvoice.findMany({
-      where: { kind: "tax_invoice", status: { in: ["issued", "paid"] }, issueDate: { gte: fyStart, lt: fyEndExclusive } },
+      where: { ...c, kind: "tax_invoice", status: { in: ["issued", "paid"] }, issueDate: { gte: fyStart, lt: fyEndExclusive } },
       select: { totalPaise: true, taxablePaise: true, issueDate: true, clientId: true },
     }),
-    prisma.salesInvoice.findMany({ where: { status: "issued" }, select: invoiceSummarySelect }),
-    prisma.salesPayment.aggregate({ where: { status: "recorded", paidOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true, tdsPaise: true }, _count: true }),
-    prisma.salesPayment.aggregate({ where: { status: "recorded", paidOn: { gte: monthStart, lt: monthEnd } }, _sum: { amountPaise: true }, _count: true }),
-    prisma.salesQuote.groupBy({ by: ["status"], _count: true, _sum: { totalPaise: true } }),
-    prisma.salesOrder.groupBy({ by: ["status"], _count: true, _sum: { totalPaise: true } }),
+    prisma.salesInvoice.findMany({ where: { ...c, status: "issued" }, select: invoiceSummarySelect }),
+    prisma.salesPayment.aggregate({ where: { ...c, status: "recorded", paidOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true, tdsPaise: true }, _count: true }),
+    prisma.salesPayment.aggregate({ where: { ...c, status: "recorded", paidOn: { gte: monthStart, lt: monthEnd } }, _sum: { amountPaise: true }, _count: true }),
+    prisma.salesQuote.groupBy({ by: ["status"], where: c, _count: true, _sum: { totalPaise: true } }),
+    prisma.salesOrder.groupBy({ by: ["status"], where: c, _count: true, _sum: { totalPaise: true } }),
     prisma.salesInvoice.groupBy({
       by: ["clientId"],
-      where: { kind: "tax_invoice", status: { in: ["issued", "paid"] }, issueDate: { gte: fyStart, lt: fyEndExclusive } },
+      where: { ...c, kind: "tax_invoice", status: { in: ["issued", "paid"] }, issueDate: { gte: fyStart, lt: fyEndExclusive } },
       _sum: { totalPaise: true },
       orderBy: { _sum: { totalPaise: "desc" } },
       take: 5,
@@ -42,15 +44,16 @@ export async function getSalesDashboard() {
     prisma.salesOrderItem.groupBy({
       by: ["platform"],
       // createdAt is a TIMESTAMP: the financial year starts at 00:00 IST, not 00:00 UTC.
-      where: { status: { not: "cancelled" }, order: { status: { in: ["confirmed", "in_progress", "delivered", "closed"] }, createdAt: { gte: istMidnight(fy.startDay), lt: istMidnight(`${Number(fy.endDay.slice(0, 4))}-04-01`) } } },
+      where: { status: { not: "cancelled" }, order: { ...c, status: { in: ["confirmed", "in_progress", "delivered", "closed"] }, createdAt: { gte: istMidnight(fy.startDay), lt: istMidnight(`${Number(fy.endDay.slice(0, 4))}-04-01`) } } },
       _sum: { amountPaise: true },
       _count: true,
     }),
-    prisma.salesEvent.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
+    // Events carry no company: read more and keep this company's (see below).
+    prisma.salesEvent.findMany({ orderBy: { createdAt: "desc" }, take: 80 }),
     // Every non-cancelled, non-draft order with its deal day: the "sales by financial year" table.
-    prisma.salesOrder.findMany({ where: { status: { in: ["confirmed", "in_progress", "delivered", "closed"] } }, select: { totalPaise: true, startDate: true, createdAt: true, status: true } }),
-    prisma.salesRefund.aggregate({ where: { status: "issued", payment: { status: "recorded" }, refundedOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true } }),
-    prisma.salesRefund.aggregate({ where: { status: "issued", payment: { status: "recorded" }, refundedOn: { gte: monthStart, lt: monthEnd } }, _sum: { amountPaise: true } }),
+    prisma.salesOrder.findMany({ where: { ...c, status: { in: ["confirmed", "in_progress", "delivered", "closed"] } }, select: { totalPaise: true, startDate: true, createdAt: true, status: true } }),
+    prisma.salesRefund.aggregate({ where: { status: "issued", payment: { ...c, status: "recorded" }, refundedOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true } }),
+    prisma.salesRefund.aggregate({ where: { status: "issued", payment: { ...c, status: "recorded" }, refundedOn: { gte: monthStart, lt: monthEnd } }, _sum: { amountPaise: true } }),
   ]);
 
   const clients = topClientRows.length
@@ -72,17 +75,26 @@ export async function getSalesDashboard() {
 
   // Labels for the activity feed: the document numbers behind the event rows, in one query per kind.
   const ids = (t: string) => recent.filter((e) => e.entityType === t).map((e) => e.entityId);
-  const [qn, on, inn, pn] = await Promise.all([
-    ids("quote").length ? prisma.salesQuote.findMany({ where: { id: { in: ids("quote") } }, select: { id: true, number: true, title: true } }) : [],
-    ids("order").length ? prisma.salesOrder.findMany({ where: { id: { in: ids("order") } }, select: { id: true, number: true, title: true } }) : [],
-    ids("invoice").length ? prisma.salesInvoice.findMany({ where: { id: { in: ids("invoice") } }, select: { id: true, number: true } }) : [],
-    ids("payment").length ? prisma.salesPayment.findMany({ where: { id: { in: ids("payment") } }, select: { id: true, number: true } }) : [],
+  const [qn, on, inn, pn, cn] = await Promise.all([
+    ids("quote").length ? prisma.salesQuote.findMany({ where: { ...c, id: { in: ids("quote") } }, select: { id: true, number: true, title: true } }) : [],
+    ids("order").length ? prisma.salesOrder.findMany({ where: { ...c, id: { in: ids("order") } }, select: { id: true, number: true, title: true } }) : [],
+    ids("invoice").length ? prisma.salesInvoice.findMany({ where: { ...c, id: { in: ids("invoice") } }, select: { id: true, number: true } }) : [],
+    ids("payment").length ? prisma.salesPayment.findMany({ where: { ...c, id: { in: ids("payment") } }, select: { id: true, number: true } }) : [],
+    ids("credit_note").length ? prisma.salesCreditNote.findMany({ where: { invoice: c, id: { in: ids("credit_note") } }, select: { id: true, number: true } }) : [],
   ]);
   const label = new Map<string, string>();
   for (const r of qn) label.set(`quote:${r.id}`, `${r.number} · ${r.title}`);
   for (const r of on) label.set(`order:${r.id}`, `${r.number} · ${r.title}`);
   for (const r of inn) label.set(`invoice:${r.id}`, r.number ?? "Draft invoice");
   for (const r of pn) label.set(`payment:${r.id}`, r.number);
+  for (const r of cn) label.set(`credit_note:${r.id}`, r.number);
+  // A document event is this company's when its document was found above under the company
+  // filter; a settings event when it is this company's profile; client events belong to both.
+  const ours = (e: (typeof recent)[number]) =>
+    e.entityType === "client" ? true
+    : e.entityType === "settings" ? e.entityId === SALES_COMPANIES[company].settingsKey
+    : label.has(`${e.entityType}:${e.entityId}`);
+  const feed = recent.filter(ours).slice(0, 12);
 
   const byFyMap = new Map<string, { count: number; totalPaise: number; closedPaise: number }>();
   for (const o of allOrders) {
@@ -122,6 +134,7 @@ export async function getSalesDashboard() {
     byPlatform: platformRows
       .map((r) => ({ platform: r.platform ?? "custom", lines: r._count, amountPaise: r._sum.amountPaise ?? 0 }))
       .sort((a, b) => b.amountPaise - a.amountPaise),
-    recent: recent.map((e) => ({ ...e, label: label.get(`${e.entityType}:${e.entityId}`) ?? null })),
+    company,
+    recent: feed.map((e) => ({ ...e, label: label.get(`${e.entityType}:${e.entityId}`) ?? null })),
   };
 }

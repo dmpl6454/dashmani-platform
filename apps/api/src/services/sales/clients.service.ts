@@ -6,7 +6,7 @@ import { receiptBalance } from "./payments.service";
 import { AppError } from "../../middleware/error-handler";
 import { logSalesEvent, dateToDay } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
-import { todayIST } from "@dashmani/shared";
+import { todayIST, type CompanyKey } from "@dashmani/shared";
 
 // Clients as the sales team sees them: the existing clients row plus its billing profile and
 // money position. Creating a client here never hands out a login — the row gets an unusable
@@ -99,14 +99,16 @@ export async function upsertClientBilling(clientId: string, input: ClientBilling
 }
 
 /** Every money document for one client, with balances — the account statement. */
-export async function getClientStatement(clientId: string) {
+/** The client's account with one company (both, when no company is given — each row says whose). */
+export async function getClientStatement(clientId: string, company?: CompanyKey) {
+  const c = company ? { companyKey: company } : {};
   const client = await prisma.client.findUnique({ where: { id: clientId }, select: clientSelect });
   if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
   const today = todayIST();
   const [invoices, payments, creditNotes] = await Promise.all([
-    prisma.salesInvoice.findMany({ where: { clientId, status: { not: "draft" } }, orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }], select: invoiceSummarySelect }),
-    prisma.salesPayment.findMany({ where: { clientId }, orderBy: { paidOn: "desc" }, include: { allocations: { select: { invoiceId: true, amountPaise: true, tdsPaise: true } }, refunds: true } }),
-    prisma.salesCreditNote.findMany({ where: { clientId }, orderBy: { issueDate: "desc" } }),
+    prisma.salesInvoice.findMany({ where: { ...c, clientId, status: { not: "draft" } }, orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }], select: invoiceSummarySelect }),
+    prisma.salesPayment.findMany({ where: { ...c, clientId }, orderBy: { paidOn: "desc" }, include: { allocations: { select: { invoiceId: true, amountPaise: true, tdsPaise: true } }, refunds: true } }),
+    prisma.salesCreditNote.findMany({ where: { clientId, ...(company ? { invoice: c } : {}) }, orderBy: { issueDate: "desc" }, include: { invoice: { select: { companyKey: true } } } }),
   ]);
   const derived = invoices.map((i) => deriveInvoice(i, today));
   const live = payments.filter((p) => p.status === "recorded");

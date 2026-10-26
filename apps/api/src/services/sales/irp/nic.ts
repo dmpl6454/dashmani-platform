@@ -10,20 +10,22 @@ import { IrpError, type IrpProvider, type IrpResult } from "./provider";
  *    and response Data are AES-256-ECB with the decrypted Sek, base64.
  *  - POST /eicore/v1.03/Invoice (generate), GET .../Invoice/irnbydocdetails (look up),
  *    POST .../Invoice/Cancel. A duplicate submission fails with 2150 and InfoDtls DUPIRN.
- * Credentials: EINVOICE_CLIENT_ID, EINVOICE_CLIENT_SECRET, EINVOICE_PUBLIC_KEY (PEM text or a
- * file path), and per GSTIN EINVOICE_USER_<GSTIN> / EINVOICE_PASSWORD_<GSTIN>. EINVOICE_BASE_URL
- * defaults to the sandbox.
+ * Credentials: EINVOICE_PUBLIC_KEY (PEM text or a file path); per GSTIN EINVOICE_USER_<GSTIN> /
+ * EINVOICE_PASSWORD_<GSTIN>; and the API client EINVOICE_CLIENT_ID / EINVOICE_CLIENT_SECRET, which
+ * EINVOICE_CLIENT_ID_<GSTIN> / EINVOICE_CLIENT_SECRET_<GSTIN> override (a second company has its
+ * own PAN and so its own API client). EINVOICE_BASE_URL defaults to the sandbox.
  */
 export interface NicConfig {
   baseUrl: string;
+  /** Used when credentials() gives no client of its own. */
   clientId: string;
   clientSecret: string;
   publicKeyPem: string;
-  credentials: (gstin: string) => { user: string; password: string } | null;
+  credentials: (gstin: string) => { user: string; password: string; clientId?: string; clientSecret?: string } | null;
   fetch?: typeof fetch;
 }
 
-type Session = { token: string; sek: Buffer; user: string; expiresAt: number };
+type Session = { token: string; sek: Buffer; user: string; clientId: string; clientSecret: string; expiresAt: number };
 
 export function aesEncrypt(key: Buffer, data: Buffer): string {
   const c = crypto.createCipheriv("aes-256-ecb", key, null);
@@ -42,17 +44,18 @@ export class NicIrp implements IrpProvider {
 
   static fromEnv(): NicIrp | null {
     const e = process.env;
-    if (!e.EINVOICE_CLIENT_ID || !e.EINVOICE_CLIENT_SECRET || !e.EINVOICE_PUBLIC_KEY) return null;
+    const anyClient = (!!e.EINVOICE_CLIENT_ID && !!e.EINVOICE_CLIENT_SECRET) || Object.keys(e).some((k) => k.startsWith("EINVOICE_CLIENT_ID_"));
+    if (!anyClient || !e.EINVOICE_PUBLIC_KEY) return null;
     const pem = e.EINVOICE_PUBLIC_KEY.includes("BEGIN") ? e.EINVOICE_PUBLIC_KEY.replace(/\\n/g, "\n") : fs.readFileSync(e.EINVOICE_PUBLIC_KEY, "utf8");
     return new NicIrp({
       baseUrl: (e.EINVOICE_BASE_URL || "https://einv-apisandbox.nic.in").replace(/\/+$/, ""),
-      clientId: e.EINVOICE_CLIENT_ID,
-      clientSecret: e.EINVOICE_CLIENT_SECRET,
+      clientId: e.EINVOICE_CLIENT_ID ?? "",
+      clientSecret: e.EINVOICE_CLIENT_SECRET ?? "",
       publicKeyPem: pem,
       credentials: (gstin) => {
         const user = e[`EINVOICE_USER_${gstin}`];
         const password = e[`EINVOICE_PASSWORD_${gstin}`];
-        return user && password ? { user, password } : null;
+        return user && password ? { user, password, clientId: e[`EINVOICE_CLIENT_ID_${gstin}`], clientSecret: e[`EINVOICE_CLIENT_SECRET_${gstin}`] } : null;
       },
     });
   }
@@ -66,12 +69,15 @@ export class NicIrp implements IrpProvider {
     if (!force && cached && cached.expiresAt - 5 * 60_000 > Date.now()) return cached;
     const cred = this.cfg.credentials(gstin);
     if (!cred) throw new IrpError(`No e-invoice API user is configured for GSTIN ${gstin} (EINVOICE_USER_${gstin} / EINVOICE_PASSWORD_${gstin})`, "CONFIG");
+    const clientId = cred.clientId || this.cfg.clientId;
+    const clientSecret = cred.clientSecret || this.cfg.clientSecret;
+    if (!clientId || !clientSecret) throw new IrpError(`No e-invoice API client is configured for GSTIN ${gstin} (EINVOICE_CLIENT_ID_${gstin} / EINVOICE_CLIENT_SECRET_${gstin})`, "CONFIG");
     const appKey = crypto.randomBytes(32);
     const json = JSON.stringify({ UserName: cred.user, Password: cred.password, AppKey: appKey.toString("base64"), ForceRefreshAccessToken: true });
     const data = crypto.publicEncrypt({ key: this.cfg.publicKeyPem, padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(Buffer.from(json).toString("base64"))).toString("base64");
     const res = await this.f(`${this.cfg.baseUrl}/eivital/v1.04/auth`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", client_id: this.cfg.clientId, client_secret: this.cfg.clientSecret, gstin },
+      headers: { "Content-Type": "application/json", client_id: clientId, client_secret: clientSecret, gstin },
       body: JSON.stringify({ Data: data }),
     });
     const body = (await res.json().catch(() => ({}))) as { Status?: number | string; Data?: { AuthToken: string; Sek: string; TokenExpiry: string }; ErrorDetails?: Array<{ ErrorCode: string; ErrorMessage: string }> };
@@ -79,7 +85,7 @@ export class NicIrp implements IrpProvider {
       const e = body.ErrorDetails?.[0];
       throw new IrpError(`IRP login failed: ${e?.ErrorMessage ?? `HTTP ${res.status}`}`, e?.ErrorCode ?? "AUTH");
     }
-    const s: Session = { token: body.Data.AuthToken, sek: aesDecrypt(appKey, body.Data.Sek), user: cred.user, expiresAt: istToMs(body.Data.TokenExpiry) || Date.now() + 5 * 3600_000 };
+    const s: Session = { token: body.Data.AuthToken, sek: aesDecrypt(appKey, body.Data.Sek), user: cred.user, clientId, clientSecret, expiresAt: istToMs(body.Data.TokenExpiry) || Date.now() + 5 * 3600_000 };
     this.sessions.set(gstin, s);
     return s;
   }
@@ -88,7 +94,7 @@ export class NicIrp implements IrpProvider {
     const s = await this.session(gstin);
     const res = await this.f(`${this.cfg.baseUrl}${path}`, {
       method,
-      headers: { "Content-Type": "application/json", client_id: this.cfg.clientId, client_secret: this.cfg.clientSecret, gstin, user_name: s.user, AuthToken: s.token },
+      headers: { "Content-Type": "application/json", client_id: s.clientId, client_secret: s.clientSecret, gstin, user_name: s.user, AuthToken: s.token },
       ...(payload !== undefined ? { body: JSON.stringify({ Data: aesEncrypt(s.sek, Buffer.from(JSON.stringify(payload))) }) } : {}),
     });
     const body = (await res.json().catch(() => ({}))) as {

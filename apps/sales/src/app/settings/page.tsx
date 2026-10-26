@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useSeller } from "@/lib/hooks";
+import { useCompany } from "@/lib/company";
 import { useAuth } from "@/lib/auth";
 import { isAdminUser } from "@/lib/access";
 import { apiFetch } from "@/lib/api";
@@ -9,7 +10,8 @@ import type { SellerBranch, SellerProfile } from "@/lib/sales-types";
 import { Field, LoadError, Loading, PageHead, Toast } from "@/components/sales-ui";
 import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 
-// Our own GST identity and the defaults every document inherits. A tax invoice cannot be
+// Each billing company's GST identity and the defaults its documents inherit (the company
+// chosen at the top of the page). A tax invoice cannot be
 // issued until the fields a GST invoice must print are filled in.
 
 const EMPTY: SellerProfile = {
@@ -23,6 +25,7 @@ const EMPTY_BRANCH: SellerBranch = { label: "", gstin: "", stateCode: "", state:
 const LABELS: Record<string, string> = { legalName: "legal name", gstin: "GSTIN", addressLine1: "address", city: "city", stateCode: "state", pincode: "PIN code" };
 
 export default function SettingsPage() {
+  const { company, info } = useCompany();
   const { data, error, isLoading, mutate } = useSeller();
   const { user } = useAuth();
   const canEdit = isAdminUser(user);
@@ -31,7 +34,8 @@ export default function SettingsPage() {
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   useEffect(() => { if (data) setForm({ ...EMPTY, ...Object.fromEntries(Object.entries(data.profile).map(([k, v]) => [k, v ?? (typeof EMPTY[k as keyof SellerProfile] === "boolean" ? false : "")])) } as SellerProfile); }, [data]);
   if (error) return <LoadError error={error} retry={() => mutate()} />;
-  if (isLoading || !data) return <Loading />;
+  // While the other company's profile loads, the previous one is still on screen: never show or save it under this company.
+  if (isLoading || !data || data.company !== company) return <Loading />;
   const set = (k: keyof SellerProfile, v: string | number | boolean) => setForm((f) => ({ ...f, [k]: v }));
   const text = (k: keyof SellerProfile, placeholder = "") => (
     <input className="input" value={(form[k] as string) ?? ""} placeholder={placeholder} onChange={(e) => set(k, e.target.value)} />
@@ -44,7 +48,7 @@ export default function SettingsPage() {
       const body: Record<string, unknown> = { ...form };
       for (const k of Object.keys(body)) if (body[k] === "") body[k] = null;
       body.branches = (form.branches ?? []).map((b) => Object.fromEntries(Object.entries(b).map(([k, v]) => [k, v === "" ? null : v])));
-      const res = await apiFetch<{ profile: SellerProfile; missing: string[] }>("/sales/settings/seller", { method: "PUT", body: JSON.stringify(body) });
+      const res = await apiFetch<{ profile: SellerProfile; missing: string[] }>(`/sales/settings/seller?company=${company}`, { method: "PUT", body: JSON.stringify(body) });
       await mutate();
       setToast({ message: res.data.missing.length ? `Saved. Still needed for tax invoices: ${res.data.missing.map((m) => LABELS[m] ?? m).join(", ")}.` : "Saved. Tax invoices can be issued.", tone: "ok" });
     } catch (err) {
@@ -56,7 +60,8 @@ export default function SettingsPage() {
 
   return (
     <>
-      <PageHead kicker="Settings" title="Company billing profile" />
+      <PageHead kicker="Settings" title={`${info.short} billing profile`} />
+      <p className="text-sm text-ink-3 -mt-2 mb-4">Every document of {info.name} prints these details. The other company has its own profile: switch company at the top of the page. Prefixes must differ between the two companies.</p>
       {!data.saved && <div className="card border-attention p-3 text-sm mb-4">Not saved yet. Invoices print these details, and a <strong>tax invoice</strong> cannot be issued until the legal name, GSTIN, address, city, state and PIN are filled in.</div>}
       {data.saved && data.missing.length > 0 && <div className="card border-attention p-3 text-sm mb-4">Still needed for tax invoices: {data.missing.map((m) => LABELS[m] ?? m).join(", ")}.</div>}
       {!canEdit && <div className="card p-3 text-sm mb-4">Only an Admin or Super Admin can change the company profile — its GSTIN and bank details print on every invoice.</div>}
@@ -64,8 +69,8 @@ export default function SettingsPage() {
        <fieldset disabled={!canEdit} className="grid gap-6 min-w-0 border-0 p-0 m-0">
         <section className="card p-4 grid sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Identity</h2>
-          <Field label="Legal name" className="sm:col-span-2">{text("legalName", "Digital Sukoon Private Limited")}</Field>
-          <Field label="Trade name (optional)">{text("tradeName", "Digital Sukoon")}</Field>
+          <Field label="Legal name" className="sm:col-span-2">{text("legalName", info.name)}</Field>
+          <Field label="Trade name (optional)">{text("tradeName", info.short)}</Field>
           <Field label="GSTIN" hint="15 characters; the first two are the state code.">{text("gstin", "27AAACD1234E1Z5")}</Field>
           <Field label="PAN">{text("pan", "AAACD1234E")}</Field>
           <Field label="Authorised signatory">{text("signatory", "Name printed under the signature")}</Field>

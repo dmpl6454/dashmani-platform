@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Download } from "lucide-react";
 import { useClientReceipts, useEvents, useInvoice } from "@/lib/hooks";
+import { companyName, companyOfDoc } from "@/lib/company";
 import type { Invoice, Payment } from "@/lib/sales-types";
 import { ApiError, apiFetch, apiFetchBlob, downloadBlob } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
@@ -32,7 +33,7 @@ function InvoiceView() {
   const { data: inv, error, isLoading, mutate } = useInvoice(id);
   const { data: events, mutate: mutateEvents } = useEvents("invoice", id);
   const [modal, setModal] = useState<null | "issue" | "cancel" | "credit" | "delete" | "apply" | "convert">(null);
-  const { data: receipts, mutate: mutateReceipts } = useClientReceipts(inv?.clientId);
+  const { data: receipts, mutate: mutateReceipts } = useClientReceipts(inv?.clientId, inv ? companyOfDoc(inv) : undefined);
   const [issueDate, setIssueDate] = useState(todayIST());
   const [dueDate, setDueDate] = useState("");
   const [reason, setReason] = useState("");
@@ -108,12 +109,12 @@ function InvoiceView() {
   const pct = (bp: number) => `${bp / 100}%`;
   return (
     <>
-      <PageHead kicker={<><Link href="/invoices" className="hover:text-white">Invoices</Link>{inv.order && <> · <Link href={`/orders/view?id=${inv.order.id}`} className="hover:text-white">{inv.order.number}</Link></>}</> as unknown as string} title={<><span className="font-mono">{inv.number ?? "Draft invoice"}</span> <StatusPill status={ds} />{inv.kind === "proforma" && <span className="text-sm text-ink-3 ml-2">proforma</span>}</>}>
+      <PageHead kicker={<><Link href="/invoices" className="hover:text-white">Invoices</Link> · {companyName(inv.companyKey)}{inv.order && <> · <Link href={`/orders/view?id=${inv.order.id}`} className="hover:text-white">{inv.order.number}</Link></>}</> as unknown as string} title={<><span className="font-mono">{inv.number ?? "Draft invoice"}</span> <StatusPill status={ds} />{inv.kind === "proforma" && <span className="text-sm text-ink-3 ml-2">proforma</span>}</>}>
         {ds === "draft" && <Link href={`/invoices/edit?id=${inv.id}`} className="btn btn-light">Edit</Link>}
         {ds === "draft" && <button type="button" className="btn" onClick={() => { setIssueDate(inv.issueDate ?? todayIST()); setDueDate(inv.dueDate ?? ""); setModal("issue"); }}>Issue</button>}
         {ds !== "draft" && <button type="button" className="btn btn-light" onClick={pdf}><Download size={14} /> PDF</button>}
         {open && !inv.sentAt && <button type="button" className="btn btn-ghost" onClick={markSent}>Mark sent</button>}
-        {open && <Link href={`/payments/record?clientId=${inv.clientId}&invoiceId=${inv.id}`} className="btn">Record payment</Link>}
+        {open && <Link href={`/payments/record?clientId=${inv.clientId}&invoiceId=${inv.id}&company=${inv.companyKey}`} className="btn">Record payment</Link>}
         {open && advances.length > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("apply")}>Apply a receipt</button>}
         {inv.kind === "proforma" && (open || ds === "paid") && !liveConversion && <button type="button" className="btn" onClick={() => setModal("convert")}>Convert to tax invoice</button>}
         {(open || ds === "paid") && inv.kind === "tax_invoice" && <button type="button" className="btn btn-ghost" onClick={() => setModal("credit")}>Credit note</button>}

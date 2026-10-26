@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useClients, useInvoice, useSeller } from "@/lib/hooks";
+import { companyOfDoc, SALES_COMPANIES, useCompany } from "@/lib/company";
 import { errorSentence } from "@/lib/messages";
 import type { Invoice, InvoiceItem, TaxMode } from "@/lib/sales-types";
 import { Field, LoadError, Loading, Money, MoneyInput, PageHead, Toast } from "@/components/sales-ui";
@@ -21,7 +22,10 @@ function Editor() {
   const router = useRouter();
   const { data: inv, error, isLoading } = useInvoice(id);
   const { data: clients } = useClients();
-  const { data: seller } = useSeller();
+  // A new invoice is billed by the company the portal is working in; a draft keeps its own.
+  const { company: current } = useCompany();
+  const companyKey = id ? companyOfDoc(inv) : current;
+  const { data: seller } = useSeller(id && !inv ? undefined : companyKey);
   const [form, setForm] = useState({ clientId: params.get("clientId") ?? "", kind: "tax_invoice" as "tax_invoice" | "proforma", issueDate: "", dueDate: "", taxMode: "auto" as "auto" | TaxMode, gstRateBp: 1800, discountPaise: 0, notes: "", terms: "", internalNotes: "", items: [blank()] as InvoiceItem[] });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
@@ -45,7 +49,7 @@ function Editor() {
     setBusy(true);
     try {
       const body = {
-        clientId: form.clientId, kind: form.kind, orderId: inv?.orderId ?? null, campaignBookingId: inv?.campaignBookingId ?? null,
+        companyKey, clientId: form.clientId, kind: form.kind, orderId: inv?.orderId ?? null, campaignBookingId: inv?.campaignBookingId ?? null,
         issueDate: form.issueDate || null, dueDate: form.dueDate || null, gstRateBp: form.gstRateBp, discountPaise: form.discountPaise,
         notes: form.notes || null, terms: form.terms || null, internalNotes: form.internalNotes || null, ...(form.taxMode !== "auto" ? { taxMode: form.taxMode } : {}),
         items: form.items.map((i) => ({ description: i.description.trim(), sac: i.sac || null, quantity: i.quantity, unitPricePaise: i.unitPricePaise, discountPaise: i.discountPaise, orderItemId: i.orderItemId ?? null })),
@@ -64,6 +68,9 @@ function Editor() {
       <PageHead kicker={<Link href="/invoices" className="hover:text-white">Invoices</Link> as unknown as string} title={inv ? "Edit draft invoice" : "New invoice"} />
       <form onSubmit={save} className="grid gap-5">
         <section className="card p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={inv ? "A saved draft stays with its company." : "Switch company at the top of the page before saving."}>
+            <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
+          </Field>
           <Field label="Client" className="sm:col-span-2">
             <select className="input" required value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })}><option value="">Choose a client…</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.companyName}{c.billingProfile?.gstin ? ` · ${c.billingProfile.gstin}` : ""}</option>)}</select>
           </Field>

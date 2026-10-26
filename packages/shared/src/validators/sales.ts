@@ -1,12 +1,41 @@
 import { z } from "zod";
 import { safeString, normalizedEmail } from "../utils/sanitize";
-import { DEFAULT_GST_RATE_BP, DEFAULT_SAC, TAX_MODES } from "../sales/gst";
+import { DEFAULT_GST_RATE_BP, DEFAULT_SAC, GST_STATE_CODES, TAX_MODES } from "../sales/gst";
 
 // sales.digitalsukoon.com — shared by the API (input validation) and the portal (forms).
 // Import BY PATH from the frontend ("@dashmani/shared/src/validators/sales"), never via the barrel.
 
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
-const paise = z.number().int().min(0).max(100_000_000_000); // ₹1,00,00,00,000 cap keeps int4 safe
+/** A real calendar day: "2026-13-45" used to reach the database as an Invalid Date (a 500) and "2026-02-31" became 3 March. */
+const isRealDay = (s: string) => {
+  const t = Date.parse(`${s}T00:00:00.000Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === s;
+};
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").refine(isRealDay, "That date does not exist");
+
+/**
+ * A GSTIN's first two digits ARE its state code, and the state code decides CGST+SGST versus
+ * IGST. So the two must agree (a 29… GSTIN saved with state 27 billed the wrong tax), and a
+ * GSTIN without a state code fills it in.
+ */
+function checkGstinState(v: { gstin?: string | null; stateCode?: string | null }, ctx: z.RefinementCtx) {
+  const fromGstin = v.gstin?.slice(0, 2);
+  if (fromGstin && v.stateCode && fromGstin !== v.stateCode) {
+    const name = GST_STATE_CODES[fromGstin] ? ` (${GST_STATE_CODES[fromGstin]})` : "";
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["stateCode"], message: `The GSTIN is registered in state ${fromGstin}${name}, but the state code says ${v.stateCode} — they must match` });
+  }
+}
+function fillStateFromGstin<T extends { gstin?: string | null; stateCode?: string | null; state?: string | null }>(v: T): T {
+  if (!v.gstin || v.stateCode) return v;
+  const code = v.gstin.slice(0, 2);
+  return { ...v, stateCode: code, state: v.state || GST_STATE_CODES[code] || null };
+}
+/** The money columns are Postgres INT: ₹2,14,74,836.47 is the most one field can hold. */
+export const MAX_PAISE = 2_147_483_647;
+const paise = z.number().int().min(0).max(MAX_PAISE, "That amount is too large for one document");
+/** Invoice and credit-note prefixes: GST numbers may use only letters, digits, "-" and "/", 16
+ * characters at most — PREFIX/26-27/0001 is the prefix + 11, so the prefix gets 5. */
+const gstPrefix = (fallback: string) =>
+  z.string().trim().regex(/^[A-Za-z0-9-]{1,5}$/, "Use 1–5 letters, digits or hyphens (GST numbers allow 16 characters)").default(fallback);
 const optionalText = (max: number) => safeString.pipe(z.string().max(max)).optional().nullable();
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -50,10 +79,10 @@ export const sellerProfileSchema = z.object({
   accountNumber: optionalText(40),
   ifsc: z.string().trim().transform(upper).pipe(z.string().regex(IFSC_RE, "That is not a valid IFSC")).optional().nullable(),
   upiId: optionalText(80),
-  invoicePrefix: safeString.pipe(z.string().min(1).max(10)).default("DS"),
+  invoicePrefix: gstPrefix("DS"),
   quotePrefix: safeString.pipe(z.string().min(1).max(10)).default("Q"),
   orderPrefix: safeString.pipe(z.string().min(1).max(10)).default("SO"),
-  creditNotePrefix: safeString.pipe(z.string().min(1).max(10)).default("CN"),
+  creditNotePrefix: gstPrefix("CN"),
   receiptPrefix: safeString.pipe(z.string().min(1).max(10)).default("RCPT"),
   defaultSac: z.string().trim().regex(/^\d{4,8}$/).default(DEFAULT_SAC),
   defaultGstRateBp: z.number().int().min(0).max(4000).default(DEFAULT_GST_RATE_BP),
@@ -61,7 +90,7 @@ export const sellerProfileSchema = z.object({
   roundToRupee: z.boolean().default(true),
   terms: optionalText(2000),
   signatory: optionalText(120),
-});
+}).superRefine(checkGstinState).transform(fillStateFromGstin);
 export type SellerProfileInput = z.infer<typeof sellerProfileSchema>;
 
 export const clientBillingProfileSchema = z.object({
@@ -78,7 +107,7 @@ export const clientBillingProfileSchema = z.object({
   billingEmail: normalizedEmail.optional().nullable(),
   billingPhone: optionalText(30),
   notes: optionalText(2000),
-});
+}).superRefine(checkGstinState).transform(fillStateFromGstin);
 export type ClientBillingProfileInput = z.infer<typeof clientBillingProfileSchema>;
 
 /** A client created by sales (no portal login needed; the account gets an unusable password). */
@@ -168,6 +197,8 @@ export type InvoiceUpsertInput = z.infer<typeof invoiceUpsertSchema>;
 export const invoiceIssueSchema = z.object({
   issueDate: day.optional(),
   dueDate: day.optional().nullable(),
+  /** When the GST type the draft was saved with no longer matches the seller and buyer: update it, or keep it on purpose. */
+  taxResolution: z.enum(["recompute", "keep"]).optional(),
 });
 
 export const invoiceCancelSchema = z.object({ reason: safeString.pipe(z.string().min(3).max(300)) });
@@ -189,13 +220,22 @@ export const paymentCreateSchema = z
   })
   .refine((p) => p.amountPaise + p.tdsPaise > 0, { message: "Enter an amount received or TDS withheld", path: ["amountPaise"] })
   .refine((p) => p.allocations.reduce((s, a) => s + a.amountPaise, 0) <= p.amountPaise, { message: "Allocated more than was received", path: ["allocations"] })
-  .refine((p) => p.allocations.reduce((s, a) => s + a.tdsPaise, 0) <= p.tdsPaise, { message: "Allocated more TDS than was withheld", path: ["allocations"] });
+  .refine((p) => p.allocations.reduce((s, a) => s + a.tdsPaise, 0) <= p.tdsPaise, { message: "Allocated more TDS than was withheld", path: ["allocations"] })
+  .refine((p) => new Set(p.allocations.map((a) => a.invoiceId)).size === p.allocations.length, { message: "List each invoice once in a payment", path: ["allocations"] });
 export type PaymentCreateInput = z.infer<typeof paymentCreateSchema>;
+
+/** Apply the unallocated part of a recorded receipt (an advance) to invoices later. */
+export const paymentAllocateSchema = z
+  .object({
+    allocations: z.array(z.object({ invoiceId: z.string().uuid(), amountPaise: paise.default(0), tdsPaise: paise.default(0) })).min(1).max(50),
+  })
+  .refine((p) => new Set(p.allocations.map((a) => a.invoiceId)).size === p.allocations.length, { message: "List each invoice once", path: ["allocations"] });
+export type PaymentAllocateInput = z.infer<typeof paymentAllocateSchema>;
 
 export const creditNoteCreateSchema = z.object({
   invoiceId: z.string().uuid(),
   reason: safeString.pipe(z.string().min(3).max(300)),
-  taxablePaise: z.number().int().min(1).max(100_000_000_000),
+  taxablePaise: z.number().int().min(1).max(MAX_PAISE),
   issueDate: day.optional(),
 });
 export type CreditNoteCreateInput = z.infer<typeof creditNoteCreateSchema>;

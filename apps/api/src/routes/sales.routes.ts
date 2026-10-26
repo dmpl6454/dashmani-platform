@@ -7,6 +7,7 @@ import {
   invoiceUpsertSchema,
   orderItemStatusSchema,
   orderUpsertSchema,
+  paymentAllocateSchema,
   paymentCreateSchema,
   quoteUpsertSchema,
   salesClientCreateSchema,
@@ -36,6 +37,9 @@ import { renderInvoicePdf } from "../services/sales/pdf.service";
 const router = Router();
 const view = [authenticate, requireInternalUser, requirePermission("sales", "view")];
 const manage = [authenticate, requireInternalUser, requirePermission("sales", "manage")];
+// The company's own GST identity and BANK DETAILS print on every invoice; a changed account number
+// is how invoice fraud starts. Only Admin / Super Admin (who hold sales:approve) may change them.
+const admin = [authenticate, requireInternalUser, requirePermission("sales", "approve")];
 const staffId = (req: Request) => req.user!.userId;
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 
@@ -48,7 +52,7 @@ router.get("/sales/settings/seller", ...view, asyncHandler(async (_req, res) => 
   return success(res, { profile: profile ?? SELLER_FALLBACK, saved: !!profile, missing: sellerMissingFields(profile) });
 }));
 
-router.put("/sales/settings/seller", ...manage, validate(sellerProfileSchema), asyncHandler(async (req, res) => {
+router.put("/sales/settings/seller", ...admin, validate(sellerProfileSchema), asyncHandler(async (req, res) => {
   const profile = await saveSellerProfile(req.body, staffId(req));
   return success(res, { profile, saved: true, missing: sellerMissingFields(profile) });
 }));
@@ -111,6 +115,7 @@ router.get("/sales/invoices/:id/pdf", ...view, asyncHandler(async (req, res) => 
 
 router.get("/sales/payments", ...view, asyncHandler(async (req, res) => success(res, await payments.listPayments({ clientId: str(req.query.clientId), q: str(req.query.q), from: str(req.query.from), to: str(req.query.to) }))));
 router.post("/sales/payments", ...manage, validate(paymentCreateSchema), asyncHandler(async (req, res) => success(res, await payments.createPayment(req.body, staffId(req)), undefined, 201)));
+router.post("/sales/payments/:id/allocations", ...manage, validate(paymentAllocateSchema), asyncHandler(async (req, res) => success(res, await payments.allocatePayment(req.params.id, req.body, staffId(req)))));
 router.get("/sales/payments/:id", ...view, asyncHandler(async (req, res) => success(res, await payments.getPayment(req.params.id))));
 router.get("/sales/credit-notes", ...view, asyncHandler(async (req, res) => success(res, await payments.listCreditNotes({ invoiceId: str(req.query.invoiceId), clientId: str(req.query.clientId) }))));
 router.post("/sales/credit-notes", ...manage, validate(creditNoteCreateSchema), asyncHandler(async (req, res) => success(res, await payments.createCreditNote(req.body, staffId(req)), undefined, 201)));

@@ -63,6 +63,8 @@ export function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
     ["Due date", fmtDay(inv.dueDate)],
     ["Place of supply", inv.placeOfSupplyCode ? `${inv.placeOfSupplyCode} — ${GST_STATE_CODES[inv.placeOfSupplyCode] ?? ""}` : "—"],
     ["Tax", TAX_MODE_LABELS[inv.taxMode as keyof typeof TAX_MODE_LABELS] ?? inv.taxMode],
+    // Rule 46(p): a tax invoice states whether tax is payable on reverse charge. A proforma says what it is not.
+    inv.kind === "proforma" ? ["Note", "Proforma — not a tax invoice"] : ["Reverse charge", "No"],
   ];
   for (const [k, v] of meta) doc.text(`${k}: ${v}`, left + width * 0.6, doc.y, { width: width * 0.4, align: "right" });
   doc.y = Math.max(headerBottom, doc.y) + 14;

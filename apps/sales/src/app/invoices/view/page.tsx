@@ -1,10 +1,12 @@
 "use client";
 import { Suspense, useState } from "react";
+import { mutate as mutateGlobal } from "swr";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Download } from "lucide-react";
-import { useEvents, useInvoice } from "@/lib/hooks";
-import { apiFetch, apiFetchBlob, downloadBlob } from "@/lib/api";
+import { useClientReceipts, useEvents, useInvoice } from "@/lib/hooks";
+import type { Payment } from "@/lib/sales-types";
+import { ApiError, apiFetch, apiFetchBlob, downloadBlob } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, todayIST } from "@/lib/format";
 import { Confirm, Empty, Field, LoadError, Loading, Money, MoneyInput, PageHead, StatusPill, Toast, titleCase } from "@/components/sales-ui";
@@ -29,24 +31,36 @@ function InvoiceView() {
   const router = useRouter();
   const { data: inv, error, isLoading, mutate } = useInvoice(id);
   const { data: events, mutate: mutateEvents } = useEvents("invoice", id);
-  const [modal, setModal] = useState<null | "issue" | "cancel" | "credit" | "delete">(null);
+  const [modal, setModal] = useState<null | "issue" | "cancel" | "credit" | "delete" | "apply">(null);
+  const { data: receipts, mutate: mutateReceipts } = useClientReceipts(inv?.clientId);
   const [issueDate, setIssueDate] = useState(todayIST());
   const [dueDate, setDueDate] = useState("");
   const [reason, setReason] = useState("");
   const [creditPaise, setCreditPaise] = useState(0);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
+  const [taxQuestion, setTaxQuestion] = useState<string | null>(null);
   if (!id) return <Empty title="No invoice selected." action={<Link href="/invoices" className="btn">Back to invoices</Link>} />;
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading || !inv) return <Loading />;
   const refresh = () => Promise.all([mutate(), mutateEvents()]);
   const fail = (err: unknown) => setToast({ message: errorSentence(err), tone: "err" });
 
-  async function issue() {
-    try { await apiFetch(`/sales/invoices/${id}/issue`, { method: "POST", body: JSON.stringify({ issueDate, dueDate: dueDate || null }) }); await refresh(); setModal(null); setToast({ message: "Issued.", tone: "ok" }); } catch (err) { fail(err); }
-  }
-  async function cancel() {
+  // The server refuses to issue a draft whose GST type no longer matches the company and client
+  // (TAX_CHANGED) until staff choose: update it, or keep it as drafted on purpose.
+  async function issue(taxResolution?: "recompute" | "keep") {
     try {
-      const res = await apiFetch<unknown>(`/sales/invoices/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+      await apiFetch(`/sales/invoices/${id}/issue`, { method: "POST", body: JSON.stringify({ issueDate, dueDate: dueDate || null, ...(taxResolution ? { taxResolution } : {}) }) });
+      await refresh(); setModal(null); setTaxQuestion(null); setToast({ message: "Issued.", tone: "ok" });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "TAX_CHANGED") { setModal(null); setTaxQuestion(err.message); return; }
+      fail(err);
+    }
+  }
+  // The reason is passed in, not read from state: "Delete draft" sets it and calls this in the same
+  // tick, when the state still holds the old (empty) reason and the API refused it.
+  async function cancel(why: string = reason) {
+    try {
+      const res = await apiFetch<unknown>(`/sales/invoices/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: why }) });
       if (res.data === null) { router.replace("/invoices"); return; }
       await refresh(); setModal(null); setToast({ message: "Cancelled. The number stays on record.", tone: "ok" });
     } catch (err) { fail(err); }
@@ -57,10 +71,20 @@ function InvoiceView() {
   async function pdf() {
     try { const { blob, filename } = await apiFetchBlob(`/sales/invoices/${id}/pdf`); downloadBlob(blob, filename ?? `${inv!.number ?? "invoice"}.pdf`); } catch (err) { fail(err); }
   }
+  async function applyReceipt(paymentId: string, amountPaise: number, tdsPaise: number) {
+    try {
+      const p = await apiFetch<Payment>(`/sales/payments/${paymentId}/allocations`, { method: "POST", body: JSON.stringify({ allocations: [{ invoiceId: id, amountPaise, tdsPaise }] }) });
+      await Promise.all([refresh(), mutateReceipts(), mutateGlobal((key) => typeof key === "string" && (key.startsWith("/sales/invoices") || key.startsWith("/sales/payments") || key.startsWith("/sales/dashboard") || key.startsWith("/sales/clients")), undefined, { revalidate: true })]);
+      setModal(null);
+      setToast({ message: `Applied ${p.data.number} to this invoice.`, tone: "ok" });
+    } catch (err) { fail(err); }
+  }
   async function markSent() {
     try { await apiFetch(`/sales/invoices/${id}/sent`, { method: "POST" }); await refresh(); setToast({ message: "Marked as sent.", tone: "ok" }); } catch (err) { fail(err); }
   }
   const ds = inv.derivedStatus;
+  // Receipts of this client with money not yet applied to any invoice (advances, part-used payments).
+  const advances = (receipts ?? []).map(unallocatedOf).filter((r) => r.amountPaise + r.tdsPaise > 0);
   const open = ds === "issued" || ds === "partially_paid" || ds === "overdue";
   const pct = (bp: number) => `${bp / 100}%`;
   return (
@@ -71,6 +95,7 @@ function InvoiceView() {
         {ds !== "draft" && <button type="button" className="btn btn-light" onClick={pdf}><Download size={14} /> PDF</button>}
         {open && !inv.sentAt && <button type="button" className="btn btn-ghost" onClick={markSent}>Mark sent</button>}
         {open && <Link href={`/payments/record?clientId=${inv.clientId}&invoiceId=${inv.id}`} className="btn">Record payment</Link>}
+        {open && advances.length > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("apply")}>Apply a receipt</button>}
         {(open || ds === "paid") && inv.kind === "tax_invoice" && <button type="button" className="btn btn-ghost" onClick={() => setModal("credit")}>Credit note</button>}
         {open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("cancel")}>Cancel</button>}
         {ds === "draft" && <button type="button" className="btn btn-ghost" onClick={() => setModal("delete")}>Delete draft</button>}
@@ -124,12 +149,14 @@ function InvoiceView() {
         <EventList events={events} />
       </div>
       {modal === "issue" && (
-        <Confirm title={`Issue this ${inv.kind === "proforma" ? "proforma" : "tax invoice"}?`} confirmLabel="Issue" onConfirm={issue} onClose={() => setModal(null)}
+        <Confirm title={`Issue this ${inv.kind === "proforma" ? "proforma" : "tax invoice"}?`} confirmLabel="Issue" onConfirm={() => issue()} onClose={() => setModal(null)}
           body={<div className="grid gap-3"><p>The next serial of the financial year is assigned and the document is frozen.</p><Field label="Issue date"><input className="input" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></Field><Field label="Due date (blank = default terms)"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field></div>} />
       )}
-      {modal === "cancel" && <Confirm title="Cancel this invoice?" danger confirmLabel="Cancel invoice" onConfirm={cancel} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>The number stays on record as cancelled; issue a new invoice if needed.</p><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Duplicate / wrong client / …" /></Field></div>} />}
-      {modal === "delete" && <Confirm title="Delete this draft?" danger confirmLabel="Delete" onConfirm={async () => { setReason("draft"); await cancel(); }} onClose={() => setModal(null)} />}
+      {modal === "cancel" && <Confirm title="Cancel this invoice?" danger confirmLabel="Cancel invoice" onConfirm={() => cancel()} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>The number stays on record as cancelled; issue a new invoice if needed.</p><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Duplicate / wrong client / …" /></Field></div>} />}
+      {modal === "delete" && <Confirm title="Delete this draft?" danger confirmLabel="Delete" onConfirm={() => cancel("Draft deleted")} onClose={() => setModal(null)} />}
       {modal === "credit" && <Confirm title="Issue a credit note" confirmLabel="Issue credit note" onConfirm={credit} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>Reduces what the client owes on <span className="font-mono">{inv.number}</span>; GST is credited at the invoice&apos;s rate.</p><Field label="Taxable amount to credit"><MoneyInput paise={creditPaise} onChange={setCreditPaise} /></Field><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="One reel cancelled" /></Field></div>} />}
+      {modal === "apply" && <ApplyReceipt receipts={advances} balancePaise={inv.balancePaise} onApply={applyReceipt} onClose={() => setModal(null)} />}
+      {taxQuestion && <TaxChoice message={taxQuestion} onChoose={issue} onClose={() => setTaxQuestion(null)} />}
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>
   );
@@ -137,4 +164,62 @@ function InvoiceView() {
 
 export default function InvoiceViewPage() {
   return <Suspense fallback={<Loading />}><InvoiceView /></Suspense>;
+}
+
+function TaxChoice({ message, onChoose, onClose }: { message: string; onChoose: (r: "recompute" | "keep") => Promise<void>; onClose: () => void }) {
+  const [busy, setBusy] = useState<null | "recompute" | "keep">(null);
+  const go = async (r: "recompute" | "keep") => { setBusy(r); try { await onChoose(r); } finally { setBusy(null); } };
+  return (
+    <div className="fixed inset-0 z-40 bg-black/70 grid place-items-center p-4" onClick={busy ? undefined : onClose}>
+      <div className="card p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="tax-choice-title">
+        <h3 id="tax-choice-title" className="font-extrabold text-lg mb-2">The GST on this draft is out of date</h3>
+        <p className="text-sm text-ink-3 mb-5">{message}</p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy !== null}>Cancel</button>
+          <button type="button" className="btn btn-light" onClick={() => go("keep")} disabled={busy !== null}>{busy === "keep" ? "Working…" : "Keep and issue"}</button>
+          <button type="button" className="btn" onClick={() => go("recompute")} disabled={busy !== null}>{busy === "recompute" ? "Working…" : "Update GST and issue"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type Advance = { id: string; number: string; paidOn: string | null; amountPaise: number; tdsPaise: number };
+function unallocatedOf(p: Payment): Advance {
+  const used = p.allocations.reduce((a, x) => ({ amount: a.amount + x.amountPaise, tds: a.tds + x.tdsPaise }), { amount: 0, tds: 0 });
+  return { id: p.id, number: p.number, paidOn: p.paidOn, amountPaise: p.amountPaise - used.amount, tdsPaise: p.tdsPaise - used.tds };
+}
+
+function ApplyReceipt({ receipts, balancePaise, onApply, onClose }: { receipts: Advance[]; balancePaise: number; onApply: (paymentId: string, amountPaise: number, tdsPaise: number) => Promise<void>; onClose: () => void }) {
+  const first = receipts[0];
+  const defaults = (r: Advance) => { const amount = Math.min(r.amountPaise, balancePaise); return { amount, tds: Math.min(r.tdsPaise, balancePaise - amount) }; };
+  const [pid, setPid] = useState(first?.id ?? "");
+  const [amount, setAmount] = useState(first ? defaults(first).amount : 0);
+  const [tds, setTds] = useState(first ? defaults(first).tds : 0);
+  const [busy, setBusy] = useState(false);
+  const pick = (id: string) => { const r = receipts.find((x) => x.id === id); setPid(id); if (r) { const d = defaults(r); setAmount(d.amount); setTds(d.tds); } };
+  const r = receipts.find((x) => x.id === pid);
+  const over = !!r && (amount > r.amountPaise || tds > r.tdsPaise || amount + tds > balancePaise);
+  return (
+    <div className="fixed inset-0 z-40 bg-black/70 grid place-items-center p-4" onClick={busy ? undefined : onClose}>
+      <div className="card p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="apply-receipt-title">
+        <h3 id="apply-receipt-title" className="font-extrabold text-lg mb-2">Apply a receipt</h3>
+        <p className="text-sm text-ink-3 mb-4">Money already recorded for this client but not yet on an invoice. Balance due here: <Money paise={balancePaise} />.</p>
+        <div className="grid gap-3 mb-5">
+          <Field label="Receipt">
+            <select className="input" value={pid} onChange={(e) => pick(e.target.value)}>
+              {receipts.map((x) => <option key={x.id} value={x.id}>{x.number} · {fmtDate(x.paidOn)} · ₹{(x.amountPaise / 100).toLocaleString("en-IN")} unallocated{x.tdsPaise ? ` + TDS ₹${(x.tdsPaise / 100).toLocaleString("en-IN")}` : ""}</option>)}
+            </select>
+          </Field>
+          <Field label="Amount to apply"><MoneyInput paise={amount} onChange={setAmount} /></Field>
+          {!!r?.tdsPaise && <Field label="TDS to apply"><MoneyInput paise={tds} onChange={setTds} /></Field>}
+          {over && <p className="text-sm text-danger" role="alert">More than the receipt has left, or more than this invoice owes.</p>}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn" disabled={busy || over || amount + tds <= 0} onClick={async () => { setBusy(true); try { await onApply(pid, amount, tds); } finally { setBusy(false); } }}>{busy ? "Applying…" : "Apply"}</button>
+        </div>
+      </div>
+    </div>
+  );
 }

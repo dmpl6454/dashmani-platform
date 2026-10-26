@@ -92,7 +92,7 @@ function RecordPayment() {
             <h2 className="font-bold">Allocate to invoices</h2>
             <div className="text-sm text-ink-3">Unallocated: <Money paise={unallocated} className={unallocated < 0 ? "text-danger" : unallocated > 0 ? "text-attention" : "text-success"} /> · <button type="button" className="underline hover:text-white" onClick={autoAllocate} disabled={!invoices.length}>allocate oldest first</button></div>
           </div>
-          {!clientId ? <p className="text-sm text-ink-3">Choose a client to see open invoices.</p> : !openInvoices ? <Loading /> : invoices.length === 0 ? <p className="text-sm text-ink-3">No open invoices for this client — the payment is recorded as unallocated and can be matched later from the client page.</p> : (
+          {!clientId ? <p className="text-sm text-ink-3">Choose a client to see open invoices.</p> : !openInvoices ? <Loading /> : invoices.length === 0 ? <p className="text-sm text-ink-3">No open invoices for this client — the payment is recorded as unallocated (an advance) and can be applied later from the invoice, with “Apply a receipt”.</p> : (
             <table className="w-full text-sm">
               <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-2">Invoice</th><th className="p-2">Due</th><th className="p-2 text-right">Balance</th><th className="p-2 w-40">Amount</th><th className="p-2 w-36">TDS</th></tr></thead>
               <tbody>

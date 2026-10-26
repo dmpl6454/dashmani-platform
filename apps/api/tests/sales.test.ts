@@ -19,6 +19,7 @@ const SELLER = {
 };
 
 let salesToken: string;
+let adminToken: string;
 let employeeToken: string;
 let salesUserId: string;
 let clientMh: string; // Maharashtra, GST-registered
@@ -35,9 +36,12 @@ async function seedWorld() {
     ...["view", "create", "edit", "export", "manage"].map((action) => ({ resource: "sales", action, scope: "global" })),
     { resource: "clients", action: "view", scope: "global" },
   ]);
+  await createTestRole("Admin", ["view", "manage", "approve"].map((action) => ({ resource: "sales", action, scope: "global" })));
   await createTestRole("Employee", [{ resource: "attendance", action: "view", scope: "own" }]);
   const sales = await createTestUser({ name: "Sales Person", roleNames: ["Sales"] });
   const emp = await createTestUser({ name: "Plain Employee", roleNames: ["Employee"] });
+  const adm = await createTestUser({ name: "Office Admin", roleNames: ["Admin"] });
+  adminToken = generateToken(adm.id, adm.email, ["Admin"]);
   salesUserId = sales.id;
   salesToken = generateToken(sales.id, sales.email, ["Sales"]);
   employeeToken = generateToken(emp.id, emp.email, ["Employee"]);
@@ -116,9 +120,11 @@ describe("sales API", () => {
     const before = await request(app).get("/v1/sales/settings/seller").set(auth(salesToken));
     expect(before.body.data.saved).toBe(false);
     expect(before.body.data.missing).toContain("gstin");
-    const bad = await request(app).put("/v1/sales/settings/seller").set(auth(salesToken)).send({ ...SELLER, gstin: "nope" });
+    // Bank details and GSTIN print on every invoice: only an admin may change them.
+    expect((await request(app).put("/v1/sales/settings/seller").set(auth(salesToken)).send(SELLER)).status).toBe(403);
+    const bad = await request(app).put("/v1/sales/settings/seller").set(auth(adminToken)).send({ ...SELLER, gstin: "nope" });
     expect(bad.status).toBe(400);
-    const saved = await request(app).put("/v1/sales/settings/seller").set(auth(salesToken)).send(SELLER);
+    const saved = await request(app).put("/v1/sales/settings/seller").set(auth(adminToken)).send(SELLER);
     expect(saved.status).toBe(200);
     expect(saved.body.data).toMatchObject({ saved: true, missing: [] });
     expect(saved.body.data.profile.gstin).toBe("27AAACD1234E1Z5");
@@ -201,15 +207,18 @@ describe("sales API", () => {
     const order = (await request(app).post("/v1/sales/orders").set(auth(salesToken)).send(quoteBody(clientMh, { poNumber: "PO-77" }))).body.data;
     expect(order.status).toBe("draft");
     expect((await request(app).post(`/v1/sales/orders/${order.id}/invoice`).set(auth(salesToken))).status).toBe(409); // drafts are not billable
-    await request(app).post(`/v1/sales/orders/${order.id}/confirm`).set(auth(salesToken));
-    const draft = (await request(app).post(`/v1/sales/orders/${order.id}/invoice`).set(auth(salesToken))).body.data;
+    const confirmed = await request(app).post(`/v1/sales/orders/${order.id}/confirm`).set(auth(salesToken));
+    expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
+    const fromOrder = await request(app).post(`/v1/sales/orders/${order.id}/invoice`).set(auth(salesToken));
+    expect(fromOrder.status, JSON.stringify(fromOrder.body)).toBe(201);
+    const draft = fromOrder.body.data;
     expect(draft).toMatchObject({ status: "draft", number: null, orderId: order.id, totalPaise: 13_216_000, derivedStatus: "draft" });
 
     // Issuing needs the company GST profile.
     const blocked = await request(app).post(`/v1/sales/invoices/${draft.id}/issue`).set(auth(salesToken)).send({});
     expect(blocked.status).toBe(422);
     expect(blocked.body.error.code).toBe("SELLER_PROFILE_INCOMPLETE");
-    await request(app).put("/v1/sales/settings/seller").set(auth(salesToken)).send(SELLER);
+    await request(app).put("/v1/sales/settings/seller").set(auth(adminToken)).send(SELLER);
 
     const issued = (await request(app).post(`/v1/sales/invoices/${draft.id}/issue`).set(auth(salesToken)).send({ issueDate: "2026-10-20" })).body.data;
     expect(issued).toMatchObject({ number: documentNumber("DS", financialYear("2026-10-20").label, 1), status: "issued", issueDate: "2026-10-20", dueDate: "2026-11-04", balancePaise: 13_216_000 });
@@ -248,7 +257,7 @@ describe("sales API", () => {
 
     // Cancelling an unpaid invoice keeps its serial; the next invoice takes the next one.
     const second = (await request(app).post("/v1/sales/invoices").set(auth(salesToken)).send({ clientId: clientKa, items: [{ description: "YouTube integration", unitPricePaise: 10_000_000 }] })).body.data;
-    const secondIssued = (await request(app).post(`/v1/sales/invoices/${second.id}/issue`).set(auth(salesToken)).send({ issueDate: "2026-10-21", dueDate: "2026-10-01" })).body.data;
+    const secondIssued = (await request(app).post(`/v1/sales/invoices/${second.id}/issue`).set(auth(salesToken)).send({ issueDate: "2026-10-21", dueDate: "2026-10-21" })).body.data; // due on receipt, so overdue by now
     expect(secondIssued).toMatchObject({ number: documentNumber("DS", fy.label, 2), taxMode: "inter", igstPaise: 1_800_000, totalPaise: 11_800_000, derivedStatus: "overdue" });
     const overdue = await request(app).get("/v1/sales/invoices?status=overdue").set(auth(salesToken));
     expect(overdue.body.data.map((i: { id: string }) => i.id)).toEqual([second.id]);

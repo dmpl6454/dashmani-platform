@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useSeller } from "@/lib/hooks";
+import { useAuth } from "@/lib/auth";
+import { isAdminUser } from "@/lib/access";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import type { SellerProfile } from "@/lib/sales-types";
@@ -20,6 +22,8 @@ const LABELS: Record<string, string> = { legalName: "legal name", gstin: "GSTIN"
 
 export default function SettingsPage() {
   const { data, error, isLoading, mutate } = useSeller();
+  const { user } = useAuth();
+  const canEdit = isAdminUser(user);
   const [form, setForm] = useState<SellerProfile>(EMPTY);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
@@ -52,7 +56,9 @@ export default function SettingsPage() {
       <PageHead kicker="Settings" title="Company billing profile" />
       {!data.saved && <div className="card border-attention p-3 text-sm mb-4">Not saved yet. Invoices print these details, and a <strong>tax invoice</strong> cannot be issued until the legal name, GSTIN, address, city, state and PIN are filled in.</div>}
       {data.saved && data.missing.length > 0 && <div className="card border-attention p-3 text-sm mb-4">Still needed for tax invoices: {data.missing.map((m) => LABELS[m] ?? m).join(", ")}.</div>}
-      <form onSubmit={save} className="grid gap-6">
+      {!canEdit && <div className="card p-3 text-sm mb-4">Only an Admin or Super Admin can change the company profile — its GSTIN and bank details print on every invoice.</div>}
+      <form onSubmit={save}>
+       <fieldset disabled={!canEdit} className="grid gap-6 min-w-0 border-0 p-0 m-0">
         <section className="card p-4 grid sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Identity</h2>
           <Field label="Legal name" className="sm:col-span-2">{text("legalName", "Dashmani Media Private Limited")}</Field>
@@ -87,10 +93,10 @@ export default function SettingsPage() {
         </section>
         <section className="card p-4 grid sm:grid-cols-3 gap-4">
           <h2 className="font-bold sm:col-span-3">Documents</h2>
-          <Field label="Invoice prefix" hint="Numbers run per financial year: DS/26-27/0001">{text("invoicePrefix")}</Field>
+          <Field label="Invoice prefix" hint="Up to 5 letters, digits or hyphens. Numbers run per financial year: DS/26-27/0001">{text("invoicePrefix")}</Field>
           <Field label="Quote prefix">{text("quotePrefix")}</Field>
           <Field label="Order prefix">{text("orderPrefix")}</Field>
-          <Field label="Credit note prefix">{text("creditNotePrefix")}</Field>
+          <Field label="Credit note prefix" hint="Up to 5 letters, digits or hyphens">{text("creditNotePrefix")}</Field>
           <Field label="Receipt prefix">{text("receiptPrefix")}</Field>
           <Field label="Default SAC" hint="998365 = sale of internet advertising space">{text("defaultSac")}</Field>
           <Field label="Default GST rate (%)"><input className="input" type="number" min={0} max={40} step={0.01} value={form.defaultGstRateBp / 100} onChange={(e) => set("defaultGstRateBp", Math.round(Number(e.target.value) * 100))} /></Field>
@@ -101,6 +107,7 @@ export default function SettingsPage() {
           <Field label="Default terms (printed on invoices)" className="sm:col-span-3"><textarea className="input min-h-[90px]" value={form.terms ?? ""} onChange={(e) => set("terms", e.target.value)} /></Field>
         </section>
         <div><button type="submit" className="btn" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></div>
+       </fieldset>
       </form>
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>

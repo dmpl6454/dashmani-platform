@@ -290,11 +290,15 @@ input[type="date"].input { color-scheme: dark; }
 .rec { color: var(--light); animation: ds-blink 1.4s infinite; }
 .card-body { padding: 16px; border-top: 2px solid var(--divider); display: flex; flex-direction: column; gap: 4px; }
 .card-body .name { font-weight: 800; font-size: 24px; letter-spacing: -0.03em; }
+/* Five cases in one row leave ~175px cards at 1024px; shrink names so "Bonkers Corner" stays on one line. */
+.cards.cases .card-body .name { font-size: clamp(18px, 1.7vw, 24px); }
 .card-body .kind { font-size: 13px; color: var(--text-2); }
-.cards.cases { grid-template-columns: 1fr; align-items: start; }
-/* Four cases: 2 × 2, then one row of four, never a 3 + 1 with an orphan. */
+.cards.cases { grid-template-columns: 1fr; align-items: stretch; }
+/* Two columns on tablets. On desktop --n (set by ChannelSurf) is the column count: every
+   case in one row up to five, then two even rows (6 → 3 + 3), so cards never get too narrow
+   or leave a lone card on a row of its own. */
 @media (min-width: 560px) { .cards.cases { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (min-width: 900px) { .cards.cases { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .cards.cases { grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); } }
 .card.has-reel { cursor: default; }
 /* Instagram's embed is a fixed-layout page (header, 4:5–9:16 media, footer); 600px shows a
    vertical reel without clipping at card widths of 300–400px. */
@@ -364,11 +368,21 @@ input[type="date"].input { color-scheme: dark; }
    Each tile "tunes in" on arrival; on hover it tilts, the glow follows the cursor
    (--mx/--my, set by spotlight()) and the brand colour takes over the frame. */
 .clients { gap: 32px; }
+/* Two groups (direct clients, via agency partners), each with a small channel-style label. */
+.client-group { display: flex; flex-direction: column; gap: 14px; }
+.client-group-h {
+  margin: 0; display: flex; align-items: center; gap: 12px;
+  font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--light);
+}
+.client-group-h::after { content: ""; flex: 1; height: 2px; background: var(--divider); order: 1; }
+.client-group-h .count { order: 2; color: var(--muted); font-variant-numeric: tabular-nums; }
 .client-wall {
   --gap: 16px;
   list-style: none; margin: 0; padding: 0; display: grid; gap: var(--gap);
-  grid-template-columns: repeat(auto-fill, minmax(min(calc(50% - var(--gap) / 2), 220px), 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+/* Desktop: --cols (set by ChannelSurf) always divides the logo count, so no row is half empty. */
+@media (min-width: 900px) { .client-wall { grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); } }
 /* Each tile is its own card with its own frame. */
 .client-wall > li {
   --brand: var(--accent);
@@ -418,10 +432,16 @@ input[type="date"].input { color-scheme: dark; }
 .client-wall > li.keep-colour:hover img { filter: drop-shadow(0 0 20px var(--brand)); }
 .client-wall > li:hover .client-sector { color: #fff; }
 .client-wall > li:hover .client-name { opacity: 1; transform: none; }
-/* Closing tile: an invitation, styled as the next free channel. */
-.client-wall > li.client-next { padding: 0; animation-delay: calc(7 * 90ms); }
+/* Closing tile: an invitation, styled as the next free channel. It spans the whole row, so
+   the wall never ends on a lone tile however many clients there are. */
+.client-wall > li.client-next { padding: 0; grid-column: span var(--span-m, 2); }
+.client-wall > li.client-next.full-m { height: 120px; }
+@media (min-width: 900px) {
+  .client-wall > li.client-next { grid-column: span var(--span-d, 1); height: 196px; }
+  .client-wall > li.client-next.full-d { height: 120px; }
+}
 .client-next a {
-  position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px;
+  position: absolute; inset: 0; display: flex; flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px 24px;
   color: #fff; text-align: center; padding: 20px; transition: transform 0.25s ease;
 }
 .client-next .t { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; }

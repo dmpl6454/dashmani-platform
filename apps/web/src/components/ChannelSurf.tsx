@@ -23,6 +23,7 @@ import {
 } from "@/lib/content";
 import CaseVideo from "./CaseVideo";
 import ContactForm from "./ContactForm";
+import type { Client } from "@/lib/content";
 
 const N = CHANNELS.length;
 const TILE_MAX = 96;
@@ -58,6 +59,65 @@ function tilt(e: ReactMouseEvent<HTMLElement>) {
   const px = (e.clientX - r.left) / r.width - 0.5;
   const py = (e.clientY - r.top) / r.height - 0.5;
   el.style.transform = `perspective(900px) rotateY(${px * 8}deg) rotateX(${-py * 8}deg) translateY(-4px)`;
+}
+// Desktop columns for a client wall: the widest of 5/4/3 that divides the logo count, so
+// every row is full (10 -> 5 + 5, 8 -> 4 + 4, 9 -> 3 + 3 + 3). When none divides, pick the
+// one leaving the fullest last row (11 -> 4 + 4 + 3).
+function wallColumns(n: number) {
+  return [5, 4, 3].find((c) => n % c === 0) ?? [5, 4, 3].reduce((a, b) => (n % b > n % a ? b : a));
+}
+const DIRECT_CLIENTS = CLIENTS.filter((c) => c.via === "direct");
+const AGENCY_CLIENTS = CLIENTS.filter((c) => c.via === "agency");
+
+/**
+ * One group of client logos. Numbering continues across groups (`start`). The last group
+ * ends with the "Your brand next?" tile, which fills whatever its last row leaves (the whole
+ * row when the logos end on a full row), on desktop and on the 2-column phone grid alike.
+ */
+function ClientWall({ items, start, label, withCta }: { items: Client[]; start: number; label: string; withCta: boolean }) {
+  const cols = wallColumns(items.length);
+  const spanD = cols - (items.length % cols);
+  const spanM = 2 - (items.length % 2);
+  return (
+    <ul className="client-wall" aria-label={label} style={{ "--cols": cols } as CSSProperties}>
+      {items.map((c, i) => (
+        <li
+          key={c.name}
+          className={[c.mono === false && "keep-colour", c.tall && "tall", c.wide && "wide"].filter(Boolean).join(" ") || undefined}
+          style={{ "--brand": c.colour, "--i": start + i } as CSSProperties}
+          onMouseMove={spotlight}
+          onMouseLeave={unmagnet}
+        >
+          <span className="client-n" aria-hidden="true">
+            {pad2(start + i + 1)}
+          </span>
+          <span className="client-sector" aria-hidden="true">
+            {c.sector}
+          </span>
+          <img src={c.logo} alt={c.name} loading="lazy" decoding="async" />
+          <span className="client-name" aria-hidden="true">
+            {c.name}
+          </span>
+        </li>
+      ))}
+      {withCta && (
+        <li
+          className={`client-next${spanD === cols ? " full-d" : ""}${spanM === 2 ? " full-m" : ""}`}
+          style={{ "--span-d": spanD, "--span-m": spanM, "--i": start + items.length } as CSSProperties}
+        >
+          <a href={CLIENT_BOOKING_URL} onMouseMove={magnet} onMouseLeave={unmagnet}>
+            <span className="client-n" aria-hidden="true">
+              {pad2(start + items.length + 1)}
+            </span>
+            <span className="t">Your brand next?</span>
+            <span className="go">
+              Start a campaign <span aria-hidden="true">→</span>
+            </span>
+          </a>
+        </li>
+      )}
+    </ul>
+  );
 }
 // Client tiles: the tilt above, plus a brand-coloured light that follows the cursor.
 function spotlight(e: ReactMouseEvent<HTMLElement>) {
@@ -506,7 +566,7 @@ export default function ChannelSurf() {
                   <span className="accent">cultural momentum.</span>
                 </h2>
               </div>
-              <div className="cards cases">
+              <div className="cards cases" style={{ "--n": CASE_STUDIES.length <= 5 ? CASE_STUDIES.length : Math.ceil(CASE_STUDIES.length / 2) } as CSSProperties}>
                 {CASE_STUDIES.map((c) => {
                   const embed = !c.video && c.reelUrl ? instagramEmbedUrl(c.reelUrl) : null;
                   const still = !embed && !c.video;
@@ -592,42 +652,29 @@ export default function ChannelSurf() {
                     <span className="accent">trust the network.</span>
                   </h2>
                 </div>
-                <p className="lede">From sportswear to steel, brands that put their campaigns on our network. Hover a logo to tune in.</p>
+                <p className="lede">From sportswear to steel, brands whose campaigns have run on our network, booked with us directly or through their agency partners.</p>
               </div>
               {CLIENTS.length > 0 ? (
-                <ul className="client-wall" aria-label="Clients">
-                  {CLIENTS.map((c, i) => (
-                    <li
-                      key={c.name}
-                      className={[c.mono === false && "keep-colour", c.tall && "tall", c.wide && "wide"].filter(Boolean).join(" ") || undefined}
-                      style={{ "--brand": c.colour, "--i": i } as CSSProperties}
-                      onMouseMove={spotlight}
-                      onMouseLeave={unmagnet}
-                    >
-                      <span className="client-n" aria-hidden="true">
-                        {pad2(i + 1)}
-                      </span>
-                      <span className="client-sector" aria-hidden="true">
-                        {c.sector}
-                      </span>
-                      <img src={c.logo} alt={c.name} loading="lazy" decoding="async" />
-                      <span className="client-name" aria-hidden="true">
-                        {c.name}
-                      </span>
-                    </li>
-                  ))}
-                  <li className="client-next">
-                    <a href={CLIENT_BOOKING_URL} onMouseMove={magnet} onMouseLeave={unmagnet}>
-                      <span className="client-n" aria-hidden="true">
-                        {pad2(CLIENTS.length + 1)}
-                      </span>
-                      <span className="t">Your brand next?</span>
-                      <span className="go">
-                        Start a campaign <span aria-hidden="true">→</span>
-                      </span>
-                    </a>
-                  </li>
-                </ul>
+                <>
+                  {DIRECT_CLIENTS.length > 0 && (
+                    <div className="client-group">
+                      <p className="client-group-h">
+                        <span>Direct clients</span>
+                        <span className="count">{pad2(DIRECT_CLIENTS.length)}</span>
+                      </p>
+                      <ClientWall items={DIRECT_CLIENTS} start={0} label="Direct clients" withCta={AGENCY_CLIENTS.length === 0} />
+                    </div>
+                  )}
+                  {AGENCY_CLIENTS.length > 0 && (
+                    <div className="client-group">
+                      <p className="client-group-h">
+                        <span>Via agency partners</span>
+                        <span className="count">{pad2(AGENCY_CLIENTS.length)}</span>
+                      </p>
+                      <ClientWall items={AGENCY_CLIENTS} start={DIRECT_CLIENTS.length} label="Brands via agency partners" withCta />
+                    </div>
+                  )}
+                </>
               ) : (
                 <p className="client-empty">Client logos coming soon.</p>
               )}

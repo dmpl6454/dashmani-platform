@@ -33,11 +33,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
+  function adoptSession(session: StaffSession) {
+    storeSession(session);
+    setUser(session.user);
+    router.replace(safeNext() ?? "/dashboard");
+  }
+
   async function login(email: string, password: string) {
     const res = await apiFetch<StaffSession>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-    storeSession(res.data);
-    setUser(res.data.user);
-    router.replace(safeNext() ?? "/dashboard");
+    adoptSession(res.data);
   }
 
   function logout() {
@@ -57,7 +61,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   else if (!isSalesUser(user)) content = <NotForRole onLogout={logout} name={user.name} />;
   else content = <AppShell>{children}</AppShell>;
 
-  return <AuthContext.Provider value={{ user, login, logout, isLoading }}>{content}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>{content}</AuthContext.Provider>;
 }
 
 function GuardPlaceholder() {

@@ -31,7 +31,7 @@ export async function login(email: string, password: string, rememberMe = false)
 }
 
 /** Mint the internal-portal session for a user row — shared by password login and Google sign-in. */
-async function issueEmployeeSession(
+export async function issueEmployeeSession(
   user: {
     id: string;
     name: string;

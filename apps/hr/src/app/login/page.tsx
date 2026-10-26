@@ -736,6 +736,25 @@ export default function LoginPage() {
   const [liveT, setLiveT] = useState<Date | null>(null);
   const [confetti, setConfetti] = useState<{ id: number; c: string; cx: number; cy: number; cr: number; d: number }[]>([]);
 
+  // Arriving from the staff or sales portal with a one-time handoff code (#handoff=): exchange it
+  // for an HR session and go straight in (window.location, not useSearchParams — static build).
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.hash.slice(1)).get("handoff") ?? new URLSearchParams(window.location.search).get("handoff");
+    if (!code) return;
+    window.history.replaceState(null, "", "/login");
+    setSubmitState("loading");
+    fetch(`${API_URL}/auth/handoff/exchange`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error?.message || "That sign-in link has expired — sign in below.");
+        setSubmitState("success");
+        login(data.data.accessToken, data.data.refreshToken, data.data.user);
+        router.push("/dashboard");
+      })
+      .catch((err: unknown) => { setErrs({ general: err instanceof Error ? err.message : "Sign-in link failed" }); setSubmitState("idle"); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const segRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
 

@@ -21,7 +21,7 @@ export async function getSellerProfile(): Promise<SellerProfile | null> {
 }
 
 /** Defaults a document inherits when no profile has been saved yet. */
-export const SELLER_FALLBACK = sellerProfileSchema.parse({ legalName: "Dashmani Media Private Limited", stateCode: "27", state: "Maharashtra" });
+export const SELLER_FALLBACK = sellerProfileSchema.parse({ legalName: "Digital Sukoon Private Limited", stateCode: "27", state: "Maharashtra" });
 
 export async function getSellerOrDefaults(): Promise<SellerProfile> {
   return (await getSellerProfile()) ?? SELLER_FALLBACK;

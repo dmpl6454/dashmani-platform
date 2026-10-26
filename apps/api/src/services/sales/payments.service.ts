@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { todayIST, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
+import { registrationByGstin, todayIST, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { getSellerOrDefaults } from "./settings.service";
@@ -271,7 +271,7 @@ export async function createCreditNote(input: CreditNoteCreateInput, actorId: st
     await lockInvoices(tx, [input.invoiceId]);
     const inv = await tx.salesInvoice.findUnique({
       where: { id: input.invoiceId },
-      select: { id: true, number: true, clientId: true, status: true, kind: true, taxMode: true, gstRateBp: true, taxablePaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true },
+      select: { id: true, number: true, clientId: true, status: true, kind: true, taxMode: true, gstRateBp: true, taxablePaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true, sellerSnapshot: true },
     });
     if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
     if (inv.status !== "issued" && inv.status !== "paid") throw new AppError(409, "NOT_ISSUED", "Only an issued invoice can take a credit note");
@@ -301,7 +301,9 @@ export async function createCreditNote(input: CreditNoteCreateInput, actorId: st
     if (note.total <= 0 || note.cgst < 0 || note.sgst < 0 || note.igst < 0) {
       throw new AppError(422, "CREDIT_TOO_SMALL", "That amount rounds to nothing on this invoice — credit a larger amount");
     }
-    const number = await nextDocumentNumber(tx, "credit_note", seller.creditNotePrefix, issueDate);
+    // A credit note is numbered in the series of the GSTIN that issued the invoice.
+    const reg = registrationByGstin(seller, (inv.sellerSnapshot as { gstin?: string | null } | null)?.gstin);
+    const number = await nextDocumentNumber(tx, "credit_note", reg.creditNotePrefix, issueDate, reg.scope);
     const cn = await tx.salesCreditNote.create({
       data: {
         number, invoiceId: inv.id, clientId: inv.clientId, issueDate: dayToDate(issueDate), reason: input.reason,

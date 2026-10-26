@@ -8,6 +8,12 @@ export interface SellerProfile {
   bankName?: string | null; accountName?: string | null; accountNumber?: string | null; ifsc?: string | null; upiId?: string | null;
   invoicePrefix: string; quotePrefix: string; orderPrefix: string; creditNotePrefix: string; receiptPrefix: string;
   defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; terms?: string | null; signatory?: string | null;
+  /** Additional GST registrations in other states; a client in that state is billed from it. */
+  branches: SellerBranch[];
+}
+export interface SellerBranch {
+  label: string; gstin: string; stateCode?: string | null; state?: string | null; addressLine1: string; addressLine2?: string | null; city: string; pincode: string;
+  invoicePrefix: string; creditNotePrefix: string;
 }
 export interface SellerSettings { profile: SellerProfile; saved: boolean; missing: string[] }
 

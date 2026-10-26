@@ -59,6 +59,20 @@ export const ORDER_STATUSES = ["draft", "confirmed", "in_progress", "delivered",
 export const ORDER_ITEM_STATUSES = ["pending", "scheduled", "delivered", "cancelled"] as const;
 export const INVOICE_STATUSES = ["draft", "issued", "paid", "cancelled"] as const;
 
+/** An additional GST registration of the same company in another state (its own GSTIN, address and number series). */
+export const sellerBranchSchema = z.object({
+  label: safeString.pipe(z.string().min(2).max(60)),
+  gstin: gstinSchema,
+  stateCode: stateCodeSchema.optional().nullable(),
+  state: optionalText(60),
+  addressLine1: safeString.pipe(z.string().min(3).max(200)),
+  addressLine2: optionalText(200),
+  city: safeString.pipe(z.string().min(2).max(100)),
+  pincode: safeString.pipe(z.string().min(6).max(10)),
+  invoicePrefix: gstPrefix("DSH"),
+  creditNotePrefix: gstPrefix("CNH"),
+}).superRefine(checkGstinState).transform(fillStateFromGstin);
+
 /** Our own GST identity and document defaults (system_settings key "sales.seller"). */
 export const sellerProfileSchema = z.object({
   legalName: safeString.pipe(z.string().min(2).max(200)),
@@ -90,7 +104,18 @@ export const sellerProfileSchema = z.object({
   roundToRupee: z.boolean().default(true),
   terms: optionalText(2000),
   signatory: optionalText(120),
-}).superRefine(checkGstinState).transform(fillStateFromGstin);
+  /** Further GST registrations (e.g. a Haryana GSTIN beside the principal Maharashtra one). */
+  branches: z.array(sellerBranchSchema).max(10).default([]),
+}).superRefine(checkGstinState).superRefine((v, ctx) => {
+  // Each registration bills its own state and numbers its own series; numbers are unique
+  // platform-wide, so prefixes may not repeat either.
+  const states = [v.stateCode ?? v.gstin?.slice(0, 2), ...v.branches.map((b) => b.stateCode)].filter(Boolean);
+  if (new Set(states).size !== states.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "Each GST registration must be in a different state" });
+  const gstins = [v.gstin, ...v.branches.map((b) => b.gstin)].filter(Boolean);
+  if (new Set(gstins).size !== gstins.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "The same GSTIN is listed twice" });
+  const prefixes = [v.invoicePrefix, v.creditNotePrefix, ...v.branches.flatMap((b) => [b.invoicePrefix, b.creditNotePrefix]), "PI"].map((p) => p.toUpperCase());
+  if (new Set(prefixes).size !== prefixes.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "Every registration needs its own invoice and credit-note prefixes (and PI is taken by proformas)" });
+}).transform(fillStateFromGstin);
 export type SellerProfileInput = z.infer<typeof sellerProfileSchema>;
 
 export const clientBillingProfileSchema = z.object({

@@ -1,14 +1,5 @@
 import { prisma } from "@dashmani/db";
-import {
-  computeTotals,
-  lineAmountPaise,
-  taxModeFor,
-  todayIST,
-  type LineItemInput,
-  type OrderUpsertInput,
-  type QuoteUpsertInput,
-  type TaxMode,
-} from "@dashmani/shared";
+import { computeTotals, lineAmountPaise, taxModeFor, todayIST, type LineItemInput, type OrderUpsertInput, type QuoteUpsertInput, type TaxMode, registrationFor } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { getSellerOrDefaults, type SellerProfile } from "./settings.service";
@@ -36,7 +27,7 @@ export async function resolveDocumentTax(
   ]);
   if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
   const placeOfSupplyCode = input.placeOfSupplyCode ?? client.billingProfile?.stateCode ?? null;
-  const taxMode = input.taxMode ?? taxModeFor(seller.stateCode, placeOfSupplyCode, client.billingProfile?.country ?? "IN");
+  const taxMode = input.taxMode ?? taxModeFor(registrationFor(seller, placeOfSupplyCode).stateCode, placeOfSupplyCode, client.billingProfile?.country ?? "IN");
   const gstRateBp = input.gstRateBp ?? seller.defaultGstRateBp;
   return { seller, placeOfSupplyCode, taxMode, gstRateBp };
 }

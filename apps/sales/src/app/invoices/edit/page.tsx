@@ -8,7 +8,7 @@ import { useClients, useInvoice, useSeller } from "@/lib/hooks";
 import { errorSentence } from "@/lib/messages";
 import type { Invoice, InvoiceItem, TaxMode } from "@/lib/sales-types";
 import { Field, LoadError, Loading, Money, MoneyInput, PageHead, Toast } from "@/components/sales-ui";
-import { computeTotals, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
+import { computeTotals, registrationFor, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 
 // A free-form invoice (the usual path is "Create invoice" on an order, which lands here as a
 // draft to review). Drafts only: an issued invoice is never edited.
@@ -30,7 +30,7 @@ function Editor() {
   }, [inv]);
   useEffect(() => { if (seller && !form.terms && !inv) setForm((f) => ({ ...f, terms: seller.profile.terms ?? "", gstRateBp: seller.profile.defaultGstRateBp })); }, [seller, inv, form.terms]);
   const client = clients?.find((c) => c.id === form.clientId);
-  const autoMode = taxModeFor(seller?.profile.stateCode, client?.billingProfile?.stateCode, client?.billingProfile?.country ?? "IN");
+  const autoMode = taxModeFor(seller ? registrationFor(seller.profile, client?.billingProfile?.stateCode).stateCode : null, client?.billingProfile?.stateCode, client?.billingProfile?.country ?? "IN");
   const taxMode: TaxMode = form.taxMode === "auto" ? autoMode : form.taxMode;
   const totals = useMemo(() => computeTotals({ lines: form.items, discountPaise: form.discountPaise, taxMode, gstRateBp: form.gstRateBp, roundToRupee: seller?.profile.roundToRupee ?? true }), [form.items, form.discountPaise, taxMode, form.gstRateBp, seller]);
   const setItem = (i: number, patch: Partial<InvoiceItem>) => setForm((f) => ({ ...f, items: f.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) }));

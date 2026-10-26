@@ -166,3 +166,55 @@ export function stateCodeFromGstin(gstin: string | null | undefined): string | n
   const m = gstin?.trim().toUpperCase().match(/^(\d{2})[0-9A-Z]{13}$/);
   return m ? m[1] : null;
 }
+
+/** One GST registration of the seller (the principal one, or an additional state registration). */
+export interface SellerRegistration {
+  label: string;
+  gstin: string | null;
+  stateCode: string | null;
+  state: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  pincode: string | null;
+  invoicePrefix: string;
+  creditNotePrefix: string;
+  /** Numbering scope: null for the principal registration (its series keys stay as they were), the GSTIN otherwise. */
+  scope: string | null;
+}
+
+type SellerLike = {
+  gstin?: string | null; stateCode?: string | null; state?: string | null; addressLine1?: string | null; addressLine2?: string | null;
+  city?: string | null; pincode?: string | null; invoicePrefix: string; creditNotePrefix: string;
+  branches?: Array<{ label: string; gstin: string; stateCode?: string | null; state?: string | null; addressLine1?: string | null; addressLine2?: string | null; city?: string | null; pincode?: string | null; invoicePrefix: string; creditNotePrefix: string }> | null;
+};
+
+function principal(s: SellerLike): SellerRegistration {
+  return {
+    label: "Principal", gstin: s.gstin ?? null, stateCode: s.stateCode ?? null, state: s.state ?? null, addressLine1: s.addressLine1 ?? null,
+    addressLine2: s.addressLine2 ?? null, city: s.city ?? null, pincode: s.pincode ?? null, invoicePrefix: s.invoicePrefix, creditNotePrefix: s.creditNotePrefix, scope: null,
+  };
+}
+
+function branchReg(b: NonNullable<SellerLike["branches"]>[number]): SellerRegistration {
+  return {
+    label: b.label, gstin: b.gstin, stateCode: b.stateCode ?? b.gstin.slice(0, 2), state: b.state ?? null, addressLine1: b.addressLine1 ?? null,
+    addressLine2: b.addressLine2 ?? null, city: b.city ?? null, pincode: b.pincode ?? null, invoicePrefix: b.invoicePrefix, creditNotePrefix: b.creditNotePrefix, scope: b.gstin,
+  };
+}
+
+/**
+ * The registration a supply is billed from: the one registered in the place of supply's state
+ * (so the client pays CGST + SGST and claims it in-state), otherwise the principal registration
+ * (IGST for other states). Deterministic, so a draft and its issue always agree.
+ */
+export function registrationFor(seller: SellerLike, placeOfSupplyCode: string | null | undefined): SellerRegistration {
+  const b = placeOfSupplyCode ? (seller.branches ?? []).find((x) => (x.stateCode ?? x.gstin.slice(0, 2)) === placeOfSupplyCode) : undefined;
+  return b && placeOfSupplyCode !== seller.stateCode ? branchReg(b) : principal(seller);
+}
+
+/** The registration an issued document was billed from, by the GSTIN frozen in its seller snapshot. */
+export function registrationByGstin(seller: SellerLike, gstin: string | null | undefined): SellerRegistration {
+  const b = gstin ? (seller.branches ?? []).find((x) => x.gstin === gstin) : undefined;
+  return b ? branchReg(b) : principal(seller);
+}

@@ -1,5 +1,5 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { computeTotals, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
+import { computeTotals, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { resolveDocumentTax, type ResolvedTax } from "./documents.service";
@@ -281,9 +281,10 @@ function buyerSnapshotFor(client: NonNullable<Awaited<ReturnType<typeof getInvoi
 
 export type BuyerSnapshot = ReturnType<typeof buyerSnapshotFor>;
 
-function sellerSnapshotFor(s: SellerProfile) {
-  const { invoicePrefix, quotePrefix, orderPrefix, creditNotePrefix, receiptPrefix, defaultSac, defaultGstRateBp, defaultDueDays, roundToRupee, ...printable } = s;
-  return printable;
+function sellerSnapshotFor(s: SellerProfile, reg: SellerRegistration) {
+  const { invoicePrefix, quotePrefix, orderPrefix, creditNotePrefix, receiptPrefix, defaultSac, defaultGstRateBp, defaultDueDays, roundToRupee, branches, ...printable } = s;
+  // The GSTIN and address printed are those of the registration billing this supply.
+  return { ...printable, gstin: reg.gstin, stateCode: reg.stateCode, state: reg.state, addressLine1: reg.addressLine1, addressLine2: reg.addressLine2, city: reg.city, pincode: reg.pincode, registration: reg.label };
 }
 
 export type SellerSnapshot = ReturnType<typeof sellerSnapshotFor>;
@@ -319,7 +320,9 @@ export async function issueInvoice(
     // deliberate place of supply).
     const buyerProfile = inv.client.billingProfile;
     const expectedPos = buyerProfile?.stateCode ?? inv.placeOfSupplyCode ?? null;
-    const expectedMode = taxModeFor(seller.stateCode, expectedPos, buyerProfile?.country ?? "IN");
+    // The registration this supply is billed from (the client's state if we are registered there).
+    const reg = registrationFor(seller, expectedPos);
+    const expectedMode = taxModeFor(reg.stateCode, expectedPos, buyerProfile?.country ?? "IN");
     const storedMode = inv.taxMode as TaxMode;
     const taxChanged = expectedMode !== storedMode || expectedPos !== (inv.placeOfSupplyCode ?? null);
     if (taxChanged && !input.taxResolution) {
@@ -370,7 +373,7 @@ export async function issueInvoice(
     // Proformas are not tax invoices: their own PI series, so the tax-invoice serials stay consecutive.
     const number = inv.kind === "proforma"
       ? await nextDocumentNumber(tx, "proforma", "PI", issueDate)
-      : await nextDocumentNumber(tx, "invoice", seller.invoicePrefix, issueDate);
+      : await nextDocumentNumber(tx, "invoice", reg.invoicePrefix, issueDate, reg.scope);
     await tx.salesInvoice.update({
       where: { id },
       data: {
@@ -380,7 +383,7 @@ export async function issueInvoice(
         issueDate: dayToDate(issueDate),
         dueDate: dayToDate(dueDate),
         issuedAt: new Date(),
-        sellerSnapshot: sellerSnapshotFor(seller) as Prisma.InputJsonValue,
+        sellerSnapshot: sellerSnapshotFor(seller, reg) as Prisma.InputJsonValue,
         buyerSnapshot: buyerSnapshotFor(inv.client as Parameters<typeof buyerSnapshotFor>[0]) as Prisma.InputJsonValue,
         amountInWords: rupeesInWords(totalPaise),
         terms: inv.terms ?? seller.terms ?? null,

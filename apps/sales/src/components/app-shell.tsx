@@ -5,7 +5,7 @@ import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PortalSwitcher } from "./portal-switcher";
 import { CompanySwitcher } from "./company-switcher";
-import { useCompany } from "@/lib/company";
+import { COMPANY_LOGO, useCompany } from "@/lib/company";
 
 // The signed-in frame: brand, the billing company, the eight sections, the portal switcher and sign-out. Nav wraps rather than scrolls so
 // nothing overflows at 390px.
@@ -29,7 +29,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="border-b-2 border-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Link href="/dashboard" className="flex items-center gap-2.5 font-extrabold tracking-tight text-[17px] whitespace-nowrap min-w-0">
-            <img src="/logo-mark.svg" alt="" className="w-8 h-8 shrink-0" />
+            <img src={COMPANY_LOGO[info.key]} alt="" className="w-8 h-8 shrink-0" />
             <span className="truncate">{info.short} <span className="text-indigo-light">Sales</span></span>
           </Link>
           <CompanySwitcher />

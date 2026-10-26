@@ -25,8 +25,13 @@ export async function getSellerProfile(company: CompanyKey = DEFAULT_COMPANY): P
 /** Defaults a document inherits when the company has no saved profile yet. */
 const FALLBACKS: Record<CompanyKey, SellerProfile> = {
   dspl: sellerProfileSchema.parse({ legalName: SALES_COMPANIES.dspl.name, stateCode: "27", state: "Maharashtra" }),
+  // Prefilled from its GST registration certificate (REG-06, GSTIN 27AAJCD7425L1Z8, issued
+  // 03/10/2025). Bank details and signatory are not on the certificate: an Admin adds them.
   dmpl: sellerProfileSchema.parse({
-    legalName: SALES_COMPANIES.dmpl.name, stateCode: "27", state: "Maharashtra",
+    legalName: SALES_COMPANIES.dmpl.name, tradeName: SALES_COMPANIES.dmpl.name,
+    gstin: "27AAJCD7425L1Z8", pan: "AAJCD7425L",
+    addressLine1: "Off-702, Parinee I, Plot No 7/A", addressLine2: "Shah Industrial Estate, Off Veera Desai Marg, Andheri West",
+    city: "Mumbai", pincode: "400053", stateCode: "27", state: "Maharashtra",
     invoicePrefix: "DM", creditNotePrefix: "DMCN", quotePrefix: "DMQ", orderPrefix: "DMSO", receiptPrefix: "DMRC",
   }),
 };

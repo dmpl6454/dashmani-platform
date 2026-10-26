@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import { GST_STATE_CODES, TAX_MODE_LABELS, DEFAULT_SAC, rupeesInWords } from "@dashmani/shared";
@@ -13,6 +15,29 @@ const PAGE = { width: 595.28, height: 841.89, margin: 40 }; // A4
 const INK = "#111111";
 const MUTED = "#666666";
 const RULE = "#cccccc";
+
+// Each billing company's logo, printed top-left of its documents when the file exists
+// (apps/api/assets/logos/<companyKey>.png; PNG or JPEG only — pdfkit cannot draw SVG/WebP).
+const LOGO_DIR = path.resolve(__dirname, "../../../assets/logos");
+const logoCache = new Map<string, Buffer | null>();
+function logoFor(companyKey: string | null | undefined): Buffer | null {
+  const key = /^[a-z]{2,8}$/.test(companyKey ?? "") ? companyKey! : "dspl";
+  if (!logoCache.has(key)) {
+    const file = path.join(LOGO_DIR, `${key}.png`);
+    logoCache.set(key, fs.existsSync(file) ? fs.readFileSync(file) : null);
+  }
+  return logoCache.get(key) ?? null;
+}
+const LOGO_W = 66;
+const LOGO_H = 56;
+
+/** Draw the logo (if any) and return where the seller's name and address column starts. */
+function sellerColumn(doc: PDFKit.PDFDocument, companyKey: string | null | undefined, left: number, width: number): { x: number; w: number; logoBottom: number } {
+  const logo = logoFor(companyKey);
+  if (!logo) return { x: left, w: width * 0.6, logoBottom: PAGE.margin };
+  doc.image(logo, left, PAGE.margin, { fit: [LOGO_W, LOGO_H] });
+  return { x: left + LOGO_W + 12, w: width * 0.6 - LOGO_W - 12, logoBottom: PAGE.margin + LOGO_H };
+}
 
 function rs(paise: number): string {
   const rupees = paise / 100;
@@ -73,13 +98,14 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   const width = right - left;
 
   // ── Header: seller + document title ────────────────────────────────────────
-  doc.fillColor(INK).font("Helvetica-Bold").fontSize(16).text(seller.legalName ?? "Digital Sukoon", left, PAGE.margin, { width: width * 0.6 });
+  const col = sellerColumn(doc, inv.companyKey, left, width);
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(16).text(seller.legalName ?? "Digital Sukoon", col.x, PAGE.margin, { width: col.w });
   doc.font("Helvetica").fontSize(9).fillColor(MUTED);
-  for (const line of addressLines(seller)) doc.text(line, { width: width * 0.6 });
-  if (seller.gstin) doc.text(`GSTIN: ${seller.gstin}`, { width: width * 0.6 });
-  if (seller.pan) doc.text(`PAN: ${seller.pan}`, { width: width * 0.6 });
-  if (seller.email || seller.phone) doc.text([seller.email, seller.phone].filter(Boolean).join(" · "), { width: width * 0.6 });
-  const headerBottom = doc.y;
+  for (const line of addressLines(seller)) doc.text(line, { width: col.w });
+  if (seller.gstin) doc.text(`GSTIN: ${seller.gstin}`, { width: col.w });
+  if (seller.pan) doc.text(`PAN: ${seller.pan}`, { width: col.w });
+  if (seller.email || seller.phone) doc.text([seller.email, seller.phone].filter(Boolean).join(" · "), { width: col.w });
+  const headerBottom = Math.max(doc.y, col.logoBottom);
 
   doc.font("Helvetica-Bold").fontSize(18).fillColor(INK).text(title, left + width * 0.6, PAGE.margin, { width: width * 0.4, align: "right" });
   doc.font("Helvetica").fontSize(9).fillColor(MUTED);
@@ -230,12 +256,13 @@ export async function renderCreditNotePdf(cn: CreditNoteView): Promise<Buffer> {
   const right = PAGE.width - PAGE.margin;
   const width = right - left;
 
-  doc.fillColor(INK).font("Helvetica-Bold").fontSize(16).text(seller.legalName ?? "Digital Sukoon", left, PAGE.margin, { width: width * 0.6 });
+  const col = sellerColumn(doc, cn.invoice.companyKey, left, width);
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(16).text(seller.legalName ?? "Digital Sukoon", col.x, PAGE.margin, { width: col.w });
   doc.font("Helvetica").fontSize(9).fillColor(MUTED);
-  for (const line of addressLines(seller)) doc.text(line, { width: width * 0.6 });
-  if (seller.gstin) doc.text(`GSTIN: ${seller.gstin}`, { width: width * 0.6 });
-  if (seller.pan) doc.text(`PAN: ${seller.pan}`, { width: width * 0.6 });
-  const headerBottom = doc.y;
+  for (const line of addressLines(seller)) doc.text(line, { width: col.w });
+  if (seller.gstin) doc.text(`GSTIN: ${seller.gstin}`, { width: col.w });
+  if (seller.pan) doc.text(`PAN: ${seller.pan}`, { width: col.w });
+  const headerBottom = Math.max(doc.y, col.logoBottom);
 
   doc.font("Helvetica-Bold").fontSize(18).fillColor(INK).text("CREDIT NOTE", left + width * 0.6, PAGE.margin, { width: width * 0.4, align: "right" });
   doc.font("Helvetica").fontSize(9).fillColor(MUTED);

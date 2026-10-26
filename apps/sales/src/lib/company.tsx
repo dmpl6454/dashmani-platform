@@ -38,3 +38,6 @@ export function useCompany() {
 /** The company of a document, read defensively (rows from before the column default to Digital Sukoon). */
 export const companyOfDoc = (d: { companyKey?: string | null } | null | undefined): CompanyKey => (isCompanyKey(d?.companyKey) ? d.companyKey : DEFAULT_COMPANY);
 export const companyName = (k: string | null | undefined) => SALES_COMPANIES[isCompanyKey(k) ? k : DEFAULT_COMPANY].name;
+
+/** Each company's mark for the header (files in apps/sales/public). */
+export const COMPANY_LOGO: Record<CompanyKey, string> = { dspl: "/logo-mark.svg", dmpl: "/logo-dmpl.png" };

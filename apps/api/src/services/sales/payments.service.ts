@@ -259,7 +259,7 @@ export async function getCreditNote(id: string) {
   const cn = await prisma.salesCreditNote.findUnique({
     where: { id },
     include: {
-      invoice: { select: { id: true, number: true, issueDate: true, placeOfSupplyCode: true, sellerSnapshot: true, buyerSnapshot: true, items: { select: { sac: true }, take: 1, orderBy: { position: "asc" } } } },
+      invoice: { select: { id: true, companyKey: true, number: true, issueDate: true, placeOfSupplyCode: true, sellerSnapshot: true, buyerSnapshot: true, items: { select: { sac: true }, take: 1, orderBy: { position: "asc" } } } },
       client: { select: { id: true, companyName: true } },
       einvoice: { select: { status: true, irn: true, ackNo: true, ackDate: true, signedQrCode: true } },
     },

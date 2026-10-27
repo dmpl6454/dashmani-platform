@@ -8,6 +8,7 @@ export const NAV_CHANNELS = [
   { id: "approvals", href: "/approvals", label: "Approvals", key: "a" },
   { id: "analytics", href: "/analytics", label: "Analytics", key: "n" },
   { id: "files",     href: "/files",     label: "Files",     key: "f" },
+  { id: "invoices",  href: "/invoices",  label: "Invoices",  key: "i" },
 ] as const;
 
 export const pad2 = (n: number) => String(n).padStart(2, "0");

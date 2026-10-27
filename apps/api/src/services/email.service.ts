@@ -18,10 +18,12 @@ async function createTransporter() {
 
 export async function sendEmail(options: {
   to: string;
+  cc?: string;
   subject: string;
   html: string;
   replyTo?: string;
   fromName?: string;
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
 }) {
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
     console.warn("⚠ Email not configured (SMTP_USER/SMTP_PASS missing). Skipping email.");
@@ -33,9 +35,11 @@ export async function sendEmail(options: {
     const result = await transporter.sendMail({
       from: `"${options.fromName ?? "Digital Sukoon HR"}" <${process.env.SMTP_USER}>`,
       to: options.to,
+      cc: options.cc,
       subject: options.subject,
       html: options.html,
       replyTo: options.replyTo,
+      attachments: options.attachments,
     });
     console.log(`✉ Email sent to ${options.to}: ${result.messageId}`);
     return result;

@@ -36,6 +36,7 @@ import { getSalesDashboard } from "../services/sales/dashboard.service";
 import { getBooking, listBookings } from "../services/sales/bookings.service";
 import { retryEInvoice } from "../services/sales/einvoice.service";
 import { renderCreditNotePdf, renderInvoicePdf } from "../services/sales/pdf.service";
+import { emailInvoice } from "../services/sales/invoice-email.service";
 
 // sales.digitalsukoon.com — staff only. `sales.view` reads; `sales.manage` writes (the Sales
 // role and both admin roles hold both, see packages/db/prisma/seed.ts). Every money action is
@@ -127,6 +128,12 @@ router.post("/sales/invoices/:id/convert", ...manage, asyncHandler(async (req, r
 // E-invoice: register again after a failure (asks the IRP first, so it can never double-register).
 router.post("/sales/invoices/:id/einvoice", ...manage, asyncHandler(async (req, res) => { await retryEInvoice({ invoiceId: req.params.id }, staffId(req)); return success(res, await invoices.getInvoice(req.params.id)); }));
 router.post("/sales/credit-notes/:id/einvoice", ...manage, asyncHandler(async (req, res) => success(res, await retryEInvoice({ creditNoteId: req.params.id }, staffId(req)))));
+// Email the invoice PDF to the client (To) and the company's billing addresses (Cc) now.
+router.post("/sales/invoices/:id/email", ...manage, asyncHandler(async (req, res) => {
+  const r = await emailInvoice(req.params.id, { manual: true, actorId: staffId(req) });
+  if (!r.sent) throw new AppError(r.skipped?.startsWith("the email") ? 502 : 409, "EMAIL_NOT_SENT", `Not emailed: ${r.skipped}`);
+  return success(res, r);
+}));
 router.post("/sales/invoices/:id/sent", ...manage, asyncHandler(async (req, res) => success(res, await invoices.markInvoiceSent(req.params.id, staffId(req)))));
 router.get("/sales/invoices/:id/pdf", ...view, asyncHandler(async (req, res) => {
   const inv = await invoices.getInvoice(req.params.id);

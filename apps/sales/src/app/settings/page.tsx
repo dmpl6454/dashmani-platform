@@ -17,7 +17,7 @@ import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 const EMPTY: SellerProfile = {
   legalName: "", tradeName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "27", pincode: "", email: "", billingEmails: [], phone: "", website: "",
   bankName: "", accountName: "", accountNumber: "", ifsc: "", upiId: "", invoicePrefix: "DS", quotePrefix: "Q", orderPrefix: "SO", creditNotePrefix: "CN", receiptPrefix: "RCPT",
-  defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, terms: "", signatory: "", branches: [],
+  defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, autoEmailInvoices: true, terms: "", signatory: "", branches: [],
   eInvoicing: { enabled: false, applicableFrom: null, thirtyDayLimit: false },
 };
 const EMPTY_BRANCH: SellerBranch = { label: "", gstin: "", stateCode: "", state: "", addressLine1: "", addressLine2: "", city: "", pincode: "", invoicePrefix: "", creditNotePrefix: "" };
@@ -150,6 +150,9 @@ export default function SettingsPage() {
           <Field label="Payment due (days)"><input className="input" type="number" min={0} max={180} value={form.defaultDueDays} onChange={(e) => set("defaultDueDays", Number(e.target.value))} /></Field>
           <Field label="Round totals to the rupee">
             <select className="input" value={form.roundToRupee ? "yes" : "no"} onChange={(e) => set("roundToRupee", e.target.value === "yes")}><option value="yes">Yes — print a round-off line</option><option value="no">No — exact paise</option></select>
+          </Field>
+          <Field label="Email invoices on payment" hint="The PDF goes to the client and the billing emails above">
+            <select className="input" value={form.autoEmailInvoices === false ? "no" : "yes"} onChange={(e) => set("autoEmailInvoices", e.target.value === "yes")}><option value="yes">Yes — as soon as a payment is recorded</option><option value="no">No — send by hand</option></select>
           </Field>
           <Field label="Default terms (printed on invoices)" className="sm:col-span-3"><textarea className="input min-h-[90px]" value={form.terms ?? ""} onChange={(e) => set("terms", e.target.value)} /></Field>
         </section>

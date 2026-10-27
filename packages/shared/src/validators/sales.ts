@@ -105,6 +105,8 @@ export const sellerProfileSchema = z.object({
   defaultGstRateBp: z.number().int().min(0).max(4000).default(DEFAULT_GST_RATE_BP),
   defaultDueDays: z.number().int().min(0).max(180).default(15),
   roundToRupee: z.boolean().default(true),
+  /** Email the invoice PDF to the client (and this company's billing addresses) whenever a payment is recorded against it. */
+  autoEmailInvoices: z.boolean().default(true),
   terms: optionalText(2000),
   signatory: optionalText(120),
   /** Further GST registrations (e.g. a Haryana GSTIN beside the principal Maharashtra one). */

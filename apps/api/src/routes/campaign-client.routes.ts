@@ -20,12 +20,32 @@ import { getCatalogue } from "../services/campaign/rate-card.service";
 import { getResults } from "../services/campaign/delivery.service";
 import { renderIdOfVariant, signedMediaPath, verifyMediaSignature } from "../services/campaign/media-url";
 import { renderPath } from "../services/campaign/media.service";
+import { getClientInvoice, listClientInvoices } from "../services/sales/client-invoices.service";
+import { renderInvoicePdf } from "../services/sales/pdf.service";
 
 // Client portal: self-serve campaign booking. Every query is scoped to the signed-in client;
 // another client's booking or upload is a 404.
 
 const router = Router();
 const clientId = (req: Request) => (req as any).client.id as string;
+
+// ── Invoices (the client's own bills, from the sales portal) ────────────────────
+
+router.get("/client/invoices", authenticateClient, asyncHandler(async (req, res) => {
+  const bookingId = typeof req.query.bookingId === "string" && req.query.bookingId ? req.query.bookingId : undefined;
+  res.set("Cache-Control", "no-store");
+  return success(res, await listClientInvoices(clientId(req), { bookingId }));
+}));
+
+router.get("/client/invoices/:id/pdf", authenticateClient, asyncHandler(async (req, res) => {
+  const inv = await getClientInvoice(clientId(req), req.params.id);
+  const pdf = await renderInvoicePdf(inv);
+  const name = `${(inv.number ?? "invoice").replace(/[^\w.-]+/g, "-")}.pdf`;
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+  res.setHeader("Cache-Control", "no-store");
+  return res.send(pdf);
+}));
 
 // ── Catalogue ───────────────────────────────────────────────────────────────────
 

@@ -6,6 +6,8 @@ import * as rzp from "./razorpay";
 import { assertCreativeReady, transitionBooking, logBookingEvent, type Actor } from "./booking.service";
 import { notifyStaffPaid, sendStatusEmail } from "./delivery.service";
 import { priceFor } from "./rate-card.service";
+import { billOnlineBookingPayment } from "../sales/booking-billing.service";
+import { inBackground } from "../sales/common";
 
 // Checkout, the Razorpay webhook, and refunds.
 //
@@ -201,6 +203,8 @@ async function onCaptured(p: any, event: string): Promise<WebhookResult> {
   });
   void sendStatusEmail(pay.bookingId, "paid").catch((e) => console.error("[campaign] paid email failed", e));
   void notifyStaffPaid(pay.bookingId).catch((e) => console.error("[campaign] staff email failed", e));
+  // Bill it: issue the tax invoice, record the receipt, email the invoice to the client + accounts.
+  inBackground(`auto-invoice for booking ${pay.bookingId}`, () => billOnlineBookingPayment(pay.bookingId, String(p.id), amount));
   return { handled: true };
 }
 

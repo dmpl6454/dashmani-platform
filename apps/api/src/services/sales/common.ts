@@ -100,3 +100,21 @@ export async function logSalesEvent(
 export async function listSalesEvents(entityType: SalesEntity, entityId: string) {
   return prisma.salesEvent.findMany({ where: { entityType, entityId }, orderBy: { createdAt: "desc" }, take: 100 });
 }
+
+// ── Background work ─────────────────────────────────────────────────────────────
+// Work that runs after the response (invoice emails, billing an online payment) is tracked here so
+// it is never silently lost on a rejection, and so tests can wait for it before resetting the DB.
+
+const background = new Set<Promise<unknown>>();
+
+export function inBackground(label: string, work: () => Promise<unknown>): void {
+  const p: Promise<unknown> = Promise.resolve()
+    .then(work)
+    .catch((err) => console.error(`[sales] ${label} failed`, err))
+    .finally(() => background.delete(p));
+  background.add(p);
+}
+
+export async function flushSalesBackground(): Promise<void> {
+  while (background.size) await Promise.allSettled([...background]);
+}

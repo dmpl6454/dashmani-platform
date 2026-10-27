@@ -10,7 +10,7 @@ import { useAuth } from "@/lib/auth";
 import { NAV_CHANNELS, channelIndex } from "@/lib/nav";
 
 // The site's rail: numbered "channels", a 2px divider under each, the current
-// one solid accent. Same seven destinations the portal always had.
+// one solid accent. Seven destinations, plus Invoices (8th, so the old digits keep their channels).
 const NAV = [
   { id: "dashboard", href: "/dashboard", label: "Home",      Icon: Icon.Dashboard,  key: "g d" },
   { id: "campaigns", href: "/campaigns", label: "Campaigns", Icon: Icon.Megaphone,  key: "g m" },
@@ -19,6 +19,7 @@ const NAV = [
   { id: "approvals", href: "/approvals", label: "Approvals", Icon: Icon.CheckBadge, key: "g a", badge: "pending" as const },
   { id: "analytics", href: "/analytics", label: "Analytics", Icon: Icon.Chart,      key: "g n" },
   { id: "files",     href: "/files",     label: "Files",     Icon: Icon.File,       key: "g f" },
+  { id: "invoices",  href: "/invoices",  label: "Invoices",  Icon: Icon.Receipt,    key: "g i" },
 ];
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -61,7 +62,7 @@ export function PortalRail() {
         return;
       }
       if (primed) {
-        const map: Record<string, string> = { d: "/dashboard", m: "/campaigns", p: "/projects", c: "/content", a: "/approvals", n: "/analytics", f: "/files" };
+        const map: Record<string, string> = { d: "/dashboard", m: "/campaigns", p: "/projects", c: "/content", a: "/approvals", n: "/analytics", f: "/files", i: "/invoices" };
         if (map[e.key]) { e.preventDefault(); router.push(map[e.key]); primed = false; if (timer) clearTimeout(timer); }
       }
     };

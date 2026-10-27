@@ -81,6 +81,31 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   return data as ApiEnvelope<T>;
 }
 
+/**
+ * Download a file the API serves with the client's token (a PDF) and save it. `<a download>` cannot
+ * send the Authorization header, so the bytes are fetched here and handed to the browser as a blob.
+ */
+export async function downloadFile(path: string, fallbackName: string, _retried = false): Promise<void> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("clientAccessToken") : null;
+  const res = await fetch(`${API_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (res.status === 401 && !_retried && (await tryRefresh())) return downloadFile(path, fallbackName, true);
+  if (!res.ok) {
+    let data: any = null;
+    try { data = await res.json(); } catch { /* not JSON */ }
+    throw apiErrorFrom(data, res.status, "Download failed");
+  }
+  const blob = await res.blob();
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /** Upload a file via multipart/form-data. Returns the unwrapped data on success. */
 export async function uploadFile<T>(path: string, formData: FormData): Promise<T> {
   const token = typeof window !== "undefined" ? localStorage.getItem("clientAccessToken") : null;

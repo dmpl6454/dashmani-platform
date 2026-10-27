@@ -6,8 +6,8 @@ import { finePointer, reducedMotion, tilt, untilt } from "@/lib/motion";
 
 /* The website's "channel surf" feel, inside the portal:
    - a scanline film over the screen and a burst of static when the channel changes;
-   - ↑/↓ (or ←/→) step through the channels, 1–7 jump, like the site's rail
-     (on the seven channel roots only; inert on sub-pages);
+   - ↑/↓ (or ←/→) step through the channels, 1–8 jump, like the site's rail
+     (on the eight channel roots only; inert on sub-pages);
    - cards with .v3-card-lift tilt toward the cursor;
    - an edge hint naming the keys, desktop only.
    Everything is skipped under prefers-reduced-motion. Keys are ignored while typing. */
@@ -31,7 +31,7 @@ export function ChannelFx() {
     return () => timers.current.forEach(clearTimeout);
   }, [pathname]);
 
-  // Keyboard: ↓/→ next, ↑/← previous, 1–7 jump.
+  // Keyboard: ↓/→ next, ↑/← previous, 1–8 jump.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -39,7 +39,7 @@ export function ChannelFx() {
       if (t?.closest?.("input,select,textarea,[contenteditable=true],[role=dialog]")) return;
       if (document.querySelector("[role=dialog], .palette-shell")) return;
       const cur = channelIndex(pathname);
-      // Only on the seven channel roots. On a sub-page (/campaigns/<id>, the
+      // Only on the eight channel roots. On a sub-page (/campaigns/<id>, the
       // booking steps, a project) a stray arrow or digit would navigate away
       // and drop whatever the client had uploaded or typed.
       if (cur < 0 || pathname !== NAV_CHANNELS[cur].href) return;
@@ -52,7 +52,7 @@ export function ChannelFx() {
         if (cur < 0) return;
         e.preventDefault();
         router.push(NAV_CHANNELS[(cur - 1 + n) % n].href);
-      } else if (/^[1-7]$/.test(e.key)) {
+      } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= NAV_CHANNELS.length) {
         const i = Number(e.key) - 1;
         if (i !== cur) router.push(NAV_CHANNELS[i].href);
       }
@@ -87,7 +87,7 @@ export function ChannelFx() {
         {onRoot ? (
           <>
             <span className="edge-ch">CH {pad2(ch + 1)} / {pad2(NAV_CHANNELS.length)}</span>
-            <span>↑ ↓ change channel · 1–7 jump · Ctrl K search</span>
+            <span>↑ ↓ change channel · 1–8 jump · Ctrl K search</span>
           </>
         ) : (
           <span>Ctrl K search</span>

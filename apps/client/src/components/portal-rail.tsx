@@ -141,8 +141,19 @@ export function PortalRail() {
           })}
         </nav>
 
-        {/* Footer: WhatsApp support, collapse toggle, user */}
+        {/* Footer: team, WhatsApp support, collapse toggle, user */}
         <div className="shrink-0 border-t-2 border-border">
+          <Link
+            href="/team"
+            onClick={onClose}
+            title={narrow ? "Team — who signs in to this account" : undefined}
+            aria-label="Team — who signs in to this account"
+            aria-current={pathname === "/team" ? "page" : undefined}
+            className={`w-full flex items-center h-11 border-b-2 border-border text-ink hover:bg-surface transition-colors ${pathname === "/team" ? "bg-surface" : ""} ${narrow ? "justify-center px-0" : "gap-3 px-5"}`}
+          >
+            <span className="text-ink-2 shrink-0"><Icon.Users size={18} /></span>
+            {!narrow && <span className="text-[13px] font-bold">Team</span>}
+          </Link>
           <a
             href={whatsappSupportUrl()}
             target="_blank"

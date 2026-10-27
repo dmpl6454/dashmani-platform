@@ -8,7 +8,7 @@ const TRUNCATE_SQL = `
       meta_deletion_requests, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators,
       campaign_media_renders, campaign_booking_events, campaign_payments, campaign_booking_items, campaign_media, campaign_bookings, campaign_rate_cards, razorpay_webhook_events,
       content_posts, approvals, project_files, project_tasks, project_accounts, projects,
-      client_refresh_tokens, client_invites, clients,
+      client_refresh_tokens, client_users, client_invites, clients,
       task_comments, tasks, link_metrics_latest, link_metrics, report_links, daily_reports, account_growth_snapshots, account_assignments,
       meta_asset_demographics, meta_asset_metrics, meta_asset_daily, meta_post_watch,
       meta_posts, meta_assets, meta_connections, meta_oauth_states, social_accounts, platforms,

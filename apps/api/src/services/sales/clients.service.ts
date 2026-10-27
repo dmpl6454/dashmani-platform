@@ -7,6 +7,7 @@ import { AppError } from "../../middleware/error-handler";
 import { logSalesEvent, dateToDay } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
 import { todayIST, type CompanyKey } from "@dashmani/shared";
+import * as team from "../client-team.service";
 
 // Clients as the sales team sees them: the existing clients row plus its billing profile and
 // money position. Creating a client here never hands out a login — the row gets an unusable
@@ -73,8 +74,7 @@ export async function createSalesClient(
   input: { companyName: string; contactName: string; email: string; phone?: string | null },
   actorId: string,
 ) {
-  const existing = await prisma.client.findFirst({ where: { email: { equals: input.email, mode: "insensitive" } }, select: { id: true } });
-  if (existing) throw new AppError(409, "EMAIL_EXISTS", "A client with this email already exists");
+  if (await team.emailInUse(input.email)) throw new AppError(409, "EMAIL_EXISTS", "This email already signs in to the client portal (as a client or a team login)");
   const passwordHash = await hash(crypto.randomBytes(32).toString("hex"), 12);
   const client = await prisma.client.create({
     data: { companyName: input.companyName, contactName: input.contactName, email: input.email, phone: input.phone ?? null, passwordHash, status: "ACTIVE" },
@@ -134,3 +134,39 @@ export async function getClientStatement(clientId: string, company?: CompanyKey)
     totals,
   };
 }
+
+// ── Portal logins (team) ──
+// Staff can add, re-invite, switch off and remove further logins for a client company — the
+// same operations the company's owner has under Team on the client portal.
+
+async function staffLabel(actorId: string) {
+  const u = await prisma.user.findUnique({ where: { id: actorId }, select: { name: true } });
+  return `${u?.name ?? "Our team"} (Digital Sukoon)`;
+}
+
+export async function listClientLogins(clientId: string) {
+  return team.listTeam(clientId);
+}
+
+export async function inviteClientLogin(clientId: string, input: { email: string; name: string }, actorId: string) {
+  const r = await team.inviteMember(clientId, input, await staffLabel(actorId));
+  await logSalesEvent(prisma, { entityType: "client", entityId: clientId, actorId, action: "login_added", note: input.email });
+  return r;
+}
+
+export async function resendClientLogin(clientId: string, memberId: string, actorId: string) {
+  return team.resendInvite(clientId, memberId, await staffLabel(actorId));
+}
+
+export async function setClientLoginEnabled(clientId: string, memberId: string, enabled: boolean, actorId: string) {
+  const m = enabled ? await team.enableMember(clientId, memberId) : await team.disableMember(clientId, memberId);
+  await logSalesEvent(prisma, { entityType: "client", entityId: clientId, actorId, action: enabled ? "login_enabled" : "login_disabled", note: m.email });
+  return m;
+}
+
+export async function removeClientLogin(clientId: string, memberId: string, actorId: string) {
+  const r = await team.removeMember(clientId, memberId);
+  await logSalesEvent(prisma, { entityType: "client", entityId: clientId, actorId, action: "login_removed" });
+  return r;
+}
+

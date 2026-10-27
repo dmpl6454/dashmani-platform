@@ -64,6 +64,7 @@ export const Icon = {
   Bookmark: (p: IconProps) => <I {...p} path={<path d="M6 4h12v16l-6-4-6 4Z"/>} />,
   Megaphone: (p: IconProps) => <I {...p} path={<><path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1Z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"/></>} />,
   Upload: (p: IconProps) => <I {...p} path={<><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></>} />,
+  Users: (p: IconProps) => <I {...p} path={<><circle cx="9" cy="8" r="3.5"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.5a6 6 0 0 1 3 5.5"/></>} />,
   Receipt: (p: IconProps) => <I {...p} path={<><path d="M6 3h12v18l-3-2-3 2-3-2-3 2Z"/><path d="M9 8h6"/><path d="M9 12h6"/></>} />,
   Download: (p: IconProps) => <I {...p} path={<><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></>} />,
   External: (p: IconProps) => <I {...p} path={<><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></>} />,

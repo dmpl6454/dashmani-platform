@@ -10,6 +10,7 @@ import { fmtDate } from "@/lib/format";
 import type { BillingProfile } from "@/lib/sales-types";
 import { Empty, Field, LoadError, Loading, Money, PageHead, Stat, StatusPill, Toast, titleCase } from "@/components/sales-ui";
 import { GST_STATE_CODES, stateCodeFromGstin } from "@dashmani/shared/src/sales/gst";
+import { ClientLogins } from "@/components/client-logins";
 
 const EMPTY: BillingProfile = { legalName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "", pincode: "", country: "IN", billingEmail: "", billingPhone: "", notes: "" };
 
@@ -66,7 +67,8 @@ function ClientView() {
         {!!t?.unappliedPaise && <Stat label="Unapplied credit" value={<Money paise={t.unappliedPaise} whole />} sub="Received, on no invoice: apply it from an invoice or refund it" tone="attention" />}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <section className="card p-4 lg:col-span-1">
+        <div className="lg:col-span-1 grid grid-cols-1 gap-4 content-start">
+        <section className="card p-4">
           <div className="flex items-center justify-between mb-3"><h2 className="font-bold">Billing profile</h2><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing((v) => !v)}>{editing ? "Cancel" : p ? "Edit" : "Add"}</button></div>
           {!editing ? (
             p ? (
@@ -104,6 +106,8 @@ function ClientView() {
           )}
           <p className="text-xs text-ink-4 mt-4">{client.contactName} · {client.email}{client.phone ? ` · ${client.phone}` : ""}</p>
         </section>
+        <ClientLogins clientId={client.id} onToast={setToast} />
+        </div>
         <section className="card p-4 lg:col-span-2">
           <h2 className="font-bold mb-3">Invoices</h2>
           {!statement ? <Loading /> : statement.invoices.length === 0 ? <p className="text-sm text-ink-3">No invoices issued to this client yet.</p> : (

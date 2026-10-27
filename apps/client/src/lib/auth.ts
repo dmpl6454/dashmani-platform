@@ -6,6 +6,9 @@ interface ClientUser {
   name: string;
   companyName: string;
   email: string;
+  /** owner = the company's own login (manages the team); member = a team login. Absent on sessions from before 2026-10-28. */
+  role?: "owner" | "member";
+  memberId?: string;
 }
 
 export interface ClientSession {

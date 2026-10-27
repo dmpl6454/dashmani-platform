@@ -65,7 +65,7 @@ function ClientView() {
         <Stat label="Overdue" value={<Money paise={t?.overduePaise ?? 0} whole />} tone={t?.overduePaise ? "danger" : undefined} />
         {!!t?.unappliedPaise && <Stat label="Unapplied credit" value={<Money paise={t.unappliedPaise} whole />} sub="Received, on no invoice: apply it from an invoice or refund it" tone="attention" />}
       </div>
-      <div className="grid lg:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <section className="card p-4 lg:col-span-1">
           <div className="flex items-center justify-between mb-3"><h2 className="font-bold">Billing profile</h2><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing((v) => !v)}>{editing ? "Cancel" : p ? "Edit" : "Add"}</button></div>
           {!editing ? (
@@ -80,7 +80,7 @@ function ClientView() {
               </dl>
             ) : <p className="text-sm text-ink-3">No billing profile yet. Invoices will print the company name and contact email; add the GSTIN and address for a proper tax invoice.</p>
           ) : (
-            <form onSubmit={save} className="grid gap-3 text-sm">
+            <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm">
               <Field label="Legal name"><input className="input" required value={form.legalName} onChange={(e) => set("legalName", e.target.value)} /></Field>
               <Field label="GSTIN" hint="Leave blank for an unregistered client."><input className="input" value={form.gstin ?? ""} onChange={(e) => { const v = e.target.value.toUpperCase(); set("gstin", v); const sc = stateCodeFromGstin(v); if (sc) { set("stateCode", sc); set("state", GST_STATE_CODES[sc] ?? ""); } }} /></Field>
               <Field label="PAN"><input className="input" value={form.pan ?? ""} onChange={(e) => set("pan", e.target.value.toUpperCase())} /></Field>
@@ -107,7 +107,7 @@ function ClientView() {
         <section className="card p-4 lg:col-span-2">
           <h2 className="font-bold mb-3">Invoices</h2>
           {!statement ? <Loading /> : statement.invoices.length === 0 ? <p className="text-sm text-ink-3">No invoices issued to this client yet.</p> : (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto"><table className="w-full text-sm">
               <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-2">Number</th><th className="p-2">Issued</th><th className="p-2">Due</th><th className="p-2">Status</th><th className="p-2 text-right">Total</th><th className="p-2 text-right">Balance</th></tr></thead>
               <tbody>
                 {statement.invoices.map((i) => (
@@ -120,19 +120,19 @@ function ClientView() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
           {statement && statement.payments.length > 0 && (
             <>
               <h2 className="font-bold mt-6 mb-3">Payments</h2>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto"><table className="w-full text-sm">
                 <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-2">Receipt</th><th className="p-2">Date</th><th className="p-2">Mode</th><th className="p-2">Reference</th><th className="p-2 text-right">Received</th><th className="p-2 text-right">TDS</th></tr></thead>
                 <tbody>
                   {statement.payments.map((p) => (
                     <tr key={p.id} className={`border-b border-rule ${p.status === "voided" ? "line-through text-ink-3" : ""}`}><td className="p-2 font-mono"><Link href={`/payments/view?id=${p.id}`} className="hover:text-indigo-light">{p.number}</Link>{p.status === "voided" ? " (voided)" : ""}</td><td className="p-2">{fmtDate(p.paidOn)}</td><td className="p-2">{titleCase(p.mode)}</td><td className="p-2 font-mono text-xs">{p.reference ?? "—"}</td><td className="p-2 text-right"><Money paise={p.amountPaise} /></td><td className="p-2 text-right"><Money paise={p.tdsPaise} className={p.tdsPaise ? "" : "text-ink-3"} /></td></tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </>
           )}
           {statement && statement.creditNotes.length > 0 && (

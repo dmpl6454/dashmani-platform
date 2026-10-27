@@ -101,8 +101,8 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
 
   if (!clients) return <Loading label="Loading clients…" />;
   return (
-    <form onSubmit={save} className="grid gap-5">
-      <section className="card p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5">
+      <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={initial ? "A saved document stays with its company." : "Switch company at the top of the page before saving."}>
           <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
         </Field>
@@ -164,7 +164,7 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
             </tbody>
           </table>
         </div>
-        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
           <div className="grid gap-3">
             <Field label="Notes (printed on the document)"><textarea className="input min-h-[80px]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
             <Field label="Internal notes (never printed)"><textarea className="input min-h-[60px]" value={form.internalNotes} onChange={(e) => setForm({ ...form, internalNotes: e.target.value })} /></Field>

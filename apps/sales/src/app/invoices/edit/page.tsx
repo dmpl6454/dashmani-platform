@@ -66,8 +66,8 @@ function Editor() {
   return (
     <>
       <PageHead kicker={<Link href="/invoices" className="hover:text-white">Invoices</Link> as unknown as string} title={inv ? "Edit draft invoice" : "New invoice"} />
-      <form onSubmit={save} className="grid gap-5">
-        <section className="card p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5">
+        <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={inv ? "A saved draft stays with its company." : "Switch company at the top of the page before saving."}>
             <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
           </Field>
@@ -102,7 +102,7 @@ function Editor() {
               </tbody>
             </table>
           </div>
-          <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
             <div className="grid gap-3">
               <Field label="Notes (printed)"><textarea className="input min-h-[60px]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
               <Field label="Terms (printed)"><textarea className="input min-h-[60px]" value={form.terms} onChange={(e) => setForm({ ...form, terms: e.target.value })} /></Field>

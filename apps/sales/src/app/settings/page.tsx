@@ -67,8 +67,8 @@ export default function SettingsPage() {
       {data.saved && data.missing.length > 0 && <div className="card border-attention p-3 text-sm mb-4">Still needed for tax invoices: {data.missing.map((m) => LABELS[m] ?? m).join(", ")}.</div>}
       {!canEdit && <div className="card p-3 text-sm mb-4">Only an Admin or Super Admin can change the company profile — its GSTIN and bank details print on every invoice.</div>}
       <form onSubmit={save}>
-       <fieldset disabled={!canEdit} className="grid gap-6 min-w-0 border-0 p-0 m-0">
-        <section className="card p-4 grid sm:grid-cols-2 gap-4">
+       <fieldset disabled={!canEdit} className="grid grid-cols-[minmax(0,1fr)] gap-6 min-w-0 border-0 p-0 m-0">
+        <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Identity</h2>
           <Field label="Legal name" className="sm:col-span-2">{text("legalName", info.name)}</Field>
           <Field label="Trade name (optional)">{text("tradeName", info.short)}</Field>
@@ -76,7 +76,7 @@ export default function SettingsPage() {
           <Field label="PAN">{text("pan", "AAACD1234E")}</Field>
           <Field label="Authorised signatory">{text("signatory", "Name printed under the signature")}</Field>
         </section>
-        <section className="card p-4 grid sm:grid-cols-2 gap-4">
+        <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Registered address</h2>
           <Field label="Address line 1" className="sm:col-span-2">{text("addressLine1")}</Field>
           <Field label="Address line 2" className="sm:col-span-2">{text("addressLine2")}</Field>
@@ -103,7 +103,7 @@ export default function SettingsPage() {
             const setB = (k: keyof SellerBranch, v: string) => set("branches", form.branches.map((x, j) => (j === i ? { ...x, [k]: v } : x)) as never);
             const t = (k: keyof SellerBranch, ph = "") => <input className="input" value={(b[k] as string) ?? ""} placeholder={ph} onChange={(e) => setB(k, e.target.value)} />;
             return (
-              <div key={i} className="border border-border p-3 grid sm:grid-cols-2 gap-3">
+              <div key={i} className="border border-border p-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Label">{t("label", "Gurugram")}</Field>
                 <Field label="GSTIN" hint="The state is taken from its first two digits.">{t("gstin", "06AAKCD3352K1ZJ")}</Field>
                 <Field label="Address line 1" className="sm:col-span-2">{t("addressLine1")}</Field>
@@ -117,7 +117,7 @@ export default function SettingsPage() {
             );
           })}
         </section>
-        <section className="card p-4 grid sm:grid-cols-3 gap-4">
+        <section className="card p-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
           <h2 className="font-bold sm:col-span-3">E-invoicing (IRN)</h2>
           <p className="text-xs text-ink-3 sm:col-span-3">When on, every tax invoice to a GST-registered client, SEZ unit or overseas client — and its credit notes — is registered on the government IRP at issue; the PDF carries the IRN and signed QR. Mandatory once aggregate turnover crossed ₹5 crore in any year since 2017-18: confirm with your CA. Needs the IRP connection (API credentials) on the server.</p>
           <Field label="E-invoicing">
@@ -130,7 +130,7 @@ export default function SettingsPage() {
             <select className="input" value={form.eInvoicing?.thirtyDayLimit ? "yes" : "no"} onChange={(e) => set("eInvoicing", { ...form.eInvoicing, thirtyDayLimit: e.target.value === "yes" } as never)}><option value="no">No</option><option value="yes">Yes — refuse documents older than 30 days</option></select>
           </Field>
         </section>
-        <section className="card p-4 grid sm:grid-cols-2 gap-4">
+        <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Bank details (printed on invoices)</h2>
           <Field label="Account name">{text("accountName")}</Field>
           <Field label="Bank">{text("bankName")}</Field>
@@ -138,7 +138,7 @@ export default function SettingsPage() {
           <Field label="IFSC">{text("ifsc")}</Field>
           <Field label="UPI ID">{text("upiId")}</Field>
         </section>
-        <section className="card p-4 grid sm:grid-cols-3 gap-4">
+        <section className="card p-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
           <h2 className="font-bold sm:col-span-3">Documents</h2>
           <Field label="Invoice prefix" hint="Up to 5 letters, digits or hyphens. Numbers run per financial year: DS/26-27/0001">{text("invoicePrefix")}</Field>
           <Field label="Quote prefix">{text("quotePrefix")}</Field>

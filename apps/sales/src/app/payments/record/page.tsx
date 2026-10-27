@@ -62,6 +62,8 @@ function RecordPayment() {
     if (!clientId) { setToast({ message: "Choose a client.", tone: "err" }); return; }
     if (form.amountPaise + form.tdsPaise <= 0) { setToast({ message: "Enter an amount received or TDS withheld.", tone: "err" }); return; }
     if (unallocated < 0 || allocatedTds > form.tdsPaise) { setToast({ message: "Allocated more than was received.", tone: "err" }); return; }
+    const over = invoices.find((i) => { const x = alloc[i.id]; return x && x.amountPaise + x.tdsPaise > i.balancePaise; });
+    if (over) { setToast({ message: `${over.number} has only ${fmtInr(over.balancePaise)} outstanding — lower that allocation.`, tone: "err" }); return; }
     setBusy(true);
     try {
       await apiFetch("/sales/payments", { method: "POST", body: JSON.stringify({ companyKey, clientId, ...form, reference: form.reference || null, bankName: form.bankName || null, notes: form.notes || null, allocations: Object.entries(alloc).filter(([, a]) => a.amountPaise + a.tdsPaise > 0).map(([invoiceId, a]) => ({ invoiceId, ...a })) }) });
@@ -82,8 +84,8 @@ function RecordPayment() {
   return (
     <>
       <PageHead kicker={<Link href="/payments" className="hover:text-white">Payments</Link> as unknown as string} title="Record a payment" />
-      <form onSubmit={save} className="grid gap-5">
-        <section className="card p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5">
+        <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Field label="Received by" className="sm:col-span-2 lg:col-span-4" hint="Only this company's invoices are listed below.">
             <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
           </Field>
@@ -102,7 +104,7 @@ function RecordPayment() {
             <div className="text-sm text-ink-3">Unallocated: <Money paise={unallocated} className={unallocated < 0 ? "text-danger" : unallocated > 0 ? "text-attention" : "text-success"} /> · <button type="button" className="underline hover:text-white" onClick={autoAllocate} disabled={!invoices.length}>allocate oldest first</button></div>
           </div>
           {!clientId ? <p className="text-sm text-ink-3">Choose a client to see open invoices.</p> : !openInvoices ? <Loading /> : invoices.length === 0 ? <p className="text-sm text-ink-3">No open invoices for this client — the payment is recorded as unallocated (an advance) and can be applied later from the invoice, with “Apply a receipt”.</p> : (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto"><table className="w-full text-sm min-w-[560px]">
               <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-2">Invoice</th><th className="p-2">Due</th><th className="p-2 text-right">Balance</th><th className="p-2 w-40">Amount</th><th className="p-2 w-36">TDS</th></tr></thead>
               <tbody>
                 {invoices.map((inv) => {
@@ -110,7 +112,7 @@ function RecordPayment() {
                   const over = a.amountPaise + a.tdsPaise > inv.balancePaise;
                   return (
                     <tr key={inv.id} className={`border-b border-rule ${over ? "bg-danger-bg" : ""}`}>
-                      <td className="p-2"><span className="font-mono">{inv.number}</span> <StatusPill status={inv.derivedStatus} /></td>
+                      <td className="p-2"><span className="font-mono whitespace-nowrap">{inv.number}</span> <StatusPill status={inv.derivedStatus} /></td>
                       <td className="p-2">{fmtDate(inv.dueDate)}</td>
                       <td className="p-2 text-right"><Money paise={inv.balancePaise} /></td>
                       <td className="p-2"><MoneyInput paise={a.amountPaise} onChange={(p) => setAlloc({ ...alloc, [inv.id]: { ...a, amountPaise: p } })} /></td>
@@ -119,7 +121,7 @@ function RecordPayment() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
           )}
         </section>
         <div className="flex gap-2"><button type="submit" className="btn" disabled={busy}>{busy ? "Saving…" : "Record payment"}</button><button type="button" className="btn btn-ghost" onClick={() => router.back()}>Cancel</button></div>

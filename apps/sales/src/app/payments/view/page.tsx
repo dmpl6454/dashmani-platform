@@ -53,7 +53,7 @@ function PaymentView() {
       {!live && <div className="card border-danger p-3 text-sm mb-4">Voided{p.voidedAt ? ` on ${fmtDate(p.voidedAt)}` : ""}{p.voidReason ? ` — ${p.voidReason}` : ""}. The number stays on record; this receipt no longer pays anything.</div>}
       {live && liveRefunds.length > 0 && <p className="text-xs text-ink-3 mb-4">To void this receipt, cancel its refunds first.</p>}
 
-      <div className="grid lg:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <section className="card p-4">
           <h2 className="font-bold mb-3">Receipt</h2>
           <dl className="grid grid-cols-2 gap-y-2 text-sm">

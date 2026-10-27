@@ -1,12 +1,12 @@
 /**
  * Invoice emails + client downloads (2026-10-27): recording a payment emails the invoice PDF to the
- * client and the company's billing addresses; an online campaign payment is invoiced (GST-inclusive),
+ * client and the company's billing addresses; an online campaign payment is invoiced (GST on top),
  * receipted and emailed on its own; the client portal lists and downloads its own invoices.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
 import { prisma } from "@dashmani/db";
-import { computeTotals, pricesExclusiveOfGst, todayIST } from "@dashmani/shared";
+import { todayIST } from "@dashmani/shared";
 
 const sent: Array<{ to: string; cc?: string; subject: string; attachments?: Array<{ filename: string; content: Buffer }> }> = [];
 vi.mock("../src/services/email.service", async (orig) => {
@@ -122,7 +122,7 @@ describe("invoice emails and client downloads", () => {
     expect((await request(app).get("/v1/client/invoices").set(auth(token))).status).toBe(403);
   });
 
-  it("an online campaign payment is invoiced GST-inclusive, receipted and emailed — once", async () => {
+  it("an online campaign payment is invoiced with GST on top, receipted and emailed — once", async () => {
     const b = await prisma.campaignBooking.create({
       data: {
         clientId, name: "Diwali push", brand: "Filmy", status: "paid_pending_review", totalPaise: 1_180_000, submittedAt: new Date(), paidAt: new Date(),
@@ -135,11 +135,13 @@ describe("invoice emails and client downloads", () => {
     const r = await billOnlineBookingPayment(b.id, "pay_test123", 1_180_000);
     await flushSalesBackground();
     const inv = await prisma.salesInvoice.findUnique({ where: { id: r.invoiceId! } });
-    expect(inv).toMatchObject({ status: "paid", totalPaise: 1_180_000, taxablePaise: 1_000_000, cgstPaise: 90_000, sgstPaise: 90_000, campaignBookingId: b.id });
+    // Rate-card prices are the taxable value; 18% GST is added on top and stays due.
+    expect(inv).toMatchObject({ status: "issued", taxablePaise: 1_180_000, cgstPaise: 106_200, sgstPaise: 106_200, totalPaise: 1_392_400, paidPaise: 1_180_000, campaignBookingId: b.id });
     const pay = await prisma.salesPayment.findUnique({ where: { id: r.paymentId! } });
     expect(pay).toMatchObject({ mode: "razorpay", reference: "pay_test123", amountPaise: 1_180_000, recordedById: "system" });
     expect(sent).toHaveLength(1);
-    expect(sent[0].subject).toContain("(paid in full)");
+    expect(sent[0].subject).toContain("payment of ₹11,800.00 received");
+    expect(sent[0].subject).not.toContain("paid in full");
 
     // The webhook can arrive twice: no second receipt, invoice or email.
     const again = await billOnlineBookingPayment(b.id, "pay_test123", 1_180_000);
@@ -148,18 +150,5 @@ describe("invoice emails and client downloads", () => {
     expect(await prisma.salesPayment.count()).toBe(1);
     expect(await prisma.salesInvoice.count()).toBe(1);
     expect(sent).toHaveLength(1);
-  });
-
-  it("GST-inclusive pricing always lands the invoice total on the amount paid", () => {
-    for (const prices of [[100_000], [700_000, 480_000], [33_333, 66_667, 12_345], [99_900, 1_234_500, 7], [250_000, 250_000, 250_000]]) {
-      for (const mode of ["intra", "inter"] as const) {
-        const ex = pricesExclusiveOfGst(prices, mode, 1800, true);
-        const inclusive = prices.reduce((s, p) => s + p, 0);
-        const t = computeTotals({ lines: ex.map((u) => ({ quantity: 1, unitPricePaise: u, discountPaise: 0 })), taxMode: mode, gstRateBp: 1800, roundToRupee: true });
-        if (inclusive % 100 === 0) expect(t.totalPaise, `${mode} ${prices}`).toBe(inclusive);
-        else expect(Math.abs(t.totalPaise - inclusive)).toBeLessThanOrEqual(50);
-      }
-    }
-    expect(pricesExclusiveOfGst([5000], "none", 1800)).toEqual([5000]);
   });
 });

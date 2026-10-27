@@ -22,6 +22,7 @@ const PAGES: PaletteItem[] = [
   { id: "page-content",   label: "Content",   sub: "All posts",        href: "/content",   icon: Icon.Edit       },
   { id: "page-approvals", label: "Approvals", sub: "Pending review",   href: "/approvals", icon: Icon.Check      },
   { id: "page-analytics", label: "Analytics", sub: "Metrics",          href: "/analytics", icon: Icon.Chart      },
+  { id: "page-invoices",  label: "Invoices",  sub: "Download your invoices", href: "/invoices", icon: Icon.Receipt  },
   { id: "page-files",     label: "Files",     sub: "Project files",    href: "/files",     icon: Icon.File       },
 ];
 

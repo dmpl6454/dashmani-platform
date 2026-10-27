@@ -1,5 +1,5 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
+import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, pricesExclusiveOfGst, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { assertSameCompany, resolveDocumentTax, type ResolvedTax } from "./documents.service";
@@ -248,8 +248,12 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
   );
 }
 
-/** A draft invoice for a client's self-serve campaign booking (frozen item prices). */
-export async function createInvoiceFromBooking(bookingId: string, actorId: string, company: CompanyKey = "dspl") {
+/**
+ * A draft invoice for a client's self-serve campaign booking (frozen item prices). `gstInclusive`:
+ * the booking total was paid as-is (online checkout), so the lines are priced so the invoice total,
+ * GST included, equals what was paid.
+ */
+export async function createInvoiceFromBooking(bookingId: string, actorId: string, company: CompanyKey = "dspl", opts: { gstInclusive?: boolean } = {}) {
   const booking = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, include: { items: true } });
   if (!booking) throw new AppError(404, "NOT_FOUND", "Campaign booking not found");
   if ((UNBILLABLE_BOOKING_STATUSES as readonly string[]).includes(booking.status)) {
@@ -262,6 +266,12 @@ export async function createInvoiceFromBooking(bookingId: string, actorId: strin
     throw new AppError(409, "BOOKING_EMPTY", "Every post on this booking failed or was refunded — there is nothing to bill");
   }
   const labelFormat = (f: string) => f.charAt(0).toUpperCase() + f.slice(1);
+  const billed = booking.items.filter((it) => !(UNBILLED_ITEM_STATUSES as readonly string[]).includes(it.status));
+  let prices = billed.map((it) => it.pricePaise);
+  if (opts.gstInclusive) {
+    const tax = await resolveDocumentTax(booking.clientId, {}, company);
+    prices = pricesExclusiveOfGst(prices, tax.taxMode, tax.gstRateBp, tax.seller.roundToRupee);
+  }
   return createInvoice(
     {
       companyKey: company,
@@ -270,15 +280,13 @@ export async function createInvoiceFromBooking(bookingId: string, actorId: strin
       campaignBookingId: booking.id,
       discountPaise: 0,
       notes: `Campaign "${booking.name}" for ${booking.brand}`,
-      items: booking.items
-        // A failed post was never made and a refunded one was paid back: neither is billed.
-        .filter((it) => !(UNBILLED_ITEM_STATUSES as readonly string[]).includes(it.status))
-        .map((it) => ({
-          description: `${it.accountName}${it.accountHandle ? ` (@${it.accountHandle})` : ""} · ${labelFormat(it.platform)} ${labelFormat(it.format)}`,
-          quantity: 1,
-          unitPricePaise: it.pricePaise,
-          discountPaise: 0,
-        })),
+      // A failed post was never made and a refunded one was paid back: neither is billed.
+      items: billed.map((it, i) => ({
+        description: `${it.accountName}${it.accountHandle ? ` (@${it.accountHandle})` : ""} · ${labelFormat(it.platform)} ${labelFormat(it.format)}`,
+        quantity: 1,
+        unitPricePaise: prices[i],
+        discountPaise: 0,
+      })),
     },
     actorId,
   );
@@ -307,7 +315,7 @@ function buyerSnapshotFor(client: NonNullable<Awaited<ReturnType<typeof getInvoi
 export type BuyerSnapshot = ReturnType<typeof buyerSnapshotFor>;
 
 function sellerSnapshotFor(s: SellerProfile, reg: SellerRegistration) {
-  const { invoicePrefix, quotePrefix, orderPrefix, creditNotePrefix, receiptPrefix, defaultSac, defaultGstRateBp, defaultDueDays, roundToRupee, branches, ...printable } = s;
+  const { invoicePrefix, quotePrefix, orderPrefix, creditNotePrefix, receiptPrefix, defaultSac, defaultGstRateBp, defaultDueDays, roundToRupee, autoEmailInvoices, branches, ...printable } = s;
   // The GSTIN and address printed are those of the registration billing this supply.
   return { ...printable, gstin: reg.gstin, stateCode: reg.stateCode, state: reg.state, addressLine1: reg.addressLine1, addressLine2: reg.addressLine2, city: reg.city, pincode: reg.pincode, registration: reg.label };
 }

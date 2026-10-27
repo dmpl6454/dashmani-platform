@@ -2,6 +2,7 @@ import { prisma } from "@dashmani/db";
 import { companyScope, registrationByGstin, SALES_COMPANIES, todayIST, type CompanyKey, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
+import { queueInvoiceEmails } from "./invoice-email.service";
 import { getSellerOrDefaults } from "./settings.service";
 import { recomputeSettlement, releaseExcess } from "./invoices.service";
 import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueCreditNoteEInvoice, registerEInvoice } from "./einvoice.service";
@@ -139,6 +140,8 @@ export async function createPayment(input: PaymentCreateInput, actorId: string) 
     await logSalesEvent(tx, { entityType: "payment", entityId: p.id, actorId, action: "recorded", note: `${input.mode} ${input.reference ?? ""}`.trim() });
     return p;
   });
+  // After commit: the invoice PDF goes to the client and the company's billing addresses.
+  queueInvoiceEmails(invoiceIds, created.id, actorId);
   return getPayment(created.id);
 }
 
@@ -169,6 +172,7 @@ export async function allocatePayment(paymentId: string, input: PaymentAllocateI
     }
     await logSalesEvent(tx, { entityType: "payment", entityId: p.id, actorId, action: "allocated", note: `${rs(addAmount + addTds)} applied` });
   });
+  queueInvoiceEmails(input.allocations.map((a) => a.invoiceId), paymentId, actorId);
   return getPayment(paymentId);
 }
 

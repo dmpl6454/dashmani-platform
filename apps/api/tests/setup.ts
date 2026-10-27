@@ -1,5 +1,6 @@
 import { prisma } from "@dashmani/db";
 import { beforeEach, afterAll } from "vitest";
+import { flushSalesBackground } from "../src/services/sales/common";
 
 const TRUNCATE_SQL = `
     TRUNCATE TABLE sales_einvoices, sales_refunds, sales_events, sales_credit_notes, sales_payment_allocations, sales_payments, sales_invoice_items, sales_invoices, sales_order_items, sales_orders, sales_quote_items, sales_quotes, sales_sequences, client_billing_profiles,
@@ -111,6 +112,8 @@ async function healRenamedTables(): Promise<void> {
 }
 
 beforeEach(async () => {
+  // Background sales work (invoice emails, billing an online payment) finishes on intact data first.
+  await flushSalesBackground();
   await healRenamedTables();
   // Drain first (prevents the deadlock forming), then truncate (retries if one forms anyway).
   await waitForQuiesce();

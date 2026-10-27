@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState } from "react";
 import { mutate as mutateGlobal } from "swr";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Download } from "lucide-react";
+import { Download, Mail } from "lucide-react";
 import { useClientReceipts, useEvents, useInvoice } from "@/lib/hooks";
 import { companyName, companyOfDoc } from "@/lib/company";
 import type { Invoice, Payment } from "@/lib/sales-types";
@@ -97,6 +97,14 @@ function InvoiceView() {
   async function retryEInvoice(path: string) {
     try { await apiFetch(path, { method: "POST" }); await refresh(); setToast({ message: "Sent to the IRP again.", tone: "ok" }); } catch (err) { fail(err); }
   }
+  async function emailNow() {
+    try {
+      const r = await apiFetch<{ to: string[]; cc: string[] }>(`/sales/invoices/${id}/email`, { method: "POST" });
+      await refresh();
+      const who = [...r.data.to, ...r.data.cc];
+      setToast({ message: `Emailed to ${who.join(", ")}.`, tone: "ok" });
+    } catch (err) { fail(err); }
+  }
   async function markSent() {
     try { await apiFetch(`/sales/invoices/${id}/sent`, { method: "POST" }); await refresh(); setToast({ message: "Marked as sent.", tone: "ok" }); } catch (err) { fail(err); }
   }
@@ -113,6 +121,7 @@ function InvoiceView() {
         {ds === "draft" && <Link href={`/invoices/edit?id=${inv.id}`} className="btn btn-light">Edit</Link>}
         {ds === "draft" && <button type="button" className="btn" onClick={() => { setIssueDate(inv.issueDate ?? todayIST()); setDueDate(inv.dueDate ?? ""); setModal("issue"); }}>Issue</button>}
         {ds !== "draft" && <button type="button" className="btn btn-light" onClick={pdf}><Download size={14} /> PDF</button>}
+        {(open || ds === "paid") && <button type="button" className="btn btn-light" onClick={emailNow}><Mail size={14} /> Email invoice</button>}
         {open && !inv.sentAt && <button type="button" className="btn btn-ghost" onClick={markSent}>Mark sent</button>}
         {open && <Link href={`/payments/record?clientId=${inv.clientId}&invoiceId=${inv.id}&company=${inv.companyKey}`} className="btn">Record payment</Link>}
         {open && advances.length > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("apply")}>Apply a receipt</button>}

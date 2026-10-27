@@ -7,7 +7,7 @@ export interface SellerProfile {
   email?: string | null; billingEmails?: string[]; phone?: string | null; website?: string | null;
   bankName?: string | null; accountName?: string | null; accountNumber?: string | null; ifsc?: string | null; upiId?: string | null;
   invoicePrefix: string; quotePrefix: string; orderPrefix: string; creditNotePrefix: string; receiptPrefix: string;
-  defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; terms?: string | null; signatory?: string | null;
+  defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; autoEmailInvoices?: boolean; terms?: string | null; signatory?: string | null;
   /** Additional GST registrations in other states; a client in that state is billed from it. */
   branches: SellerBranch[];
   eInvoicing: { enabled: boolean; applicableFrom?: string | null; thirtyDayLimit: boolean };

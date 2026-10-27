@@ -14,6 +14,8 @@ import { AccountsStep, CreativeStep, InfoForm } from "../_steps";
 import { ItemTextRow } from "../_item-text";
 import { StepNav, STEPS, type Step } from "../_step-nav";
 import { Card, CampaignStatus, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
+import { InvoiceList } from "@/components/invoice-list";
+import { useClientInvoices } from "@/lib/hooks/use-invoices";
 
 const PRE_PAY = ["draft", "awaiting_payment"];
 /** Statuses where an offline campaign's amount is still to be settled with our team. */
@@ -666,6 +668,18 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
           ))}
         </ul>
       </Card>
+      <BookingInvoices bookingId={c.id} />
     </div>
+  );
+}
+
+/** This campaign's invoice(s), once one is issued (it is also emailed when a payment is received). */
+function BookingInvoices({ bookingId }: { bookingId: string }) {
+  const { data } = useClientInvoices(bookingId);
+  if (!data?.length) return null;
+  return (
+    <Card title={data.length === 1 ? "Invoice" : "Invoices"} sub="Download a PDF any time — every invoice is also under Invoices.">
+      <InvoiceList invoices={data} />
+    </Card>
   );
 }

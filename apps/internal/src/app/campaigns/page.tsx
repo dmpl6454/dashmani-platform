@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { Tags } from "lucide-react";
+import { Tags, Youtube } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { CARD, BTN_GHOST, ErrorBar, PageHead, StatusPill, fmtDate, rupees } from "./_ds";
@@ -47,9 +47,14 @@ export default function CampaignBookingsPage() {
         title="Campaign Bookings"
         sub={!data ? "Loading…" : `${needsReview} to review · ${toPost} to post`}
         right={
-          <Link href="/campaigns/rate-cards" className={BTN_GHOST}>
-            <Tags className="h-4 w-4" /> Rate card
-          </Link>
+          <div className="flex gap-2">
+            <Link href="/campaigns/youtube" className={BTN_GHOST}>
+              <Youtube className="h-4 w-4" /> YouTube
+            </Link>
+            <Link href="/campaigns/rate-cards" className={BTN_GHOST}>
+              <Tags className="h-4 w-4" /> Rate card
+            </Link>
+          </div>
         }
       />
 

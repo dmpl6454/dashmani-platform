@@ -6,6 +6,8 @@ import { campaignConfig } from "./config";
 import { signedMediaPath } from "./media-url";
 import { itemText, logBookingEvent, resolveItemFiles, settleBooking, type Actor } from "./booking.service";
 import { sendDeliveryEmail, sendItemLiveEmail } from "./delivery.service";
+import { activeConnectionForChannel, channelIdForSocialAccount, youtubeOauthConfig } from "./youtube.service";
+import { renderedFile, youtubeDescription, youtubeTitle, ytStep } from "./youtube-publish";
 
 // Phase 2 — publish approved campaign items on our connected Instagram accounts and Facebook
 // Pages through the Meta API. Switched OFF unless CAMPAIGN_PUBLISH_ENABLED=1.
@@ -22,6 +24,10 @@ import { sendDeliveryEmail, sendItemLiveEmail } from "./delivery.service";
 //    (IST), or immediately when staff press "Publish now".
 //  • A container id is saved the moment it exists, so a retry reuses it instead of creating a
 //    second one.
+//
+// Phase 3 adds YouTube (youtube-publish.ts) behind its OWN switch, CAMPAIGN_YOUTUBE_PUBLISH_ENABLED:
+// a YouTube item never depends on the Meta switch and a Meta item never on the YouTube one. The
+// resumable upload session is the YouTube "container" ("yt:<url>"), saved before any byte is sent.
 
 const SYSTEM: Actor = { type: "system" };
 const IG_SCOPE = "instagram_content_publish";
@@ -44,13 +50,21 @@ export interface PublishTarget {
   token: string;
 }
 
-type Eligibility = { ok: true; target: PublishTarget } | { ok: false; reason: string };
+export interface YoutubePublishTarget {
+  platform: "youtube";
+  channelId: string;
+  connectionId: string;
+}
+
+type Eligibility = { ok: true; target: PublishTarget | YoutubePublishTarget } | { ok: false; reason: string };
 
 interface ItemLike {
   targetType: string;
   targetId: string;
   platform: string;
   format: string;
+  /** Set once a video exists on YouTube for this item — it must never be uploaded again. */
+  remotePostId?: string | null;
 }
 interface BookingLike {
   audioIntegration: boolean;
@@ -60,6 +74,7 @@ interface BookingLike {
 
 /** Can this item be published by the API right now? Reason is shown to staff when not. */
 export async function checkEligibility(item: ItemLike, booking: BookingLike): Promise<Eligibility> {
+  if (item.platform === "youtube" && item.targetType === "social_account") return checkYoutubeEligibility(item, booking);
   if (!campaignConfig.publishEnabled()) return { ok: false, reason: "Auto-publishing is switched off." };
   if (item.targetType !== "meta_asset" || (item.platform !== "instagram" && item.platform !== "facebook")) {
     return { ok: false, reason: "This platform is posted by hand." };
@@ -127,6 +142,24 @@ export async function checkEligibility(item: ItemLike, booking: BookingLike): Pr
   }
 }
 
+/** YouTube (Phase 3): one rendered video, a Short (reel) or a video (post), on a connected channel. */
+async function checkYoutubeEligibility(item: ItemLike, booking: BookingLike): Promise<Eligibility> {
+  if (!campaignConfig.youtubePublishEnabled()) return { ok: false, reason: "YouTube auto-upload is switched off." };
+  if (!youtubeOauthConfig.configured()) return { ok: false, reason: "YouTube uploading is not set up on the server." };
+  if (item.remotePostId) return { ok: false, reason: `Already uploaded to YouTube (video ${item.remotePostId}) — paste its link instead of uploading again.` };
+  if (item.format !== "reel" && item.format !== "post") return { ok: false, reason: "Only Shorts and videos are uploaded to YouTube automatically." };
+  if (booking.audioIntegration && item.format === "reel") {
+    return { ok: false, reason: "Song audio integration has to be added by hand — the API cannot attach a song." };
+  }
+  const creative = booking.media.filter((m) => m.role !== "thumbnail");
+  if (creative.length !== 1 || creative[0].kind !== "video") return { ok: false, reason: "YouTube takes one video — this campaign's media has to be posted by hand." };
+  const channelId = await channelIdForSocialAccount(item.targetId);
+  if (!channelId) return { ok: false, reason: "We don't know this channel's YouTube id yet (the follower sync records it)." };
+  const conn = await activeConnectionForChannel(channelId);
+  if (!conn) return { ok: false, reason: "This YouTube channel isn't connected for uploading (Campaigns → YouTube)." };
+  return { ok: true, target: { platform: "youtube", channelId, connectionId: conn.id } };
+}
+
 /** When an item becomes due: launch day at CAMPAIGN_PUBLISH_HOUR_IST (IST), never in the past. */
 export function launchAt(launchFrom: Date | null, now = new Date()): Date {
   if (!launchFrom) return now;
@@ -162,10 +195,11 @@ export async function planPublishing(bookingId: string) {
 // ── One publish step ────────────────────────────────────────────────────────────
 
 export type Outcome =
-  | { kind: "published"; remotePostId: string; permalink: string | null }
+  | { kind: "published"; remotePostId: string; permalink: string | null; note?: string }
   | { kind: "wait"; delayMs: number; containerId: string | null }
   | { kind: "retry"; error: string; containerId: string | null; delayMs?: number }
-  | { kind: "manual"; reason: string };
+  /** remotePostId: a video that exists (e.g. YouTube kept it private) — recorded so it is never re-uploaded. */
+  | { kind: "manual"; reason: string; remotePostId?: string };
 
 interface PublishJob {
   itemId: string;
@@ -438,10 +472,10 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
     where: { id: itemId },
     select: {
       id: true, bookingId: true, status: true, targetType: true, targetId: true, platform: true, format: true,
-      accountName: true, attempts: true, containerId: true, captionOverride: true, hashtagsOverride: true,
+      accountName: true, attempts: true, containerId: true, captionOverride: true, hashtagsOverride: true, remotePostId: true,
       booking: {
         select: {
-          status: true, caption: true, hashtags: true, userTags: true, collaborators: true, audioIntegration: true,
+          name: true, brand: true, status: true, caption: true, hashtags: true, userTags: true, collaborators: true, audioIntegration: true,
           media: { where: { purgedAt: null, uploadStatus: "complete" }, orderBy: { position: "asc" }, select: { id: true, kind: true, role: true } },
         },
       },
@@ -469,6 +503,11 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
     }
     const text = itemText(item.booking, item);
     const cover = files.find((f) => f.role === "thumbnail");
+    if (e.target.platform === "youtube") {
+      outcome = await youtubeOutcome(e.target, item, files, text);
+      await applyOutcome(item, outcome);
+      return outcome;
+    }
     const job: PublishJob = {
       itemId: item.id,
       format: item.format,
@@ -489,6 +528,34 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
   return outcome;
 }
 
+async function youtubeOutcome(
+  target: YoutubePublishTarget,
+  item: { id: string; format: string; containerId: string | null; booking: { name: string; brand: string } },
+  files: Array<{ mediaId: string; kind: string; role: string; renderId: string | null }>,
+  text: { caption: string; hashtags: string[] },
+): Promise<Outcome> {
+  const video = files.find((f) => f.role !== "thumbnail" && f.kind === "video");
+  const file = video ? await renderedFile(video) : null;
+  if (!file) return { kind: "manual", reason: "The prepared video file is missing on the server — post it by hand." };
+  const thumb = files.find((f) => f.role === "thumbnail");
+  const thumbFile = thumb ? await renderedFile(thumb) : null;
+  const caption = buildCaption(text.caption, text.hashtags);
+  try {
+    return await ytStep({
+      itemId: item.id,
+      connectionId: target.connectionId,
+      format: item.format,
+      containerId: item.containerId,
+      title: youtubeTitle(text.caption, item.booking.name || item.booking.brand),
+      description: youtubeDescription(caption, item.format),
+      file,
+      thumbnail: thumbFile ? { path: thumbFile.path } : null,
+    });
+  } catch (err) {
+    return { kind: "retry", error: err instanceof Error ? err.message : String(err), containerId: item.containerId };
+  }
+}
+
 async function applyOutcome(
   item: { id: string; bookingId: string; accountName: string; format: string; attempts: number },
   o: Outcome,
@@ -506,6 +573,7 @@ async function applyOutcome(
     });
     if (res.count !== 1) return;
     await logBookingEvent(item.bookingId, SYSTEM, `Auto-published on ${item.accountName} (${item.format})${o.permalink ? `: ${o.permalink}` : ""}`);
+    if (o.note) await logBookingEvent(item.bookingId, SYSTEM, o.note);
     if (o.permalink) void sendItemLiveEmail(item.id).catch((err) => console.error("[campaign-publish] live email failed", err));
     const finished = await settleBooking(item.bookingId, SYSTEM);
     if (finished) void sendDeliveryEmail(item.bookingId).catch((err) => console.error("[campaign-publish] delivery email failed", err));
@@ -534,7 +602,10 @@ async function applyOutcome(
   }
   const res = await prisma.campaignBookingItem.updateMany({
     where,
-    data: { status: "manual_pending", lastError: o.reason.slice(0, 500), lockedUntil: null, nextAttemptAt: null },
+    data: {
+      status: "manual_pending", lastError: o.reason.slice(0, 500), lockedUntil: null, nextAttemptAt: null,
+      ...(o.remotePostId ? { remotePostId: o.remotePostId, containerId: null } : {}),
+    },
   });
   if (res.count === 1) await logBookingEvent(item.bookingId, SYSTEM, `Handed to staff for ${item.accountName}: ${o.reason}`);
 }
@@ -543,13 +614,15 @@ let running = false;
 
 /** One worker tick: claim up to N due items, run one step each. Never throws. */
 export async function runPublishTick(): Promise<number> {
-  if (running || !campaignConfig.publishEnabled()) return 0;
+  if (running || !campaignConfig.anyPublishEnabled()) return 0;
   running = true; // claimed before the first await — a concurrent tick skips
   try {
     const now = new Date();
     const due = await prisma.campaignBookingItem.findMany({
       where: {
         status: "queued",
+        // Each publisher only touches its own items: a switched-off one leaves its queue alone.
+        platform: { in: [...(campaignConfig.publishEnabled() ? ["instagram", "facebook"] : []), ...(campaignConfig.youtubePublishEnabled() ? ["youtube"] : [])] },
         AND: [
           { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
           { OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] },

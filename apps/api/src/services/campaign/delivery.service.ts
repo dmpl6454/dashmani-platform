@@ -286,7 +286,7 @@ export async function getResults(clientId: string, bookingId: string) {
     if (!byRemote.has(p.metaPostId)) byRemote.set(p.metaPostId, p);
   }
 
-  const autoOn = campaignConfig.publishEnabled();
+  const autoOn = campaignConfig.anyPublishEnabled();
   return {
     id: b.id,
     status: b.status,

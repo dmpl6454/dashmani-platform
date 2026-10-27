@@ -97,3 +97,19 @@ export const createBriefSchema = z.object({
   description:  z.string().min(2, "Description must be at least 2 characters").max(4000),
   referenceUrl: z.string().url("Invalid URL").optional().or(z.literal("").transform(() => undefined)),
 });
+
+/**
+ * Team logins: a further person who signs in to the client portal as the same company. Added by
+ * the company's owner (client portal → Team) or by sales staff (sales portal → client).
+ */
+export const clientTeamInviteSchema = z.object({
+  email: z.string().max(254, "Email is too long").pipe(normalizedEmail),
+  name: safeString.pipe(z.string().min(2, "Name must be at least 2 characters").max(200)),
+});
+
+/** Accepting a team invite: the emailed one-time token, a password, and optionally a corrected name. */
+export const clientJoinSchema = z.object({
+  token: z.string().regex(/^[a-f0-9]{64}$/, "Invalid invite link"),
+  password: z.string().min(8, "Password must be at least 8 characters").max(200),
+  name: safeString.pipe(z.string().min(2, "Name must be at least 2 characters").max(200)).optional(),
+});

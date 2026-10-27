@@ -323,38 +323,38 @@ model SocialAccount {
   /// YouTube: LIFETIME view count, exact. ⚠️ Not windowed — the honest per-window figure
   /// is the delta of this counter between two AccountGrowthSnapshot rows, which is why
   /// that table carries it too. Snapchat publishes no equivalent, so it stays null there.
-  totalViews    BigInt?       @map("total_views")
+  totalViews         BigInt?   @map("total_views")
   /// YouTube: public upload count, exact.
-  videoCount    Int?          @map("video_count")
+  videoCount         Int?      @map("video_count")
   /// ⚠️ The rounding step applied to `followerCount`, or null when the figure is exact.
   /// YouTube rounds to 3 significant figures, so seven of this estate's channels cannot
   /// move their reported subscriber count for 15–19 consecutive days. Any delta smaller
   /// than this step is quantisation noise and must render "—", never 0. It is also what
   /// distinguishes a legitimately-rounded official-API series from the "mostly round ⇒
   /// scraped display string" fingerprint that a 2026-08-24 audit deletes history on.
-  followersPrecision Int?     @map("followers_precision")
+  followersPrecision Int?      @map("followers_precision")
   /// Snapchat: summed views of the Spotlight posts on the profile page that actually
   /// published one. ⚠️ Meaningless without the two coverage fields below — 74% of posts
   /// across the estate withhold their view count, and the withholding is per-channel
   /// (nine channels publish none at all), so channels are NOT comparable on this alone.
-  recentViews   BigInt?       @map("recent_views")
+  recentViews        BigInt?   @map("recent_views")
   /// How many posts on the page carried a real view count …
-  recentViewsCovered Int?     @map("recent_views_covered")
+  recentViewsCovered Int?      @map("recent_views_covered")
   /// … out of how many posts the page returned. Snapchat chooses this number (2–31
   /// observed); it is not a time window, so never label a sum "views in N days".
-  recentPostsSeen    Int?     @map("recent_posts_seen")
+  recentPostsSeen    Int?      @map("recent_posts_seen")
   /// Why the last metrics refresh failed, if it did. Surfaced in the UI so a blank cell
   /// can explain itself instead of looking like missing data.
-  metricsError  String?       @map("metrics_error")
+  metricsError       String?   @map("metrics_error")
   /// When the channel metrics above were last REFRESHED — distinct from lastSyncedAt,
   /// which means "when we last measured a real follower count". They differ for the seven
   /// Snapchat profiles that withhold their count: we fetch those successfully every time
   /// and still have no number to stamp. Mirrors meta_assets.metricsFetchedAt, and is what
   /// the scraper's refresh floor is measured against.
-  metricsFetchedAt DateTime?  @map("metrics_fetched_at")
+  metricsFetchedAt   DateTime? @map("metrics_fetched_at")
 
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   platform        Platform                @relation(fields: [platformId], references: [id])
   assignments     AccountAssignment[]
@@ -469,6 +469,8 @@ model Client {
 
   projects         Project[]
   refreshTokens    ClientRefreshToken[]
+  /// Extra portal logins for the same company (the row's own email is the owner's login).
+  users            ClientUser[]
   otpTokens        OtpToken[]
   campaignBookings CampaignBooking[]
   campaignMedia    CampaignMedia[]
@@ -514,15 +516,52 @@ model AdminInvite {
 }
 
 model ClientRefreshToken {
-  id        String   @id @default(uuid())
-  clientId  String   @map("client_id")
-  token     String   @unique
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid())
+  clientId     String   @map("client_id")
+  /// The team login this session belongs to; null = the company owner (the clients row's email).
+  clientUserId String?  @map("client_user_id")
+  token        String   @unique
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
 
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client     Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientUser ClientUser? @relation(fields: [clientUserId], references: [id], onDelete: Cascade)
 
+  @@index([clientUserId])
   @@map("client_refresh_tokens")
+}
+
+/// A further person who signs in to the client portal as the same company. Sees and does what
+/// the owner does, except managing the team. Email is unique here AND never equal to any
+/// clients.email (checked in the service, case-insensitively).
+model ClientUser {
+  id             String    @id @default(uuid())
+  clientId       String    @map("client_id")
+  /// Lowercased.
+  email          String    @unique @db.VarChar(254)
+  name           String    @db.VarChar(200)
+  /// Null until the invite is accepted.
+  passwordHash   String?   @map("password_hash")
+  /// invited | active | disabled
+  status         String    @default("invited") @db.VarChar(16)
+  /// Bumped to end every session of this login at once (disable, password reset).
+  sessionVersion Int       @default(0) @map("session_version")
+  /// sha256 of the one-time link token (invite or password reset); the raw token is only emailed.
+  tokenHash      String?   @unique @map("token_hash") @db.VarChar(64)
+  /// invite | reset
+  tokenPurpose   String?   @map("token_purpose") @db.VarChar(16)
+  tokenExpiresAt DateTime? @map("token_expires_at")
+  /// Who added the login, for the record ("Sales: Priya", "Owner").
+  invitedBy      String?   @map("invited_by") @db.VarChar(200)
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  client        Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  refreshTokens ClientRefreshToken[]
+
+  @@index([clientId])
+  @@map("client_users")
 }
 
 // ============ PROJECTS ============
@@ -783,9 +822,9 @@ model ReportLink {
   // Historical rows are backfilled to createdAt (best available proxy).
   firstSeenAt  DateTime  @default(now()) @map("first_seen_at")
 
-  report  DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  account SocialAccount @relation(fields: [accountId], references: [id])
-  metrics LinkMetric[]
+  report       DailyReport        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  account      SocialAccount      @relation(fields: [accountId], references: [id])
+  metrics      LinkMetric[]
   latestMetric LinkMetricLatest[]
 
   @@index([reportId])
@@ -1504,8 +1543,8 @@ model LinkMetric {
 //     the exact query class that took the portals down. `link_metrics` is kept as
 //     the per-link HISTORY (getLinkMetricsHistory) and the write-dedupe reference.
 model LinkMetricLatest {
-  employeeId    String   @map("employee_id")
-  urlNormalized String   @map("url_normalized")
+  employeeId    String @map("employee_id")
+  urlNormalized String @map("url_normalized")
 
   linkId     String?  @map("link_id")
   reportDate DateTime @map("report_date") @db.Date
@@ -1790,8 +1829,8 @@ model MetaAsset {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  connection    MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  socialAccount SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  connection    MetaConnection         @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount?         @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
   posts         MetaPost[]
   windowMetrics MetaAssetMetric[]
   demographics  MetaAssetDemographic[]
@@ -1828,12 +1867,12 @@ model MetaAssetDemographic {
   asset   MetaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   /// "follower" | "engaged" | "reached"
-  audience String
+  audience  String
   /// "country" | "city" | "age" | "gender"
   dimension String
   /// The bucket label as Meta returns it — "BD", "Mumbai, Maharashtra", "25-34", "M".
-  bucket String
-  value  Int
+  bucket    String
+  value     Int
 
   fetchedAt DateTime @map("fetched_at")
 
@@ -1928,7 +1967,7 @@ model MetaAssetMetric {
   /// impression and the reason Meta's own app appears to disagree with us.
   periodEnd DateTime? @map("period_end")
 
-  error     String?
+  error String?
 
   @@unique([assetId, window])
   @@index([window])
@@ -1966,14 +2005,14 @@ model MetaAssetDaily {
   /// The day the values describe, date-only.
   date DateTime @db.Date
 
-  views        BigInt?
+  views           BigInt?
   /// Daily unique viewers — valid AS A DAY, poisonous summed. See model doc.
-  reach        BigInt?
-  engagements  BigInt?
-  profileViews BigInt? @map("profile_views")
-  reactions    BigInt?
-  follows      Int?
-  unfollows    Int?
+  reach           BigInt?
+  engagements     BigInt?
+  profileViews    BigInt? @map("profile_views")
+  reactions       BigInt?
+  follows         Int?
+  unfollows       Int?
   videoViewTimeMs BigInt? @map("video_view_time_ms")
   saves           Int?
   shares          Int?
@@ -2107,16 +2146,17 @@ model MetaPostWatch {
 
 /// Phases are DATA (owner will rename/reorder/add). Never hard-code phase ids.
 model PipelinePhase {
-  id         String    @id @default(uuid())
-  key        String    @unique @db.VarChar(40)       // stable slug for scripts/tests
-  name       String    @db.VarChar(40)
+  id         String            @id @default(uuid())
+  key        String            @unique @db.VarChar(40) // stable slug for scripts/tests
+  name       String            @db.VarChar(40)
   position   Int
-  color      String    @default("indigo") @db.VarChar(16) // design-token allowlist
-  isTerminal Boolean   @default(false) @map("is_terminal") // no due/overdue alerts
-  archivedAt DateTime? @map("archived_at")  // allowed only when NO project row (any state) references it
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
+  color      String            @default("indigo") @db.VarChar(16) // design-token allowlist
+  isTerminal Boolean           @default(false) @map("is_terminal") // no due/overdue alerts
+  archivedAt DateTime?         @map("archived_at") // allowed only when NO project row (any state) references it
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
   projects   PipelineProject[]
+
   @@index([position, id])
   @@map("pipeline_phases")
 }
@@ -2126,27 +2166,28 @@ model PipelineBoardState {
   id        Int      @id
   seq       Int      @default(0)
   updatedAt DateTime @updatedAt @map("updated_at")
+
   @@map("pipeline_board_state")
 }
 
 model PipelineProject {
   id                 String    @id @default(uuid())
-  clientId           String    @map("client_id") @db.VarChar(64)   // create idempotency key (body field)
+  clientId           String    @map("client_id") @db.VarChar(64) // create idempotency key (body field)
   title              String    @db.VarChar(120)
-  description        String    @default("") @db.Text               // ≤ 5,000 chars (validator)
-  ownerId            String    @map("owner_id")                    // the ONLY source of ownership
+  description        String    @default("") @db.Text // ≤ 5,000 chars (validator)
+  ownerId            String    @map("owner_id") // the ONLY source of ownership
   createdById        String    @map("created_by_id")
   phaseId            String    @map("phase_id")
-  rank               String    @db.VarChar(64)                     // fractional index; compare COLLATE "C"
+  rank               String    @db.VarChar(64) // fractional index; compare COLLATE "C"
   startDate          DateTime? @map("start_date") @db.Date
   dueDate            DateTime? @map("due_date") @db.Date
-  headerRev          Int       @default(1) @map("header_rev")       // header/participant change
-  threadRev          Int       @default(0) @map("thread_rev")       // thread change (delta cursor)
+  headerRev          Int       @default(1) @map("header_rev") // header/participant change
+  threadRev          Int       @default(0) @map("thread_rev") // thread change (delta cursor)
   lastMessageSeq     Int       @default(0) @map("last_message_seq")
   lastMessageAt      DateTime? @map("last_message_at")
-  memberCount        Int       @default(1) @map("member_count")     // MEMBER rows (owner always has one)
+  memberCount        Int       @default(1) @map("member_count") // MEMBER rows (owner always has one)
   phaseChangedAt     DateTime? @map("phase_changed_at")
-  phaseChangedById   String?   @map("phase_changed_by_id")          // informational, no FK
+  phaseChangedById   String?   @map("phase_changed_by_id") // informational, no FK
   moveGen            Int       @default(0) @map("move_gen")
   moveActorId        String?   @map("move_actor_id")
   moveStartedAt      DateTime? @map("move_started_at")
@@ -2157,13 +2198,13 @@ model PipelineProject {
   archivedAt         DateTime? @map("archived_at")
   archivedById       String?   @map("archived_by_id")
   archivedByAdmin    Boolean   @default(false) @map("archived_by_admin") // non-owner admin acted
-  deletedAt          DateTime? @map("deleted_at")                   // soft delete; purged after 30 days
+  deletedAt          DateTime? @map("deleted_at") // soft delete; purged after 30 days
   deletedById        String?   @map("deleted_by_id")
   deletedByAdmin     Boolean   @default(false) @map("deleted_by_admin")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  owner        User                  @relation("PipelineOwner",   fields: [ownerId],     references: [id], onDelete: Restrict)
+  owner        User                  @relation("PipelineOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   createdBy    User                  @relation("PipelineCreator", fields: [createdById], references: [id], onDelete: Restrict)
   phase        PipelinePhase         @relation(fields: [phaseId], references: [id], onDelete: Restrict)
   participants PipelineParticipant[]
@@ -2183,12 +2224,12 @@ model PipelineProject {
 model PipelineParticipant {
   projectId       String    @map("project_id")
   userId          String    @map("user_id")
-  role            String    @db.VarChar(12)                  // "MEMBER" | "FOLLOWER" — never "OWNER"
-  notify          Boolean   @default(true)                   // false after unfollow; only the user changes it
+  role            String    @db.VarChar(12) // "MEMBER" | "FOLLOWER" — never "OWNER"
+  notify          Boolean   @default(true) // false after unfollow; only the user changes it
   lastReadSeq     Int       @default(0) @map("last_read_seq")
-  seenAt          DateTime? @map("seen_at")                  // active-reader suppression; NULL on leave
-  engagedAt       DateTime? @map("engaged_at")               // first post/reply/mention/explicit follow
-  memberAddedById String?   @map("member_added_by_id")       // set ONLY by create / add-members
+  seenAt          DateTime? @map("seen_at") // active-reader suppression; NULL on leave
+  engagedAt       DateTime? @map("engaged_at") // first post/reply/mention/explicit follow
+  memberAddedById String?   @map("member_added_by_id") // set ONLY by create / add-members
   memberAddedAt   DateTime? @map("member_added_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
@@ -2203,15 +2244,15 @@ model PipelineParticipant {
 
 model PipelineMessage {
   id          String    @id @default(uuid())
-  clientId    String    @map("client_id") @db.VarChar(64)    // send idempotency key (body field)
+  clientId    String    @map("client_id") @db.VarChar(64) // send idempotency key (body field)
   projectId   String    @map("project_id")
-  seq         Int                                             // creation order in project, immutable
-  rev         Int                                             // last-change stamp = delta cursor
-  parentId    String?   @map("parent_id")                     // null = top-level; replies point at the ROOT
+  seq         Int // creation order in project, immutable
+  rev         Int // last-change stamp = delta cursor
+  parentId    String?   @map("parent_id") // null = top-level; replies point at the ROOT
   authorId    String    @map("author_id")
-  body        String    @db.Text                              // ≤ 4,000; "" when deleted
-  mentionIds  String[]  @default([]) @map("mention_ids")      // delivered (valid) mentions only, ≤ 20
-  reactions   Json      @default("{}")                       // {"thumbs_up":["<userId>",…]}
+  body        String    @db.Text // ≤ 4,000; "" when deleted
+  mentionIds  String[]  @default([]) @map("mention_ids") // delivered (valid) mentions only, ≤ 20
+  reactions   Json      @default("{}") // {"thumbs_up":["<userId>",…]}
   replyCount  Int       @default(0) @map("reply_count")
   lastReplyAt DateTime? @map("last_reply_at")
   editedAt    DateTime? @map("edited_at")
@@ -2226,9 +2267,9 @@ model PipelineMessage {
 
   @@unique([authorId, clientId])
   @@unique([projectId, seq])
-  @@unique([projectId, rev])            // total order → unambiguous delta cursor
-  @@index([projectId, parentId, seq])   // top-level pages and reply lists
-  @@index([parentId])                   // FK cascade on purge must not full-scan
+  @@unique([projectId, rev]) // total order → unambiguous delta cursor
+  @@index([projectId, parentId, seq]) // top-level pages and reply lists
+  @@index([parentId]) // FK cascade on purge must not full-scan
   @@map("pipeline_messages")
 }
 
@@ -2250,8 +2291,8 @@ model PipelineEmailOutbox {
   id        String    @id @default(uuid())
   userId    String    @map("user_id")
   projectId String    @map("project_id")
-  kind      String    @db.VarChar(16)                   // moved | mention | due_soon | due_changed
-  payload   Json      @default("{}")                    // moved {fromPhaseId, actorIds}; mention {messageIds ≤ 20}; due_changed {fromDue, actorIds}; due_soon {due}
+  kind      String    @db.VarChar(16) // moved | mention | due_soon | due_changed
+  payload   Json      @default("{}") // moved {fromPhaseId, actorIds}; mention {messageIds ≤ 20}; due_changed {fromDue, actorIds}; due_soon {due}
   status    String    @default("pending") @db.VarChar(12) // pending | sending | sent | skipped | failed
   attempts  Int       @default(0)
   sendAfter DateTime  @map("send_after")
@@ -2287,23 +2328,23 @@ model PipelineEmailOutbox {
 /// at least one active card. targetType "meta_asset" → meta_assets.id (FB Page / IG account);
 /// "social_account" → social_accounts.id (YouTube, posted by staff until Phase 3).
 model CampaignRateCard {
-  id          String   @id @default(uuid())
-  targetType  String   @map("target_type") @db.VarChar(16)
-  targetId    String   @map("target_id")
-  platform    String   @db.VarChar(16) // instagram | facebook | youtube
-  format      String   @db.VarChar(16) // reel | story | post | carousel
+  id                      String   @id @default(uuid())
+  targetType              String   @map("target_type") @db.VarChar(16)
+  targetId                String   @map("target_id")
+  platform                String   @db.VarChar(16) // instagram | facebook | youtube
+  format                  String   @db.VarChar(16) // reel | story | post | carousel
   /// Brand campaign price (the "Brand Cost" column of the rate sheet).
-  pricePaise  Int      @map("price_paise")
+  pricePaise              Int      @map("price_paise")
   /// Entertainment (film / OTT / music promo) price. null = not offered for entertainment.
-  entertainmentPricePaise Int? @map("entertainment_price_paise")
+  entertainmentPricePaise Int?     @map("entertainment_price_paise")
   /// Song audio integration on a reel, charged on top of the post price. null = not offered.
-  audioAddonPaise         Int? @map("audio_addon_paise")
-  active      Boolean  @default(true)
+  audioAddonPaise         Int?     @map("audio_addon_paise")
+  active                  Boolean  @default(true)
   /// Shown to clients ("Bollywood news", "Lifestyle"…). Staff-entered: Instagram exposes none.
-  category    String?  @db.VarChar(60)
-  updatedById String?  @map("updated_by_id")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  category                String?  @db.VarChar(60)
+  updatedById             String?  @map("updated_by_id")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
   @@unique([targetType, targetId, format])
   @@index([active, platform])
@@ -2311,43 +2352,43 @@ model CampaignRateCard {
 }
 
 model CampaignBooking {
-  id              String    @id @default(uuid())
-  clientId        String    @map("client_id")
-  name            String    @db.VarChar(200)
-  brand           String    @db.VarChar(200)
-  objective       String?   @db.Text
+  id               String    @id @default(uuid())
+  clientId         String    @map("client_id")
+  name             String    @db.VarChar(200)
+  brand            String    @db.VarChar(200)
+  objective        String?   @db.Text
   /// brand | entertainment — decides which rate-card price applies. Staff check it at review.
-  campaignType    String    @default("brand") @map("campaign_type") @db.VarChar(16)
+  campaignType     String    @default("brand") @map("campaign_type") @db.VarChar(16)
   /// Reel only: integrate the client's song audio (priced per account as an add-on).
-  audioIntegration Boolean  @default(false) @map("audio_integration")
+  audioIntegration Boolean   @default(false) @map("audio_integration")
   /// The song to integrate: a title or a link the client gives us.
-  audioTrack      String?   @map("audio_track") @db.VarChar(300)
+  audioTrack       String?   @map("audio_track") @db.VarChar(300)
   /// IST calendar days (YYYY-MM-DD semantics; stored as DATE).
-  launchFrom      DateTime? @map("launch_from") @db.Date
-  launchTo        DateTime? @map("launch_to") @db.Date
-  format          String?   @db.VarChar(16) // reel | story | post | carousel
-  caption         String?   @db.Text
-  hashtags        String[]  @default([])
+  launchFrom       DateTime? @map("launch_from") @db.Date
+  launchTo         DateTime? @map("launch_to") @db.Date
+  format           String?   @db.VarChar(16) // reel | story | post | carousel
+  caption          String?   @db.Text
+  hashtags         String[]  @default([])
   /// IG handles to tag (no "@").
-  userTags        String[]  @default([]) @map("user_tags")
+  userTags         String[]  @default([]) @map("user_tags")
   /// IG collaborators (max 3, no "@").
-  collaborators   String[]  @default([])
+  collaborators    String[]  @default([])
   /// Overlay text WE burn into the media (ffmpeg / sharp). Style is a preset key, never raw params.
-  superText       String?   @map("super_text") @db.VarChar(200)
-  superTextStyle  String?   @map("super_text_style") @db.VarChar(24)
-  status          String    @default("draft") @db.VarChar(24)
-  totalPaise      Int?      @map("total_paise")
+  superText        String?   @map("super_text") @db.VarChar(200)
+  superTextStyle   String?   @map("super_text_style") @db.VarChar(24)
+  status           String    @default("draft") @db.VarChar(24)
+  totalPaise       Int?      @map("total_paise")
   /// The rate cards as they were when the order was created (prices are frozen per item too).
-  pricingSnapshot Json?     @map("pricing_snapshot")
-  reviewNote      String?   @map("review_note") @db.Text
-  reviewedById    String?   @map("reviewed_by_id")
-  submittedAt     DateTime? @map("submitted_at")
-  paidAt          DateTime? @map("paid_at")
-  approvedAt      DateTime? @map("approved_at")
+  pricingSnapshot  Json?     @map("pricing_snapshot")
+  reviewNote       String?   @map("review_note") @db.Text
+  reviewedById     String?   @map("reviewed_by_id")
+  submittedAt      DateTime? @map("submitted_at")
+  paidAt           DateTime? @map("paid_at")
+  approvedAt       DateTime? @map("approved_at")
   /// Set when the delivery email (every item live / settled) has been sent — sent once.
-  deliveredAt     DateTime? @map("delivered_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deliveredAt      DateTime? @map("delivered_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   client   Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
   media    CampaignMedia[]
@@ -2392,8 +2433,8 @@ model CampaignMedia {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  client  Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  booking CampaignBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  client  Client                @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  booking CampaignBooking?      @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   renders CampaignMediaRender[]
 
   @@index([clientId, uploadStatus])
@@ -2401,6 +2442,7 @@ model CampaignMedia {
   @@index([renderStatus])
   @@map("campaign_media")
 }
+
 /// A render of one media file with an overlay that differs from the booking's default — one
 /// per (file, overlay text + style). Items that customise their super text point at these; the
 /// default overlay stays on campaign_media.render_*. Files live beside the default renders.
@@ -2431,40 +2473,40 @@ model CampaignMediaRender {
 /// One (account, format) the client paid for. Price frozen at checkout. Carries its own posting
 /// state so a partly-delivered campaign is visible per account.
 model CampaignBookingItem {
-  id            String    @id @default(uuid())
-  bookingId     String    @map("booking_id")
-  rateCardId    String    @map("rate_card_id")
-  targetType    String    @map("target_type") @db.VarChar(16)
-  targetId      String    @map("target_id")
-  platform      String    @db.VarChar(16)
-  format        String    @db.VarChar(16)
+  id                     String    @id @default(uuid())
+  bookingId              String    @map("booking_id")
+  rateCardId             String    @map("rate_card_id")
+  targetType             String    @map("target_type") @db.VarChar(16)
+  targetId               String    @map("target_id")
+  platform               String    @db.VarChar(16)
+  format                 String    @db.VarChar(16)
   /// Snapshot of the account as the client saw it (the asset may later be renamed / removed).
-  accountName   String    @map("account_name") @db.VarChar(200)
-  accountHandle String?   @map("account_handle") @db.VarChar(100)
+  accountName            String    @map("account_name") @db.VarChar(200)
+  accountHandle          String?   @map("account_handle") @db.VarChar(100)
   /// Total for this account: base price + audio add-on (both frozen at checkout).
-  pricePaise    Int       @map("price_paise")
+  pricePaise             Int       @map("price_paise")
   /// The audio add-on part of pricePaise (0 when not booked).
-  audioAddonPaise Int     @default(0) @map("audio_addon_paise")
+  audioAddonPaise        Int       @default(0) @map("audio_addon_paise")
   /// Per-account text. null = the booking's caption / hashtags / overlay; a value replaces it for
   /// THIS account only. superTextOverride "" = no overlay on this account.
-  captionOverride        String?  @map("caption_override") @db.Text
-  hashtagsOverride       String[] @default([]) @map("hashtags_override")
-  superTextOverride      String?  @map("super_text_override") @db.VarChar(200)
-  superTextStyleOverride String?  @map("super_text_style_override") @db.VarChar(24)
-  status        String    @default("pending") @db.VarChar(24)
-  attempts      Int       @default(0)
-  nextAttemptAt DateTime? @map("next_attempt_at")
-  lockedUntil   DateTime? @map("locked_until")
-  containerId   String?   @map("container_id")
-  remotePostId  String?   @map("remote_post_id")
-  permalink     String?   @db.VarChar(500)
-  postedAt      DateTime? @map("posted_at")
-  postedById    String?   @map("posted_by_id")
-  lastError     String?   @map("last_error") @db.VarChar(500)
+  captionOverride        String?   @map("caption_override") @db.Text
+  hashtagsOverride       String[]  @default([]) @map("hashtags_override")
+  superTextOverride      String?   @map("super_text_override") @db.VarChar(200)
+  superTextStyleOverride String?   @map("super_text_style_override") @db.VarChar(24)
+  status                 String    @default("pending") @db.VarChar(24)
+  attempts               Int       @default(0)
+  nextAttemptAt          DateTime? @map("next_attempt_at")
+  lockedUntil            DateTime? @map("locked_until")
+  containerId            String?   @map("container_id")
+  remotePostId           String?   @map("remote_post_id")
+  permalink              String?   @db.VarChar(500)
+  postedAt               DateTime? @map("posted_at")
+  postedById             String?   @map("posted_by_id")
+  lastError              String?   @map("last_error") @db.VarChar(500)
   /// When the client was emailed that THIS post is live (per-item "your post is live" mail).
-  notifiedAt    DateTime? @map("notified_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  notifiedAt             DateTime? @map("notified_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   booking CampaignBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
@@ -2956,14 +2998,14 @@ model SalesInvoice {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  client      Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  order       SalesOrder?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  convertedFrom SalesInvoice?          @relation("ProformaConversion", fields: [convertedFromId], references: [id], onDelete: SetNull)
-  conversions   SalesInvoice[]         @relation("ProformaConversion")
-  items       SalesInvoiceItem[]
-  allocations SalesPaymentAllocation[]
-  creditNotes SalesCreditNote[]
-  einvoice    SalesEInvoice?
+  client        Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  order         SalesOrder?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  convertedFrom SalesInvoice?            @relation("ProformaConversion", fields: [convertedFromId], references: [id], onDelete: SetNull)
+  conversions   SalesInvoice[]           @relation("ProformaConversion")
+  items         SalesInvoiceItem[]
+  allocations   SalesPaymentAllocation[]
+  creditNotes   SalesCreditNote[]
+  einvoice      SalesEInvoice?
 
   @@index([clientId])
   @@index([status, dueDate])
@@ -2993,27 +3035,27 @@ model SalesInvoiceItem {
 
 /// Money received (or withheld as TDS) from a client, allocated across one or more invoices.
 model SalesPayment {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   /// The billing company (dspl = Digital Sukoon Private Limited, dmpl = Dashmani Media Private Limited).
-  companyKey        String    @default("dspl") @map("company_key") @db.VarChar(8)
-  number       String   @unique @db.VarChar(32)
-  clientId     String   @map("client_id")
-  amountPaise  Int      @map("amount_paise")
+  companyKey   String    @default("dspl") @map("company_key") @db.VarChar(8)
+  number       String    @unique @db.VarChar(32)
+  clientId     String    @map("client_id")
+  amountPaise  Int       @map("amount_paise")
   /// TDS the client deducted on this settlement (counts toward the invoice, never received).
-  tdsPaise     Int      @default(0) @map("tds_paise")
+  tdsPaise     Int       @default(0) @map("tds_paise")
   /// bank_transfer | upi | cheque | cash | razorpay | other
-  mode         String   @db.VarChar(16)
-  reference    String?  @db.VarChar(120)
-  paidOn       DateTime @map("paid_on") @db.Date
-  bankName     String?  @map("bank_name") @db.VarChar(120)
-  notes        String?  @db.Text
-  recordedById String   @map("recorded_by_id")
+  mode         String    @db.VarChar(16)
+  reference    String?   @db.VarChar(120)
+  paidOn       DateTime  @map("paid_on") @db.Date
+  bankName     String?   @map("bank_name") @db.VarChar(120)
+  notes        String?   @db.Text
+  recordedById String    @map("recorded_by_id")
   /// recorded | voided — a voided receipt keeps its number; its allocations stop counting.
   status       String    @default("recorded") @db.VarChar(16)
   voidedAt     DateTime? @map("voided_at")
   voidReason   String?   @map("void_reason") @db.VarChar(300)
   voidedById   String?   @map("voided_by_id")
-  createdAt    DateTime @default(now()) @map("created_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   client      Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   allocations SalesPaymentAllocation[]

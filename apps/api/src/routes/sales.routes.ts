@@ -17,6 +17,7 @@ import {
   DEFAULT_COMPANY,
   isCompanyKey,
   type CompanyKey,
+  clientValidators,
 } from "@dashmani/shared";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
@@ -28,7 +29,10 @@ import { success } from "../utils/response";
 import { listSalesEvents, type SalesEntity } from "../services/sales/common";
 import { getSellerProfile, saveSellerProfile, sellerFallback, sellerMissingFields } from "../services/sales/settings.service";
 import { listInventory } from "../services/sales/inventory.service";
-import { createSalesClient, getClientStatement, getSalesClient, listSalesClients, upsertClientBilling } from "../services/sales/clients.service";
+import {
+  createSalesClient, getClientStatement, getSalesClient, inviteClientLogin, listClientLogins, listSalesClients,
+  removeClientLogin, resendClientLogin, setClientLoginEnabled, upsertClientBilling,
+} from "../services/sales/clients.service";
 import * as docs from "../services/sales/documents.service";
 import * as invoices from "../services/sales/invoices.service";
 import * as payments from "../services/sales/payments.service";
@@ -83,6 +87,13 @@ router.get("/sales/clients", ...view, asyncHandler(async (req, res) => success(r
 router.post("/sales/clients", ...manage, validate(salesClientCreateSchema), asyncHandler(async (req, res) => success(res, await createSalesClient(req.body, staffId(req)), undefined, 201)));
 router.get("/sales/clients/:id", ...view, asyncHandler(async (req, res) => success(res, await getSalesClient(req.params.id))));
 router.put("/sales/clients/:id/billing", ...manage, validate(clientBillingProfileSchema), asyncHandler(async (req, res) => success(res, await upsertClientBilling(req.params.id, req.body, staffId(req)))));
+// Portal logins: further people who sign in to the client portal as this company.
+router.get("/sales/clients/:id/logins", ...view, asyncHandler(async (req, res) => success(res, await listClientLogins(req.params.id))));
+router.post("/sales/clients/:id/logins", ...manage, validate(clientValidators.clientTeamInviteSchema), asyncHandler(async (req, res) => success(res, await inviteClientLogin(req.params.id, req.body, staffId(req)), undefined, 201)));
+router.post("/sales/clients/:id/logins/:memberId/resend", ...manage, asyncHandler(async (req, res) => success(res, await resendClientLogin(req.params.id, req.params.memberId, staffId(req)))));
+router.post("/sales/clients/:id/logins/:memberId/disable", ...manage, asyncHandler(async (req, res) => success(res, await setClientLoginEnabled(req.params.id, req.params.memberId, false, staffId(req)))));
+router.post("/sales/clients/:id/logins/:memberId/enable", ...manage, asyncHandler(async (req, res) => success(res, await setClientLoginEnabled(req.params.id, req.params.memberId, true, staffId(req)))));
+router.delete("/sales/clients/:id/logins/:memberId", ...manage, asyncHandler(async (req, res) => success(res, await removeClientLogin(req.params.id, req.params.memberId, staffId(req)))));
 router.get("/sales/clients/:id/statement", ...view, asyncHandler(async (req, res) => success(res, await getClientStatement(req.params.id, companyQuery(req)))));
 
 // ── Campaign bookings (client self-serve, reviewed in the staff portal) — read-only here ──

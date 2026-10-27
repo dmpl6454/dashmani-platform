@@ -3,6 +3,7 @@ import { compare, hash } from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { AppError } from "../middleware/error-handler";
+import { likeLiteral } from "../utils/like-literal";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 const ACCESS_TOKEN_EXPIRY = "15m";
@@ -11,48 +12,27 @@ const REFRESH_TOKEN_EXPIRY = "7d";
 export async function clientLogin(email: string, password: string) {
   const normalized = email.trim().toLowerCase();
   const client = await prisma.client.findUnique({ where: { email: normalized } });
-  if (!client) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+  if (!client) return memberLogin(normalized, password);
   if (client.status !== "ACTIVE") throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
 
   const valid = await compare(password, client.passwordHash);
   if (!valid) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
 
-  const accessToken = jwt.sign(
-    { userId: client.id, email: client.email, roles: [], type: "client" as const },
-    JWT_SECRET,
-    { expiresIn: ACCESS_TOKEN_EXPIRY }
-  );
+  return issueClientSession(client);
+}
 
-  const refreshToken = jwt.sign(
-    { userId: client.id },
-    JWT_SECRET,
-    { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() }
-  );
-
-  const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
-  await prisma.clientRefreshToken.create({
-    data: {
-      clientId: client.id,
-      token: tokenHash,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  return {
-    accessToken,
-    refreshToken,
-    user: {
-      id: client.id,
-      name: client.contactName,
-      companyName: client.companyName,
-      email: client.email,
-      roles: [],
-    },
-  };
+/** A team login (client_users). Same answers as the owner path, so neither reveals which exists. */
+async function memberLogin(email: string, password: string) {
+  const member = await prisma.clientUser.findUnique({ where: { email }, include: { client: true } });
+  if (!member || !member.passwordHash) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+  const valid = await compare(password, member.passwordHash);
+  if (!valid) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+  if (member.status !== "active" || member.client.status !== "ACTIVE") throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
+  return issueClientSession(member.client, member);
 }
 
 export async function clientRefresh(refreshToken: string) {
-  const decoded = jwt.verify(refreshToken, JWT_SECRET) as { userId: string };
+  const decoded = jwt.verify(refreshToken, JWT_SECRET) as { userId: string; memberId?: string; sv?: number };
   const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
 
   const stored = await prisma.clientRefreshToken.findUnique({ where: { token: tokenHash } });
@@ -64,6 +44,17 @@ export async function clientRefresh(refreshToken: string) {
   if (!client || client.status !== "ACTIVE") {
     throw new AppError(401, "INVALID_TOKEN", "Client not found or inactive");
   }
+  // A team login's session ends when the login is disabled, removed or its password reset.
+  let member: { id: string; email: string; name: string; sessionVersion: number } | null = null;
+  if (decoded.memberId) {
+    member = await prisma.clientUser.findFirst({
+      where: { id: decoded.memberId, clientId: client.id, status: "active", sessionVersion: decoded.sv ?? 0 },
+      select: { id: true, email: true, name: true, sessionVersion: true },
+    });
+    if (!member || stored.clientUserId !== member.id) throw new AppError(401, "INVALID_TOKEN", "This login is no longer active");
+  } else if (stored.clientUserId) {
+    throw new AppError(401, "INVALID_TOKEN", "Invalid or expired refresh token");
+  }
 
   // Rotate token — race-safe one-time consume (see hr-auth.service.ts refreshHrToken):
   // a bare delete() 500s the loser of two concurrent refreshes with the same token
@@ -73,38 +64,19 @@ export async function clientRefresh(refreshToken: string) {
     throw new AppError(401, "INVALID_TOKEN", "Refresh token already used");
   }
 
-  const newAccessToken = jwt.sign(
-    { userId: client.id, email: client.email, roles: [], type: "client" as const },
-    JWT_SECRET,
-    { expiresIn: ACCESS_TOKEN_EXPIRY }
-  );
-
-  const newRefreshToken = jwt.sign(
-    { userId: client.id },
-    JWT_SECRET,
-    { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() }
-  );
-
-  const newTokenHash = crypto.createHash("sha256").update(newRefreshToken).digest("hex");
-  await prisma.clientRefreshToken.create({
-    data: {
-      clientId: client.id,
-      token: newTokenHash,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+  const { accessToken, refreshToken: newRefreshToken } = await issueClientSession(client, member);
+  return { accessToken, refreshToken: newRefreshToken };
 }
 
-export async function clientLogout(clientId: string) {
-  await prisma.clientRefreshToken.deleteMany({ where: { clientId } });
+/** Ends the sessions of the person signing out only — never their colleagues'. */
+export async function clientLogout(clientId: string, memberId?: string) {
+  await prisma.clientRefreshToken.deleteMany({ where: { clientId, clientUserId: memberId ?? null } });
 }
 
 export async function clientForgotPassword(email: string) {
   const normalized = email.trim().toLowerCase();
   const client = await prisma.client.findUnique({ where: { email: normalized } });
-  if (!client) return; // silent — don't reveal whether email exists
+  if (!client) return memberForgotPassword(normalized); // silent either way — don't reveal whether email exists
 
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -137,6 +109,49 @@ export async function clientForgotPassword(email: string) {
   });
 }
 
+/** A team login's reset link: stored as a hash on the login itself (otp_tokens is keyed on clients). */
+async function memberForgotPassword(email: string) {
+  const member = await prisma.clientUser.findUnique({ where: { email }, include: { client: { select: { status: true } } } });
+  if (!member || member.status !== "active" || member.client.status !== "ACTIVE") return;
+  const { newLinkToken, sha256, RESET_TTL_MS } = await import("./client-team.service");
+  const token = newLinkToken();
+  await prisma.clientUser.update({
+    where: { id: member.id },
+    data: { tokenHash: sha256(token), tokenPurpose: "reset", tokenExpiresAt: new Date(Date.now() + RESET_TTL_MS) },
+  });
+  const portalUrl = process.env.CLIENT_APP_URL || "https://client.digitalsukoon.com";
+  const { sendEmail } = await import("./email.service");
+  await sendEmail({
+    to: member.email,
+    subject: "Reset your password — Digital Sukoon Client Portal",
+    html: `
+      <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:32px">
+        <h2 style="margin:0 0 8px">Reset your password</h2>
+        <p style="color:#555">Click the button below to reset your client-portal password. This link expires in 24 hours.</p>
+        <a href="${portalUrl}/reset-password?token=${token}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#1A1A1A;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">Reset Password</a>
+        <p style="color:#999;font-size:12px">Didn't see this in your inbox? <strong>Check your spam or junk folder</strong>.</p>
+        <p style="color:#999;font-size:12px">If you didn't request this, ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+/** Reset a team login's password from its emailed link. Ends every session of that login. */
+async function memberResetPassword(token: string, newPassword: string): Promise<boolean> {
+  const { sha256 } = await import("./client-team.service");
+  if (!/^[a-f0-9]{64}$/.test(token)) return false;
+  const passwordHash = await hash(newPassword, 12);
+  const member = await prisma.clientUser.findUnique({ where: { tokenHash: sha256(token) }, select: { id: true } });
+  if (!member) return false;
+  const res = await prisma.clientUser.updateMany({
+    where: { id: member.id, tokenPurpose: "reset", status: "active", tokenExpiresAt: { gt: new Date() } },
+    data: { passwordHash, tokenHash: null, tokenPurpose: null, tokenExpiresAt: null, sessionVersion: { increment: 1 } },
+  });
+  if (res.count !== 1) return false;
+  await prisma.clientRefreshToken.deleteMany({ where: { clientUserId: member.id } });
+  return true;
+}
+
 export async function clientResetPassword(token: string, newPassword: string) {
   const record = await prisma.otpToken.findFirst({
     where: {
@@ -150,13 +165,15 @@ export async function clientResetPassword(token: string, newPassword: string) {
   });
 
   if (!record || !record.clientId) {
+    if (await memberResetPassword(token, newPassword)) return;
     throw new AppError(400, "INVALID_TOKEN", "Reset link is invalid or expired");
   }
 
   const passwordHash = await hash(newPassword, 12);
   await prisma.client.update({ where: { id: record.clientId }, data: { passwordHash } });
   await prisma.otpToken.update({ where: { id: record.id }, data: { verified: true } });
-  await prisma.clientRefreshToken.deleteMany({ where: { clientId: record.clientId } });
+  // The owner's sessions only: a colleague's login is not affected by the owner's password.
+  await prisma.clientRefreshToken.deleteMany({ where: { clientId: record.clientId, clientUserId: null } });
 }
 
 export async function createClient(data: {
@@ -169,6 +186,7 @@ export async function createClient(data: {
   const email = data.email.trim().toLowerCase();
   const existing = await prisma.client.findUnique({ where: { email } });
   if (existing) throw new AppError(409, "EMAIL_EXISTS", "A client with this email already exists");
+  if (await memberEmailExists(email)) throw new AppError(409, "EMAIL_EXISTS", "This email is already a team login on another client account");
 
   const passwordHash = await hash(data.password, 12);
   return prisma.client.create({
@@ -254,7 +272,7 @@ export async function updateClient(id: string, data: { companyName?: string; con
 export async function clientSignup(data: { companyName: string; contactName: string; email: string; password: string; phone?: string }) {
   const email = data.email.trim().toLowerCase();
   const existing = await prisma.client.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } });
-  if (existing) throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in, or use “Forgot password”.");
+  if (existing || (await memberEmailExists(email))) throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in, or use “Forgot password”.");
 
   const passwordHash = await hash(data.password, 12);
   let client;
@@ -354,6 +372,21 @@ export async function clientGoogleSignIn(input: { credential: string; companyNam
     if (existing.status !== "ACTIVE") throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
     return issueClientSession(existing);
   }
+  // A team login. Google has proven the person controls the address — what the invite email
+  // proves — so an invited login is joined here (its link stops working); a disabled one is refused.
+  const member = await prisma.clientUser.findFirst({ where: { email: { equals: likeLiteral(email), mode: "insensitive" } }, include: { client: true } });
+  if (member) {
+    if (member.status === "disabled" || member.client.status !== "ACTIVE") throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
+    if (member.status === "invited") {
+      const joined = await prisma.clientUser.update({
+        where: { id: member.id },
+        data: { status: "active", tokenHash: null, tokenPurpose: null, tokenExpiresAt: null },
+        include: { client: true },
+      });
+      return issueClientSession(joined.client, joined);
+    }
+    return issueClientSession(member.client, member);
+  }
 
   const companyName = input.companyName?.trim();
   if (!companyName) {
@@ -399,22 +432,46 @@ export async function clientGoogleSignIn(input: { credential: string; companyNam
   return issueClientSession(client);
 }
 
-/** Access + refresh token pair for a freshly created or authenticated client (same shape as clientLogin). */
-async function issueClientSession(client: { id: string; email: string; contactName: string; companyName: string }) {
+/** Is this address a team login (client_users)? Case-insensitive, wildcard-safe. */
+async function memberEmailExists(email: string): Promise<boolean> {
+  const m = await prisma.clientUser.findFirst({ where: { email: { equals: likeLiteral(email), mode: "insensitive" } }, select: { id: true } });
+  return Boolean(m);
+}
+
+/**
+ * Access + refresh token pair (same shape for every client sign-in path). The subject is always
+ * the COMPANY (clients.id), so every client-scoped query works unchanged; a team login adds
+ * `memberId` + `sv`, which authenticateClient and clientRefresh re-check against the login row.
+ */
+export async function issueClientSession(
+  client: { id: string; email: string; contactName: string; companyName: string },
+  member?: { id: string; email: string; name: string; sessionVersion: number } | null,
+) {
+  const claims = member ? { memberId: member.id, sv: member.sessionVersion } : {};
   const accessToken = jwt.sign(
-    { userId: client.id, email: client.email, roles: [], type: "client" as const },
+    { userId: client.id, email: member?.email ?? client.email, roles: [], type: "client" as const, ...claims },
     JWT_SECRET,
     { expiresIn: ACCESS_TOKEN_EXPIRY }
   );
-  const refreshToken = jwt.sign({ userId: client.id }, JWT_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() });
+  const refreshToken = jwt.sign({ userId: client.id, ...claims }, JWT_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() });
   const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
   await prisma.clientRefreshToken.create({
-    data: { clientId: client.id, token: tokenHash, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+    data: { clientId: client.id, clientUserId: member?.id ?? null, token: tokenHash, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
   });
+  if (member) await prisma.clientUser.update({ where: { id: member.id }, data: { lastLoginAt: new Date() } }).catch(() => undefined);
   return {
     accessToken,
     refreshToken,
-    user: { id: client.id, name: client.contactName, companyName: client.companyName, email: client.email, roles: [] },
+    user: {
+      id: client.id,
+      name: member?.name ?? client.contactName,
+      companyName: client.companyName,
+      email: member?.email ?? client.email,
+      roles: [],
+      /** owner = the company's own login (manages the team); member = a team login. */
+      role: member ? ("member" as const) : ("owner" as const),
+      ...(member ? { memberId: member.id } : {}),
+    },
   };
 }
 
@@ -425,7 +482,7 @@ export async function createInvite(email: string): Promise<{ id: string; email: 
   // that would set up the "registered but can't sign in" trap (admin thinks the user
   // got an invite; user thinks they should reset their existing password).
   const existingClient = await prisma.client.findUnique({ where: { email: normalized } });
-  if (existingClient) {
+  if (existingClient || (await memberEmailExists(normalized))) {
     throw new AppError(409, "EMAIL_EXISTS", "A client account already exists for this email. Send them a password reset link instead.");
   }
 
@@ -452,7 +509,7 @@ export async function acceptInvite(token: string, password: string, contactName?
   // Atomic: check-then-create-then-mark-used to prevent TOCTOU race condition
   const client = await prisma.$transaction(async (tx) => {
     const existing = await tx.client.findUnique({ where: { email: invite.email } });
-    if (existing) throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists");
+    if (existing || (await memberEmailExists(invite.email))) throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists");
 
     const newClient = await tx.client.create({
       data: {
@@ -473,35 +530,5 @@ export async function acceptInvite(token: string, password: string, contactName?
     return newClient;
   });
 
-  // Generate tokens (reuse same pattern as clientLogin)
-  const accessToken = jwt.sign(
-    { userId: client.id, email: client.email, roles: [], type: "client" as const },
-    JWT_SECRET,
-    { expiresIn: ACCESS_TOKEN_EXPIRY }
-  );
-  const refreshToken = jwt.sign(
-    { userId: client.id },
-    JWT_SECRET,
-    { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() }
-  );
-  const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
-  await prisma.clientRefreshToken.create({
-    data: {
-      clientId: client.id,
-      token: tokenHash,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  return {
-    accessToken,
-    refreshToken,
-    user: {
-      id: client.id,
-      name: client.contactName,
-      companyName: client.companyName,
-      email: client.email,
-      roles: [],
-    },
-  };
+  return issueClientSession(client);
 }

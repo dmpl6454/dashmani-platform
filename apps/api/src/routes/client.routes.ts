@@ -1,11 +1,12 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
-import { authenticateClient } from "../middleware/client-auth";
+import { authenticateClient, requireClientOwner } from "../middleware/client-auth";
 import { requirePermission } from "../middleware/rbac";
 import { validate } from "../middleware/validate";
 import { auditLog } from "../middleware/audit-log";
 import { clientValidators, contentValidators } from "@dashmani/shared";
 import * as clientAuthService from "../services/client-auth.service";
+import * as clientTeamService from "../services/client-team.service";
 import * as projectService from "../services/project.service";
 import * as approvalService from "../services/approval.service";
 import * as contentService from "../services/content.service";
@@ -37,7 +38,7 @@ router.post("/client/auth/refresh", async (req: Request, res: Response, next: Ne
 
 router.post("/client/auth/logout", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await clientAuthService.clientLogout((req as any).client.id);
+    await clientAuthService.clientLogout((req as any).client.id, (req as any).client.memberId ?? undefined);
     return success(res, { message: "Logged out" });
   } catch (err) { next(err); }
 });
@@ -361,6 +362,70 @@ router.post(
     } catch (err) { next(err); }
   }
 );
+
+// ===== TEAM LOGINS (more than one person per client company) =====
+
+// GET /v1/client/auth/join/:token  (public: who the invite is for, before a password is set)
+router.get("/client/auth/join/:token", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return success(res, await clientTeamService.describeInvite(req.params.token));
+  } catch (err) { next(err); }
+});
+
+// POST /v1/client/auth/join  (public: accept a team invite — set a password, get a session;
+// rate-limited by authLimiter in app.ts)
+router.post("/client/auth/join", validate(clientValidators.clientJoinSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const member = await clientTeamService.acceptMemberInvite(req.body);
+    return success(res, await clientAuthService.issueClientSession(member.client, member), undefined, 201);
+  } catch (err) { next(err); }
+});
+
+// GET /v1/client/team  (any login of the company may see who else signs in)
+router.get("/client/team", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const team = await clientTeamService.listTeam((req as any).client.id);
+    return success(res, { ...team, you: (req as any).client.memberId ?? "owner" });
+  } catch (err) { next(err); }
+});
+
+const ownerName = async (clientId: string) => {
+  const c = await clientAuthService.getClientById(clientId);
+  return `${c.contactName} (account owner)`;
+};
+
+router.post("/client/team", authenticateClient, requireClientOwner, validate(clientValidators.clientTeamInviteSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const clientId = (req as any).client.id;
+    return success(res, await clientTeamService.inviteMember(clientId, req.body, await ownerName(clientId)), undefined, 201);
+  } catch (err) { next(err); }
+});
+
+router.post("/client/team/:memberId/resend", authenticateClient, requireClientOwner, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const clientId = (req as any).client.id;
+    return success(res, await clientTeamService.resendInvite(clientId, req.params.memberId, await ownerName(clientId)));
+  } catch (err) { next(err); }
+});
+
+router.post("/client/team/:memberId/disable", authenticateClient, requireClientOwner, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    return success(res, await clientTeamService.disableMember((req as any).client.id, req.params.memberId));
+  } catch (err) { next(err); }
+});
+
+router.post("/client/team/:memberId/enable", authenticateClient, requireClientOwner, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    return success(res, await clientTeamService.enableMember((req as any).client.id, req.params.memberId));
+  } catch (err) { next(err); }
+});
+
+router.delete("/client/team/:memberId", authenticateClient, requireClientOwner, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    return success(res, await clientTeamService.removeMember((req as any).client.id, req.params.memberId));
+  } catch (err) { next(err); }
+});
 
 // GET /v1/client/analytics
 router.get("/client/analytics", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {

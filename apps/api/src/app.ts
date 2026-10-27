@@ -149,6 +149,9 @@ app.use("/v1/client/auth/login", authLimiter);
 // Public self-signup: the same per-(client, account) bucket — 20 attempts per 15 min keeps a
 // bot from minting accounts in bulk without punishing a brand on a shared office IP.
 app.use("/v1/client/auth/signup", authLimiter);
+// Accepting a team invite sets a password from an emailed token: POST only (the GET that shows
+// the invite is a page load). No email in the body, so the bucket is the client's IP.
+app.post("/v1/client/auth/join", authLimiter);
 // Sign in with Google: the body carries no email, so loginRateLimitKey buckets by the ID
 // token's (unverified) `sub` — per (client, Google account), like the password logins.
 // ⚠️ POST on the exact path only — `app.use` would prefix-match GET /google/config, which every

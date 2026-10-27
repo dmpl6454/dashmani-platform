@@ -133,6 +133,8 @@ describe("sales API", () => {
   it("lists the client catalogue first, then every other active channel without a price", async () => {
     const platform = await prisma.platform.create({ data: { name: "Snapchat", slug: "snapchat" } });
     await prisma.socialAccount.create({ data: { handle: "bollywoodsociety", displayName: "Bollywood Society", platformId: platform.id, followerCount: 147_300, status: "ACTIVE" } });
+    const x = await prisma.platform.create({ data: { name: "X", slug: "x" } });
+    await prisma.socialAccount.create({ data: { handle: "filmyx", displayName: "Filmy X", platformId: x.id, followerCount: 5_000, status: "ACTIVE" } });
     // Two connected Instagram accounts: one priced (= in the client catalogue), one not.
     const conn = await prisma.metaConnection.create({ data: { metaUserId: "mu-sales", connectedById: salesUserId, status: "ACTIVE" } });
     const priced = await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "INSTAGRAM_ACCOUNT", metaId: "9001", name: "Paparazzi Feed", username: "paparazzifeed", followerCount: 2_000_000 } });
@@ -154,8 +156,10 @@ describe("sales API", () => {
     // A connected account without an active price is bookable but not in the catalogue; its reach does not move it up.
     expect(rows.find((c) => c.handle === "filmeflicks")).toMatchObject({ inCatalogue: false, bookable: true, offers: [] });
     expect(rows.findIndex((c) => c.handle === "filmeflicks")).toBeGreaterThan(0);
-    // A tracked-only channel on another platform is listed too, priced or not.
-    expect(rows.find((c) => c.handle === "bollywoodsociety")).toMatchObject({ platform: "snapchat", followers: 147_300, bookable: false, inCatalogue: false, offers: [] });
+    // A Snapchat profile can take a price (bookable) but is not in the catalogue until it has one.
+    expect(rows.find((c) => c.handle === "bollywoodsociety")).toMatchObject({ platform: "snapchat", followers: 147_300, bookable: true, inCatalogue: false, offers: [] });
+    // A tracked-only channel on a platform clients can't book is listed too, never bookable.
+    expect(rows.find((c) => c.handle === "filmyx")).toMatchObject({ platform: "x", bookable: false, inCatalogue: false, offers: [] });
     // Exactly what the client portal serves, in the same order.
     const clientToken = jwt.sign({ userId: clientMh, email: "mh@client.test", roles: [], type: "client" }, process.env.JWT_SECRET || "dev-secret", { expiresIn: "15m" });
     const cat = await request(app).get("/v1/client/campaigns/catalogue").set(auth(clientToken));

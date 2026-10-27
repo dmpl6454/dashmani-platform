@@ -126,9 +126,9 @@ function InvoiceView() {
       {inv.convertedFrom && <div className="card p-3 text-sm mb-4">Made from proforma <Link href={`/invoices/view?id=${inv.convertedFrom.id}`} className="font-mono hover:text-indigo-light">{inv.convertedFrom.number}</Link>. Issuing it moves the proforma&apos;s payments onto this invoice and retires the proforma.</div>}
       {liveConversion && <div className="card p-3 text-sm mb-4">Converted to <Link href={`/invoices/view?id=${liveConversion.id}`} className="font-mono hover:text-indigo-light">{liveConversion.number ?? "a draft tax invoice"}</Link>{liveConversion.number ? "" : " — issue it to move this proforma's payments across"}.</div>}
       {ds === "cancelled" && <div className="card border-danger p-3 text-sm mb-4">Cancelled{inv.cancelReason ? ` — ${inv.cancelReason}` : ""}. The number is kept on record and never reused.</div>}
-      <div className="grid lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 grid gap-4">
-          <section className="card p-4 grid sm:grid-cols-2 gap-4">
+          <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Party title="From" p={inv.sellerSnapshot} />
             <Party title="Bill to" p={inv.buyerSnapshot ?? { legalName: inv.client.billingProfile?.legalName ?? inv.client.companyName, gstin: inv.client.billingProfile?.gstin ?? null, stateCode: inv.client.billingProfile?.stateCode ?? null, email: inv.client.email ?? null, addressLine1: inv.client.billingProfile?.addressLine1 ?? null, addressLine2: null, city: inv.client.billingProfile?.city ?? null, state: inv.client.billingProfile?.state ?? null, pincode: inv.client.billingProfile?.pincode ?? null, phone: null, companyName: inv.client.companyName }} />
             <dl className="sm:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm border-t border-rule pt-3">

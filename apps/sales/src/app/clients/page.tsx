@@ -36,7 +36,7 @@ export default function ClientsPage() {
         <button type="button" className="btn" onClick={() => setAdding((a) => !a)}>{adding ? "Close" : "Add client"}</button>
       </PageHead>
       {adding && (
-        <form onSubmit={create} className="card p-4 grid sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4 items-end">
+        <form onSubmit={create} className="card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4 items-end">
           <Field label="Company"><input className="input" required value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} /></Field>
           <Field label="Contact person"><input className="input" required value={form.contactName} onChange={(e) => setForm({ ...form, contactName: e.target.value })} /></Field>
           <Field label="Email"><input className="input" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>

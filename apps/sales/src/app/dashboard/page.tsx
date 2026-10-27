@@ -68,7 +68,7 @@ export default function DashboardPage() {
           </div>
         </section>
       )}
-      <div className="grid lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <section className="card p-4">
           <h2 className="font-bold mb-3">Top clients this FY</h2>
           {d.topClients.length === 0 ? <p className="text-ink-3 text-sm">No invoices issued this financial year.</p> : (

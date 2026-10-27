@@ -48,7 +48,7 @@ function BookingView() {
       </PageHead>
       {canInvoice && <p className="text-sm text-ink-3 -mt-2 mb-4">The invoice is a draft for {info.name} (switch company at the top to bill the other). It bills every account except posts that failed or were refunded.</p>}
       {!b.billable && <div className="card p-3 text-sm mb-4">This booking is {b.statusLabel.toLowerCase()}, so it cannot be invoiced.</div>}
-      <div className="grid lg:grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <section className="card p-4 text-sm grid gap-2">
           <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Client</div><Link href={`/clients/view?id=${b.client.id}`} className="font-bold hover:text-indigo-light">{b.client.billingProfile?.legalName ?? b.client.companyName}</Link><div className="text-ink-3 text-xs">{b.client.contactName ? `${b.client.contactName} · ` : ""}{b.client.email}{b.client.billingProfile?.gstin ? ` · GSTIN ${b.client.billingProfile.gstin}` : " · no GSTIN on file"}</div></div>
           <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Campaign</div>{titleCase(b.campaignType)}{b.format ? ` · ${titleCase(b.format)}` : ""}{b.audioIntegration ? ` · song${b.audioTrack ? `: ${b.audioTrack}` : ""}` : ""}</div>

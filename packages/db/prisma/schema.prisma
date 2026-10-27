@@ -3150,3 +3150,27 @@ model SalesEvent {
   @@index([entityType, entityId, createdAt])
   @@map("sales_events")
 }
+
+/// A YouTube channel connected by staff (Google OAuth, scopes youtube.upload + youtube.readonly)
+/// so approved campaign items on that channel can be uploaded automatically (Phase 3). One row
+/// per channel: a Google login acts as ONE channel (the one picked at consent), so reconnecting
+/// the same channel updates this row. The refresh token is encrypted with utils/token-crypto.
+/// Service: apps/api/src/services/campaign/youtube.service.ts. DDL: scripts/campaign-youtube-ddl.sql.
+model YoutubeConnection {
+  id              String    @id @default(uuid())
+  /// The UC… channel id.
+  channelId       String    @unique @map("channel_id") @db.VarChar(64)
+  channelTitle    String    @map("channel_title") @db.VarChar(200)
+  googleEmail     String?   @map("google_email") @db.VarChar(320)
+  refreshTokenEnc String    @map("refresh_token_enc") @db.Text
+  grantedScopes   String    @default("") @map("granted_scopes") @db.Text
+  /// active | needs_reauth | revoked
+  status          String    @default("active") @db.VarChar(16)
+  lastError       String?   @map("last_error") @db.Text
+  connectedById   String?   @map("connected_by_id")
+  revokedAt       DateTime? @map("revoked_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("youtube_connections")
+}

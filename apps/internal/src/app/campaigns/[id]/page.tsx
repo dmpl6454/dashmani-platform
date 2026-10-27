@@ -93,7 +93,7 @@ export default function CampaignBookingDetail() {
         {info && <div className="px-3.5 py-2.5 rounded-[8px] bg-[rgba(0,215,160,.08)] border border-[rgba(0,215,160,.3)] text-ds-teal text-[12.5px]">{info}</div>}
         {postable && queuedItems.length > 0 && (autoOn ? (
           <div className="px-3.5 py-2.5 rounded-[8px] bg-[rgba(35,139,255,.08)] border border-[rgba(35,139,255,.3)] text-[#7DB8FF] text-[12.5px]">
-            {queuedItems.length === 1 ? "1 account posts" : `${queuedItems.length} accounts post`} automatically through the Meta API
+            {queuedItems.length === 1 ? "1 account posts" : `${queuedItems.length} accounts post`} automatically through the Meta / YouTube API
             {nextAuto && new Date(nextAuto) > new Date() ? <> — next on <strong>{fmtWhen(nextAuto)}</strong></> : " — now"}.
             {" "}Press <strong>Publish now</strong> on an account to post it sooner.
           </div>
@@ -192,7 +192,7 @@ export default function CampaignBookingDetail() {
               <h2 className="text-[15px] font-semibold text-ds-text mb-1">Review</h2>
               <p className="text-[12.5px] text-ds-t3 mb-3">
                 {autoOn
-                  ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
+                  ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta / YouTube API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
                   : "Auto-publishing is switched off: approving sends every account to \"To post\" — someone posts each one by hand and pastes the link."}
                 {" "}
                 {offline
@@ -341,7 +341,7 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
             ? "Auto-publishing is switched off — this won't post by itself. Choose \"Post by hand instead\"."
             : i.nextAttemptAt && new Date(i.nextAttemptAt) > new Date()
               ? `Posts automatically on ${fmtWhen(i.nextAttemptAt)}`
-              : "Publishing through the Meta API now…"}
+              : "Publishing through the API now…"}
           {autoPublish && i.attempts > 0 ? ` · attempt ${i.attempts + 1} of 5` : ""}
         </div>
       )}

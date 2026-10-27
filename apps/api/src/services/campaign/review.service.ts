@@ -77,7 +77,7 @@ export async function getBookingForStaff(id: string) {
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
   return {
     ...b,
-    autoPublish: { enabled: campaignConfig.publishEnabled(), dueAt: launchAt(b.launchFrom) },
+    autoPublish: { enabled: campaignConfig.anyPublishEnabled(), dueAt: launchAt(b.launchFrom) },
     launchFrom: ymd(b.launchFrom),
     launchTo: ymd(b.launchTo),
     media: b.media.map((m) => ({

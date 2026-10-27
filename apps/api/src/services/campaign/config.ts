@@ -72,6 +72,24 @@ export const campaignConfig = {
   publishMediaTtlSec: () => envNum("CAMPAIGN_PUBLISH_MEDIA_TTL_SEC", 6 * 3600, 600),
   /** Items published per tick (the worker runs every minute). */
   publishBatch: () => envNum("CAMPAIGN_PUBLISH_BATCH", 3, 1),
+  /**
+   * Phase 3: upload approved YouTube items through the YouTube Data API. Its OWN switch,
+   * independent of CAMPAIGN_PUBLISH_ENABLED (Meta). OFF unless explicitly "1".
+   */
+  youtubePublishEnabled: () => process.env.CAMPAIGN_YOUTUBE_PUBLISH_ENABLED === "1",
+  /** Either publisher is on — the worker runs, and staff see auto-publish wording. */
+  anyPublishEnabled: () => campaignConfig.publishEnabled() || campaignConfig.youtubePublishEnabled(),
+  /**
+   * Uploads started per IST day across every channel. videos.insert is the costly call against
+   * the Google project's 10,000-unit daily quota (1,600 units until Google's 2025-12-04 revision
+   * cut it to ~100; third-party pages disagree on later cuts) — 5 is deliberately conservative.
+   */
+  youtubeDailyUploads: () => envNum("CAMPAIGN_YOUTUBE_DAILY_UPLOADS", 5, 1),
+  /** public | unlisted | private. An unverified Google project forces uploads to private. */
+  youtubePrivacy: (): "public" | "unlisted" | "private" => {
+    const v = process.env.CAMPAIGN_YOUTUBE_PRIVACY;
+    return v === "unlisted" || v === "private" ? v : "public";
+  },
   /** Our team's inbox for booking alerts (CC'd on delivery emails). */
   teamEmail: () => process.env.CAMPAIGN_TEAM_EMAIL || process.env.SITE_ENQUIRY_TO || "admin@digitalsukoon.com",
 };

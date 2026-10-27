@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, X as CloseIcon } from "lucide-react";
 import { Icon } from "./portal-icons";
+import { SUPPORT_WHATSAPP_DISPLAY, whatsappSupportUrl } from "@/lib/support";
 import { Avatar } from "./portal-shared";
 import { useClientPendingApprovals } from "@/lib/hooks/use-content";
 import { useAuth } from "@/lib/auth";
@@ -140,8 +141,24 @@ export function PortalRail() {
           })}
         </nav>
 
-        {/* Footer: collapse toggle + user */}
+        {/* Footer: WhatsApp support, collapse toggle, user */}
         <div className="shrink-0 border-t-2 border-border">
+          <a
+            href={whatsappSupportUrl()}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={narrow ? `WhatsApp support · ${SUPPORT_WHATSAPP_DISPLAY}` : undefined}
+            aria-label={`WhatsApp support, ${SUPPORT_WHATSAPP_DISPLAY} (opens WhatsApp)`}
+            className={`w-full flex items-center h-12 border-b-2 border-border text-ink hover:bg-surface transition-colors ${narrow ? "justify-center px-0" : "gap-3 px-5"}`}
+          >
+            <span className="text-[#25D366] shrink-0"><Icon.WhatsApp size={18} /></span>
+            {!narrow && (
+              <span className="min-w-0 leading-tight">
+                <span className="block text-[13px] font-bold">WhatsApp support</span>
+                <span className="block text-[11px] text-ink-3 tabular-nums">{SUPPORT_WHATSAPP_DISPLAY}</span>
+              </span>
+            )}
+          </a>
           {!onClose && (
             <button
               onClick={() => setCollapsed((v) => !v)}
@@ -193,6 +210,15 @@ export function PortalRail() {
           <Menu size={22} />
         </button>
         <Brand small />
+        <a
+          href={whatsappSupportUrl()}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`WhatsApp support, ${SUPPORT_WHATSAPP_DISPLAY} (opens WhatsApp)`}
+          className="ml-auto order-last p-1.5 text-[#25D366] hover:opacity-80"
+        >
+          <Icon.WhatsApp size={22} />
+        </a>
         {pending > 0 && (
           <span className="ml-auto h-5 min-w-[20px] px-1.5 text-[10px] font-extrabold grid place-items-center bg-attention-bg text-attention tabular-nums">
             {pending}

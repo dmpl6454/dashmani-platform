@@ -53,6 +53,7 @@ export const Icon = {
   Carousel: (p: IconProps) => <I {...p} path={<><rect x="6" y="6" width="13" height="13" rx="2"/><path d="M3 9v7a2 2 0 0 0 2 2h7"/></>} />,
   Story: (p: IconProps) => <I {...p} path={<><rect x="6" y="3" width="12" height="18" rx="6"/><circle cx="12" cy="12" r="2"/></>} />,
   Image: (p: IconProps) => <I {...p} path={<><rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m4 16 4-4 5 5"/><path d="m13 14 3-3 4 4"/></>} />,
+  WhatsApp: (p: IconProps) => <I {...p} path={<><path d="M4 20l1.3-4.2A8 8 0 1 1 8.4 18.7Z"/><path d="M9.2 8.6c.2-.5.5-.5.8-.5h.5c.2 0 .4.1.5.4l.6 1.5c.1.2 0 .4-.1.6l-.5.6c.6 1.1 1.5 2 2.6 2.6l.6-.5c.2-.1.4-.2.6-.1l1.5.6c.3.1.4.3.4.5v.5c0 .3 0 .6-.5.8-.6.3-1.5.4-2.6-.1-1.6-.7-3-2.1-3.7-3.7-.5-1.1-.4-2-.1-2.6Z"/></>} />,
   Comment: (p: IconProps) => <I {...p} path={<path d="M5 6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-5l-4 3v-3H7a2 2 0 0 1-2-2Z"/>} />,
   Send: (p: IconProps) => <I {...p} path={<><path d="M21 4 3 11l7 2 2 7Z"/><path d="m10 13 4-4"/></>} />,
   Logout: (p: IconProps) => <I {...p} path={<><path d="M9 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></>} />,

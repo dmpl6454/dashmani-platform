@@ -16,6 +16,7 @@ import { StepNav, STEPS, type Step } from "../_step-nav";
 import { Card, CampaignStatus, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
 import { InvoiceList } from "@/components/invoice-list";
 import { useClientInvoices } from "@/lib/hooks/use-invoices";
+import { SUPPORT_WHATSAPP_DISPLAY, whatsappSupportUrl } from "@/lib/support";
 
 const PRE_PAY = ["draft", "awaiting_payment"];
 /** Statuses where an offline campaign's amount is still to be settled with our team. */
@@ -235,7 +236,7 @@ function RenderWait({ campaign: c, action }: { campaign: Campaign; action: strin
   return (
     <p role="status" aria-live="polite" className="text-[13px] text-ink-2 mb-3">
       Preparing your preview: {parts || "your files"}. This usually takes a few minutes, longer when our servers are busy. Your campaign is saved — you can leave this page and come back from Campaigns; this page updates by itself. You can {action} once it&apos;s ready.
-      {slow && " This is taking longer than usual. You don't need to wait here — if it still isn't ready later today, email hello@digitalsukoon.com."}
+      {slow && <> This is taking longer than usual. You don&apos;t need to wait here — if it still isn&apos;t ready later today, <a href={whatsappSupportUrl(`my campaign preview`)} target="_blank" rel="noopener noreferrer" className="underline font-semibold">WhatsApp us on {SUPPORT_WHATSAPP_DISPLAY}</a> or email hello@digitalsukoon.com.</>}
     </p>
   );
 }
@@ -569,7 +570,8 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
           {windowPassed && (
             <p className="text-[13px] text-attention mt-2">
               Your posting window has passed — reply to the review email or write to{" "}
-              <a href="mailto:hello@digitalsukoon.com" className="underline font-semibold">hello@digitalsukoon.com</a> and our team will agree new dates with you.
+              <a href="mailto:hello@digitalsukoon.com" className="underline font-semibold">hello@digitalsukoon.com</a>, or{" "}
+              <a href={whatsappSupportUrl(`new dates for my campaign "${c.name}"`)} target="_blank" rel="noopener noreferrer" className="underline font-semibold">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a>, and our team will agree new dates with you.
             </p>
           )}
           {!editing && <div className="mt-3"><Button variant="ink" onClick={() => setEditing(true)}>Update your campaign</Button></div>}

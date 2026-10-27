@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { canonicalKey, CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, formatPaise, LIVE_ITEM_STATUSES, SETTLED_ITEM_STATUSES, type CampaignFormat, type CampaignType, type ItemStatus } from "@dashmani/shared";
+import { canonicalKey, CAMPAIGN_TYPE_LABELS, formatLabelFor, formatPaise, LIVE_ITEM_STATUSES, SETTLED_ITEM_STATUSES, type CampaignType, type ItemStatus } from "@dashmani/shared";
 import { sendEmail, notifyAdminByEmail } from "../email.service";
 import { campaignConfig } from "./config";
 
@@ -12,7 +12,7 @@ import { campaignConfig } from "./config";
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-const PLATFORM_LABEL: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", youtube: "YouTube" };
+const PLATFORM_LABEL: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", youtube: "YouTube", snapchat: "Snapchat" };
 
 function fmtIST(d: Date | null): string {
   if (!d) return "—";
@@ -108,7 +108,7 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
       return `<tr>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${esc(PLATFORM_LABEL[i.platform] ?? i.platform)}</td>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${acct}</td>
-<td style="padding:10px 8px;border-bottom:1px solid #eee">${esc(FORMAT_LABELS[i.format as CampaignFormat] ?? i.format)}</td>
+<td style="padding:10px 8px;border-bottom:1px solid #eee">${esc(formatLabelFor(i.platform, i.format))}</td>
 <td style="padding:10px 8px;border-bottom:1px solid #eee;white-space:nowrap">${esc(i.postedAt ? fmtIST(i.postedAt) : "—")}</td>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${link}</td></tr>`;
     })
@@ -165,7 +165,7 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
   const where = item.accountHandle ? `@${item.accountHandle}` : item.accountName;
   const html = shell(`Your post is live on ${where}`, `
 <p>Hi ${esc(b.client.contactName)},</p>
-<p>Your ${esc(FORMAT_LABELS[item.format as CampaignFormat] ?? item.format)} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
+<p>Your ${esc(formatLabelFor(item.platform, item.format))} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
 <p>${button(item.permalink, "View post")}</p>
 ${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
   await sendEmail({ to: b.client.email, subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });

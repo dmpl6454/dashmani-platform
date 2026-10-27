@@ -66,7 +66,7 @@ export function StatusPill({ status, map = STATUS }: { status: string; map?: Rec
 }
 
 export function PlatformDot({ platform }: { platform: string }) {
-  const c = platform === "instagram" ? "#DD3FAF" : platform === "facebook" ? "#2F86F0" : "#E52D47";
+  const c = platform === "instagram" ? "#DD3FAF" : platform === "facebook" ? "#2F86F0" : platform === "snapchat" ? "#FFFC00" : "#E52D47";
   return <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-full shrink-0" style={{ background: c }} />;
 }
 

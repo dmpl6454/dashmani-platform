@@ -117,7 +117,7 @@ export function ItemStatus({ status, paidOnline }: { status: string; paidOnline:
 }
 
 export function PlatformDot({ platform }: { platform: string }) {
-  const color = platform === "instagram" ? "#d6249f" : platform === "facebook" ? "#1877f2" : platform === "youtube" ? "#ff0000" : "#888";
+  const color = platform === "instagram" ? "#d6249f" : platform === "facebook" ? "#1877f2" : platform === "youtube" ? "#ff0000" : platform === "snapchat" ? "#fffc00" : "#888";
   return <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-full shrink-0" style={{ background: color }} />;
 }
 

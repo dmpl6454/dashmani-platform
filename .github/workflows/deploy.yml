@@ -5,6 +5,15 @@ on:
     branches:
       - main
 
+# One deploy at a time. Two merges seconds apart used to run deploy.sh twice at
+# once on the box, and the first run's build failed while the second rebuilt the
+# same .next directories. A newer run now waits for the running one to finish.
+# GitHub keeps at most one waiting run per group (a third push replaces it),
+# which is fine: deploy.sh always deploys the latest origin/main.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

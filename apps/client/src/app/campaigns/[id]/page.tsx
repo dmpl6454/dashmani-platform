@@ -6,7 +6,7 @@ import { mutate as revalidate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
 import { Button, PageError, Skeleton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
-import { CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, type CampaignFormat } from "@dashmani/shared/src/validators/campaign";
+import { CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, formatLabelFor, type CampaignFormat } from "@dashmani/shared/src/validators/campaign";
 import { todayIST } from "@dashmani/shared/src/utils/date";
 import { useAuth } from "@/lib/auth";
 import { compact, mutateJson, previewUrl, renderFailed, renderPending, renderPendingCounts, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign, type CampaignListRow } from "@/lib/campaign";
@@ -658,7 +658,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                 <div className="min-w-0">
                   <div className="text-[13.5px] font-semibold text-ink truncate">{i.accountName}{i.accountHandle && <span className="text-ink-3 font-normal"> @{i.accountHandle}</span>}</div>
                   <div className="text-[12px] text-ink-3">
-                    {PLATFORM_LABEL[i.platform]} · {FORMAT_LABELS[i.format as CampaignFormat] ?? i.format}
+                    {PLATFORM_LABEL[i.platform]} · {formatLabelFor(i.platform, i.format)}
                     {i.postedAt ? ` · posted ${fmtDateTime(i.postedAt)}` : ""}
                     {!i.postedAt && "scheduledFor" in i && i.scheduledFor && new Date(i.scheduledFor) > new Date() ? ` · posts ${fmtDateTime(i.scheduledFor)}` : ""}
                   </div>

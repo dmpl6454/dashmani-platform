@@ -8,19 +8,40 @@ import { todayIST } from "../utils/date";
 
 // ── Vocabularies ────────────────────────────────────────────────────────────────
 
-export const CAMPAIGN_PLATFORMS = ["instagram", "facebook", "youtube"] as const;
+export const CAMPAIGN_PLATFORMS = ["instagram", "facebook", "youtube", "snapchat"] as const;
 export type CampaignPlatform = (typeof CAMPAIGN_PLATFORMS)[number];
 
 /** reel = IG Reel / FB Reel / YouTube Short; post = feed photo or video (YouTube: long video). */
 export const CAMPAIGN_FORMATS = ["reel", "story", "post", "carousel"] as const;
 export type CampaignFormat = (typeof CAMPAIGN_FORMATS)[number];
 
-/** Which formats each platform can carry. YouTube has no stories or carousels. */
+/**
+ * Which formats each platform can carry. YouTube has no stories or carousels; Snapchat carries a
+ * Spotlight (stored as "reel") and a Story, nothing else.
+ */
 export const PLATFORM_FORMATS: Record<CampaignPlatform, readonly CampaignFormat[]> = {
   instagram: ["reel", "story", "post", "carousel"],
   facebook: ["reel", "story", "post", "carousel"],
   youtube: ["reel", "post"],
+  snapchat: ["reel", "story"],
 };
+
+/** Video length limits a platform sets below our format limit (seconds). Snapchat Spotlight: 60 s. */
+export const PLATFORM_VIDEO_MAX_SEC: Partial<Record<CampaignPlatform, Partial<Record<CampaignFormat, number>>>> = {
+  snapchat: { reel: 60 },
+};
+
+export function platformVideoMaxSec(platform: string, format: string): number | null {
+  return PLATFORM_VIDEO_MAX_SEC[platform as CampaignPlatform]?.[format as CampaignFormat] ?? null;
+}
+
+/** What a format is called on a platform (a Snapchat "reel" is a Spotlight, a YouTube one a Short). */
+export function formatLabelFor(platform: string, format: string): string {
+  if (format === "reel" && platform === "snapchat") return "Spotlight";
+  if (format === "reel" && platform === "youtube") return "Short";
+  if (format === "post" && platform === "youtube") return "Video";
+  return FORMAT_LABELS[format as CampaignFormat] ?? format;
+}
 
 /**
  * Formats clients can book today (owner decision 2026-10-08: reel, post and carousel — no
@@ -354,6 +375,7 @@ export const PLATFORM_POST_HOSTS: Record<CampaignPlatform, readonly string[]> = 
   instagram: ["instagram.com"],
   facebook: ["facebook.com", "fb.watch"],
   youtube: ["youtube.com", "youtu.be"],
+  snapchat: ["snapchat.com"],
 };
 
 export function isPlatformPostUrl(platform: CampaignPlatform, url: string): boolean {

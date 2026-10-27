@@ -4,6 +4,7 @@ import {
   CAMPAIGN_LIMITS,
   EDITABLE_BOOKING_STATUSES,
   PLATFORM_FORMATS,
+  platformVideoMaxSec,
   SETTLED_ITEM_STATUSES,
   LIVE_ITEM_STATUSES,
   type BookingStatus,
@@ -562,6 +563,7 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
     }
     prices.set(c.id, p);
   }
+  await assertPlatformVideoLengths(id, cards);
   const targets = await resolveCatalogueTargets(cards.map((c) => ({ targetType: c.targetType, targetId: c.targetId })));
   for (const c of cards) {
     if (!targets.has(`${c.targetType}:${c.targetId}`)) {
@@ -656,15 +658,46 @@ export async function assertCreativeReady(id: string) {
       // Only renders of files still attached to this booking: a variant of a purged or detached
       // file is never rendered and must not hold checkout hostage.
       renders: { where: { media: { purgedAt: null, bookingId: id } }, select: { status: true } },
+      items: { select: { platform: true, format: true } },
     },
   });
   if (!b?.format || b.media.filter((m) => m.role !== "thumbnail").length === 0) throw new AppError(400, "NO_CREATIVE", "Add your video or image first.");
+  // The video may have been replaced after the accounts were picked.
+  await assertPlatformVideoLengths(id, b.items);
   const states = [...b.media.map((m) => m.renderStatus), ...b.renders.map((r) => r.status)];
   if (states.some((s) => s === "failed")) {
     throw new AppError(400, "RENDER_FAILED", "We couldn't prepare one of your files. Open the Content step and press Try again, or contact us.");
   }
   if (states.some((s) => s !== "done")) {
     throw new AppError(409, "RENDER_PENDING", "We're still preparing your preview. Try again in a minute.");
+  }
+}
+
+/**
+ * A platform may take shorter videos than our format limit (Snapchat Spotlight: 60 s). Refuse a
+ * booking whose video is too long for one of its accounts, naming the platform and the limit.
+ */
+export async function assertPlatformVideoLengths(bookingId: string, items: Array<{ platform: string; format: string }>) {
+  const limits = new Map<string, number>();
+  for (const i of items) {
+    const max = platformVideoMaxSec(i.platform, i.format);
+    if (max != null) limits.set(i.platform, Math.min(max, limits.get(i.platform) ?? max));
+  }
+  if (limits.size === 0) return;
+  const videos = await prisma.campaignMedia.findMany({
+    where: { bookingId, purgedAt: null, kind: "video", role: { not: "thumbnail" }, durationMs: { not: null } },
+    select: { durationMs: true },
+  });
+  const longest = Math.max(0, ...videos.map((v) => v.durationMs ?? 0));
+  for (const [platform, max] of limits) {
+    if (longest > max * 1000) {
+      const name = platform === "snapchat" ? "Snapchat" : platform;
+      throw new AppError(
+        400,
+        "VIDEO_TOO_LONG_FOR_PLATFORM",
+        `${name} takes videos up to ${max} seconds and yours is ${Math.ceil(longest / 1000)} seconds. Trim the video or leave out the ${name} accounts.`,
+      );
+    }
   }
 }
 

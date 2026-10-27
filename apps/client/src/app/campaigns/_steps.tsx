@@ -8,6 +8,8 @@ import {
   CAMPAIGN_TYPES,
   FORMAT_LABELS,
   daysBetween,
+  formatLabelFor,
+  platformVideoMaxSec,
   type CampaignFormat,
   type CampaignType,
 } from "@dashmani/shared/src/validators/campaign";
@@ -182,7 +184,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const fmt = FORMAT_LABELS[format].toLowerCase();
   const { data, error: loadError, isLoading, mutate: reload } = useCatalogue(true);
   const [q, setQ] = useState("");
-  const [platform, setPlatform] = useState<"all" | "instagram" | "facebook" | "youtube">("all");
+  const [platform, setPlatform] = useState<"all" | "instagram" | "facebook" | "youtube" | "snapchat">("all");
   // null = every category; otherwise a categoryKey() from categoryTabs().
   const [cat, setCat] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("followers");
@@ -190,29 +192,46 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The longest video in the post: a platform with a shorter limit (Snapchat Spotlight, 60 s)
+  // can't carry it, so its accounts are left out and the reason is said below.
+  const longestSec = Math.max(0, ...campaign.media.filter((m) => m.kind === "video" && m.role !== "thumbnail").map((m) => (m.durationMs ?? 0) / 1000));
+  const tooLong = (p: string) => {
+    const max = platformVideoMaxSec(p, format);
+    return max != null && longestSec > max;
+  };
+
   const offers = useMemo(() => {
     const rows = (data ?? []).flatMap((a) => {
+      if (tooLong(a.platform)) return [];
       const o = a.offers.find((x) => x.format === format);
       const price = o ? offerPrice(o, campaign) : null;
       return o && price ? [{ ...a, offer: o, price }] : [];
     });
     return rows;
-  }, [data, format, campaign]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, format, campaign, longestSec]);
 
   // Accounts that carry this format but are left out by a choice the client made: the campaign
   // type (no entertainment price) or the song option (no add-on). Said out loud, never silent.
   const hidden = useMemo(() => {
     let byType = 0;
     let bySong = 0;
+    let byLength = 0;
     for (const a of data ?? []) {
       const o = a.offers.find((x) => x.format === format);
-      if (!o || offerPrice(o, campaign)) continue;
+      if (!o) continue;
+      if (tooLong(a.platform)) {
+        byLength++;
+        continue;
+      }
+      if (offerPrice(o, campaign)) continue;
       const base = campaign.campaignType === "entertainment" ? o.entertainmentPricePaise : o.pricePaise;
       if (base == null) byType++;
       else bySong++;
     }
-    return { byType, bySong };
-  }, [data, format, campaign]);
+    return { byType, bySong, byLength };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, format, campaign, longestSec]);
 
   const offerIds = useMemo(() => new Set(offers.map((a) => a.offer.rateCardId)), [offers]);
   // Picked earlier but no longer offered (withdrawn, or the type/format/song changed since).
@@ -245,10 +264,10 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const total = selected.reduce((s, a) => s + a.price.total, 0);
   const withAudio = campaign.audioIntegration && format === "reel";
   const reach = selected.reduce((s, a) => s + (a.followers ?? 0), 0);
-  const counts = { all: offers.length, instagram: 0, facebook: 0, youtube: 0 } as Record<string, number>;
+  const counts = { all: offers.length, instagram: 0, facebook: 0, youtube: 0, snapchat: 0 } as Record<string, number>;
   for (const a of offers) counts[a.platform]++;
-  // Only platforms that actually have accounts get a tab (there are no YouTube rate cards today).
-  const tabs = (["all", "instagram", "facebook", "youtube"] as const).filter((p) => p === "all" || counts[p] > 0 || platform === p);
+  // Only platforms that actually have priced accounts get a tab.
+  const tabs = (["all", "instagram", "facebook", "youtube", "snapchat"] as const).filter((p) => p === "all" || counts[p] > 0 || platform === p);
 
   const toggle = (id: string) => setPicked((p) => {
     const n = new Set(p);
@@ -299,7 +318,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const term = q.trim();
   const emptyText =
     offers.length === 0
-      ? hidden.byType + hidden.bySong > 0
+      ? hidden.byType + hidden.bySong + hidden.byLength > 0
         ? `No account takes a ${fmt} with the choices you made so far.`
         : `No accounts are open for ${fmt} posts yet. Try another format, or contact us.`
       : term
@@ -373,7 +392,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
           </div>
         )}
 
-        {data && (hidden.byType > 0 || hidden.bySong > 0) && (
+        {data && (hidden.byType > 0 || hidden.bySong > 0 || hidden.byLength > 0) && (
           <div className="mb-4 grid gap-1 text-[12.5px] text-ink-3">
             {hidden.byType > 0 && (
               <p>
@@ -383,6 +402,11 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
             {hidden.bySong > 0 && (
               <p>
                 {hiddenLead(hidden.bySong)} offer songs — turn the song off in {jump("creative", "Content")} to see {hidden.bySong === 1 ? "it" : "them"}.
+              </p>
+            )}
+            {hidden.byLength > 0 && (
+              <p>
+                {hiddenLead(hidden.byLength)} take a video this long (Snapchat Spotlight: up to {platformVideoMaxSec("snapchat", format) ?? 60} seconds) — use a shorter video in {jump("creative", "Content")} to see {hidden.byLength === 1 ? "it" : "them"}.
               </p>
             )}
           </div>
@@ -435,7 +459,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                     </div>
                     <div className="text-[12px] text-ink-3 flex flex-wrap gap-x-3 gap-y-0.5">
                       {a.username && <span className="truncate max-w-[160px]">@{a.username}</span>}
-                      <span>{PLATFORM_LABEL[a.platform]}</span>
+                      <span>{PLATFORM_LABEL[a.platform]}{formatLabelFor(a.platform, format) !== FORMAT_LABELS[format] ? ` ${formatLabelFor(a.platform, format)}` : ""}</span>
                       {a.category && <span>{a.category}</span>}
                       {a.linkDeliveryMinutes && <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>}
                     </div>

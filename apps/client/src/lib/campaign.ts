@@ -28,7 +28,7 @@ export interface CampaignMedia {
 export interface CampaignItem {
   id: string;
   rateCardId: string;
-  platform: "instagram" | "facebook" | "youtube";
+  platform: "instagram" | "facebook" | "youtube" | "snapchat";
   format: string;
   accountName: string;
   accountHandle: string | null;
@@ -116,7 +116,7 @@ export interface CampaignListRow {
 export interface CatalogueEntry {
   targetType: string;
   targetId: string;
-  platform: "instagram" | "facebook" | "youtube";
+  platform: "instagram" | "facebook" | "youtube" | "snapchat";
   name: string;
   username: string | null;
   pictureUrl: string | null;
@@ -337,4 +337,4 @@ export function compact(n: number | null | undefined): string {
   return String(n);
 }
 
-export const PLATFORM_LABEL: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", youtube: "YouTube" };
+export const PLATFORM_LABEL: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", youtube: "YouTube", snapchat: "Snapchat" };

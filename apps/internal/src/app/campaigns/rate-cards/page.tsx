@@ -15,7 +15,7 @@ import { BTN_GOLD, CARD, INPUT, ErrorBar, PageHead, PlatformDot, compact } from 
 type Target = {
   targetType: "meta_asset" | "social_account";
   targetId: string;
-  platform: "instagram" | "facebook" | "youtube";
+  platform: "instagram" | "facebook" | "youtube" | "snapchat";
   name: string;
   username: string | null;
   followers: number | null;
@@ -42,7 +42,7 @@ export default function RateCardsPage() {
   // Edits: key → { category?, prices: format → rupees string }
   const [edits, setEdits] = useState<Record<string, { category?: string; prices: Record<string, string> }>>({});
   const [q, setQ] = useState("");
-  const [platform, setPlatform] = useState<"all" | "instagram" | "facebook" | "youtube">("all");
+  const [platform, setPlatform] = useState<"all" | "instagram" | "facebook" | "youtube" | "snapchat">("all");
   const [onlyPriced, setOnlyPriced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -134,7 +134,7 @@ export default function RateCardsPage() {
       <Link href="/campaigns" className="mt-6 inline-flex items-center gap-1 text-[12.5px] text-ds-t3 hover:text-ds-text"><ChevronLeft className="h-4 w-4" />Campaign bookings</Link>
       <PageHead
         title="Rate card"
-        sub="Rupees per account and format. Brand = brand campaigns (empty = format not offered). Ent. = film / OTT / music campaigns (empty = not offered for those). Audio = song integration add-on on reels. Clients see accounts with at least one price."
+        sub="Rupees per account and format. Brand = brand campaigns (empty = format not offered). Ent. = film / OTT / music campaigns (empty = not offered for those). Audio = song integration add-on on reels. On YouTube the Reel column is a Short and Post a video; on Snapchat Reel is a Spotlight (videos up to 60 s, posted by hand). Clients see accounts with at least one price."
       />
 
       <div className="flex flex-wrap gap-2 items-center mb-4">
@@ -142,7 +142,7 @@ export default function RateCardsPage() {
           <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-ds-t3" />
           <input className={`${INPUT} pl-9`} placeholder="Search accounts" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search accounts" />
         </div>
-        {(["all", "instagram", "facebook", "youtube"] as const).map((p) => (
+        {(["all", "instagram", "facebook", "youtube", "snapchat"] as const).map((p) => (
           <button key={p} type="button" onClick={() => setPlatform(p)} aria-pressed={platform === p}
             className={`h-9 px-3.5 rounded-full text-[12.5px] font-semibold border ${platform === p ? "border-ds-gold text-ds-gold" : "border-ds-line2 text-ds-t2"}`}>
             {p === "all" ? "All" : p[0].toUpperCase() + p.slice(1)}

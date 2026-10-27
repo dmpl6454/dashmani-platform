@@ -7,7 +7,8 @@ import { LINK_DELIVERY_MINUTES } from "./config";
 
 // Rate cards (our price per account per format) and the client-facing catalogue built from
 // them. A "target" is either a connected Meta asset (Facebook Page / Instagram account) or a
-// tracked social_accounts row (YouTube — not publishable through Meta, posted by staff).
+// tracked social_accounts row (YouTube channel or Snapchat profile — not publishable through
+// Meta; Snapchat is always posted by staff, it has no posting API).
 //
 // ⚠️ The catalogue is served to CLIENTS. It returns explicit fields only: never earnings,
 // tokens, connection ids or anything else from meta_assets beyond what is listed below.
@@ -43,10 +44,10 @@ function metaProfileUrl(kind: string, metaId: string, username: string | null): 
 
 /**
  * Every account that can be put on a rate card: live, monitored Meta assets (duplicates
- * suppressed, as everywhere else) and active YouTube channels.
+ * suppressed, as everywhere else) and active YouTube channels and Snapchat profiles.
  */
 export async function listBookableTargets(): Promise<CatalogueTarget[]> {
-  const [assets, hidden, yt] = await Promise.all([
+  const [assets, hidden, tracked] = await Promise.all([
     prisma.metaAsset.findMany({
       where: { disconnectedAt: null, selected: true },
       select: {
@@ -63,8 +64,11 @@ export async function listBookableTargets(): Promise<CatalogueTarget[]> {
     }),
     resolveDuplicateAssetIds(),
     prisma.socialAccount.findMany({
-      where: { status: "ACTIVE", platform: { slug: "youtube" } },
-      select: { id: true, handle: true, displayName: true, followerCount: true, profileUrl: true },
+      where: { status: "ACTIVE", platform: { slug: { in: ["youtube", "snapchat"] } } },
+      select: {
+        id: true, handle: true, displayName: true, followerCount: true, profileUrl: true,
+        platform: { select: { slug: true } },
+      },
     }),
   ]);
   const out: CatalogueTarget[] = [];
@@ -86,19 +90,23 @@ export async function listBookableTargets(): Promise<CatalogueTarget[]> {
       profileUrl: metaProfileUrl(a.kind, a.metaId, a.username),
     });
   }
-  for (const s of yt) {
+  for (const s of tracked) {
+    const handle = s.handle.replace(/^@/, "");
+    const platform = s.platform.slug === "snapchat" ? "snapchat" : "youtube";
     out.push({
       targetType: "social_account",
       targetId: s.id,
-      platform: "youtube",
+      platform,
       name: s.displayName,
-      username: s.handle.replace(/^@/, ""),
+      username: handle,
       pictureUrl: null,
+      // A 0 is "not known" (Snapchat withholds the count on some profiles), never a real zero.
       followers: s.followerCount > 0 ? s.followerCount : null,
       views28d: null,
       engagements28d: null,
       engagementRatePct: null,
-      profileUrl: s.profileUrl,
+      // Snapchat's stored /p/ and /t/ links are dead (404 since 2026-09); /@<handle> is the live page.
+      profileUrl: platform === "snapchat" ? (handle ? `https://www.snapchat.com/@${encodeURIComponent(handle)}` : null) : s.profileUrl,
     });
   }
   return out;

@@ -1,4 +1,5 @@
 "use client";
+import { SUPPORT_WHATSAPP_DISPLAY, whatsappSupportUrl } from "@/lib/support";
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -199,7 +200,7 @@ function SignupForm() {
             </button>
 
             <p className="auth-fine">
-              By creating an account you agree to work with Digital Sukoon under its standard terms. Questions: <a href="mailto:hello@digitalsukoon.com">hello@digitalsukoon.com</a>.
+              By creating an account you agree to work with Digital Sukoon under its standard terms. Questions: <a href="mailto:hello@digitalsukoon.com">hello@digitalsukoon.com</a> or <a href={whatsappSupportUrl("signing up")} target="_blank" rel="noopener noreferrer">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a>.
             </p>
           </form>
         )}

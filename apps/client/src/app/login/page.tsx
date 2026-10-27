@@ -1,4 +1,5 @@
 "use client";
+import { SUPPORT_WHATSAPP_DISPLAY, whatsappSupportUrl } from "@/lib/support";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Check, AlertCircle, X } from "lucide-react";
@@ -102,6 +103,7 @@ function LoginForm() {
             <button type="button" onClick={() => setForgotOpen(true)} className="auth-link">Forgot password?</button>
           </div>
           {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
+          <p className="auth-fine">Trouble signing in? <a href={whatsappSupportUrl("signing in to the client portal")} target="_blank" rel="noopener noreferrer" className="auth-link">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a></p>
           <button type="submit" disabled={submitState !== "idle" || !hydrated} className="auth-btn" aria-live="polite">
             {submitState === "idle" && (<><span>Enter the portal</span><ArrowRight size={17} /></>)}
             {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>One moment…</span></>)}

@@ -18,6 +18,7 @@ import app from "../src/app";
 import { flushSalesBackground } from "../src/services/sales/common";
 import { emailInvoice } from "../src/services/sales/invoice-email.service";
 import { billOnlineBookingPayment } from "../src/services/sales/booking-billing.service";
+import { campaignPricing, itemGstPaise } from "../src/services/campaign/gst";
 import { createTestRole, createTestUser, generateClientToken, generateToken } from "./helpers";
 
 const SELLER = {
@@ -125,30 +126,40 @@ describe("invoice emails and client downloads", () => {
   it("an online campaign payment is invoiced with GST on top, receipted and emailed — once", async () => {
     const b = await prisma.campaignBooking.create({
       data: {
-        clientId, name: "Diwali push", brand: "Filmy", status: "paid_pending_review", totalPaise: 1_180_000, submittedAt: new Date(), paidAt: new Date(),
+        clientId, name: "Diwali push", brand: "Filmy", status: "paid_pending_review", totalPaise: 1_392_400, submittedAt: new Date(), paidAt: new Date(),
         items: { create: [
           { rateCardId: "rc-1", targetType: "meta_asset", targetId: "a1", platform: "instagram", format: "reel", accountName: "Bollywood Society", accountHandle: "bs", pricePaise: 700_000, status: "pending" },
           { rateCardId: "rc-2", targetType: "meta_asset", targetId: "a2", platform: "facebook", format: "post", accountName: "Filmy Page", pricePaise: 480_000, status: "pending" },
         ] },
       },
     });
-    const r = await billOnlineBookingPayment(b.id, "pay_test123", 1_180_000);
+    // Checkout charged ₹11,800 of rate cards + 18% GST = ₹13,924.
+    const r = await billOnlineBookingPayment(b.id, "pay_test123", 1_392_400);
     await flushSalesBackground();
     const inv = await prisma.salesInvoice.findUnique({ where: { id: r.invoiceId! } });
-    // Rate-card prices are the taxable value; 18% GST is added on top and stays due.
-    expect(inv).toMatchObject({ status: "issued", taxablePaise: 1_180_000, cgstPaise: 106_200, sgstPaise: 106_200, totalPaise: 1_392_400, paidPaise: 1_180_000, campaignBookingId: b.id });
+    // Rate-card prices are the taxable value with 18% GST on top — exactly what checkout charged.
+    expect(inv).toMatchObject({ status: "paid", taxablePaise: 1_180_000, cgstPaise: 106_200, sgstPaise: 106_200, totalPaise: 1_392_400, paidPaise: 1_392_400, campaignBookingId: b.id });
     const pay = await prisma.salesPayment.findUnique({ where: { id: r.paymentId! } });
-    expect(pay).toMatchObject({ mode: "razorpay", reference: "pay_test123", amountPaise: 1_180_000, recordedById: "system" });
+    expect(pay).toMatchObject({ mode: "razorpay", reference: "pay_test123", amountPaise: 1_392_400, recordedById: "system" });
     expect(sent).toHaveLength(1);
-    expect(sent[0].subject).toContain("payment of ₹11,800.00 received");
-    expect(sent[0].subject).not.toContain("paid in full");
+    expect(sent[0].subject).toContain("payment of ₹13,924.00 received (paid in full)");
 
     // The webhook can arrive twice: no second receipt, invoice or email.
-    const again = await billOnlineBookingPayment(b.id, "pay_test123", 1_180_000);
+    const again = await billOnlineBookingPayment(b.id, "pay_test123", 1_392_400);
     await flushSalesBackground();
     expect(again.paymentId).toBe(r.paymentId);
     expect(await prisma.salesPayment.count()).toBe(1);
     expect(await prisma.salesInvoice.count()).toBe(1);
     expect(sent).toHaveLength(1);
+  });
+
+  it("campaign checkout pricing equals the booking's tax invoice total", async () => {
+    const pricing = await campaignPricing(clientId, [700_000, 480_000]);
+    expect(pricing).toMatchObject({ subtotalPaise: 1_180_000, taxMode: "intra", cgstPaise: 106_200, sgstPaise: 106_200, gstPaise: 212_400, totalPaise: 1_392_400 });
+    // A client billed from another state pays IGST; export / no state on file → as resolved for the invoice.
+    await prisma.clientBillingProfile.update({ where: { clientId }, data: { stateCode: "07", state: "Delhi" } });
+    expect(await campaignPricing(clientId, [100_000])).toMatchObject({ taxMode: "inter", igstPaise: 18_000, totalPaise: 118_000 });
+    expect(itemGstPaise(100_000, { taxMode: "inter", gstRateBp: 1800 })).toBe(18_000);
+    expect(itemGstPaise(100_000, { taxMode: "none", gstRateBp: 1800 })).toBe(0);
   });
 });

@@ -334,8 +334,10 @@ describe("campaign booking flow", () => {
     expect((await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokB}`)).status).toBe(404);
 
     const co = await pay(id);
-    expect(co.amount).toBe(250_000);
-    expect(rzpCalls[0].body).toMatchObject({ amount: 250_000, currency: "INR", payment_capture: 1 });
+    // ₹2,500 of rate cards + 18% GST on top.
+    expect(co.amount).toBe(295_000);
+    expect(co.pricing).toMatchObject({ subtotalPaise: 250_000, gstRateBp: 1800, gstPaise: 45_000, totalPaise: 295_000 });
+    expect(rzpCalls[0].body).toMatchObject({ amount: 295_000, currency: "INR", payment_capture: 1 });
     let b = await prisma.campaignBooking.findUniqueOrThrow({ where: { id } });
     expect(b.status).toBe("paid_pending_review");
 
@@ -401,7 +403,7 @@ describe("campaign booking flow", () => {
     expect(early.body.error.code).toBe("RENDER_PENDING");
     await renderNext({ ignoreLoad: true });
     const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`).send({ amount: 100 });
-    expect(co.body.data.amount).toBe(100_000);
+    expect(co.body.data.amount).toBe(118_000);
   });
 
   it("a caption-only re-save keeps finished renders; an overlay or format change re-queues them; a failed render is re-queued by any save", async () => {
@@ -469,7 +471,7 @@ describe("campaign booking flow", () => {
     expect(r.status).toBe(200);
     const refunds = rzpCalls.filter((c) => c.url.includes("/refund"));
     expect(refunds).toHaveLength(1);
-    expect(refunds[0].body.amount).toBe(250_000);
+    expect(refunds[0].body.amount).toBe(295_000);
     expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("refunded");
     expect((await request(app).post(`/v1/admin/campaigns/${id}/reject`).set("Authorization", `Bearer ${admin}`).send({ note: "again please" })).status).toBe(409);
     expect(rzpCalls.filter((c) => c.url.includes("/refund"))).toHaveLength(1);
@@ -485,7 +487,7 @@ describe("campaign booking flow", () => {
       const calls = rzpCalls.length;
       const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
       expect(co.status).toBe(200);
-      expect(co.body.data).toMatchObject({ offline: true, amount: 250_000, status: "paid_pending_review" });
+      expect(co.body.data).toMatchObject({ offline: true, amount: 295_000, status: "paid_pending_review" });
       // A second submit (stale tab, double click) is told "submitted", never "paid".
       const again = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
       expect(again.status).toBe(409);
@@ -496,7 +498,7 @@ describe("campaign booking flow", () => {
       expect(b.status).toBe("paid_pending_review");
       expect(b.paidAt).toBeNull();
       expect(b.submittedAt).not.toBeNull();
-      expect(b.totalPaise).toBe(250_000);
+      expect(b.totalPaise).toBe(295_000);
       expect(b.pricingSnapshot).not.toBeNull();
       expect(b.payments).toHaveLength(0);
       expect(b.items[0].pricePaise).toBe(250_000);
@@ -555,6 +557,8 @@ describe("campaign booking flow", () => {
     const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: id } });
     const rf = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/refund`).set("Authorization", `Bearer ${admin}`);
     expect(rf.status).toBe(200);
+    // The post's price AND the GST charged on it go back: ₹2,500 + ₹450.
+    expect(rzpCalls.filter((c) => c.url.includes("/refund")).map((c) => c.body.amount)).toEqual([295_000]);
     await new Promise((r) => setTimeout(r, 50));
     expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("partially_published");
     const mail = vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Delivered"));
@@ -610,12 +614,12 @@ describe("campaign booking flow", () => {
     // Checkout charges the server's price and records how it was built.
     const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
     expect(co.status).toBe(200);
-    expect(co.body.data.amount).toBe(350_000);
+    expect(co.body.data.amount).toBe(413_000);
     const b = await prisma.campaignBooking.findUniqueOrThrow({ where: { id } });
     expect(b.pricingSnapshot).toMatchObject({ campaignType: "brand", audioIntegration: true, items: [{ basePaise: 300_000, audioAddonPaise: 50_000, pricePaise: 350_000 }] });
 
     // After payment the audio option is frozen — it is part of what was paid for.
-    await webhook("payment.captured", { id: "pay_audio", order_id: co.body.data.orderId, amount: 350_000, currency: "INR", status: "captured" });
+    await webhook("payment.captured", { id: "pay_audio", order_id: co.body.data.orderId, amount: 413_000, currency: "INR", status: "captured" });
     await request(app).post(`/v1/admin/campaigns/${id}/request-changes`).set("Authorization", `Bearer ${admin}`).send({ note: "New cut please" });
     const frozen = await creative({ audioIntegration: false });
     expect(frozen.status).toBe(409);

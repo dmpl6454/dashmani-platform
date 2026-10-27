@@ -6,6 +6,7 @@ import * as rzp from "./razorpay";
 import { assertCreativeReady, transitionBooking, logBookingEvent, type Actor } from "./booking.service";
 import { notifyStaffPaid, sendStatusEmail } from "./delivery.service";
 import { priceFor } from "./rate-card.service";
+import { campaignPricing } from "./gst";
 import { billOnlineBookingPayment } from "../sales/booking-billing.service";
 import { inBackground } from "../sales/common";
 
@@ -13,7 +14,7 @@ import { inBackground } from "../sales/common";
 //
 // ⚠️ Money rules:
 //  • The amount is ALWAYS computed here from the frozen item prices — nothing the client sends
-//    is used as a price.
+//    is used as a price. GST is added on top (campaign/gst.ts), exactly as the tax invoice adds it.
 //  • Only the webhook (HMAC-verified over the raw body) marks a booking paid. The checkout
 //    handler's verify call only drives the UI.
 //  • A webhook event is processed once (razorpay_webhook_events.event_id is unique).
@@ -62,8 +63,10 @@ export async function checkout(clientId: string, bookingId: string) {
     if (!p) throw new AppError(409, "RATE_CARD_UNAVAILABLE", `${i.accountName} is no longer available for this campaign. Remove it and try again.`);
     return { ...i, pricePaise: p.total, basePaise: p.base, audioAddonPaise: p.addon };
   });
-  const total = computeTotal(priced);
-  if (total < 100) throw new AppError(400, "AMOUNT_TOO_LOW", "The total is below the minimum payment.");
+  if (computeTotal(priced) < 100) throw new AppError(400, "AMOUNT_TOO_LOW", "The total is below the minimum payment.");
+  // GST is charged on top of the rate-card prices; the client pays the GST-inclusive total.
+  const pricing = await campaignPricing(clientId, priced.map((i) => i.pricePaise));
+  const total = pricing.totalPaise;
 
   const snapshot = {
     campaignType: b.campaignType,
@@ -79,6 +82,7 @@ export async function checkout(clientId: string, bookingId: string) {
       audioAddonPaise: i.audioAddonPaise,
       pricePaise: i.pricePaise,
     })),
+    gst: pricing,
   };
 
   if (mode === "offline") {
@@ -88,13 +92,13 @@ export async function checkout(clientId: string, bookingId: string) {
       // "was this paid online?" decision (refunds, email wording) keys on it.
       await transitionBooking(b.id, ["draft", "awaiting_payment"], "paid_pending_review", { type: "client", id: clientId }, {
         tx,
-        note: `Submitted for review without online payment (offline mode) — ${total} paise to be collected by hand`,
+        note: `Submitted for review without online payment (offline mode) — ${total} paise incl. ${pricing.gstPaise} paise GST to be collected by hand`,
         data: { totalPaise: total, pricingSnapshot: snapshot as unknown as Prisma.InputJsonValue, submittedAt: new Date() },
       });
     });
     void sendStatusEmail(b.id, "paid").catch((e) => console.error("[campaign] submitted email failed", e));
     void notifyStaffPaid(b.id).catch((e) => console.error("[campaign] staff email failed", e));
-    return { offline: true as const, amount: total, currency: "INR", name: b.name, status: "paid_pending_review" };
+    return { offline: true as const, amount: total, pricing, currency: "INR", name: b.name, status: "paid_pending_review" };
   }
 
   const order = await rzp.createOrder(total, `cb_${b.id.slice(0, 30)}`, { bookingId: b.id, clientId });
@@ -113,7 +117,7 @@ export async function checkout(clientId: string, bookingId: string) {
     }
   });
 
-  return { offline: false as const, orderId: order.id, amount: total, currency: "INR", keyId: razorpayConfig.keyId(), name: b.name };
+  return { offline: false as const, orderId: order.id, amount: total, pricing, currency: "INR", keyId: razorpayConfig.keyId(), name: b.name };
 }
 
 /** Checkout success callback. Confirms the signature for the UI; the webhook does the real work. */

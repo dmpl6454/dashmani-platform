@@ -175,7 +175,8 @@ ${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together on
 export async function sendStatusEmail(bookingId: string, kind: "paid" | "approved" | "changes_requested" | "rejected") {
   const b = await bookingWithClient(bookingId);
   if (!b) return;
-  const total = b.totalPaise != null ? formatPaise(b.totalPaise) : "";
+  // The checkout total includes GST (charged on top of the rate-card prices).
+  const total = b.totalPaise != null ? `${formatPaise(b.totalPaise)} (incl. GST)` : "";
   // paidAt is set only by the Razorpay webhook; a booking submitted without online payment
   // (offline mode) has none, and its money wording must not claim a payment or a refund.
   const paidOnline = Boolean(b.paidAt);
@@ -235,7 +236,7 @@ export async function notifyStaffPaid(bookingId: string) {
       { label: "Type", value: CAMPAIGN_TYPE_LABELS[b.campaignType as CampaignType] ?? b.campaignType },
       ...(b.audioIntegration ? [{ label: "Song audio", value: b.audioTrack ?? "yes" }] : []),
       { label: "Accounts", value: String(b.items.length) },
-      { label: paidOnline ? "Paid" : "Amount (not yet collected)", value: b.totalPaise != null ? formatPaise(b.totalPaise) : "—" },
+      { label: paidOnline ? "Paid" : "Amount (not yet collected)", value: b.totalPaise != null ? `${formatPaise(b.totalPaise)} incl. GST` : "—" },
     ],
     `/campaigns/${b.id}`,
   );

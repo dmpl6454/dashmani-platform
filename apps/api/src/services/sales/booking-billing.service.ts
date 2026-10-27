@@ -6,9 +6,10 @@ import { createPayment } from "./payments.service";
 import { SYSTEM_ACTOR } from "./invoice-email.service";
 
 // A campaign booking paid online (Razorpay) is billed at once: a tax invoice for the booking is
-// created and issued — priced so its total, GST included, equals what the client paid — and the
-// payment is recorded against it as a receipt, which emails the invoice to the client and to the
-// company's billing addresses. Offline bookings are billed by staff in the sales portal, and
+// created and issued — rate-card prices with GST added on top — and the payment is recorded
+// against it as a receipt, which emails the invoice to the client and to the company's billing
+// addresses. Checkout charges the rate-card total, so the GST stays due on the invoice until it is
+// collected and recorded. Offline bookings are billed by staff in the sales portal, and
 // recording the payment there sends the same email.
 
 export async function billOnlineBookingPayment(
@@ -34,7 +35,7 @@ export async function billOnlineBookingPayment(
       company = existing.companyKey as CompanyKey;
       if (existing.status === "draft") await issueInvoice(existing.id, { taxResolution: "keep" }, SYSTEM_ACTOR);
     } else {
-      const draft = await createInvoiceFromBooking(bookingId, SYSTEM_ACTOR, company, { gstInclusive: true });
+      const draft = await createInvoiceFromBooking(bookingId, SYSTEM_ACTOR, company);
       invoiceId = draft.id;
       await issueInvoice(draft.id, { taxResolution: "keep" }, SYSTEM_ACTOR);
     }

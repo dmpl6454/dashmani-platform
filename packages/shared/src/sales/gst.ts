@@ -108,34 +108,6 @@ export function computeTotals(input: {
   };
 }
 
-/**
- * Line prices that EXCLUDE GST, for amounts the client already paid GST-inclusive (a campaign
- * booking's rate-card total): the taxable value is split across the lines in proportion to their
- * inclusive prices, then the largest line is nudged so the document total (tax and rupee rounding
- * included) equals `inclusive` exactly. With no GST (export / SEZ) the prices are returned as-is.
- */
-export function pricesExclusiveOfGst(prices: number[], taxMode: TaxMode, gstRateBp: number, roundToRupee = true): number[] {
-  if (taxMode === "none" || gstRateBp <= 0 || !prices.length) return [...prices];
-  const inclusive = prices.reduce((s, p) => s + p, 0);
-  const taxable = Math.round((inclusive * 10_000) / (10_000 + gstRateBp));
-  // Largest remainder, so the parts add up to `taxable` exactly.
-  const raw = prices.map((p) => (inclusive ? (p * taxable) / inclusive : 0));
-  const out = raw.map(Math.floor);
-  let left = taxable - out.reduce((s, v) => s + v, 0);
-  const order = raw.map((v, i) => [v - Math.floor(v), i] as const).sort((a, b) => b[0] - a[0]);
-  for (let k = 0; left > 0 && k < order.length; k++, left--) out[order[k][1]] += 1;
-  const totalOf = (lines: number[]) => computeTotals({ lines: lines.map((u) => ({ quantity: 1, unitPricePaise: u, discountPaise: 0 })), taxMode, gstRateBp, roundToRupee }).totalPaise;
-  if (totalOf(out) === inclusive) return out;
-  const big = out.indexOf(Math.max(...out));
-  for (let d = 1; d <= 300; d++) {
-    for (const delta of [d, -d]) {
-      const trial = out.map((v, i) => (i === big ? v + delta : v));
-      if (trial[big] >= 0 && totalOf(trial) === inclusive) return trial;
-    }
-  }
-  return out;
-}
-
 // ── Amount in words (Indian system: crore, lakh, thousand) ───────────────────────
 
 const ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];

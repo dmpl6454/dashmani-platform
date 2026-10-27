@@ -47,6 +47,8 @@ export interface CampaignItem {
 }
 
 export interface Campaign {
+  /** Subtotal + GST + total (GST is charged on top of the rate-card prices). Null with no accounts picked. */
+  pricing?: CampaignPricing | null;
   id: string;
   name: string;
   brand: string;
@@ -83,6 +85,18 @@ export interface ItemPreviewFile {
   role: "creative" | "thumbnail";
   status: string;
   url: string | null;
+}
+
+export interface CampaignPricing {
+  subtotalPaise: number;
+  gstRateBp: number;
+  taxMode: "intra" | "inter" | "none";
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  gstPaise: number;
+  roundOffPaise: number;
+  totalPaise: number;
 }
 
 export interface CampaignListRow {

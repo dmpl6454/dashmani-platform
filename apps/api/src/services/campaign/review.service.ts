@@ -1,3 +1,4 @@
+import { itemGstPaise, snapshotPricing } from "./gst";
 import { prisma } from "@dashmani/db";
 import { isPlatformPostUrl, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
@@ -253,7 +254,11 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     return getBookingForStaff(bookingId);
   }
   try {
-    await refundPaymentRow(pay.id, item.pricePaise, `item:${itemId.slice(0, 30)}`, staff(staffId));
+    // The post's price plus the GST charged on it, never more than is left on the payment.
+    const snap = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { pricingSnapshot: true } });
+    const left = pay.amountPaise - pay.refundedPaise;
+    const amount = Math.min(left, item.pricePaise + itemGstPaise(item.pricePaise, snapshotPricing(snap?.pricingSnapshot)));
+    await refundPaymentRow(pay.id, amount, `item:${itemId.slice(0, 30)}`, staff(staffId));
   } catch (err) {
     await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: item.status } });
     throw err;

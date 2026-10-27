@@ -277,7 +277,10 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
   // Only a per-account variant failed: Content has no Try again for it — a re-save of that
   // account's text re-queues it (syncRenderVariants).
   const fileFailed = failedFile(c);
-  const total = c.items.reduce((s, i) => s + i.pricePaise, 0);
+  const subtotal = c.items.reduce((s, i) => s + i.pricePaise, 0);
+  // GST is charged on top; the server works it out exactly as the tax invoice will.
+  const pricing = c.pricing ?? null;
+  const total = pricing?.totalPaise ?? subtotal;
   const offline = c.paymentMode === "offline";
   // Only the campaign's own files (not per-account variants) are shown in the strip below.
   const defaultPending = (c.thumbnail ? [...c.media, c.thumbnail] : c.media).some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering");
@@ -416,9 +419,25 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
             <ItemTextRow key={i.id} campaign={c} item={i} editable onSaved={() => onChanged()} />
           ))}
         </ul>
-        <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: "2px solid rgba(255,255,255,0.18)" }}>
-          <span className="text-[13px] font-semibold text-ink-2">Total</span>
-          <span className="text-[19px] font-bold text-ink tabular-nums">{rupees(total)}</span>
+        <div className="mt-3 pt-3 space-y-1" style={{ borderTop: "2px solid rgba(255,255,255,0.18)" }}>
+          {pricing && pricing.gstPaise > 0 && (
+            <>
+              <div className="flex items-center justify-between text-[13px] text-ink-2"><span>Subtotal</span><span className="tabular-nums">{rupees(pricing.subtotalPaise)}</span></div>
+              {pricing.taxMode === "intra" ? (
+                <>
+                  <div className="flex items-center justify-between text-[13px] text-ink-2"><span>CGST ({pricing.gstRateBp / 200}%)</span><span className="tabular-nums">{rupees(pricing.cgstPaise)}</span></div>
+                  <div className="flex items-center justify-between text-[13px] text-ink-2"><span>SGST ({pricing.gstRateBp / 200}%)</span><span className="tabular-nums">{rupees(pricing.sgstPaise)}</span></div>
+                </>
+              ) : (
+                <div className="flex items-center justify-between text-[13px] text-ink-2"><span>IGST ({pricing.gstRateBp / 100}%)</span><span className="tabular-nums">{rupees(pricing.igstPaise)}</span></div>
+              )}
+              {pricing.roundOffPaise !== 0 && <div className="flex items-center justify-between text-[12px] text-ink-3"><span>Round-off</span><span className="tabular-nums">{pricing.roundOffPaise > 0 ? "+" : "−"}{rupees(Math.abs(pricing.roundOffPaise))}</span></div>}
+            </>
+          )}
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-[13px] font-semibold text-ink-2">{pricing && pricing.gstPaise > 0 ? "Total incl. GST" : "Total"}</span>
+            <span className="text-[19px] font-bold text-ink tabular-nums">{rupees(total)}</span>
+          </div>
         </div>
         <p className="text-[13px] text-ink-2 mt-2">
           {offline
@@ -572,10 +591,10 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
           {c.totalPaise != null && (paidOnline || SETTLING.includes(c.status)) && (
             <p className="text-[12.5px] text-ink-3 mt-2">
               {paidOnline
-                ? `Paid ${rupees(c.totalPaise)} on ${fmtDateTime(c.paidAt as string)}`
+                ? `Paid ${rupees(c.totalPaise)} incl. GST on ${fmtDateTime(c.paidAt as string)}`
                 : c.status === "partially_published"
                   ? `Campaign total before the posts that couldn't be made: ${rupees(c.totalPaise)} — our team will confirm the final amount with you`
-                  : `Campaign total ${rupees(c.totalPaise)} — our team will confirm payment with you`}
+                  : `Campaign total ${rupees(c.totalPaise)} incl. GST — our team will confirm payment with you`}
             </p>
           )}
         </Card>

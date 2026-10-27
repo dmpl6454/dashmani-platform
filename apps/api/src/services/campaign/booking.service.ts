@@ -1,3 +1,4 @@
+import { campaignPricing, snapshotPricing } from "./gst";
 import { prisma, Prisma } from "@dashmani/db";
 import {
   CAMPAIGN_LIMITS,
@@ -264,7 +265,10 @@ export async function getClientBooking(clientId: string, id: string) {
     },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
-  return shapeBooking(b, await resolveItemFiles(b.id));
+  // Subtotal + GST + total: frozen at checkout, else worked out live from the current item prices
+  // (the same computation checkout and the tax invoice use).
+  const pricing = snapshotPricing(b.pricingSnapshot) ?? (b.items.length ? await campaignPricing(clientId, b.items.map((i: { pricePaise: number }) => i.pricePaise)) : null);
+  return { ...shapeBooking(b, await resolveItemFiles(b.id)), pricing };
 }
 
 async function requireEditable(clientId: string, id: string, allowed: readonly BookingStatus[] = EDITABLE_BOOKING_STATUSES) {

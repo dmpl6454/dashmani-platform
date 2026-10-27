@@ -465,7 +465,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
         {error && <div role="alert" className="basis-full order-first text-[12px] text-danger font-medium">{error}</div>}
         <div className="min-w-0 flex-1">
           <div className="text-[12px] text-ink-3">{selected.length} account{selected.length === 1 ? "" : "s"} · {compact(reach)} followers</div>
-          <div className="text-[17px] font-bold text-ink tabular-nums">{rupees(total)}</div>
+          <div className="text-[17px] font-bold text-ink tabular-nums">{rupees(total)} <span className="text-[12px] font-medium text-ink-3">+ GST</span></div>
         </div>
         <Button variant="ink" onClick={save} disabled={busy || selected.length === 0} aria-live="polite" iconRight={<Icon.ArrowRight size={15} />}>
           {busy ? "Saving…" : "Continue"}

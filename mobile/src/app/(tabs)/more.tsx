@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "@/lib/auth";
 import { colors, spacing } from "@/lib/theme";
 import { Screen, Card, SectionTitle, Row, Button } from "@/components/ui";
+import { PipelineEntryRow } from "@/components/pipeline";
 
 export default function MoreScreen() {
   const router = useRouter();
@@ -44,6 +45,7 @@ export default function MoreScreen() {
         <Row icon="calendar-number-outline" iconColor="#FF453A" title="Calendar" subtitle="Month view — holidays & your leaves" onPress={() => router.push("/calendar")} />
         <Row icon="documents-outline" iconColor="#64D2FF" title="Report History" subtitle="Your past daily reports" onPress={() => router.push("/history")} />
         <Row icon="clipboard-outline" iconColor="#F0568C" title="Plan of Action" subtitle="Today's POA + past plans" onPress={() => router.push("/plan")} />
+        <PipelineEntryRow />
       </Card>
 
       <SectionTitle>Requests & Claims</SectionTitle>

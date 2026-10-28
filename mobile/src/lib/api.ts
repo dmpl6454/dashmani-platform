@@ -62,6 +62,10 @@ const store = {
 export class ApiError extends Error {
   code?: string;
   details?: Array<{ field: string; message: string }>;
+  /** HTTP status, when the server answered. */
+  status?: number;
+  /** Seconds to wait before retrying (429 / 503 capacity answers). */
+  retryAfterSec?: number;
   constructor(message: string, code?: string, details?: Array<{ field: string; message: string }>) {
     super(message);
     this.name = "ApiError";
@@ -175,7 +179,15 @@ export function setSessionExpiredHandler(fn: () => void) {
 }
 
 export async function apiFetch<T = any>(path: string, options: RequestInit = {}, _retried = false): Promise<T> {
-  const mode = await getMode();
+  return apiFetchFor<T>(await getMode(), path, options, _retried);
+}
+
+/**
+ * apiFetch with an explicit portal session — e.g. Pipeline, which only accepts HR tokens, is
+ * reachable from the admin portal when the person also has an HR session. A failed refresh of
+ * a session that is NOT the active one never signs the user out of the active portal.
+ */
+export async function apiFetchFor<T = any>(mode: PortalMode, path: string, options: RequestInit = {}, _retried = false): Promise<T> {
   const token = await store.get(keysFor(mode).access);
 
   let res: Response;
@@ -194,9 +206,9 @@ export async function apiFetch<T = any>(path: string, options: RequestInit = {},
 
   if (res.status === 401 && !_retried) {
     const ok = await tryRefresh(mode);
-    if (ok) return apiFetch<T>(path, options, true);
+    if (ok) return apiFetchFor<T>(mode, path, options, true);
     await clearSession(mode);
-    onSessionExpired?.();
+    if (mode === (await getMode())) onSessionExpired?.();
     throw new ApiError("Session expired. Please sign in again.", "UNAUTHORIZED");
   }
 
@@ -211,11 +223,14 @@ export async function apiFetch<T = any>(path: string, options: RequestInit = {},
   }
 
   if (!data.success) {
-    throw new ApiError(
+    const err = new ApiError(
       data.error?.message || (typeof data.error === "string" ? data.error : "API error"),
       data.error?.code,
       data.error?.details,
     );
+    err.status = res.status;
+    if (typeof data.error?.retryAfterSec === "number") err.retryAfterSec = data.error.retryAfterSec;
+    throw err;
   }
   return data.data as T;
 }

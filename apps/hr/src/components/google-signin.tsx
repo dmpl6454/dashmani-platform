@@ -6,17 +6,21 @@ import type { HrUser } from "@/lib/auth";
 /* "Sign in with Google" for the HR portal, under both tabs of /login.
    Real wire, no mock: the Google Identity Services button yields an ID token, which goes to
    POST /v1/hr/auth/google; the API verifies it with Google and answers the same session shape
-   as password login (plus `created`, true when this first sign-in just opened the account —
-   Google supplies the name and the email, which is all HR self-registration needs).
+   as password login for an existing active account (plus `created: false`). An unknown email
+   opens an account that waits for admin approval: the answer is `{ pending: true, created,
+   message }` with NO tokens (owner decision 2026-10-28).
    The OAuth client id comes from GET /v1/hr/auth/google/config at runtime, so the button simply
    does not render while the server has no GOOGLE_CLIENT_ID — nothing fake is ever shown. */
 
-export type GoogleHrSession = {
-  accessToken: string;
-  refreshToken: string;
-  user: HrUser & { roles?: string[]; profileImageUrl?: string | null };
-  created: boolean;
-};
+export type GoogleHrSession =
+  | {
+      pending?: false;
+      accessToken: string;
+      refreshToken: string;
+      user: HrUser & { roles?: string[]; profileImageUrl?: string | null };
+      created: boolean;
+    }
+  | { pending: true; created: boolean; message: string };
 
 declare global {
   interface Window {

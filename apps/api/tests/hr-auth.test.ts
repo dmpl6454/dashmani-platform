@@ -16,8 +16,8 @@ describe("HR Auth API", () => {
   // or overwrite an existing account. Before this fix, registering with the email or phone
   // of an admin-created ONBOARDING hire promoted that row to ACTIVE with the registrant's
   // password and replaced its roles — anyone who knew a pending hire's email could claim
-  // the account. Owner decision: new sign-ups stay instant (ACTIVE); only the takeover
-  // path closes.
+  // the account. Owner decision 2026-10-28: a new sign-up starts ONBOARDING and signs in
+  // only after an admin sets it Active.
   describe("POST /v1/hr/auth/register", () => {
     const REGISTER = "/v1/hr/auth/register";
 
@@ -131,7 +131,7 @@ describe("HR Auth API", () => {
       },
     );
 
-    it("creates a brand-new account as ACTIVE with the Employee role, and it can log in", async () => {
+    it("creates a brand-new account as ONBOARDING with the Employee role; it signs in only once an admin activates it", async () => {
       const res = await request(app).post(REGISTER).send({
         name: "New Starter",
         email: "New.Starter@Test.com",
@@ -141,17 +141,27 @@ describe("HR Auth API", () => {
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.user.status).toBe("ACTIVE");
+      expect(res.body.data.user.status).toBe("ONBOARDING");
+      expect(res.body.data.message).toMatch(/approve/i);
+      expect(res.body.data.accessToken).toBeUndefined();
       expect(res.body.data.user.email).toBe("new.starter@test.com");
 
       const row = await prisma.user.findUniqueOrThrow({
         where: { email: "new.starter@test.com" },
         include: { roles: { include: { role: true } }, profile: true },
       });
-      expect(row.status).toBe("ACTIVE");
+      expect(row.status).toBe("ONBOARDING");
       expect(row.roles.map((r) => r.role.name)).toEqual(["Employee"]);
       expect(row.profile).not.toBeNull();
 
+      // Pending: the right password is still refused until an admin activates the account.
+      const pending = await request(app)
+        .post("/v1/hr/auth/login")
+        .send({ identifier: "new.starter@test.com", password: "StarterPass123!" });
+      expect(pending.status).toBe(403);
+      expect(pending.body.error.code).toBe("PENDING_APPROVAL");
+
+      await prisma.user.update({ where: { id: row.id }, data: { status: "ACTIVE" } });
       const login = await request(app)
         .post("/v1/hr/auth/login")
         .send({ identifier: "new.starter@test.com", password: "StarterPass123!" });
@@ -325,6 +335,8 @@ describe("HR Auth API", () => {
       });
       expect(res.status).toBe(201);
 
+      // New sign-ups wait for approval; activate it to prove the bound password logs in.
+      await prisma.user.update({ where: { id: res.body.data.user.id }, data: { status: "ACTIVE" } });
       const login = await request(app).post("/v1/hr/auth/login").send({ identifier: email, password });
       expect(login.status).toBe(200);
     });
@@ -460,23 +472,42 @@ describe("HR Auth API", () => {
       expect(String(fetchMock.mock.calls[0][0])).toContain("oauth2.googleapis.com/tokeninfo?id_token=");
     });
 
-    it("creates an ACTIVE Employee for an unknown email, with an unusable password and a profile", async () => {
+    it("creates an ONBOARDING Employee for an unknown email with no session; it signs in once an admin activates it", async () => {
       googleAnswers(200, baseClaims());
       const res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
       expect(res.status).toBe(200);
-      expect(res.body.data.created).toBe(true);
-      expect(res.body.data.user).toMatchObject({ name: "Priya Nair", email: "priya@digitalsukoon.test", roles: ["Employee"] });
-      const row = await prisma.user.findUnique({ where: { email: "priya@digitalsukoon.test" } });
-      expect(row?.status).toBe("ACTIVE");
+      expect(res.body.data).toMatchObject({ pending: true, created: true });
+      expect(res.body.data.message).toMatch(/approve/i);
+      expect(res.body.data.accessToken).toBeUndefined();
+      expect(res.body.data.refreshToken).toBeUndefined();
+      expect(await prisma.refreshToken.count()).toBe(0);
+      const row = await prisma.user.findUnique({
+        where: { email: "priya@digitalsukoon.test" },
+        include: { roles: { include: { role: true } } },
+      });
+      expect(row?.status).toBe("ONBOARDING");
+      expect(row?.name).toBe("Priya Nair");
+      expect(row?.roles.map((r) => r.role.name)).toEqual(["Employee"]);
       expect(await prisma.employeeProfile.count({ where: { userId: row!.id } })).toBe(1);
+      // A second Google sign-in before approval is refused, and opens no second account.
+      googleAnswers(200, baseClaims());
+      const waiting = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(waiting.status).toBe(403);
+      expect(waiting.body.error.code).toBe("PENDING_APPROVAL");
+      expect(await prisma.user.count()).toBe(1);
+
+      await prisma.user.update({ where: { id: row!.id }, data: { status: "ACTIVE" } });
       // Password login cannot guess its way in.
       const pw = await request(app).post("/v1/hr/auth/login").send({ identifier: "priya@digitalsukoon.test", password: "anything-at-all" });
       expect(pw.status).toBe(401);
-      // A second Google sign-in is a plain sign-in, not a second account.
+      // Once active, Google is a plain sign-in with a working session.
       googleAnswers(200, baseClaims());
       const again = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
       expect(again.status).toBe(200);
       expect(again.body.data.created).toBe(false);
+      expect(again.body.data.user).toMatchObject({ name: "Priya Nair", email: "priya@digitalsukoon.test", roles: ["Employee"] });
+      const me = await request(app).get("/v1/hr/profile").set("Authorization", `Bearer ${again.body.data.accessToken}`);
+      expect(me.status).toBe(200);
       expect(await prisma.user.count()).toBe(1);
     });
 

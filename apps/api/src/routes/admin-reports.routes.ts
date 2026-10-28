@@ -2,7 +2,7 @@ import { requireInternalUser } from "../middleware/require-internal-user";
 import { fetchPublicText } from "../utils/public-fetch";
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
-import { requirePermission } from "../middleware/rbac";
+import { requirePermission, GLOBAL_ONLY } from "../middleware/rbac";
 import { guardTargetUser } from "../middleware/role-guard";
 import { validate } from "../middleware/validate";
 import { adminReportFilterSchema, todayIST, istMidnight, dateToIST } from "@dashmani/shared";
@@ -43,7 +43,7 @@ const router = Router();
 router.get(
   "/admin/reports",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   validate(adminReportFilterSchema, "query"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -62,7 +62,7 @@ router.get(
 router.get(
   "/admin/reports/summary",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
@@ -78,7 +78,7 @@ router.get(
 router.get(
   "/admin/reports/employee-stats/:employeeId",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { employeeId } = req.params;
@@ -173,7 +173,7 @@ router.get(
 router.get(
   "/admin/reports/links-analytics",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
@@ -313,7 +313,7 @@ router.get(
 router.get(
   "/admin/reports/submission-gaps",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   asyncHandler(async (req: Request, res: Response) => {
     const params = parseSubmissionGapsQuery(req.query as Record<string, unknown>);
     return success(res, await getSubmissionGaps(params));
@@ -327,7 +327,7 @@ router.get(
 router.get(
   "/admin/reports/submission-gaps/days",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   asyncHandler(async (req: Request, res: Response) => {
     const params = parseSubmissionGapDaysQuery(req.query as Record<string, unknown>);
     return success(res, await getSubmissionGapDays(params));
@@ -346,7 +346,7 @@ router.get(
 router.get(
   "/admin/reports/submission-gaps/days.csv",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const params = parseSubmissionGapDaysCsvQuery(req.query as Record<string, unknown>);
@@ -389,7 +389,7 @@ function writeWithBackpressure(res: Response, chunk: string): Promise<boolean> {
 router.get(
   "/admin/reports/links-by-account",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
@@ -405,7 +405,7 @@ router.get(
 router.get(
   "/admin/reports/export.xlsx",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate, employeeId } = req.query as {
@@ -437,7 +437,7 @@ router.get(
 router.get(
   "/admin/reports/links.csv",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate, employeeId } = req.query as {
@@ -469,7 +469,7 @@ router.get(
 router.get(
   "/admin/reports/leaderboard",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
@@ -490,7 +490,7 @@ router.get(
 router.get(
   "/admin/reports/true-links",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
@@ -508,7 +508,7 @@ router.get(
 router.get(
   "/admin/reports/top-links-leaderboard",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
@@ -527,7 +527,7 @@ router.get(
 router.get(
   "/admin/reports/platform-leaderboards",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
@@ -545,7 +545,7 @@ router.get(
 router.get(
   "/admin/reports/leaderboard-coverage",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const coverage = await getLeaderboardCoverage();
@@ -562,7 +562,7 @@ router.get(
 router.get(
   "/admin/reports/insights-summary",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate, employeeId } = req.query as Record<string, string | undefined>;
@@ -579,7 +579,7 @@ router.get(
 router.get(
   "/admin/reports/top-youtube-links",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate, limit } = req.query as Record<string, string | undefined>;
@@ -608,7 +608,7 @@ router.get(
 router.get(
   "/admin/reports/top-links",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { platform, startDate, endDate, limit } = req.query as Record<string, string | undefined>;
@@ -640,7 +640,7 @@ router.get(
 router.get(
   "/admin/link-search",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { q, from, to, platform } = req.query as Record<string, string | undefined>;
@@ -665,7 +665,7 @@ router.get(
 router.get(
   "/admin/link-search/export.xlsx",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { q, from, to, platform } = req.query as Record<string, string | undefined>;
@@ -689,7 +689,7 @@ router.get(
 router.get(
   "/admin/entities",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const q = ((req.query.q as string) || "").trim();
@@ -730,7 +730,7 @@ router.get(
 router.get(
   "/admin/enrichment/toggle",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const row = await prisma.systemSetting.findUnique({ where: { key: ENRICHMENT_ENABLED_KEY } });
@@ -773,7 +773,7 @@ router.put(
 router.get(
   "/admin/extraction/spend-ceiling",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const [ceilingUsd, todaySpendUsd] = await Promise.all([getSpendCeilingUsd(), getTodayDeepseekSpendUsd()]);
@@ -811,7 +811,7 @@ router.put(
 router.get(
   "/admin/reports/:reportId",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const report = await getReportById(req.params.reportId);
@@ -826,7 +826,7 @@ router.get(
 router.get(
   "/admin/reports/links/:linkId/metrics",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { getLinkMetricsHistory } = await import("../services/social-insights.service");
@@ -916,7 +916,7 @@ router.get(
 router.get(
   "/admin/growth",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const parsed = req.query.days ? parseInt(String(req.query.days), 10) : 30;
@@ -933,7 +933,7 @@ router.get(
 router.get(
   "/admin/growth/:accountId",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const parsed = req.query.days ? parseInt(String(req.query.days), 10) : 30;
@@ -989,7 +989,7 @@ router.get(
 router.get(
   "/admin/employees/:employeeId/performance",
   authenticate,
-  requirePermission("reports", "view"),
+  requirePermission("reports", "view", GLOBAL_ONLY),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await getEmployeePerformance(req.params.employeeId);

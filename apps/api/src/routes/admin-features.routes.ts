@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
-import { requirePermission } from "../middleware/rbac";
+import { requirePermission, GLOBAL_ONLY } from "../middleware/rbac";
 import { guardRoleAssignment, guardTargetUser, requireAdminOrHrRole, assertSuperAdminBoundary, actorIsAdmin } from "../middleware/role-guard";
 import { success } from "../utils/response";
 import { hashPassword } from "../utils/password";
@@ -864,7 +864,7 @@ router.post("/admin/expenses/:id/reject", authenticate, requirePermission("emplo
 
 // ===== Auto-Teams (employees sharing accounts) =====
 
-router.get("/admin/auto-teams", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/auto-teams", authenticate, requirePermission("accounts", "view", GLOBAL_ONLY), async (req: Request, res: Response, next: NextFunction) => {
   try {
     // Find all accounts that have 2+ active assignees
     const accounts = await prisma.socialAccount.findMany({

@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
-import { requirePermission } from "../middleware/rbac";
+import { requirePermission, GLOBAL_ONLY } from "../middleware/rbac";
 import { guardRoleAssignment, guardTargetUser } from "../middleware/role-guard";
 import { validate } from "../middleware/validate";
 import { auditLog } from "../middleware/audit-log";
@@ -11,7 +11,7 @@ import { parsePagination } from "../utils/pagination";
 
 const router = Router();
 
-router.get("/employees", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/employees", authenticate, requirePermission("employees", "view", GLOBAL_ONLY), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const pagination = parsePagination(req.query as any);
     const result = await employeeService.listEmployees({
@@ -25,14 +25,14 @@ router.get("/employees", authenticate, requirePermission("employees", "view"), a
   } catch (err) { next(err); }
 });
 
-router.get("/employees/:id", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/employees/:id", authenticate, requirePermission("employees", "view", { ...GLOBAL_ONLY, selfParam: "id" }), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const employee = await employeeService.getEmployeeById(req.params.id);
     return success(res, employee);
   } catch (err) { next(err); }
 });
 
-router.get("/employees/:id/accounts", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/employees/:id/accounts", authenticate, requirePermission("employees", "view", { ...GLOBAL_ONLY, selfParam: "id" }), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const accounts = await employeeService.getEmployeeAccounts(req.params.id);
     return success(res, accounts);

@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
-import { requirePermission } from "../middleware/rbac";
+import { requirePermission, GLOBAL_ONLY } from "../middleware/rbac";
 import { validate } from "../middleware/validate";
 import { auditLog } from "../middleware/audit-log";
 import { accountValidators } from "@dashmani/shared";
@@ -18,7 +18,7 @@ router.get("/platforms", authenticate, async (_req: Request, res: Response, next
   } catch (err) { next(err); }
 });
 
-router.get("/accounts", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/accounts", authenticate, requirePermission("accounts", "view", GLOBAL_ONLY), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const pagination = parsePagination(req.query as any);
     const result = await accountService.listAccounts({
@@ -32,7 +32,7 @@ router.get("/accounts", authenticate, requirePermission("accounts", "view"), asy
 });
 
 // GET /accounts/:id/link-stats — link submission stats for one account with per-employee breakdown
-router.get("/accounts/:id/link-stats", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/accounts/:id/link-stats", authenticate, requirePermission("accounts", "view", GLOBAL_ONLY), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
     const stats = await accountService.getAccountLinkStats(req.params.id, startDate, endDate);
@@ -40,7 +40,7 @@ router.get("/accounts/:id/link-stats", authenticate, requirePermission("accounts
   } catch (err) { next(err); }
 });
 
-router.get("/accounts/:id", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/accounts/:id", authenticate, requirePermission("accounts", "view", GLOBAL_ONLY), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const account = await accountService.getAccountById(req.params.id);
     return success(res, account);
@@ -94,21 +94,21 @@ router.post("/accounts/sync-followers", authenticate, requirePermission("account
 });
 
 // GET /accounts/sync-followers/status — UI polls this while the button spinner is on
-router.get("/accounts/sync-followers/status", authenticate, requirePermission("accounts", "view"), async (_req: Request, res: Response, next: NextFunction) => {
+router.get("/accounts/sync-followers/status", authenticate, requirePermission("accounts", "view", GLOBAL_ONLY), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     return success(res, getSyncProgress());
   } catch (err) { next(err); }
 });
 
 // POST /accounts/:id/sync-followers — sync a single account
-router.post("/accounts/:id/sync-followers", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.post("/accounts/:id/sync-followers", authenticate, requirePermission("accounts", "view", GLOBAL_ONLY), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await syncSingleAccountFollowers(req.params.id);
     return success(res, result);
   } catch (err) { next(err); }
 });
 
-router.get("/workload", authenticate, requirePermission("accounts", "view"), async (_req: Request, res: Response, next: NextFunction) => {
+router.get("/workload", authenticate, requirePermission("accounts", "view", GLOBAL_ONLY), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const matrix = await accountService.getWorkloadMatrix();
     return success(res, matrix);

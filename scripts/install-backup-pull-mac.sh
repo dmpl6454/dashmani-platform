@@ -11,8 +11,13 @@
 #    rsync of /opt/backups/dashmani (`rrsync -ro`) — no shell, no port forwarding.
 # 2. Copies the pull script to ~/Library/Application Support/dashmani-backup/ (launchd must
 #    not run it from a git checkout: switching branches would change or remove it).
-# 3. Installs a LaunchAgent that runs it every day at 09:30 local time. launchd runs a
-#    missed run when the Mac wakes. Output: ~/Library/Logs/dashmani-backup-pull.log.
+# 3. Wraps it in a tiny app, DashmaniBackup.app. ⚠️ macOS (TCC) refuses a background
+#    `bash` access to an external drive with no prompt ("Operation not permitted"); an app
+#    can be granted it. The first run shows "DashmaniBackup would like to access files on a
+#    removable volume" — click Allow once (or add the app under System Settings → Privacy &
+#    Security → Files and Folders / Full Disk Access).
+# 4. Installs a LaunchAgent that opens the app every day at 09:30 local time. launchd runs
+#    a missed run when the Mac wakes. Output: ~/Library/Logs/dashmani-backup-pull.log.
 set -euo pipefail
 
 LABEL="com.digitalsukoon.backup-pull"
@@ -41,6 +46,15 @@ echo "  command=\"/usr/bin/rrsync -ro /opt/backups/dashmani\",restrict $(cat "$K
 mkdir -p "$APPDIR" "$(dirname "$PLIST")" "$(dirname "$LOG")"
 install -m 700 "$HERE/backup-pull-mac.sh" "$APPDIR/backup-pull-mac.sh"
 
+APP="$APPDIR/DashmaniBackup.app"
+rm -rf "$APP"
+/usr/bin/osacompile -o "$APP" -e "do shell script \"/bin/bash '$APPDIR/backup-pull-mac.sh' >> '$LOG' 2>&1 || true\""
+# A background app: no Dock icon while it runs.
+/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$APP/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.digitalsukoon.backup-pull.app" "$APP/Contents/Info.plist" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.digitalsukoon.backup-pull.app" "$APP/Contents/Info.plist"
+/usr/bin/codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,7 +62,7 @@ cat > "$PLIST" <<PLIST
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>$APPDIR/backup-pull-mac.sh</string></array>
+  <array><string>/usr/bin/open</string><string>-W</string><string>-g</string><string>$APP</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
   <key>StandardOutPath</key><string>$LOG</string>
@@ -61,3 +75,4 @@ PLIST
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "Installed $LABEL (daily 09:30). Run now with: launchctl kickstart gui/$(id -u)/$LABEL"
+echo "First run: macOS asks whether DashmaniBackup may access the removable volume — click Allow."

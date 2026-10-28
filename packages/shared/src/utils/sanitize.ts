@@ -65,3 +65,16 @@ export function sanitizeAccountHandle(raw: string): string {
   // mention) otherwise renders as "@@handle" wherever the UI prepends its own "@".
   return raw.split("?")[0].trim().replace(/^@+/, "");
 }
+
+/**
+ * True for an http(s) URL. zod's `.url()` is only a `new URL()` check, so
+ * `javascript:alert(1)` passes it — and React 18 renders `href="javascript:…"` as a
+ * live link. Every user-supplied URL that is later rendered as a link must also pass
+ * this (security audit 2026-10-28: an employee's report link was stored XSS in the
+ * admin portal).
+ */
+export function isHttpUrl(s: string): boolean {
+  return /^https?:\/\//i.test(String(s).trim());
+}
+
+export const HTTP_URL_MESSAGE = "Link must start with http:// or https://";

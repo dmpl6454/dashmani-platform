@@ -2,6 +2,7 @@
 // Links Analytics — premium dark redesign ("ds"), built to the Links Analytics.dc.html mockup.
 // UI only: the same hooks, the same requests, the same links. Every figure comes from the
 // API; nothing here is mock data, and a missing figure renders "—", never a fabricated 0.
+import { safeHref } from "@/lib/safe-href";
 import { useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -609,7 +610,7 @@ export default function LinksAnalyticsPage() {
                         className="grid grid-cols-[28px_minmax(0,1fr)_minmax(0,160px)_76px_70px_84px] gap-x-3.5 items-center h-[54px] px-6 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] tabular-nums transition-colors hover:bg-[color:var(--hx-0A1620)]"
                       >
                         <span className="text-[12px] font-bold text-ds-t3">{i + 1}</span>
-                        <a href={link.url} target="_blank" rel="noopener noreferrer" title={link.url} className="min-w-0 truncate text-ds-t5 hover:text-ds-gold transition-colors">{link.url}</a>
+                        <a href={safeHref(link.url)} target="_blank" rel="noopener noreferrer" title={link.url} className="min-w-0 truncate text-ds-t5 hover:text-ds-gold transition-colors">{link.url}</a>
                         <span className="text-ds-t2 truncate">{link.employeeName}</span>
                         <span className="flex items-center justify-end gap-[5px] font-semibold whitespace-nowrap text-[color:var(--hx-FDA4AF)]"><Eye className="h-3 w-3 shrink-0" />{fmtCompact(link.views)}</span>
                         <span className="flex items-center justify-end gap-[5px] font-semibold whitespace-nowrap text-[color:var(--hx-F9A8D4)]"><Heart className="h-3 w-3 shrink-0" />{fmtCompact(link.likes)}</span>

@@ -1,3 +1,5 @@
+import { requireInternalUser } from "../middleware/require-internal-user";
+import { fetchPublicText } from "../utils/public-fetch";
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
@@ -869,29 +871,28 @@ router.delete(
 );
 
 // GET /admin/link-preview?url=... — fetch OG metadata for link preview
+// ⚠️ Staff only (requireInternalUser): `authenticate` alone accepted HR and CLIENT
+// tokens (client sign-up is public). The fetch goes through fetchPublicText, which
+// refuses private / loopback / link-local targets (also after redirects) and caps the
+// body — see utils/public-fetch.ts. Answers are per-viewer, so never publicly cached.
 router.get(
   "/admin/link-preview",
   authenticate,
+  requireInternalUser,
   async (req: Request, res: Response) => {
     const url = req.query.url as string;
     if (!url) return res.status(400).json({ success: false, error: { message: "url is required" } });
+    res.setHeader("Cache-Control", "private, max-age=86400");
 
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(url, {
-        signal: controller.signal,
+      const { text: slice } = await fetchPublicText(url, {
+        timeoutMs: 5000,
+        maxBytes: 50_000, // Only parse head section
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; LinkPreview/1.0)",
           "Accept": "text/html",
         },
-        redirect: "follow",
       });
-      clearTimeout(timeout);
-
-      const html = await response.text();
-      const slice = html.slice(0, 50000); // Only parse head section
 
       const ogImage = slice.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)?.[1]
         || slice.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i)?.[1];
@@ -900,7 +901,6 @@ router.get(
       const ogDesc = slice.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)?.[1]
         || slice.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i)?.[1];
 
-      res.setHeader("Cache-Control", "public, max-age=86400");
       return res.json({ success: true, data: { image: ogImage || null, title: ogTitle || null, description: ogDesc || null } });
     } catch {
       return res.json({ success: true, data: { image: null, title: null, description: null } });

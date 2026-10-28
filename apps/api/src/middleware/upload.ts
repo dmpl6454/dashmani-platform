@@ -2,6 +2,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { AppError } from "./error-handler";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
@@ -14,6 +15,38 @@ for (const dir of dirs) {
   }
 }
 
+/**
+ * Extension written to disk for each accepted MIME type.
+ *
+ * ⚠️ The stored extension must NEVER come from the uploader's file name alone.
+ * `/uploads` is served by express.static, which picks the Content-Type from the
+ * extension, and the file filters below only see the client-chosen `mimetype`.
+ * Keeping `path.extname(originalname)` let an anonymous job applicant send
+ * `x.html` labelled `application/pdf` and have the API serve it back as a web
+ * page on api.digitalsukoon.com (stored XSS / phishing on our own domain).
+ */
+const EXT_BY_MIME: Record<string, string[]> = {
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/png": [".png"],
+  "image/webp": [".webp"],
+  "application/pdf": [".pdf"],
+  "application/msword": [".doc"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+  // Windows browsers label .csv files application/vnd.ms-excel, so both spellings
+  // keep the name the user gave the file.
+  "application/vnd.ms-excel": [".xls", ".csv"],
+  "text/csv": [".csv"],
+};
+
+/** The extension to store for an accepted upload — never anything outside EXT_BY_MIME. */
+export function safeUploadExtension(mimetype: string, originalname: string): string {
+  const allowed = EXT_BY_MIME[mimetype];
+  if (!allowed) return "";
+  const own = path.extname(originalname || "").toLowerCase();
+  return allowed.includes(own) ? own : allowed[0];
+}
+
 function makeStorage(subDir: string) {
   return multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -21,7 +54,7 @@ function makeStorage(subDir: string) {
     },
     filename: (_req, file, cb) => {
       const uniqueSuffix = crypto.randomBytes(8).toString("hex");
-      const ext = path.extname(file.originalname);
+      const ext = safeUploadExtension(file.mimetype, file.originalname);
       cb(null, `${Date.now()}-${uniqueSuffix}${ext}`);
     },
   });
@@ -40,7 +73,7 @@ export const uploadDocument = multer({
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error("Only images, PDFs and documents are allowed"));
+      cb(new AppError(400, "INVALID_FILE_TYPE", "Only images, PDFs and documents are allowed"));
     }
   },
 });
@@ -53,7 +86,7 @@ export const uploadProfilePicture = multer({
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error("Only JPEG, PNG or WebP images are allowed"));
+      cb(new AppError(400, "INVALID_FILE_TYPE", "Only JPEG, PNG or WebP images are allowed"));
     }
   },
 });
@@ -70,7 +103,7 @@ export const uploadExcel = multer({
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error("Only Excel (.xlsx, .xls) or CSV files are allowed"));
+      cb(new AppError(400, "INVALID_FILE_TYPE", "Only Excel (.xlsx, .xls) or CSV files are allowed"));
     }
   },
 });

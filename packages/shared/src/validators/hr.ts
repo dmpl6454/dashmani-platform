@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { normalizedEmail, safeString } from "../utils/sanitize";
+import { normalizedEmail, safeString, isHttpUrl, HTTP_URL_MESSAGE } from "../utils/sanitize";
 
 export const otpRequestSchema = z.object({
   identifier: z.string().trim().min(1, "Identifier (email or phone) is required"),
@@ -82,10 +82,10 @@ export const reportLinkSchema = z.object({
   // report_links_url_idx makes createMany throw an unhandled 54000 → a generic 500
   // (incident 2026-07-08). 2048 is well under that ceiling and far above any real
   // social-media URL (prod max is 719). Reject cleanly here as a 400 field error.
-  url: z.string().url("Invalid URL").max(2048, "URL is too long (max 2048 characters)").optional().nullable(),
+  url: z.string().url("Invalid URL").max(2048, "URL is too long (max 2048 characters)").refine(isHttpUrl, HTTP_URL_MESSAGE).optional().nullable(),
   platform: z.string().min(1, "Platform is required"),
   description: z.string().optional(),
-  mediaUrl: z.string().url("Invalid media URL").optional(),
+  mediaUrl: z.string().url("Invalid media URL").refine(isHttpUrl, HTTP_URL_MESSAGE).optional(),
   likes: z.number().int().nonnegative().optional(),
   comments: z.number().int().nonnegative().optional(),
   shares: z.number().int().nonnegative().optional(),

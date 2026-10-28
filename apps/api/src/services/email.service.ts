@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { ipv4SmtpHost } from "../utils/smtp-host";
+import { escapeHtml } from "./pipeline/email-template";
 
 // A fresh (non-pooled) transport per send, so every send uses a current IPv4 address for the
 // SMTP host. Gmail rejects this account's logins from the prod box over IPv6 — see
@@ -74,7 +75,7 @@ function activityEmailHtml(title: string, details: { label: string; value: strin
     <div class="header"><h1>${title}</h1></div>
     <div class="body">
       <table class="info-table">
-        ${details.map((d) => `<tr><td>${d.label}</td><td>${d.value}</td></tr>`).join("")}
+        ${details.map((d) => `<tr><td>${escapeHtml(String(d.label))}</td><td>${escapeHtml(String(d.value ?? ""))}</td></tr>`).join("")}
       </table>
       ${actionUrl ? `<a href="${actionUrl}" class="action-btn">${actionLabel || "View in Portal"} →</a>` : ""}
     </div>
@@ -153,6 +154,18 @@ export async function sendApplicationNotification(application: {
   jobDepartment?: string;
 }) {
   const hrEmail = process.env.HR_EMAIL || "hr@digitalsukoon.com";
+  // Every field below comes from an anonymous public form (POST /v1/jobs/:id/apply).
+  // Escape it before it goes into HTML, and keep only http(s) links — otherwise an
+  // applicant could make our hr@ account send arbitrary HTML (security audit 2026-10-28).
+  const raw = application;
+  const httpOnly = (u?: string) => (u && /^https?:\/\//i.test(u.trim()) ? u : undefined);
+  application = {
+    ...Object.fromEntries(
+      Object.entries(raw).map(([k, v]) => [k, typeof v === "string" ? escapeHtml(v) : v]),
+    ),
+    linkedinUrl: httpOnly(raw.linkedinUrl) && escapeHtml(raw.linkedinUrl!),
+    portfolioUrl: httpOnly(raw.portfolioUrl) && escapeHtml(raw.portfolioUrl!),
+  } as typeof raw;
 
   const html = `<!DOCTYPE html>
 <html>
@@ -214,9 +227,9 @@ export async function sendApplicationNotification(application: {
   // Send to HR
   await sendEmail({
     to: hrEmail,
-    subject: `New Application: ${application.applicantName} for ${application.jobTitle}`,
+    subject: `New Application: ${raw.applicantName} for ${raw.jobTitle}`,
     html,
-    replyTo: application.applicantEmail,
+    replyTo: raw.applicantEmail,
   });
 
   // Send confirmation to applicant
@@ -253,8 +266,8 @@ export async function sendApplicationNotification(application: {
 </html>`;
 
   await sendEmail({
-    to: application.applicantEmail,
-    subject: `Application Received - ${application.jobTitle} at Digital Sukoon`,
+    to: raw.applicantEmail,
+    subject: `Application Received - ${raw.jobTitle} at Digital Sukoon`,
     html: confirmHtml,
   });
 }

@@ -1,4 +1,5 @@
 "use client";
+import { safeHref } from "@/lib/safe-href";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useEmployee } from "@/lib/hooks/use-employees";
@@ -602,7 +603,7 @@ export default function EmployeeDetailPage() {
                     {a.assigner && <p>By: <span className={STRONG}>{a.assigner.name}</span></p>}
                   </div>
                   {a.account?.profileUrl && (
-                    <a href={a.account.profileUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] text-ds-gold hover:text-ds-gold2 font-semibold">
+                    <a href={safeHref(a.account.profileUrl)} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 text-[12px] text-ds-gold hover:text-ds-gold2 font-semibold">
                       <ExternalLink size={12} /> View Profile
                     </a>
                   )}

@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import DOMPurify from "dompurify";
 import useSWR from "swr";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
@@ -102,9 +102,22 @@ export default function OfferLettersPage() {
     }
   }
 
-  function viewHtml(id: string) {
-    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-    window.open(`${API_URL}/admin/offer-letters/${id}/html?token=${token}`, "_blank");
+  // Fetched with the normal Authorization header and opened as a sanitised Blob, like
+  // the AI assistant previews. The old version put the access token in the URL (where
+  // it lands in server/CDN logs and browser history) and always got a 401, because the
+  // API reads only the header (security audit 2026-10-28).
+  async function viewHtml(id: string) {
+    const w = window.open("", "_blank"); // opened synchronously so popup blockers allow it
+    try {
+      const res = await apiFetch<{ data: string }>(`/admin/offer-letters/${id}/html`);
+      const blob = new Blob([DOMPurify.sanitize(res.data ?? "")], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      if (w) w.location.href = url;
+      else window.open(url, "_blank");
+    } catch (e: any) {
+      w?.close();
+      alert(e?.message || "Could not open the offer letter");
+    }
   }
 
   const todayKey = dayKey(new Date());

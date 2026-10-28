@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
 import { requirePermission } from "../middleware/rbac";
-import { guardRoleAssignment, guardTargetUser, requireAdminOrHrRole } from "../middleware/role-guard";
+import { guardRoleAssignment, guardTargetUser, requireAdminOrHrRole, assertSuperAdminBoundary, actorIsAdmin } from "../middleware/role-guard";
 import { success } from "../utils/response";
 import { hashPassword } from "../utils/password";
 import { generateOfferLetterSchema, safeString, todayIST, istMidnight } from "@dashmani/shared";
@@ -206,7 +206,7 @@ router.post(
 router.get(
   "/admin/documents/pending",
   authenticate,
-  requirePermission("employees", "view"),
+  requirePermission("employees", "view"), requireAdminOrHrRole,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await documentService.getAllPendingDocuments();
@@ -221,7 +221,7 @@ router.get(
 router.get(
   "/admin/documents/:id",
   authenticate,
-  requirePermission("employees", "view"),
+  requirePermission("employees", "view"), requireAdminOrHrRole,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await documentService.getDocumentById(req.params.id);
@@ -236,7 +236,7 @@ router.get(
 router.post(
   "/admin/documents/:id/review",
   authenticate,
-  requirePermission("employees", "view"),
+  requirePermission("employees", "view"), requireAdminOrHrRole,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { status, reviewNotes } = req.body;
@@ -578,7 +578,7 @@ router.get(
 
 // ===== Employee Profile Data (for admin view) =====
 
-router.get("/admin/employees/:id/profile-data", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/employees/:id/profile-data", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { prisma } = require("@dashmani/db");
     const profile = await prisma.employeeProfile.findUnique({ where: { userId: req.params.id } });
@@ -627,7 +627,7 @@ router.put("/admin/employees/:id/profile-data", authenticate, requirePermission(
 
 // ===== Documents by Employee =====
 
-router.get("/admin/documents", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/documents", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { prisma } = require("@dashmani/db");
     const where: any = {};
@@ -643,7 +643,7 @@ router.get("/admin/extra-hours/pending", authenticate, requirePermission("employ
   try { return success(res, await extraWorkService.getPendingExtraHours()); } catch (err) { next(err); }
 });
 
-router.get("/admin/extra-hours", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/extra-hours", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { employeeId, year } = req.query as any;
     return success(res, await extraWorkService.getEmployeeExtraHours(employeeId, year ? parseInt(year) : undefined));
@@ -666,7 +666,7 @@ router.post("/admin/incentives", authenticate, requirePermission("employees", "e
   } catch (err) { next(err); }
 });
 
-router.get("/admin/incentives", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/incentives", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { employeeId, year } = req.query as any;
     return success(res, await incentiveService.getAllIncentives({ employeeId, year: year ? parseInt(year) : undefined }));
@@ -681,20 +681,20 @@ router.post("/admin/performance-reviews", authenticate, requirePermission("emplo
   } catch (err) { next(err); }
 });
 
-router.get("/admin/performance-reviews", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/performance-reviews", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { employeeId } = req.query as any;
     return success(res, await reviewService.getAllReviews({ employeeId }));
   } catch (err) { next(err); }
 });
 
-router.get("/admin/performance-reviews/:id", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/performance-reviews/:id", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try { return success(res, await reviewService.getReviewById(req.params.id)); } catch (err) { next(err); }
 });
 
 // ===== Bug Reports =====
 
-router.get("/admin/bug-reports", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/bug-reports", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status, severity } = req.query as any;
     return success(res, await bugReportService.getBugReports({ status, severity }));
@@ -705,7 +705,7 @@ router.post("/admin/bug-reports/:id/status", authenticate, requirePermission("em
   try { return success(res, await bugReportService.updateBugStatus(req.params.id, req.body)); } catch (err) { next(err); }
 });
 
-router.get("/admin/bug-reports/:id", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/bug-reports/:id", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try { return success(res, await bugReportService.getBugReportById(req.params.id)); } catch (err) { next(err); }
 });
 
@@ -721,27 +721,27 @@ router.put("/admin/jobs/:id", authenticate, requirePermission("employees", "edit
   try { return success(res, await jobListingService.updateJobListing(req.params.id, req.body)); } catch (err) { next(err); }
 });
 
-router.get("/admin/jobs", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/jobs", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status } = req.query as any;
     return success(res, await jobListingService.getJobListings({ status }));
   } catch (err) { next(err); }
 });
 
-router.get("/admin/jobs/:id", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/jobs/:id", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try { return success(res, await jobListingService.getJobListingById(req.params.id)); } catch (err) { next(err); }
 });
 
 // ===== Job Applications =====
 
-router.get("/admin/applications", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/applications", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { jobId, status } = req.query as any;
     return success(res, await jobListingService.getApplications({ jobId, status }));
   } catch (err) { next(err); }
 });
 
-router.get("/admin/applications/:id", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/applications/:id", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try { return success(res, await jobListingService.getApplicationById(req.params.id)); } catch (err) { next(err); }
 });
 
@@ -793,7 +793,7 @@ router.post("/admin/ai/generate-contract", authenticate, requirePermission("empl
   try { return success(res, await aiService.generateContractContent(req.body)); } catch (err) { next(err); }
 });
 
-router.get("/admin/ai/salary-slip/:id/html", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/ai/salary-slip/:id/html", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const html = await aiService.generateSalarySlipHtml(req.params.id);
     res.setHeader("Content-Type", "text/html");
@@ -801,7 +801,7 @@ router.get("/admin/ai/salary-slip/:id/html", authenticate, requirePermission("em
   } catch (err) { next(err); }
 });
 
-router.post("/admin/ai/salary-slip/preview", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.post("/admin/ai/salary-slip/preview", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = salarySlipPreviewSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.format() });
@@ -818,7 +818,7 @@ router.post("/admin/ai/assist", authenticate, requireInternalUser, async (req: R
 
 // ===== Expense Claims (Admin) =====
 
-router.get("/admin/expenses", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/expenses", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status, employeeId } = req.query as { status?: string; employeeId?: string };
     const where: any = {};
@@ -938,7 +938,7 @@ router.post("/admin/auto-teams/create", authenticate, requirePermission("teams",
 
 // ===== Assigned Devices =====
 
-router.get("/admin/devices", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/devices", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { employeeId, type } = req.query as { employeeId?: string; type?: string };
     const where: any = { returnedAt: null };
@@ -953,7 +953,7 @@ router.get("/admin/devices", authenticate, requirePermission("employees", "view"
   } catch (err) { next(err); }
 });
 
-router.get("/admin/devices/all", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/devices/all", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const devices = await prisma.assignedDevice.findMany({
       include: { employee: { select: { id: true, name: true, email: true } } },
@@ -1027,7 +1027,7 @@ router.delete("/admin/devices/:id", authenticate, requirePermission("employees",
 
 // ===== Complaints (Admin) =====
 
-router.get("/admin/complaints", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/complaints", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status } = req.query as { status?: string };
     const where: any = {};
@@ -1062,7 +1062,7 @@ router.post("/admin/complaints/:id/respond", authenticate, requirePermission("em
 
 // ===== Joining Date Approval =====
 
-router.get("/admin/joining-dates", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/joining-dates", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const profiles = await prisma.employeeProfile.findMany({
       where: { joiningDate: { not: null } },
@@ -1096,7 +1096,7 @@ router.put("/admin/joining-dates/:userId", authenticate, requirePermission("empl
 
 // ===== Daily POA (Admin view) =====
 
-router.get("/admin/poa", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/poa", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { employeeId, date } = req.query as { employeeId?: string; date?: string };
     const where: any = {};
@@ -1119,7 +1119,7 @@ router.get("/admin/poa", authenticate, requirePermission("employees", "view"), a
 
 // ===== Daily Report status (who submitted / who hasn't, for a given day) =====
 
-router.get("/admin/daily-reports/status", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/daily-reports/status", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { date } = req.query as { date?: string };
     const day = istMidnight(date || todayIST());
@@ -1155,7 +1155,7 @@ router.get("/admin/daily-reports/status", authenticate, requirePermission("emplo
 
 // ===== Internship Applications =====
 
-router.get("/admin/internships", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/internships", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { status } = req.query as { status?: string };
     const where: any = {};
@@ -1168,7 +1168,7 @@ router.get("/admin/internships", authenticate, requirePermission("employees", "v
   } catch (err) { next(err); }
 });
 
-router.get("/admin/internships/:id", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+router.get("/admin/internships/:id", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const app = await prisma.internshipApplication.findUnique({ where: { id: req.params.id } });
     return success(res, app);
@@ -1410,6 +1410,12 @@ router.put("/admin/users/:id/roles", authenticate, requireAdminRole, async (req:
     if (roleIds.length === 0) return res.status(400).json({ success: false, error: { message: "Every employee must have at least one role. Assign the Employee role if no other role applies." } });
     const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true } });
     if (!user) return res.status(404).json({ success: false, error: { message: "User not found" } });
+    // requireAdminRole reads the JWT; this re-checks the caller in the DB and keeps
+    // Super Admin (granting it, or changing a Super Admin) to Super Admins.
+    await assertSuperAdminBoundary(req.user!.userId, { roleIds, targetUserId: req.params.id });
+    if (!(await actorIsAdmin(req.user!.userId))) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Admin role required" } });
+    }
 
     await prisma.$transaction([
       prisma.userRole.deleteMany({ where: { userId: req.params.id } }),

@@ -122,6 +122,10 @@ export async function approveLeaveRequest(requestId: string, approverId: string,
   const leaveReq = await prisma.leaveRequest.findUnique({ where: { id: requestId } });
   if (!leaveReq) throw new AppError(404, "NOT_FOUND", "Leave request not found");
   if (leaveReq.status !== "PENDING") throw new AppError(400, "ALREADY_PROCESSED", "Leave request already processed");
+  // Same rule as leave.service.ts — this second approval path was missing it.
+  if (leaveReq.employeeId === approverId) {
+    throw new AppError(403, "SELF_APPROVAL_FORBIDDEN", approved ? "You cannot approve your own leave request" : "You cannot reject your own leave request");
+  }
 
   const updated = await prisma.leaveRequest.update({
     where: { id: requestId },

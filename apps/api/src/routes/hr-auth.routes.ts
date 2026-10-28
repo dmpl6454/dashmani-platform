@@ -1,15 +1,11 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { validate } from "../middleware/validate";
 import {
-  otpRequestSchema,
-  otpVerifySchema,
   registerEmployeeSchema,
   passwordLoginSchema,
   hrGoogleSchema,
 } from "@dashmani/shared";
 import {
-  requestOtp,
-  verifyOtp,
   refreshHrToken,
   registerEmployee,
   loginWithPassword,
@@ -73,35 +69,12 @@ router.post(
   },
 );
 
-// POST /hr/auth/request-otp
-router.post(
-  "/hr/auth/request-otp",
-  validate(otpRequestSchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { identifier, channel } = req.body;
-      const result = await requestOtp(identifier, channel);
-      return success(res, result);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// POST /hr/auth/verify-otp
-router.post(
-  "/hr/auth/verify-otp",
-  validate(otpVerifySchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { identifier, otp } = req.body;
-      const result = await verifyOtp(identifier, otp);
-      return success(res, result);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+// ⚠️ POST /hr/auth/request-otp and /hr/auth/verify-otp were REMOVED (security audit,
+// 2026-10-28). The code was never delivered (only console.log'ged), nothing called the
+// routes, and verify-otp had no attempt limit: a 6-digit code could be brute-forced into
+// ANY account, Super Admin included, because rbac reads roles from the DB and ignores the
+// token type. Do not re-add an OTP login without delivery, hashing, crypto.randomInt,
+// a per-token attempt cap and the auth rate limiter.
 
 // POST /hr/auth/refresh
 router.post("/hr/auth/refresh", async (req: Request, res: Response, next: NextFunction) => {

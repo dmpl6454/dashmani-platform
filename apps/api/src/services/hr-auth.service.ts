@@ -7,10 +7,6 @@ import { likeLiteral } from "../utils/like-literal";
 import type { JwtPayload } from "@dashmani/shared";
 import { dispatchNotification } from "./notification.service";
 
-function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 /**
  * Normalize an HR auth identifier. Emails get trimmed + lowercased; phone numbers
  * are only trimmed. Detection is "contains @" — good enough for our format.
@@ -295,120 +291,6 @@ export async function loginWithPassword(identifier: string, password: string) {
       email: user.email,
       phone: user.phone,
       profileImageUrl: user.profileImageUrl,
-      roles: roleNames,
-    },
-  };
-}
-
-// ===== OTP Auth (kept for backward compatibility) =====
-
-export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | "WHATSAPP") {
-  const normalized = normalizeIdentifier(identifier);
-  const isEmail = normalized.includes("@");
-  const user = await prisma.user.findFirst({
-    where: {
-      deletedAt: null,
-      OR: isEmail
-        ? [{ email: { equals: normalized, mode: "insensitive" } }]
-        : [{ phone: normalized }],
-    },
-  });
-
-  if (!user) {
-    throw new AppError(404, "USER_NOT_FOUND", "No user found with that email or phone");
-  }
-
-  if (user.status !== "ACTIVE") {
-    throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
-  }
-
-  const otp = generateOtp();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-  await prisma.otpToken.updateMany({
-    where: { userId: user.id, verified: false },
-    data: { expiresAt: new Date(0) },
-  });
-
-  await prisma.otpToken.create({
-    data: {
-      userId: user.id,
-      otp,
-      channel,
-      target: normalized,
-      expiresAt,
-    },
-  });
-
-  console.log(`[HR-AUTH] OTP for ${normalized}: ${otp}`);
-
-  return { message: `OTP sent via ${channel}` };
-}
-
-export async function verifyOtp(identifier: string, otp: string) {
-  const normalized = normalizeIdentifier(identifier);
-  const isEmail = normalized.includes("@");
-  const user = await prisma.user.findFirst({
-    where: {
-      deletedAt: null,
-      OR: isEmail
-        ? [{ email: { equals: normalized, mode: "insensitive" } }]
-        : [{ phone: normalized }],
-    },
-    include: { roles: { include: { role: true } } },
-  });
-
-  if (!user) {
-    throw new AppError(401, "INVALID_OTP", "Invalid identifier or OTP");
-  }
-
-  const otpToken = await prisma.otpToken.findFirst({
-    where: {
-      userId: user.id,
-      otp,
-      verified: false,
-      expiresAt: { gt: new Date() },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  if (!otpToken) {
-    throw new AppError(401, "INVALID_OTP", "Invalid or expired OTP");
-  }
-
-  await prisma.otpToken.update({
-    where: { id: otpToken.id },
-    data: { verified: true },
-  });
-
-  const roleNames = user.roles.map((ur) => ur.role.name);
-
-  const payload: JwtPayload = {
-    userId: user.id,
-    email: user.email,
-    roles: roleNames,
-    type: "hr",
-  };
-
-  const accessToken = signAccessToken(payload);
-  const refreshToken = signRefreshToken({ userId: user.id });
-
-  const hashedToken = crypto.createHash("sha256").update(refreshToken).digest("hex");
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      token: hashedToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  return {
-    accessToken,
-    refreshToken,
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
       roles: roleNames,
     },
   };

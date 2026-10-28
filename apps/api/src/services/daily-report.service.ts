@@ -30,8 +30,11 @@ import { resolveSnapchatShareUrl } from "./social-insights/snapchat.provider";
 //     so a slow redirect never holds a transaction open.
 //   • DARK-SAFE — with no META token / no network, the resolvers return null and
 //     every url is left untouched.
-const FB_SHARE_URL_RE = /facebook\.com\/share\//i;
-const SNAP_SHARE_URL_RE = /snapchat\.com\/t\//i;
+// ⚠️ Anchored to the real host (security audit 2026-10-28). The old patterns matched
+// anywhere in the string, so `http://10.0.0.5/x?facebook.com/share/` made the server
+// fetch an internal address on an employee's behalf (Snapchat with redirects followed).
+const FB_SHARE_URL_RE = /^https?:\/\/(?:www\.|m\.|web\.)?facebook\.com\/share\//i;
+const SNAP_SHARE_URL_RE = /^https?:\/\/(?:www\.)?snapchat\.com\/t\//i;
 const MAX_OPAQUE_RESOLVES_PER_SUBMIT = 50; // a huge paste never stalls submit
 const OPAQUE_RESOLVE_BUDGET_MS = 8_000; // overall wall-clock guard for the pass
 
@@ -80,8 +83,8 @@ async function resolveOpaqueShareLinks(links: ReportLinkInput[]): Promise<Report
       const l = links[i];
       if (l.isScheduled || !l.url || !l.url.trim()) continue;
       if (targets.length >= MAX_OPAQUE_RESOLVES_PER_SUBMIT) break;
-      if (FB_SHARE_URL_RE.test(l.url)) targets.push({ idx: i, url: l.url.trim(), kind: "fb" });
-      else if (SNAP_SHARE_URL_RE.test(l.url)) targets.push({ idx: i, url: l.url.trim(), kind: "snap" });
+      if (FB_SHARE_URL_RE.test(l.url.trim())) targets.push({ idx: i, url: l.url.trim(), kind: "fb" });
+      else if (SNAP_SHARE_URL_RE.test(l.url.trim())) targets.push({ idx: i, url: l.url.trim(), kind: "snap" });
     }
     if (targets.length === 0) return links;
 

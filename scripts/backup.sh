@@ -19,6 +19,11 @@
 
 set -eo pipefail
 
+# Backups hold the whole database and every .env secret. The box hosts other tenants'
+# services, so nothing written here may be readable by another user (security audit
+# 2026-10-28: dumps were created 0644 under a 0755 directory).
+umask 077
+
 # Every path/knob is env-overridable so the script can be exercised against a
 # scratch directory and a local database (see the PR that added the preflight).
 BACKUP_DIR="${BACKUP_DIR:-/opt/backups/dashmani}"
@@ -113,6 +118,9 @@ trap cleanup_partial EXIT
 # ---- run -------------------------------------------------------------------
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+# Tighten anything earlier runs left world-readable.
+find "$BACKUP_DIR" -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
 
 echo "[$TIMESTAMP] Starting backup..."
 

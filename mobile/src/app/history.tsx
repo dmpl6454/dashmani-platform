@@ -27,6 +27,11 @@ export default function HistoryScreen() {
       <ErrorBanner message={error} />
       {loading ? (
         <Loading />
+      ) : error && !data ? (
+        // Only a LOADED answer may say "no reports" — a failed load must never look like lost links.
+        <Card>
+          <Empty icon="cloud-offline-outline" text="Couldn't load your reports. Your submitted links are safe — pull down to retry." />
+        </Card>
       ) : reports.length === 0 ? (
         <Card>
           <Empty icon="document-text-outline" text="No reports in this window" />

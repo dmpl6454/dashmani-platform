@@ -1,8 +1,25 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
+import { router } from "expo-router";
 import { apiFetch, fmtDateTime } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
 import { Screen, Card, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
+
+/**
+ * Where tapping a notification goes in the app. Pipeline rows carry `metadata.path`
+ * ("/pipeline/<id>", the same path the HR web bell opens); "task assigned" rows open the
+ * Tasks tab (the API does not put the task id on the row).
+ * Anything else just marks the row read.
+ */
+function destinationOf(n: any): string | null {
+  const path: unknown = n?.metadata?.path;
+  if (typeof path === "string") {
+    const m = /^\/pipeline(?:\/([0-9a-f-]{36}))?\/?$/i.exec(path);
+    if (m) return m[1] ? `/pipeline/${m[1]}` : "/pipeline";
+  }
+  if (n?.type === "TASK_ASSIGNED") return "/tasks";
+  return null;
+}
 
 export default function NotificationsScreen() {
   const [markingAll, setMarkingAll] = useState(false);
@@ -21,9 +38,12 @@ export default function NotificationsScreen() {
   };
 
   const markOne = async (n: any) => {
-    if (n.read) return;
-    setData((data ?? []).map((x) => (x.id === n.id ? { ...x, read: true } : x)));
-    apiFetch(`/hr/notifications/${n.id}/read`, { method: "PUT" }).catch(() => {});
+    if (!n.read) {
+      setData((data ?? []).map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+      apiFetch(`/hr/notifications/${n.id}/read`, { method: "PUT" }).catch(() => {});
+    }
+    const to = destinationOf(n);
+    if (to) router.push(to as never);
   };
 
   if (loading) return <Loading />;

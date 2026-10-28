@@ -11,26 +11,56 @@ type LinkRow = { key: string; url: string; accountId?: string };
 let keyCounter = 0;
 const newKey = () => `k${++keyCounter}`;
 
-/** Extract URLs from pasted text — tolerant of bare domains, list numbering, commas. */
+/** Normalise one candidate to an https URL, or null when it isn't a link. */
+function toUrl(candidate: string): string | null {
+  let url = candidate.replace(/[,;)\]]+$/, "");
+  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  if (/\s/.test(url)) return null;
+  try {
+    const u = new URL(url);
+    return u.hostname.includes(".") ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Split two links pasted with no separator ("…/reel/Ahttps://…") at the second scheme — except
+ * when the scheme follows "?", "=" or "&": that is a link INSIDE another link's query string
+ * (e.g. l.php?u=https://…) and must stay one link. Mirrors the HR portal's parsePastedLine.
+ */
+function splitGlued(token: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  const re = /https?:\/\//gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(token))) {
+    if (m.index === 0) continue;
+    const prev = token[m.index - 1];
+    if (prev === "?" || prev === "=" || prev === "&") continue;
+    out.push(token.slice(start, m.index));
+    start = m.index;
+  }
+  out.push(token.slice(start));
+  return out;
+}
+
+/**
+ * Extract every link from pasted text — tolerant of list numbering, commas, bare domains
+ * ("instagram.com/reel/…"), several links on one line, and links glued together.
+ */
 function extractUrls(text: string): string[] {
   const out: string[] = [];
-  for (let raw of text.split(/[\n\r]+/)) {
-    let line = raw.trim();
+  for (const raw of text.split(/[\n\r]+/)) {
+    const line = raw.trim().replace(/^\d+[.)]\s*/, "");
     if (!line) continue;
-    line = line.replace(/^\d+[.)]\s*/, "").replace(/[,;]+$/, "").trim();
-    if (!line) continue;
-    // find first http(s):// or bare domain start
-    const m = line.match(/https?:\/\/\S+|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*/i);
-    if (!m) continue;
-    let url = m[0];
-    if (!/^https?:\/\//i.test(url)) url = "https://" + url;
-    if (/\s/.test(url)) continue;
-    try {
-      const u = new URL(url);
-      if (!u.hostname.includes(".")) continue;
-      out.push(url);
-    } catch {
-      // skip unparseable
+    for (const word of line.split(/[\s,;]+/)) {
+      if (!word) continue;
+      for (const piece of splitGlued(word)) {
+        if (!/^https?:\/\//i.test(piece) && !/^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i.test(piece)) continue;
+        const url = toUrl(piece);
+        if (url) out.push(url);
+      }
     }
   }
   return out;
@@ -47,6 +77,10 @@ function accountLabel(a: Account): string {
 export default function ReportScreen() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [submitted, setSubmitted] = useState<any | null>(null);
+  // "failed" = GET /hr/reports/today did not answer (429, 5xx, offline). Then we do NOT know what
+  // is already submitted today, and Update Links (delete-and-recreate on the server) could
+  // replace it with only the rows on screen — so submitting is refused until it loads.
+  const [todayState, setTodayState] = useState<"ok" | "failed">("ok");
   const [links, setLinks] = useState<LinkRow[]>([]);
   const [notes, setNotes] = useState("");
   const [pasteText, setPasteText] = useState("");
@@ -72,7 +106,23 @@ export default function ReportScreen() {
       ]);
       if (accs.status === "fulfilled") setAccounts(accs.value ?? []);
       const todayReport = today.status === "fulfilled" ? today.value : null;
-      setSubmitted(todayReport);
+      const wasFailed = todayState === "failed";
+      setTodayState(today.status === "fulfilled" ? "ok" : "failed");
+      if (today.status === "fulfilled") setSubmitted(todayReport);
+
+      // Today's report arrived only now (an earlier load failed) while the person was already
+      // adding links: put the submitted links in FRONT of theirs — rows are only ever added,
+      // never replaced, and a URL in both stays once.
+      if (restoredRef.current && wasFailed && today.status === "fulfilled") {
+        const submittedRows: LinkRow[] = (todayReport?.links ?? [])
+          .filter((l: any) => l.url)
+          .map((l: any) => ({ key: newKey(), url: l.url, accountId: l.accountId ?? undefined }));
+        setLinks((ls) => {
+          const have = new Set(submittedRows.map((r) => r.url.trim()));
+          return [...submittedRows, ...ls.filter((l) => !have.has(l.url.trim()))];
+        });
+        if (!notes && todayReport?.notes) setNotes(todayReport.notes);
+      }
 
       if (!restoredRef.current) {
         restoredRef.current = true;
@@ -161,6 +211,10 @@ export default function ReportScreen() {
 
   const handleSubmit = async () => {
     if (submittingRef.current) return;
+    if (todayState === "failed") {
+      setError("Couldn't check what you already submitted today. Pull down to retry first — submitting now could replace today's links.");
+      return;
+    }
     const clean = links.map((l) => ({ ...l, url: l.url.trim() })).filter((l) => l.url);
     if (!clean.length) {
       setError("Add at least one link before submitting");
@@ -215,6 +269,18 @@ export default function ReportScreen() {
       <SuccessBanner message={successMsg} />
 
       {/* Submitted today */}
+      {todayState === "failed" ? (
+        <Card style={{ backgroundColor: colors.yellowSoft, borderColor: "transparent" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Ionicons name="cloud-offline-outline" size={24} color={colors.amber} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.subTitle}>Couldn&apos;t check today&apos;s submissions</Text>
+              <Text style={styles.subSub}>Your submitted links are safe — this is a loading problem. Pull down to retry before submitting.</Text>
+            </View>
+            <Pressable onPress={load} hitSlop={8}><Text style={styles.linkAction}>Retry</Text></Pressable>
+          </View>
+        </Card>
+      ) : (
       <Card style={{ backgroundColor: submittedCount ? colors.greenSoft : colors.yellowSoft, borderColor: "transparent" }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <Ionicons
@@ -232,6 +298,7 @@ export default function ReportScreen() {
           </View>
         </View>
       </Card>
+      )}
 
       {/* Links editor */}
       <SectionTitle

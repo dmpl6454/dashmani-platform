@@ -76,7 +76,11 @@ export async function getEmployeeById(id: string) {
   });
   if (!employee) throw new AppError(404, "NOT_FOUND", "Employee not found");
   // Expose a flat `teams` array alongside the legacy singular `orgUnit`.
-  const { teamMemberships, ...rest } = employee;
+  // ⚠️ passwordHash is dropped here: this row is returned to any holder of
+  // employees.view (every Employee), and it used to include the bcrypt hash of any
+  // account, Super Admins included, ready for an offline crack.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { teamMemberships, passwordHash: _passwordHash, ...rest } = employee;
   return {
     ...rest,
     orgUnit: employee.orgUnit,

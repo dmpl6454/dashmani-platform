@@ -1,4 +1,5 @@
 "use client";
+import { safeHref } from "@/lib/safe-href";
 import { memo, useState, useEffect, useRef } from "react";
 import { Heart, MessageCircle, Share2, Eye, ExternalLink, Image as ImageIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -60,7 +61,7 @@ function InstagramGridCard({ link }: { link: LinkData }) {
 
   return (
     <div className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-pink-300 hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all w-[306px] inline-block align-top">
-      <a href={link.url} target="_blank" rel="noopener noreferrer" className="block relative group">
+      <a href={safeHref(link.url)} target="_blank" rel="noopener noreferrer" className="block relative group">
         <div className="relative w-[306px] h-[180px] overflow-hidden bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex flex-col items-center justify-center gap-3">
           <img src={PLATFORM_ICONS.instagram} alt="" className="h-14 w-14 opacity-80" />
           <span className="text-white text-sm font-medium opacity-80">Instagram Post</span>
@@ -85,7 +86,7 @@ function InstagramGridCard({ link }: { link: LinkData }) {
             <span className="text-sm font-medium text-[#1A1A1A] truncate">{accountName || "Instagram"}</span>
           </div>
           <a
-            href={link.url}
+            href={safeHref(link.url)}
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 h-7 w-7 rounded-lg bg-[#FEFCF7] border border-[#E8E0D0] flex items-center justify-center text-[#7A7A7A] hover:text-pink-600 hover:border-pink-200 transition-all"
@@ -188,7 +189,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
         {/* Thumbnail */}
         {thumbnail && !imgError ? (
           <a
-            href={link.url}
+            href={safeHref(link.url)}
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 w-[120px] h-[100px] bg-gray-50 overflow-hidden relative"
@@ -207,7 +208,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
           </a>
         ) : (
           <a
-            href={link.url}
+            href={safeHref(link.url)}
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 w-[60px] flex items-center justify-center bg-gray-50 border-r border-[#F0EAD8]"
@@ -239,7 +240,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               <a
-                href={link.url}
+                href={safeHref(link.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="shrink-0 h-8 w-8 rounded-lg bg-[#FEFCF7] border border-[#E8E0D0] flex items-center justify-center text-[#7A7A7A] hover:text-[#1A1A1A] hover:border-[#F5D547] transition-all"

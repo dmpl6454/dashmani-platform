@@ -1,4 +1,5 @@
 "use client";
+import { safeHref } from "@/lib/safe-href";
 import { memo, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
 import { Users, FileText, Link2, Calendar, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown, Eye, Heart, MessageCircle, ChevronDown } from "lucide-react";
@@ -226,7 +227,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, open, onToggle, d
                 <span className="font-semibold text-ds-t5 truncate min-w-0 max-w-[45%] sm:max-w-[160px]" title={link.accountName}>{link.accountName}</span>
               )}
               <a
-                href={link.url}
+                href={safeHref(link.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 title={link.url}
@@ -780,7 +781,7 @@ export default function ReportsPage() {
                       {/* The URL and the staleness chip share ONE grid cell, so the column
                           count — and the header alignment — never changes. */}
                       <span className="flex items-center gap-2 min-w-0">
-                        <a href={link.url} target="_blank" rel="noopener noreferrer" title={link.url} className="truncate min-w-0 text-ds-t5 hover:text-ds-gold">
+                        <a href={safeHref(link.url)} target="_blank" rel="noopener noreferrer" title={link.url} className="truncate min-w-0 text-ds-t5 hover:text-ds-gold">
                           {link.url}
                         </a>
                         {stale && (

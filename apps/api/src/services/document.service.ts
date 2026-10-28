@@ -57,6 +57,13 @@ export async function reviewDocument(
   const document = await prisma.employeeDocument.findUnique({ where: { id } });
   if (!document) throw new AppError(404, "NOT_FOUND", "Document not found");
   if (document.status !== "PENDING") throw new AppError(400, "ALREADY_REVIEWED", "This document has already been reviewed");
+  if (status !== "APPROVED" && status !== "REJECTED") {
+    throw new AppError(400, "VALIDATION_ERROR", "Status must be APPROVED or REJECTED");
+  }
+  // Same rule as leave: nobody approves their own paperwork.
+  if (document.employeeId === reviewedBy) {
+    throw new AppError(403, "SELF_REVIEW", "You cannot review your own document");
+  }
 
   return prisma.employeeDocument.update({
     where: { id },

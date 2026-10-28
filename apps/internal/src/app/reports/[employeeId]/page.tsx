@@ -1,4 +1,5 @@
 "use client";
+import { safeHref } from "@/lib/safe-href";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays } from "lucide-react";
@@ -274,7 +275,7 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
                       <div className="flex items-center gap-3 min-h-[40px] py-1.5 px-[22px] text-[12.5px] hover:bg-[color:var(--hx-0A1620)] transition-colors">
                         <PlatformBadge platform={link.platform} />
                         <a
-                          href={link.url}
+                          href={safeHref(link.url)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex-1 min-w-0 overflow-hidden flex items-center gap-2 group/url"

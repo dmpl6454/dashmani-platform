@@ -2,8 +2,6 @@ import { Router, Request, Response, NextFunction } from "express";
 import { authenticateHr } from "../middleware/hr-auth";
 import { success } from "../utils/response";
 import { todayIST, istMidnight } from "@dashmani/shared";
-import https from "https";
-import http from "http";
 import * as salaryService from "../services/salary-slip.service";
 import * as documentService from "../services/document.service";
 import * as profilePicService from "../services/profile-picture.service";
@@ -24,6 +22,7 @@ import * as profileService from "../services/employee-profile.service";
 import * as reportService from "../services/daily-report.service";
 import { getLeaderboard, getTeamDashboard } from "../services/leaderboard.service";
 import { prisma } from "@dashmani/db";
+import { fetchPublicText } from "../utils/public-fetch";
 import bcrypt from "bcrypt";
 
 const router = Router();
@@ -541,14 +540,31 @@ router.get("/hr/expenses", authenticateHr, async (req: Request, res: Response, n
 
 // ===== Presentations (Marp) =====
 
+/**
+ * Marp's built-in themes. ⚠️ `theme` is user input that reaches a child process, so it
+ * is checked against this list on create, update AND export (rows written before the
+ * check existed are re-checked at export), and marp is started with execFile + an
+ * argument array, never a shell string. The old `execSync(\`marp … --theme ${theme}\`)`
+ * let any HR user (self-registration is open) run shell commands as the API user.
+ */
+const MARP_THEMES = ["default", "gaia", "uncover"] as const;
+function marpTheme(input: unknown): string | null {
+  if (input === undefined || input === null || input === "") return "default";
+  return typeof input === "string" && (MARP_THEMES as readonly string[]).includes(input) ? input : null;
+}
+
 router.post("/hr/presentations", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { title, markdown, theme } = req.body;
+    const { title, markdown } = req.body;
     if (!title || !markdown) {
       return res.status(400).json({ error: "Title and markdown are required" });
     }
+    const theme = marpTheme(req.body.theme);
+    if (!theme) {
+      return res.status(400).json({ error: `Theme must be one of: ${MARP_THEMES.join(", ")}` });
+    }
     const presentation = await prisma.presentation.create({
-      data: { employeeId: req.user!.userId, title, markdown, theme: theme || "default" },
+      data: { employeeId: req.user!.userId, title, markdown, theme },
     });
     return success(res, presentation, undefined, 201);
   } catch (err) { next(err); }
@@ -581,9 +597,14 @@ router.put("/hr/presentations/:id", authenticateHr, async (req: Request, res: Re
     if (!p || p.employeeId !== req.user!.userId) {
       return res.status(404).json({ error: "Presentation not found" });
     }
+    // An omitted theme leaves the stored one alone (Prisma ignores undefined).
+    const theme = req.body.theme === undefined ? undefined : marpTheme(req.body.theme);
+    if (theme === null) {
+      return res.status(400).json({ error: `Theme must be one of: ${MARP_THEMES.join(", ")}` });
+    }
     const updated = await prisma.presentation.update({
       where: { id: req.params.id },
-      data: { title: req.body.title, markdown: req.body.markdown, theme: req.body.theme },
+      data: { title: req.body.title, markdown: req.body.markdown, theme },
     });
     return success(res, updated);
   } catch (err) { next(err); }
@@ -606,20 +627,25 @@ router.post("/hr/presentations/:id/export", authenticateHr, async (req: Request,
     if (!p || p.employeeId !== req.user!.userId) {
       return res.status(404).json({ error: "Presentation not found" });
     }
-    const { execSync } = require("child_process");
+    // A row stored before the allowlist existed falls back to the default theme
+    // rather than reaching the command line.
+    const theme = marpTheme(p.theme) ?? "default";
+    const { execFileSync } = require("child_process");
     const fs = require("fs");
+    const os = require("os");
     const path = require("path");
-    const tmpDir = path.join("/tmp", "marp-" + p.id);
-    fs.mkdirSync(tmpDir, { recursive: true });
-    const mdPath = path.join(tmpDir, "slides.md");
-    const htmlPath = path.join(tmpDir, "slides.html");
-    fs.writeFileSync(mdPath, p.markdown);
-    execSync(`marp "${mdPath}" -o "${htmlPath}" --html --theme ${p.theme || "default"}`, { timeout: 30000 });
-    const html = fs.readFileSync(htmlPath, "utf-8");
-    // Clean up
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    res.setHeader("Content-Type", "text/html");
-    return res.send(html);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "marp-"));
+    try {
+      const mdPath = path.join(tmpDir, "slides.md");
+      const htmlPath = path.join(tmpDir, "slides.html");
+      fs.writeFileSync(mdPath, p.markdown);
+      execFileSync("marp", [mdPath, "-o", htmlPath, "--html", "--theme", theme], { timeout: 30000 });
+      const html = fs.readFileSync(htmlPath, "utf-8");
+      res.setHeader("Content-Type", "text/html");
+      return res.send(html);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   } catch (err) { next(err); }
 });
 
@@ -837,47 +863,17 @@ router.get("/hr/preview", authenticateHr, async (req: Request, res: Response, ne
     const { url } = req.query as { url?: string };
     if (!url) return success(res, null);
 
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(url);
-    } catch {
-      return success(res, null);
-    }
-
-    // Only allow http/https
-    if (!["http:", "https:"].includes(parsedUrl.protocol)) return success(res, null);
-
-    const fetchHtml = (target: URL): Promise<string> =>
-      new Promise((resolve, reject) => {
-        const mod = target.protocol === "https:" ? https : http;
-        const reqOptions = {
-          hostname: target.hostname,
-          path: target.pathname + target.search,
-          headers: {
-            "User-Agent": "Mozilla/5.0 (compatible; DashmaniBot/1.0)",
-            Accept: "text/html",
-          },
-          timeout: 5000,
-        };
-        const req = mod.get(reqOptions, (res) => {
-          // Follow one redirect
-          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            try {
-              return resolve(fetchHtml(new URL(res.headers.location, target)));
-            } catch { return resolve(""); }
-          }
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => { data += chunk; if (data.length > 50000) res.destroy(); });
-          res.on("end", () => resolve(data));
-          res.on("error", reject);
-        });
-        req.on("error", reject);
-        req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
-      });
-
+    // Fetched through fetchPublicText: http(s) on default ports only, private /
+    // loopback / link-local targets refused (also after a redirect), body capped.
     let html = "";
-    try { html = await fetchHtml(parsedUrl); } catch { return success(res, null); }
+    try {
+      html = (await fetchPublicText(url, {
+        timeoutMs: 5000,
+        maxBytes: 50_000,
+        maxRedirects: 1,
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; DashmaniBot/1.0)", Accept: "text/html" },
+      })).text;
+    } catch { return success(res, null); }
 
     const getMeta = (property: string): string => {
       const m = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${property}["'][^>]+content=["']([^"']+)["']`, "i"))

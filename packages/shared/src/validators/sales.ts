@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { safeString, normalizedEmail } from "../utils/sanitize";
+import { safeString, normalizedEmail, isHttpUrl, HTTP_URL_MESSAGE } from "../utils/sanitize";
 import { DEFAULT_GST_RATE_BP, DEFAULT_SAC, GST_STATE_CODES, TAX_MODES } from "../sales/gst";
 import { COMPANY_KEYS } from "../sales/companies";
 
@@ -207,7 +207,7 @@ export type OrderUpsertInput = z.infer<typeof orderUpsertSchema>;
 
 export const orderItemStatusSchema = z.object({
   status: z.enum(ORDER_ITEM_STATUSES),
-  permalink: z.string().trim().url().max(500).optional().nullable(),
+  permalink: z.string().trim().url().max(500).refine(isHttpUrl, HTTP_URL_MESSAGE).optional().nullable(),
   deliveredOn: day.optional().nullable(),
 });
 

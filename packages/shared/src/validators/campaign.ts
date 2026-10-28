@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { safeString } from "../utils/sanitize";
+import { safeString, isHttpUrl, HTTP_URL_MESSAGE } from "../utils/sanitize";
 import { todayIST } from "../utils/date";
 
 // Self-serve campaign booking (client portal "Start a campaign"). Shared by the API (input
@@ -345,7 +345,7 @@ export const campaignReviewNoteSchema = z.object({
 });
 
 export const campaignMarkPostedSchema = z.object({
-  url: z.string().trim().url("Paste the full link to the post").max(500),
+  url: z.string().trim().url("Paste the full link to the post").max(500).refine(isHttpUrl, HTTP_URL_MESSAGE),
 });
 
 export const campaignRateCardUpsertSchema = z.object({

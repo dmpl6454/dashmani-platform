@@ -1,3 +1,4 @@
+import { escapeHtml } from "../services/pipeline/email-template";
 import { Router, Request, Response, NextFunction } from "express";
 import { success } from "../utils/response";
 import * as jobListingService from "../services/job-listing.service";
@@ -116,7 +117,7 @@ router.post(
       dispatchNotification({ type: "GENERAL", title: "New Internship Application", message: `${name} applied for a ${duration || "6 month"} internship${department ? ` in ${department}` : ""}`, metadata: { internshipId: app.id } }).catch(() => {});
 
       // Confirmation email to applicant
-      sendEmail({ to: email, subject: "Internship Application Received - Digital Sukoon", html: `<p>Hi ${name},</p><p>Thank you for applying for the internship at Digital Sukoon. We have received your application and will review it shortly.</p><p>— Digital Sukoon HR Team</p>` }).catch(() => {});
+      sendEmail({ to: email, subject: "Internship Application Received - Digital Sukoon", html: `<p>Hi ${escapeHtml(String(name ?? ""))},</p><p>Thank you for applying for the internship at Digital Sukoon. We have received your application and will review it shortly.</p><p>— Digital Sukoon HR Team</p>` }).catch(() => {});
 
       return success(res, app, undefined, 201);
     } catch (err) { next(err); }

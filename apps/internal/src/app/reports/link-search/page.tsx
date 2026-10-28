@@ -1,4 +1,5 @@
 "use client";
+import { safeHref } from "@/lib/safe-href";
 import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import {
@@ -485,7 +486,7 @@ export default function LinkSearchPage() {
                           <Chip color={pColor(p.platform)} className="mt-px">{pLabel(p.platform)}</Chip>
                           <div className="flex-1 min-w-0 flex flex-col gap-1">
                             <a
-                              href={p.url}
+                              href={safeHref(p.url)}
                               target="_blank"
                               rel="noopener noreferrer"
                               title={p.url}

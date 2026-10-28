@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { safeString, normalizedEmail } from "../utils/sanitize";
+import { safeString, normalizedEmail, isHttpUrl, HTTP_URL_MESSAGE } from "../utils/sanitize";
 
 export const clientLoginSchema = z.object({
   email: normalizedEmail,
@@ -41,7 +41,7 @@ export const updateProjectSchema = z.object({
 export const createApprovalSchema = z.object({
   title: z.string().min(2, "Title is required").max(200),
   description: z.string().max(2000).optional(),
-  fileUrl: z.string().url().optional(),
+  fileUrl: z.string().url().refine(isHttpUrl, HTTP_URL_MESSAGE).optional(),
 });
 
 export const respondApprovalSchema = z.object({
@@ -95,7 +95,7 @@ export const createBriefSchema = z.object({
   projectId:    z.string().uuid("Invalid project ID"),
   title:        z.string().min(2, "Title must be at least 2 characters").max(200),
   description:  z.string().min(2, "Description must be at least 2 characters").max(4000),
-  referenceUrl: z.string().url("Invalid URL").optional().or(z.literal("").transform(() => undefined)),
+  referenceUrl: z.string().url("Invalid URL").refine(isHttpUrl, HTTP_URL_MESSAGE).optional().or(z.literal("").transform(() => undefined)),
 });
 
 /**

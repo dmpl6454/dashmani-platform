@@ -19,10 +19,21 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+    server_tokens off;
+    # Never serve dotfiles (.env, .git) or source maps from the export directory.
+    location ~ /\. { return 404; }
+    location ~ \.map$ { return 404; }
 
     # Hashed build assets never change under the same name.
     location /_next/static/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
+        # An add_header here replaces the server-level set, so repeat it.
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
         try_files $uri =404;
     }
 
@@ -34,6 +45,8 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
         # /login → login.html, /connect?error=denied → connect.html (static export, no dynamic routes).
         try_files $uri $uri.html $uri/ =404;
     }

@@ -21,6 +21,9 @@ const CREATOR_META_CALLBACK_PATH = "/v1/creator/meta/oauth/callback";
  * does, via POST /oauth/complete), so a code in a log line would still be usable for minutes.
  */
 export function redactOauthQuery(url: string): string {
+  // One-time invite tokens travel as path segments on two GETs; a token in a log line
+  // is a usable invite until it is accepted (security audit 2026-10-28).
+  url = url.replace(/(\/v1\/(?:client\/auth\/join|admin\/users\/invite)\/)[^/?#]+/g, "$1[redacted]");
   if (!/\/oauth\/callback(?:\?|$)/.test(url.split("#")[0])) return url;
   return url.replace(/([?&](?:code|state)=)[^&#]*/g, "$1[redacted]");
 }
@@ -152,6 +155,19 @@ app.use("/v1/client/auth/signup", authLimiter);
 // Accepting a team invite sets a password from an emailed token: POST only (the GET that shows
 // the invite is a page load). No email in the body, so the bucket is the client's IP.
 app.post("/v1/client/auth/join", authLimiter);
+// Password reset and HR self-registration (security audit 2026-10-28): every
+// forgot-password call sends an email from the shared hr@ Gmail account, which password
+// resets for every portal depend on, and registration mints an ACTIVE account. They had
+// only the global 1000-per-15-min limit. Same per-(client, account) bucket as login.
+for (const path of [
+  "/v1/auth/forgot-password",
+  "/v1/auth/reset-password",
+  "/v1/client/auth/forgot-password",
+  "/v1/client/auth/reset-password",
+  "/v1/hr/auth/register",
+]) {
+  app.post(path, authLimiter);
+}
 // Sign in with Google: the body carries no email, so loginRateLimitKey buckets by the ID
 // token's (unverified) `sub` — per (client, Google account), like the password logins.
 // ⚠️ POST on the exact path only — `app.use` would prefix-match GET /google/config, which every
@@ -212,7 +228,31 @@ if (process.env.NODE_ENV !== "test") {
 }
 
 // Serve uploaded files (documents, profile pictures)
-app.use("/uploads", express.static(UPLOAD_DIR));
+// ⚠️ Uploaded bytes are user-supplied. Before the 2026-10-28 audit an anonymous job
+// applicant could store `x.html` and have it served as a web page on this origin.
+// middleware/upload.ts now fixes the stored extension; these headers also cover files
+// already on disk: no MIME sniffing, a sandbox CSP (no script, no same-origin access)
+// and a download — not a page — for anything that is not an image or PDF.
+const INLINE_UPLOAD_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf"]);
+app.use(
+  "/uploads",
+  express.static(UPLOAD_DIR, {
+    dotfiles: "deny",
+    index: false,
+    setHeaders: (res, filePath) => {
+      const ext = path.extname(filePath).toLowerCase();
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      // Not on PDFs: Chrome refuses to open a PDF under a sandbox CSP, and a PDF cannot
+      // run script on this origin anyway.
+      if (ext !== ".pdf") {
+        res.setHeader("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
+      }
+      if (!INLINE_UPLOAD_EXTS.has(ext)) {
+        res.setHeader("Content-Disposition", "attachment");
+      }
+    },
+  }),
+);
 
 app.use("/v1", routes);
 app.use(errorHandler);

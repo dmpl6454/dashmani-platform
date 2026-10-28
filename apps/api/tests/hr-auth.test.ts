@@ -330,123 +330,29 @@ describe("HR Auth API", () => {
     });
   });
 
-  describe("POST /v1/hr/auth/request-otp", () => {
-    it("sends OTP for valid email", async () => {
-      await createTestUser({ email: "hr@digitalsukoon.com", roleNames: ["Employee"] });
-
-      const res = await request(app)
-        .post("/v1/hr/auth/request-otp")
-        .send({ identifier: "hr@digitalsukoon.com", channel: "EMAIL" });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.message).toMatch(/OTP sent/i);
-    });
-
-    it("sends OTP for valid phone", async () => {
-      await prisma.user.create({
-        data: {
-          name: "Phone User",
-          email: "phoneuser@digitalsukoon.com",
-          passwordHash: "not-used",
-          phone: "+919876543210",
-          status: "ACTIVE",
-        },
-      });
-
-      const res = await request(app)
-        .post("/v1/hr/auth/request-otp")
-        .send({ identifier: "+919876543210", channel: "SMS" });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
-
-    it("returns 404 for unknown identifier", async () => {
-      const res = await request(app)
-        .post("/v1/hr/auth/request-otp")
-        .send({ identifier: "nobody@unknown.com", channel: "EMAIL" });
-
-      expect(res.status).toBe(404);
-      expect(res.body.success).toBe(false);
-      expect(res.body.error.code).toBe("USER_NOT_FOUND");
-    });
-
-    it("returns 400 for missing channel", async () => {
-      const res = await request(app)
-        .post("/v1/hr/auth/request-otp")
-        .send({ identifier: "hr@digitalsukoon.com" });
-
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe("VALIDATION_ERROR");
-    });
-  });
-
-  describe("POST /v1/hr/auth/verify-otp", () => {
-    it("returns tokens for correct OTP", async () => {
-      const user = await createTestUser({
-        email: "verify@digitalsukoon.com",
-        roleNames: ["Employee"],
-      });
-
-      // Plant an OTP directly
+  // The OTP login was removed in the 2026-10-28 security audit: the code was never
+  // delivered and verify-otp could be brute-forced into any account.
+  describe("OTP login is gone", () => {
+    it("request-otp and verify-otp no longer exist", async () => {
+      const user = await createTestUser({ email: "otp@digitalsukoon.com", roleNames: ["Employee"] });
       await prisma.otpToken.create({
         data: {
           userId: user.id,
           otp: "123456",
           channel: "EMAIL",
-          target: "verify@digitalsukoon.com",
+          target: "otp@digitalsukoon.com",
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
       });
-
-      const res = await request(app)
+      const req1 = await request(app)
+        .post("/v1/hr/auth/request-otp")
+        .send({ identifier: "otp@digitalsukoon.com", channel: "EMAIL" });
+      expect(req1.status).toBe(404);
+      const req2 = await request(app)
         .post("/v1/hr/auth/verify-otp")
-        .send({ identifier: "verify@digitalsukoon.com", otp: "123456" });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.accessToken).toBeDefined();
-      expect(res.body.data.refreshToken).toBeDefined();
-      expect(res.body.data.user.email).toBe("verify@digitalsukoon.com");
-    });
-
-    it("rejects invalid OTP", async () => {
-      await createTestUser({
-        email: "verify2@digitalsukoon.com",
-        roleNames: ["Employee"],
-      });
-
-      const res = await request(app)
-        .post("/v1/hr/auth/verify-otp")
-        .send({ identifier: "verify2@digitalsukoon.com", otp: "000000" });
-
-      expect(res.status).toBe(401);
-      expect(res.body.error.code).toBe("INVALID_OTP");
-    });
-
-    it("rejects expired OTP", async () => {
-      const user = await createTestUser({
-        email: "verify3@digitalsukoon.com",
-        roleNames: ["Employee"],
-      });
-
-      await prisma.otpToken.create({
-        data: {
-          userId: user.id,
-          otp: "654321",
-          channel: "EMAIL",
-          target: "verify3@digitalsukoon.com",
-          expiresAt: new Date(Date.now() - 1000), // already expired
-        },
-      });
-
-      const res = await request(app)
-        .post("/v1/hr/auth/verify-otp")
-        .send({ identifier: "verify3@digitalsukoon.com", otp: "654321" });
-
-      expect(res.status).toBe(401);
-      expect(res.body.error.code).toBe("INVALID_OTP");
+        .send({ identifier: "otp@digitalsukoon.com", otp: "123456" });
+      expect(req2.status).toBe(404);
+      expect(req2.body?.data?.accessToken).toBeUndefined();
     });
   });
 
@@ -457,20 +363,9 @@ describe("HR Auth API", () => {
         roleNames: ["Employee"],
       });
 
-      // Get tokens via OTP flow
-      await prisma.otpToken.create({
-        data: {
-          userId: user.id,
-          otp: "111111",
-          channel: "EMAIL",
-          target: "refresh@digitalsukoon.com",
-          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-        },
-      });
-
       const verifyRes = await request(app)
-        .post("/v1/hr/auth/verify-otp")
-        .send({ identifier: "refresh@digitalsukoon.com", otp: "111111" });
+        .post("/v1/hr/auth/login")
+        .send({ identifier: user.email, password: "TestPass123!" });
 
       expect(verifyRes.status).toBe(200);
       const { refreshToken } = verifyRes.body.data;

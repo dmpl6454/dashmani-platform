@@ -87,12 +87,14 @@ describe("security audit 2026-10-28", () => {
     it("GET /employees/:id never returns the password hash", async () => {
       const target = await createTestUser({ roleNames: ["Admin"] });
       const viewer = await createTestUser({ roleNames: ["Employee"] });
-      const res = await request(app)
-        .get(`/v1/employees/${target.id}`)
-        .set(auth(generateToken(viewer.id, viewer.email, ["Employee"])));
-      expect(res.status).toBe(200);
-      expect(res.body.data.passwordHash).toBeUndefined();
-      expect(JSON.stringify(res.body)).not.toContain("$2b$");
+      const viewerAuth = auth(generateToken(viewer.id, viewer.email, ["Employee"]));
+      // Since scope enforcement (2026-10-28) an own-scope grant reads only its own record.
+      const other = await request(app).get(`/v1/employees/${target.id}`).set(viewerAuth);
+      expect(other.status).toBe(403);
+      const own = await request(app).get(`/v1/employees/${viewer.id}`).set(viewerAuth);
+      expect(own.status).toBe(200);
+      expect(own.body.data.passwordHash).toBeUndefined();
+      expect(JSON.stringify(own.body)).not.toContain("$2b$");
     });
   });
 

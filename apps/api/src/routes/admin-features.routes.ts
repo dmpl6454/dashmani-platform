@@ -28,6 +28,7 @@ import { uploadExcel } from "../middleware/upload";
 import { prisma } from "@dashmani/db";
 import { notifyHrByEmail, notifyAdminByEmail, sendEmail } from "../services/email.service";
 import * as notificationService from "../services/notification.service";
+import { sendAccountApprovedEmail } from "../services/account-approved-email";
 import * as employeeService from "../services/employee.service";
 
 const router = Router();
@@ -1279,6 +1280,7 @@ router.post("/admin/users/invite", authenticate, requirePermission("employees", 
           });
         }
         await prisma.user.update({ where: { id: existing.id }, data: { status: "ACTIVE" } });
+        void sendAccountApprovedEmail({ name: existing.name, email: existing.email });
         return success(res, { message: "Existing pending account approved and activated", email, approvedExistingUserId: existing.id }, undefined, 200);
       }
       return res.status(409).json({ success: false, error: { code: "CONFLICT", message: "A user with this email already exists" } });

@@ -1479,7 +1479,7 @@ The system is "locked" by design — only an existing admin can invite new admin
 
 - **Hardcoded seed accounts** (in `packages/db/prisma/seed.ts`):
   - `admin@digitalsukoon.com` — password from `SEED_ADMIN_PASSWORD` env var (default `Admin@123456`)
-  - `tabish@dashmani.com` — password `admin@123` (this is **reset on every seed run** because the `update` block sets `passwordHash` on existing rows)
+  - `tabish@dashmani.com` — password from `SEED_TABISH_PASSWORD` (**reset on a seed run only when that var is set**; unset = the existing password is kept, a new row gets an unusable random one). The old hardcoded `admin@123` was removed 2026-10-28 (security audit) — it reset a Super Admin to a password published in the repo on every seed run, prod included. The demo client `demo@clientcompany.com` is created only when `SEED_DEMO_CLIENT_PASSWORD` is set (local dev only).
 - Both accounts get the `Super Admin` role on every seed run. The seed is fully idempotent (`upsert` for every entity).
 
 **Re-run the seed on production** (use this any time you need to reset the admin password or restore lockout access):
@@ -1492,7 +1492,7 @@ npx tsx prisma/seed.ts
 # because @prisma/client auto-loads packages/db/.env on initialization.
 ```
 
-After the seed, `tabish@dashmani.com / admin@123` will work via `POST /v1/auth/login`. To change either hardcoded credential, edit `packages/db/prisma/seed.ts` and redeploy.
+To recover a locked-out Tabish account, run the seed with the variable set for that one command (never store it in a file): `cd /opt/dashmani-platform/packages/db && SEED_TABISH_PASSWORD='<new password>' npx tsx prisma/seed.ts`. ⚠️ Never put a real password back into `seed.ts` — the repo is readable by anyone with access to it.
 
 ---
 

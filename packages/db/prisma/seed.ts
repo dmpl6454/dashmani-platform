@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { hash } from "bcrypt";
+import { randomBytes } from "node:crypto";
 
 const prisma = new PrismaClient();
 
@@ -156,11 +157,17 @@ async function main() {
       create: { userId: admin.id, roleId: superAdminRole.id },
     });
 
-    // Tabish — full access test account (internal portal, Super Admin)
-    const tabishHash = await hash("admin@123", 12);
+    // Tabish — full access account (internal portal, Super Admin).
+    // ⚠️ No password lives in this file any more (security audit 2026-10-28): the old
+    // hardcoded "admin@123" was reset on EVERY seed run, prod included, so anyone who read
+    // the repo could sign in as a Super Admin. The password now comes from
+    // SEED_TABISH_PASSWORD; without it the account keeps its role and its existing password
+    // (a newly created row gets an unusable random one — use "Forgot password" to set it).
+    const tabishPassword = process.env.SEED_TABISH_PASSWORD || null;
+    const tabishHash = await hash(tabishPassword ?? randomBytes(32).toString("hex"), 12);
     const tabish = await prisma.user.upsert({
       where: { email: "tabish@dashmani.com" },
-      update: { passwordHash: tabishHash, status: "ACTIVE" },
+      update: tabishPassword ? { passwordHash: tabishHash, status: "ACTIVE" } : { status: "ACTIVE" },
       create: {
         name: "Tabish Mukaddam",
         email: "tabish@dashmani.com",
@@ -216,26 +223,36 @@ async function main() {
     console.log("Seeded Demo Snapchat account");
   }
 
-  // Seed demo client
-  const clientPasswordHash = await hash("Client@123456", 12);
-  await prisma.client.upsert({
-    where: { email: "demo@clientcompany.com" },
-    update: {},
-    create: {
-      companyName: "Demo Client Co.",
-      contactName: "Rahul Sharma",
-      email: "demo@clientcompany.com",
-      passwordHash: clientPasswordHash,
-      status: "ACTIVE",
-    },
-  });
-  console.log("Seeded demo client");
+  // Demo client — local development only. It used to be created everywhere with the
+  // published password "Client@123456", which left a live client-portal login on prod.
+  // It is now seeded only when SEED_DEMO_CLIENT_PASSWORD is set (your local
+  // packages/db/.env; never on the server).
+  const demoClientPassword = process.env.SEED_DEMO_CLIENT_PASSWORD || null;
+  if (demoClientPassword) {
+    const clientPasswordHash = await hash(demoClientPassword, 12);
+    await prisma.client.upsert({
+      where: { email: "demo@clientcompany.com" },
+      update: {},
+      create: {
+        companyName: "Demo Client Co.",
+        contactName: "Rahul Sharma",
+        email: "demo@clientcompany.com",
+        passwordHash: clientPasswordHash,
+        status: "ACTIVE",
+      },
+    });
+    console.log("Seeded demo client");
+  } else {
+    console.log("Skipped demo client (SEED_DEMO_CLIENT_PASSWORD not set)");
+  }
 
-  // Tabish — full access test account (client portal)
-  const tabishClientHash = await hash("admin@123", 12);
+  // Tabish — client-portal account. Same rule as the internal account: the password comes
+  // from SEED_TABISH_PASSWORD, and an existing password is never reset without it.
+  const tabishClientPassword = process.env.SEED_TABISH_PASSWORD || null;
+  const tabishClientHash = await hash(tabishClientPassword ?? randomBytes(32).toString("hex"), 12);
   await prisma.client.upsert({
     where: { email: "tabish@dashmani.com" },
-    update: { passwordHash: tabishClientHash, status: "ACTIVE" },
+    update: tabishClientPassword ? { passwordHash: tabishClientHash, status: "ACTIVE" } : { status: "ACTIVE" },
     create: {
       companyName: "Dashmani",
       contactName: "Tabish Mukaddam",
@@ -244,7 +261,7 @@ async function main() {
       status: "ACTIVE",
     },
   });
-  console.log("Seeded Tabish test account (client portal)");
+  console.log("Seeded Tabish account (client portal)");
 }
 
 main()

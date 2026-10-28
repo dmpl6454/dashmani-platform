@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { EmployeeProfileData } from "@dashmani/shared";
+import { sendAccountApprovedEmail } from "./account-approved-email";
 
 export async function getProfile(userId: string) {
   const user = await prisma.user.findUnique({
@@ -112,6 +113,11 @@ export async function approveEmployee(userId: string) {
     data: { status: "ACTIVE" },
     select: { id: true, name: true, email: true, phone: true, status: true },
   });
+
+  // Only a pending account is "approved"; reactivating an INACTIVE one is not a sign-up approval.
+  if (user.status === "ONBOARDING") {
+    void sendAccountApprovedEmail({ name: updated.name, email: updated.email });
+  }
 
   return updated;
 }

@@ -2,6 +2,7 @@ import { prisma } from "@dashmani/db";
 import { hashPassword } from "../utils/password";
 import { AppError } from "../middleware/error-handler";
 import type { Prisma } from "@dashmani/db";
+import { sendAccountApprovedEmail } from "./account-approved-email";
 
 export async function listEmployees(params: {
   cursor?: string;
@@ -208,7 +209,7 @@ export async function updateEmployee(id: string, data: {
     });
   }
 
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id },
     data: updateData,
     include: {
@@ -216,6 +217,14 @@ export async function updateEmployee(id: string, data: {
       orgUnit: { select: { id: true, name: true } },
     },
   });
+
+  // Approval: a pending account (self sign-up or admin-created hire) going live.
+  // Fire-and-forget so a slow or failed email never blocks the save.
+  if (employee.status === "ONBOARDING" && updated.status === "ACTIVE") {
+    void sendAccountApprovedEmail({ name: updated.name, email: updated.email });
+  }
+
+  return updated;
 }
 
 export async function getEmployeeAccounts(employeeId: string) {

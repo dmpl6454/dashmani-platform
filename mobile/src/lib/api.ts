@@ -2,7 +2,9 @@ import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
 // Production API. Point at http://<your-mac-ip>:4000/v1 for local dev.
-export const API_URL = "https://api.digitalsukoon.com/v1";
+// Builds (EAS) always talk to production. EXPO_PUBLIC_API_URL exists only for local test runs
+// (`EXPO_PUBLIC_API_URL=http://localhost:4000/v1 npx expo start --ios`); it is never set in eas.json.
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || "https://api.digitalsukoon.com/v1";
 /** Base URL without /v1 — used for static file URLs like /uploads/ */
 export const API_BASE = API_URL.replace(/\/v1\/?$/, "");
 

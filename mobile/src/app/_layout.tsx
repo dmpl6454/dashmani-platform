@@ -14,6 +14,9 @@ export default function RootLayout() {
           headerTintColor: colors.ink,
           headerTitleStyle: { fontWeight: "700" },
           headerShadowVisible: false,
+          // The tab groups' route names are "(tabs)" / "(admin)"; without this every screen
+          // opened from a tab showed "< (tabs)" as its back button.
+          headerBackTitle: "Back",
           contentStyle: { backgroundColor: colors.bg },
         }}
       >

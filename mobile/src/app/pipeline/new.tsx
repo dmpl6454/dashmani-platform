@@ -106,7 +106,7 @@ export default function NewPipelineProject() {
       <Stack.Screen options={{ title: "New project" }} />
       <ErrorBanner message={error} />
 
-      <Field label="Title" value={title} onChangeText={setTitle} placeholder="e.g. Diwali launch — Brand X" autoCapitalize="sentences" />
+      <Field label="Title" value={title} onChangeText={(t) => { setTitle(t); if (error) setError(null); }} placeholder="e.g. Diwali launch — Brand X" autoCapitalize="sentences" />
       <Field label="Description (optional)" value={description} onChangeText={setDescription} multiline autoCapitalize="sentences" />
 
       <SectionTitle>Stage</SectionTitle>
@@ -155,6 +155,8 @@ export default function NewPipelineProject() {
       </Card>
       <Text style={styles.hint}>You are the owner. Members are notified; anyone on the team can still open the project.</Text>
 
+      {/* Repeated here: the form is taller than the screen, so a message only at the top is off-screen when Create is tapped. */}
+      {error ? <View style={{ marginTop: spacing.md }}><ErrorBanner message={error} /></View> : null}
       <Button title="Create project" onPress={create} loading={busy} style={{ marginTop: spacing.lg }} />
     </Screen>
   );

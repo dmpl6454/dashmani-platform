@@ -61,8 +61,11 @@ export async function assertAssignableRoles(actorId: string, roleIds: unknown): 
   if (!Array.isArray(roleIds) || roleIds.length === 0) return;
   const ids = roleIds.filter((r): r is string => typeof r === "string");
   if (ids.length === 0) return;
-  await assertSuperAdminBoundary(actorId, { roleIds: ids });
-  if (await actorIsAdmin(actorId)) return;
+  if (await actorIsAdmin(actorId)) {
+    // Admins may grant privileged roles, but Super Admin only a Super Admin.
+    await assertSuperAdminBoundary(actorId, { roleIds: ids });
+    return;
+  }
   const privileged = await prisma.role.count({
     where: { id: { in: ids }, name: { in: [...ADMIN_GRANT_ONLY_ROLE_NAMES] } },
   });
@@ -77,8 +80,10 @@ export async function assertAssignableRoles(actorId: string, roleIds: unknown): 
 
 /** Throws 403 when a non-admin tries to change an Admin, Super Admin or HR Manager account. */
 export async function assertManageableUser(actorId: string, targetUserId: string): Promise<void> {
-  await assertSuperAdminBoundary(actorId, { targetUserId });
-  if (await actorIsAdmin(actorId)) return;
+  if (await actorIsAdmin(actorId)) {
+    await assertSuperAdminBoundary(actorId, { targetUserId });
+    return;
+  }
   const privileged = await prisma.userRole.count({
     where: { userId: targetUserId, role: { name: { in: [...PRIVILEGED_ROLE_NAMES] } } },
   });

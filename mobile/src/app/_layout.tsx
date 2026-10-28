@@ -14,6 +14,9 @@ export default function RootLayout() {
           headerTintColor: colors.ink,
           headerTitleStyle: { fontWeight: "700" },
           headerShadowVisible: false,
+          // The tab groups' route names are "(tabs)" / "(admin)"; without this every screen
+          // opened from a tab showed "< (tabs)" as its back button.
+          headerBackTitle: "Back",
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
@@ -72,6 +75,10 @@ export default function RootLayout() {
         <Stack.Screen name="admin-ai" options={{ title: "AI Assistant" }} />
         <Stack.Screen name="admin-top-links" options={{ title: "Top Links" }} />
         <Stack.Screen name="admin-link-search" options={{ title: "Link Search" }} />
+        <Stack.Screen name="admin-overview" options={{ title: "Overview" }} />
+        <Stack.Screen name="admin-posting-watch" options={{ title: "Posting Watch" }} />
+        <Stack.Screen name="admin-campaigns" options={{ title: "Campaign Bookings" }} />
+        <Stack.Screen name="admin-campaign/[id]" options={{ title: "Campaign" }} />
       </Stack>
     </AuthProvider>
   );

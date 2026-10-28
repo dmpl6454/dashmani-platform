@@ -26,7 +26,7 @@ export default function AdminDashboard() {
   // The command center pulls every company vital in one parallel sweep.
   const { data, refreshing, refresh } = useApi<any>(async () => {
     const week = `startDate=${daysAgoIST(6)}&endDate=${todayIST()}`;
-    const [overview, poa, growth, tasks, summary, apps, complaints, bugs] = await Promise.allSettled([
+    const [overview, poa, growth, tasks, summary, apps, complaints, bugs, campaigns, watch] = await Promise.allSettled([
       apiFetch<any>("/analytics/overview"),
       apiFetch<any>("/admin/daily-reports/status"),
       apiFetch<any>("/admin/meta/channels?window=days_28"),
@@ -35,6 +35,9 @@ export default function AdminDashboard() {
       apiFetch<any[]>("/admin/applications"),
       apiFetch<any[]>("/admin/complaints"),
       apiFetch<any[]>("/admin/bug-reports"),
+      // Admin / Super Admin only — a 403 for anyone else simply leaves these out.
+      apiFetch<any[]>("/admin/campaigns"),
+      apiFetch<any>("/admin/meta/posting-watch"),
     ]);
     const g = growth.status === "fulfilled" ? growth.value : null;
     const t = tasks.status === "fulfilled" ? tasks.value : null;
@@ -49,6 +52,12 @@ export default function AdminDashboard() {
       bugs.status === "fulfilled"
         ? (bugs.value ?? []).filter((b: any) => ["OPEN", "IN_PROGRESS"].includes(b.status)).length
         : null;
+    const campaignsToDo =
+      campaigns.status === "fulfilled"
+        ? (campaigns.value ?? []).filter((c: any) => ["paid_pending_review", "approved", "publishing"].includes(c.status)).length
+        : null;
+    const w = watch.status === "fulfilled" && watch.value?.status === "ok" ? watch.value.counts : null;
+    const silentChannels = w ? (w.quiet_today ?? 0) + (w.no_post_today ?? 0) : null;
     const doneTasks = num((t?.byStatus ?? []).find?.((x: any) => x.status === "DONE"));
     return {
       ...(overview.status === "fulfilled" ? overview.value : {}),
@@ -69,6 +78,8 @@ export default function AdminDashboard() {
       openApps,
       openComplaints,
       openBugs,
+      campaignsToDo,
+      silentChannels,
     };
   });
 
@@ -116,6 +127,33 @@ export default function AdminDashboard() {
           </Card>
         </Pressable>
       )}
+
+      {/* Network overview + the two admin queues that need a person today */}
+      <Card>
+        <Pressable onPress={() => router.push("/admin-overview")} style={styles.quickRow}>
+          <Ionicons name="speedometer-outline" size={18} color={colors.purple} />
+          <Text style={styles.quickText}>Overview — views, reach, revenue & trending</Text>
+          <Ionicons name="chevron-forward" size={14} color={colors.faint} />
+        </Pressable>
+        {data?.silentChannels != null ? (
+          <Pressable onPress={() => router.push("/admin-posting-watch")} style={styles.quickRow}>
+            <Ionicons name="eye-outline" size={18} color={data.silentChannels > 0 ? colors.red : colors.green} />
+            <Text style={styles.quickText}>
+              {data.silentChannels > 0 ? `${data.silentChannels} channel(s) with no new post` : "Posting watch — no channel flagged"}
+            </Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.faint} />
+          </Pressable>
+        ) : null}
+        {data?.campaignsToDo != null ? (
+          <Pressable onPress={() => router.push("/admin-campaigns")} style={[styles.quickRow, { borderBottomWidth: 0 }]}>
+            <Ionicons name="megaphone-outline" size={18} color={data.campaignsToDo > 0 ? colors.yellow : colors.sub} />
+            <Text style={styles.quickText}>
+              {data.campaignsToDo > 0 ? `${data.campaignsToDo} campaign(s) to review or post` : "Campaign bookings — nothing to do"}
+            </Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.faint} />
+          </Pressable>
+        ) : null}
+      </Card>
 
       {/* Account Growth — the business headline */}
       <SectionTitle right={<SeeAll onPress={() => router.push("/admin-growth")} />}>Account Growth · 28d</SectionTitle>
@@ -304,6 +342,15 @@ export default function AdminDashboard() {
 }
 
 const styles = StyleSheet.create({
+  quickRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  quickText: { flex: 1, fontSize: 14, color: colors.ink, fontWeight: "500" },
   hero: {
     borderRadius: radius.xl,
     overflow: "hidden",

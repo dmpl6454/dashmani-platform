@@ -72,6 +72,10 @@ export default function RootLayout() {
         <Stack.Screen name="admin-ai" options={{ title: "AI Assistant" }} />
         <Stack.Screen name="admin-top-links" options={{ title: "Top Links" }} />
         <Stack.Screen name="admin-link-search" options={{ title: "Link Search" }} />
+        <Stack.Screen name="admin-overview" options={{ title: "Overview" }} />
+        <Stack.Screen name="admin-posting-watch" options={{ title: "Posting Watch" }} />
+        <Stack.Screen name="admin-campaigns" options={{ title: "Campaign Bookings" }} />
+        <Stack.Screen name="admin-campaign/[id]" options={{ title: "Campaign" }} />
       </Stack>
     </AuthProvider>
   );

@@ -1,9 +1,14 @@
 import React from "react";
 import { useRouter } from "expo-router";
+import { useAuth } from "@/lib/auth";
 import { Screen, Card, SectionTitle, Row } from "@/components/ui";
 
 export default function AdminManage() {
   const router = useRouter();
+  const { user } = useAuth();
+  // Posting watch and campaign bookings are Admin / Super Admin only on the API (an HR Manager
+  // signs in to this portal too and would get 403s).
+  const isAdmin = (user?.roles ?? []).some((r) => r === "Admin" || r === "Super Admin");
 
   return (
     <Screen>
@@ -28,6 +33,10 @@ export default function AdminManage() {
 
       <SectionTitle>Insights</SectionTitle>
       <Card>
+        <Row icon="speedometer-outline" iconColor="#F9A64A" title="Overview" subtitle="Views, reach, revenue & trending — whole network" onPress={() => router.push("/admin-overview")} />
+        {isAdmin ? (
+          <Row icon="eye-outline" iconColor="#FF375F" title="Posting Watch" subtitle="Assigned channels with no new post for 2h+" onPress={() => router.push("/admin-posting-watch")} />
+        ) : null}
         <Row icon="flame-outline" iconColor="#FF9F0A" title="Top Links" subtitle="Best performing posts per platform" onPress={() => router.push("/admin-top-links")} />
         <Row icon="search-outline" iconColor="#8E8E93" title="Link Search" subtitle="Find posts by celebrity, brand or topic" onPress={() => router.push("/admin-link-search")} />
         <Row icon="sparkles-outline" iconColor="#F0568C" title="AI Assistant" subtitle="Draft, summarize, plan — powered by Claude" onPress={() => router.push("/admin-ai")} />
@@ -35,6 +44,9 @@ export default function AdminManage() {
 
       <SectionTitle>Clients & Delivery</SectionTitle>
       <Card>
+        {isAdmin ? (
+          <Row icon="megaphone-outline" iconColor="#F0568C" title="Campaign Bookings" subtitle="Review, approve & record client campaign posts" onPress={() => router.push("/admin-campaigns")} />
+        ) : null}
         <Row icon="business-outline" iconColor="#8E8E93" title="Clients" subtitle="Client directory" onPress={() => router.push("/admin-clients")} />
         <Row icon="folder-outline" iconColor="#64D2FF" title="Projects" subtitle="Active & past projects" onPress={() => router.push("/admin-projects")} />
         <Row icon="images-outline" iconColor="#FF375F" title="Content" subtitle="Content posts & approvals" onPress={() => router.push("/admin-content")} />

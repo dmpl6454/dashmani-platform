@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, TextInput, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { apiFetch, fmtCompact, fmtDateTime } from "@/lib/api";
+import { apiFetch, fmtCompact, fmtDate, fmtDateTime } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
 import { Screen, Card, SectionTitle, Chips, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
 
@@ -108,8 +108,20 @@ export default function AdminGrowth() {
           <SectionTitle>
             Connected Channels ({data?.channelCount ?? items.length})
           </SectionTitle>
-          {data?.dataThrough ? (
-            <Text style={styles.dataThrough}>Data through {fmtDateTime(data.dataThrough)}</Text>
+          {/* The last CLOSED calendar day the figures cover (dataThrough is the instant that day
+              closed — rendering it as a time read a day late). Today's figures are partial and
+              start at each platform's own midnight. */}
+          {win === "today" && data?.dayStarts ? (
+            <Text style={styles.dataThrough}>
+              So far today · Instagram since {fmtDateTime(data.dayStarts.instagram)} · Facebook publishes no figure until its day closes
+            </Text>
+          ) : data?.dataThroughDay ? (
+            <Text style={styles.dataThrough}>Figures through {fmtDate(data.dataThroughDay)}</Text>
+          ) : null}
+          {data?.erroredChannels ? (
+            <Text style={styles.dataThrough}>
+              {data.erroredChannels} channel(s) couldn't be refreshed (marked ⚠) — their last good figures are still counted.
+            </Text>
           ) : null}
 
           <Card>

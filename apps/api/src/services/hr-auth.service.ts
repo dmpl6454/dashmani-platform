@@ -61,7 +61,10 @@ export async function registerEmployee(data: {
   const passwordHash = await bcrypt.hash(data.password, 12);
   const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
 
-  // Owner decision 2026-09-26: new sign-ups stay instant (ACTIVE).
+  // Owner decision 2026-10-28 (reverses 2026-09-26's instant access): a self-registered
+  // account starts ONBOARDING and cannot sign in until an Admin or HR Manager sets it
+  // Active on the Employees page. Anyone can reach this public form, and an active HR
+  // account can read every Pipeline project, so access is granted by a person.
   let user;
   try {
     user = await prisma.user.create({
@@ -70,7 +73,7 @@ export async function registerEmployee(data: {
         email,
         phone,
         passwordHash,
-        status: "ACTIVE",
+        status: "ONBOARDING",
         ...(employeeRole ? { roles: { create: [{ roleId: employeeRole.id }] } } : {}),
       },
     });
@@ -93,12 +96,12 @@ export async function registerEmployee(data: {
   dispatchNotification({
     type: "GENERAL",
     title: "New Employee Registration",
-    message: `${data.name} (${email}) has created an account and is now active`,
+    message: `${data.name} (${email}) has created an account and is waiting for approval — set them Active on the Employees page`,
     metadata: { userId: user.id, name: data.name, email },
   }).catch((err) => console.error("Admin notification failed:", err));
 
   return {
-    message: "Account created successfully. You can now log in.",
+    message: PENDING_SIGNUP_MESSAGE,
     user: {
       id: user.id,
       name: user.name,
@@ -107,6 +110,10 @@ export async function registerEmployee(data: {
     },
   };
 }
+
+/** Told to every new self-registration (password or Google). */
+export const PENDING_SIGNUP_MESSAGE =
+  "Account created. An admin needs to approve it before you can sign in — you'll be able to log in once it's approved.";
 
 // ===== Sign in with Google =====
 
@@ -159,8 +166,10 @@ export async function issueHrSession(user: {
  *     rules as password login (ONBOARDING → pending approval, INACTIVE / deleted → refused).
  *     Nothing on the row is touched: Google sign-in can never take over or alter an account.
  *   - an unknown email is a self-registration, exactly what POST /hr/auth/register does
- *     (owner decision 2026-09-26: instant ACTIVE access with the Employee role), except the
- *     password is unusable (bcrypt of 256 random bits) — "Forgot password" sets one.
+ *     (owner decision 2026-10-28: the account starts ONBOARDING with the Employee role and
+ *     NO session is issued — `{ pending: true, created: true, message }` — until an Admin or
+ *     HR Manager sets it Active), except the password is unusable (bcrypt of 256 random
+ *     bits) — "Forgot password" sets one once the account is active.
  * Google supplies a name and an email, which is all registration requires, so unlike the
  * client portal there is no second "complete your profile" round-trip.
  */
@@ -200,7 +209,7 @@ export async function hrGoogleSignIn(credential: string) {
         name,
         email,
         passwordHash,
-        status: "ACTIVE",
+        status: "ONBOARDING",
         ...(employeeRole ? { roles: { create: [{ roleId: employeeRole.id }] } } : {}),
       },
       include: { roles: { include: { role: true } } },
@@ -214,6 +223,9 @@ export async function hrGoogleSignIn(credential: string) {
       if (raced && raced.status === "ACTIVE" && !raced.deletedAt) {
         return { ...(await issueHrSession(raced)), created: false as const };
       }
+      if (raced && raced.status === "ONBOARDING" && !raced.deletedAt) {
+        return { pending: true as const, created: false as const, message: PENDING_SIGNUP_MESSAGE };
+      }
       throw new AppError(409, "ALREADY_EXISTS", ALREADY_EXISTS_MESSAGE);
     }
     throw err;
@@ -222,11 +234,11 @@ export async function hrGoogleSignIn(credential: string) {
   dispatchNotification({
     type: "GENERAL",
     title: "New Employee Registration",
-    message: `${name} (${email}) signed up with Google and is now active`,
+    message: `${name} (${email}) signed up with Google and is waiting for approval — set them Active on the Employees page`,
     metadata: { userId: user.id, name, email, via: "google" },
   }).catch((err) => console.error("Admin notification failed:", err));
 
-  return { ...(await issueHrSession(user)), created: true as const };
+  return { pending: true as const, created: true as const, message: PENDING_SIGNUP_MESSAGE };
 }
 
 // ===== Password Login =====

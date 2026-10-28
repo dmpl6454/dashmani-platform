@@ -850,11 +850,16 @@ export default function LoginPage() {
     }
   }
 
-  // Google handed us a verified session (existing account, or one it just opened). Same
-  // landing as password login: store it, honour the allowlisted ?next=, go.
+  // Google handed us a verified session for an existing active account — same landing as
+  // password login: store it, honour the allowlisted ?next=, go. A first Google sign-in
+  // instead opens an account that waits for admin approval and carries no session.
   function handleGoogleSession(s: GoogleHrSession) {
-    const destination = nextPathFromSearch(window.location.search);
     setErrs({});
+    if (s.pending) {
+      setSuccessMsg(s.message);
+      return;
+    }
+    const destination = nextPathFromSearch(window.location.search);
     setSuccessMsg(s.created ? "Account created with Google — taking you in." : "");
     setSubmitState("success");
     setTimeout(() => {
@@ -887,15 +892,16 @@ export default function LoginPage() {
       // A 400 carries the field-level reason in details (the top-level message is the generic
       // "Invalid request data"), so show that when present.
       if (!data.success) throw new Error(data.error?.details?.[0]?.message || data.error?.message || "Registration failed");
-      setSuccessMsg(data.data.message || "Account created! You can sign in now.");
+      setSuccessMsg(data.data.message || "Account created. An admin needs to approve it before you can sign in.");
       setSubmitState("success");
+      // The account waits for admin approval, so leave the message up long enough to read.
       setTimeout(() => {
         setTab("signin");
         setIdentifier(email);
         setPw("");
         setSuccessMsg("");
         setSubmitState("idle");
-      }, 2500);
+      }, 8000);
     } catch (err: unknown) {
       setErrs({ general: err instanceof Error ? err.message : "Registration failed" });
       setSubmitState("idle");
@@ -1136,7 +1142,7 @@ export default function LoginPage() {
                       {submitState === "success" && (<><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5D547" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4.5 4.5L19 7" strokeDasharray="24" style={{ animation: "auth-checkmark .42s cubic-bezier(0.22,1,0.36,1) forwards" }}/></svg><span>Account created!</span></>)}
                     </button>
                   </div>
-                  <p className="text-[11px] text-[#9C947C] text-center mt-1">You can sign in as soon as your account is created.</p>
+                  <p className="text-[11px] text-[#9C947C] text-center mt-1">An admin approves new accounts before they can sign in.</p>
                 </form>
               )}
 

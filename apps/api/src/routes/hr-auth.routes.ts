@@ -25,8 +25,8 @@ router.get("/hr/auth/google/config", (_req: Request, res: Response) => {
   return success(res, { enabled, clientId: enabled ? googleClientId() : null });
 });
 
-// POST /hr/auth/google — Google ID token → HR session (existing account) or a new ACTIVE
-// Employee account. The login rate limiter is mounted on this exact path in app.ts.
+// POST /hr/auth/google — Google ID token → HR session (existing active account), or a new
+// ONBOARDING Employee account awaiting admin approval (no session). The login rate limiter is mounted on this exact path in app.ts.
 router.post(
   "/hr/auth/google",
   validate(hrGoogleSchema),

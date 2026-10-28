@@ -52,7 +52,7 @@ prune_to() {
   (
     cd "$BACKUP_DIR"
     shopt -s nullglob
-    for prefix in db uploads config manifest; do
+    for prefix in db uploads config manifest SHA256SUMS; do
       files=( "${prefix}"_*.* )
       [ "${#files[@]}" -gt "$keep" ] || continue
       # shellcheck disable=SC2012
@@ -64,7 +64,7 @@ prune_to() {
 # Bytes that prune_to "$1" would delete (newest $1 sets kept per component).
 prunable_bytes() {
   local keep=$1 total=0 f prefix files
-  for prefix in db uploads config manifest; do
+  for prefix in db uploads config manifest SHA256SUMS; do
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       total=$(( total + $(wc -c < "$BACKUP_DIR/$f" | tr -d ' ') ))
@@ -203,7 +203,19 @@ Sizes:
 $(ls -lh "$BACKUP_DIR"/*_$TIMESTAMP* 2>/dev/null | awk '{print "  " $5 " " $9}')
 MANIFEST
 
-# 5. Cleanup old backups (keep last MAX_BACKUPS sets)
+# 5. Checksums, written LAST: the off-server copy (scripts/backup-pull-mac.sh) only takes
+#    a set whose SHA256SUMS file exists, and verifies every file against it — so a set
+#    still being written, or one this run abandoned, is never copied as a backup.
+echo "Writing checksums..."
+CREATED+=("$BACKUP_DIR/SHA256SUMS_$TIMESTAMP.txt" "$BACKUP_DIR/SHA256SUMS_$TIMESTAMP.txt.tmp")
+(
+  cd "$BACKUP_DIR"
+  shopt -s nullglob
+  nice -n 19 sha256sum db_"$TIMESTAMP".* uploads_"$TIMESTAMP".* config_"$TIMESTAMP".* manifest_"$TIMESTAMP".* > "SHA256SUMS_$TIMESTAMP.txt.tmp"
+  mv "SHA256SUMS_$TIMESTAMP.txt.tmp" "SHA256SUMS_$TIMESTAMP.txt"
+)
+
+# 6. Cleanup old backups (keep last MAX_BACKUPS sets)
 echo "Cleaning up old backups..."
 prune_to "$MAX_BACKUPS"
 

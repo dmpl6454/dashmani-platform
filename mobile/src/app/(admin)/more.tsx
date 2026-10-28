@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { useAuth } from "@/lib/auth";
 import { colors, spacing } from "@/lib/theme";
 import { Screen, Card, SectionTitle, Row, Button } from "@/components/ui";
+import { PipelineEntryRow } from "@/components/pipeline";
 
 export default function AdminMore() {
   const router = useRouter();
@@ -39,6 +40,8 @@ export default function AdminMore() {
       <SectionTitle>Shortcuts</SectionTitle>
       <Card>
         <Row icon="notifications-outline" iconColor="#FF453A" title="Notifications" onPress={() => router.push("/admin-notifications")} />
+        {/* Pipeline runs on the HR session: shown only when this person is also signed in there. */}
+        <PipelineEntryRow />
         <Row icon="swap-horizontal-outline" iconColor="#30D158" title="Switch to Employee Portal" subtitle="Your own reports, leave & tasks" onPress={toEmployeePortal} />
       </Card>
 

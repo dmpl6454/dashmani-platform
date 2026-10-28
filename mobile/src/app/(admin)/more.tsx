@@ -9,6 +9,7 @@ import { PipelineEntryRow } from "@/components/pipeline";
 export default function AdminMore() {
   const router = useRouter();
   const { user, logout, switchMode } = useAuth();
+  const isAdmin = (user?.roles ?? []).some((r) => r === "Admin" || r === "Super Admin");
 
   const confirmLogout = () => {
     Alert.alert("Sign out", "Sign out of the admin portal?", [
@@ -40,6 +41,13 @@ export default function AdminMore() {
       <SectionTitle>Shortcuts</SectionTitle>
       <Card>
         <Row icon="notifications-outline" iconColor="#FF453A" title="Notifications" onPress={() => router.push("/admin-notifications")} />
+        <Row icon="speedometer-outline" iconColor="#F9A64A" title="Overview" subtitle="Network views, reach & revenue" onPress={() => router.push("/admin-overview")} />
+        {isAdmin ? (
+          <>
+            <Row icon="eye-outline" iconColor="#FF375F" title="Posting Watch" subtitle="Channels gone quiet today" onPress={() => router.push("/admin-posting-watch")} />
+            <Row icon="megaphone-outline" iconColor="#F0568C" title="Campaign Bookings" subtitle="Client campaigns to review & post" onPress={() => router.push("/admin-campaigns")} />
+          </>
+        ) : null}
         {/* Pipeline runs on the HR session: shown only when this person is also signed in there. */}
         <PipelineEntryRow />
         <Row icon="swap-horizontal-outline" iconColor="#30D158" title="Switch to Employee Portal" subtitle="Your own reports, leave & tasks" onPress={toEmployeePortal} />

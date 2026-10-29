@@ -4,10 +4,13 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
+    "@react-native-community/datetimepicker": "^9.1.0",
     "expo": "~56.0.21",
+    "expo-clipboard": "~56.0.4",
     "expo-constants": "~56.0.25",
     "expo-device": "~56.0.4",
     "expo-font": "~56.0.7",
+    "expo-haptics": "~56.0.3",
     "expo-image": "~56.0.12",
     "expo-linear-gradient": "~56.0.4",
     "expo-linking": "~56.0.17",

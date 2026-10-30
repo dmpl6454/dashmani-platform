@@ -1,32 +1,82 @@
 import React from "react";
-import { Text, StyleSheet, Linking, Pressable } from "react-native";
-import { colors } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Row } from "@/components/ui";
+import { Linking, StyleSheet, Text } from "react-native";
+import { colors, spacing, type } from "@/lib/theme";
+import { useAuth } from "@/lib/auth";
+import { Card, Screen } from "@/components/ui";
+import { ListGroup, ListItem } from "@/components/list";
+import { toast } from "@/components/feedback";
+
+function openLink(url: string) {
+  Linking.openURL(url).catch(() => {
+    toast.show({ message: "Couldn't open the link. Try again.", tone: "danger" });
+  });
+}
 
 export default function CompanyScreen() {
+  const { caps } = useAuth();
+
   return (
     <Screen>
       <Card>
-        <Text style={styles.name}>Dashmani Media Private Limited</Text>
-        <Text style={styles.brand}>Operating as Digital Sukoon — a full-service digital media & marketing agency.</Text>
+        <Text style={styles.name} maxFontSizeMultiplier={1.6} accessibilityRole="header">
+          Dashmani Media Private Limited
+        </Text>
+        <Text style={styles.brand} maxFontSizeMultiplier={1.6}>
+          Operating as Digital Sukoon — a full-service digital media & marketing agency.
+        </Text>
       </Card>
-      <SectionTitle>Our Portals</SectionTitle>
-      <Card>
-        <Row icon="briefcase-outline" title="Careers" subtitle="jobs.digitalsukoon.com" onPress={() => Linking.openURL("https://jobs.digitalsukoon.com")} />
-        <Row icon="person-outline" title="Employee Portal" subtitle="hr.digitalsukoon.com" onPress={() => Linking.openURL("https://hr.digitalsukoon.com")} />
-        <Row icon="shield-checkmark-outline" title="Admin Portal" subtitle="portal.digitalsukoon.com" onPress={() => Linking.openURL("https://portal.digitalsukoon.com")} />
-      </Card>
-      <SectionTitle>Working Week</SectionTitle>
-      <Card>
-        <Text style={styles.body}>Monday – Saturday are working days. Sunday is the weekly off.</Text>
-        <Text style={styles.body}>Daily report submission is expected every working day via the Daily Report tab.</Text>
-      </Card>
+
+      <ListGroup title="Our portals" style={styles.group}>
+        <ListItem
+          icon="briefcase-outline"
+          tint="blue"
+          title="Careers"
+          subtitle="jobs.digitalsukoon.com"
+          accessibilityHint="Opens in your browser"
+          onPress={() => openLink("https://jobs.digitalsukoon.com")}
+        />
+        <ListItem
+          icon="person-outline"
+          tint="brand"
+          title="Employee portal"
+          subtitle="hr.digitalsukoon.com"
+          accessibilityHint="Opens in your browser"
+          onPress={() => openLink("https://hr.digitalsukoon.com")}
+        />
+        {caps.canUseAdminPortal ? (
+          <ListItem
+            icon="shield-checkmark-outline"
+            tint="indigo"
+            title="Admin portal"
+            subtitle="portal.digitalsukoon.com"
+            accessibilityHint="Opens in your browser"
+            onPress={() => openLink("https://portal.digitalsukoon.com")}
+          />
+        ) : null}
+      </ListGroup>
+
+      <ListGroup title="Working week" style={styles.group}>
+        <ListItem
+          icon="calendar-outline"
+          tint="green"
+          title="Monday – Saturday"
+          subtitle="Working days. Sunday is the weekly off."
+          lines={2}
+        />
+        <ListItem
+          icon="document-text-outline"
+          tint="orange"
+          title="Daily report"
+          subtitle="Submit it every working day from the Daily Report tab."
+          lines={2}
+        />
+      </ListGroup>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  name: { fontSize: 17, fontWeight: "700", color: colors.ink },
-  brand: { fontSize: 13, color: colors.sub, marginTop: 6, lineHeight: 19 },
-  body: { fontSize: 13, color: colors.sub, lineHeight: 20, marginBottom: 6 },
+  name: { ...type.headline, color: colors.ink },
+  brand: { ...type.subhead, color: colors.sub, marginTop: spacing.xs + 2, lineHeight: 20 },
+  group: { marginTop: spacing.sm },
 });

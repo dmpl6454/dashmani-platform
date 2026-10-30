@@ -1,405 +1,868 @@
-import React from "react";
-import { View, Text, StyleSheet, Pressable, ImageBackground } from "react-native";
+import React, { useCallback } from "react";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/lib/auth";
-import { apiFetch, fmtCompact, daysAgoIST, todayIST } from "@/lib/api";
-import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Stat, SeeAll, TrendBars, useApi } from "@/components/ui";
+import {
+  apiFetch,
+  addDaysISO,
+  daysAgoIST,
+  errorMessage,
+  fmtCompact,
+  fmtDay,
+  fmtTime,
+  fmtUsdCents,
+  isApiError,
+  todayIST,
+} from "@/lib/api";
+import { colors, radius, spacing, toneColors, type, type Tone } from "@/lib/theme";
+import {
+  Avatar,
+  Button,
+  Card,
+  Empty,
+  ErrorBanner,
+  IconButton,
+  LoadFailed,
+  Screen,
+  SectionTitle,
+  SeeAll,
+  TrendBars,
+  useApi,
+  useInvalidation,
+} from "@/components/ui";
+import { LargeTitle, ListGroup, ListItem, StatGrid, StatTile } from "@/components/list";
+import { SkeletonList, SkeletonStatRow } from "@/components/skeleton";
+import { useDayChange, usePendingCounts, type PendingCounts } from "@/lib/hooks/shared";
 
-const HERO = require("../../../assets/visuals/hero-admin.jpg");
+// ---------- response parsing (API answers are read defensively, never as `any`) ----------
+type Json = Record<string, unknown>;
 
-/** Meta earnings arrive in USD cents. */
-function fmtUsd(cents: number | null | undefined): string {
-  if (cents == null) return "—";
-  return "$" + fmtCompact(Math.round(cents / 100));
+function rec(v: unknown): Json | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Json) : null;
 }
 
-const num = (v: any): number =>
-  typeof v === "number" ? v : v && typeof v === "object" ? num(v.count ?? v._count ?? 0) : 0;
+function num(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
-export default function AdminDashboard() {
-  const { user } = useAuth();
-  const router = useRouter();
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
 
-  // The command center pulls every company vital in one parallel sweep.
-  const { data, refreshing, refresh } = useApi<any>(async () => {
-    const week = `startDate=${daysAgoIST(6)}&endDate=${todayIST()}`;
-    const [overview, poa, growth, tasks, summary, apps, complaints, bugs, campaigns, watch] = await Promise.allSettled([
-      apiFetch<any>("/analytics/overview"),
-      apiFetch<any>("/admin/daily-reports/status"),
-      apiFetch<any>("/admin/meta/channels?window=days_28"),
-      apiFetch<any>("/analytics/tasks"),
-      apiFetch<any>(`/admin/reports/summary?${week}`),
-      apiFetch<any[]>("/admin/applications"),
-      apiFetch<any[]>("/admin/complaints"),
-      apiFetch<any[]>("/admin/bug-reports"),
-      // Admin / Super Admin only — a 403 for anyone else simply leaves these out.
-      apiFetch<any[]>("/admin/campaigns"),
-      apiFetch<any>("/admin/meta/posting-watch"),
-    ]);
-    const g = growth.status === "fulfilled" ? growth.value : null;
-    const t = tasks.status === "fulfilled" ? tasks.value : null;
-    const sum = summary.status === "fulfilled" ? summary.value : null;
-    const openApps =
-      apps.status === "fulfilled"
-        ? (apps.value ?? []).filter((a: any) => ["RECEIVED", "REVIEWING", "SHORTLISTED", "INTERVIEW"].includes(a.status)).length
-        : null;
-    const openComplaints =
-      complaints.status === "fulfilled" ? (complaints.value ?? []).filter((c: any) => c.status === "OPEN").length : null;
-    const openBugs =
-      bugs.status === "fulfilled"
-        ? (bugs.value ?? []).filter((b: any) => ["OPEN", "IN_PROGRESS"].includes(b.status)).length
-        : null;
-    const campaignsToDo =
-      campaigns.status === "fulfilled"
-        ? (campaigns.value ?? []).filter((c: any) => ["paid_pending_review", "approved", "publishing"].includes(c.status)).length
-        : null;
-    const w = watch.status === "fulfilled" && watch.value?.status === "ok" ? watch.value.counts : null;
-    const silentChannels = w ? (w.quiet_today ?? 0) + (w.no_post_today ?? 0) : null;
-    const doneTasks = num((t?.byStatus ?? []).find?.((x: any) => x.status === "DONE"));
+function list(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+/** A count that may arrive as a number or wrapped as `{ count }` / `{ _count }`. */
+function countOf(v: unknown): number {
+  if (typeof v === "number") return v;
+  const r = rec(v);
+  return r ? countOf(r.count ?? r._count ?? 0) : 0;
+}
+
+function countWhere(v: unknown, statuses: readonly string[]): number {
+  return list(v).filter((x) => statuses.includes(str(rec(x)?.status) ?? "")).length;
+}
+
+type ErrorInfo = { message: string; code: string | null; status: number | null };
+
+/** One dashboard source: loaded, failed, or not requested for this role. */
+type Src<T> = { state: "ok"; value: T } | { state: "failed"; error: ErrorInfo } | { state: "skipped" };
+
+const SKIP: unique symbol = Symbol("skip");
+
+function call(on: boolean, path: string): Promise<unknown> {
+  return on ? apiFetch<unknown>(path) : Promise.resolve(SKIP);
+}
+
+function settle<T>(r: PromiseSettledResult<unknown>, parse: (v: unknown) => T): Src<T> {
+  if (r.status === "rejected") {
+    const e: unknown = r.reason;
     return {
-      ...(overview.status === "fulfilled" ? overview.value : {}),
-      poaStatus: poa.status === "fulfilled" ? poa.value : null,
-      growth: g ? { ...g.totals, channelCount: g.channelCount } : null,
-      tasks: t
-        ? {
-            total: t.totalTasks ?? 0,
-            open: Math.max(0, (t.totalTasks ?? 0) - doneTasks),
-            overdue: t.overdueCount ?? 0,
-            rate: t.completionRate ?? 0,
-          }
-        : null,
-      topPerformers: (sum?.employees ?? [])
-        .slice()
-        .sort((a: any, b: any) => (b.totalLinks ?? 0) - (a.totalLinks ?? 0))
-        .slice(0, 3),
-      openApps,
-      openComplaints,
-      openBugs,
-      campaignsToDo,
-      silentChannels,
+      state: "failed",
+      error: {
+        message: errorMessage(e, "Couldn't load the dashboard."),
+        code: isApiError(e) ? (e.code ?? null) : null,
+        status: isApiError(e) ? (e.status ?? null) : null,
+      },
     };
-  });
+  }
+  if (r.value === SKIP) return { state: "skipped" };
+  return { state: "ok", value: parse(r.value) };
+}
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const g = data?.growth;
+function valueOf<T>(s: Src<T> | undefined): T | null {
+  return s && s.state === "ok" ? s.value : null;
+}
+
+type TrendPoint = { date: string; count: number };
+
+type Overview = {
+  totalEmployees: number | null;
+  presentToday: number | null;
+  submittedTodayCount: number | null;
+  submissionRateToday: number | null;
+  linksToday: number | null;
+  linksThisWeek: number | null;
+  linksThisMonth: number | null;
+  activeTeams: number | null;
+  activeProjects: number | null;
+  contentPublishedThisMonth: number | null;
+  linksTrend: TrendPoint[];
+};
+
+function parseOverview(v: unknown): Overview {
+  const o: Json = rec(v) ?? {};
+  return {
+    totalEmployees: num(o.totalEmployees),
+    presentToday: num(o.presentToday),
+    submittedTodayCount: num(o.submittedTodayCount),
+    submissionRateToday: num(o.submissionRateToday),
+    linksToday: num(o.linksToday),
+    linksThisWeek: num(o.linksThisWeek),
+    linksThisMonth: num(o.linksThisMonth),
+    activeTeams: num(o.activeTeams),
+    activeProjects: num(o.activeProjects),
+    contentPublishedThisMonth: num(o.contentPublishedThisMonth),
+    linksTrend: list(o.linksTrend).flatMap((t): TrendPoint[] => {
+      const r = rec(t);
+      const date = str(r?.date);
+      return r && date ? [{ date, count: num(r.count) ?? 0 }] : [];
+    }),
+  };
+}
+
+type Poa = { written: number; expected: number };
+
+function parsePoa(v: unknown): Poa {
+  const o: Json = rec(v) ?? {};
+  const written = num(o.submittedCount) ?? 0;
+  return { written, expected: num(o.totalEmployees) ?? written + list(o.nonSubmitters).length };
+}
+
+type LinksToday = { notYet: number };
+
+function parseLinksToday(v: unknown): LinksToday {
+  return { notYet: list(rec(v)?.nonSubmitters).length };
+}
+
+type Performer = { id: string; name: string; reports: number; links: number };
+
+function parseTop(v: unknown): Performer[] {
+  return list(rec(v)?.employees)
+    .flatMap((e): Performer[] => {
+      const r = rec(e);
+      const id = str(r?.employeeId) ?? str(r?.id);
+      if (!r || !id) return [];
+      return [
+        {
+          id,
+          name: str(r.employeeName) ?? str(r.name) ?? "Employee",
+          reports: num(r.reportCount) ?? 0,
+          links: num(r.totalLinks) ?? 0,
+        },
+      ];
+    })
+    .sort((a, b) => b.links - a.links)
+    .slice(0, 3);
+}
+
+type TaskStats = { open: number; overdue: number; rate: number | null };
+
+function parseTasks(v: unknown): TaskStats | null {
+  const t = rec(v);
+  if (!t) return null;
+  const total = num(t.totalTasks) ?? 0;
+  const done = countOf(list(t.byStatus).find((x) => rec(x)?.status === "DONE"));
+  return { open: Math.max(0, total - done), overdue: num(t.overdueCount) ?? 0, rate: num(t.completionRate) };
+}
+
+type Growth = {
+  views: number | null;
+  engagements: number | null;
+  followers: number | null;
+  earningsCents: number | null;
+  channelCount: number | null;
+};
+
+/** null = loaded, but there is no Meta data for the window. */
+function parseGrowth(v: unknown): Growth | null {
+  const g = rec(v);
+  const totals = rec(g?.totals);
+  if (!g || !totals) return null;
+  const channelCount = num(g.channelCount);
+  if (channelCount === 0) return null;
+  return {
+    views: num(totals.views),
+    engagements: num(totals.engagements),
+    followers: num(totals.followers),
+    earningsCents: num(totals.earningsCents),
+    channelCount,
+  };
+}
+
+type Watch = { live: boolean; windowActive: boolean; nextStart: string | null; pausedUntil: string | null; silent: number };
+
+function parseWatch(v: unknown): Watch {
+  const w: Json = rec(v) ?? {};
+  const counts: Json = rec(w.counts) ?? {};
+  const win: Json = rec(w.window) ?? {};
+  const monitor: Json = rec(w.monitor) ?? {};
+  return {
+    live: w.status === "ok",
+    windowActive: win.active !== false,
+    nextStart: str(win.nextStart),
+    pausedUntil: str(monitor.pausedUntil),
+    silent: (num(counts.quiet_today) ?? 0) + (num(counts.no_post_today) ?? 0),
+  };
+}
+
+const parseOpenApps = (v: unknown) => countWhere(v, ["RECEIVED", "REVIEWING", "SHORTLISTED", "INTERVIEW"]);
+const parseOpenComplaints = (v: unknown) => countWhere(v, ["OPEN"]);
+const parseOpenBugs = (v: unknown) => countWhere(v, ["OPEN", "IN_PROGRESS"]);
+const parseCampaignsToDo = (v: unknown) => countWhere(v, ["paid_pending_review", "approved", "publishing"]);
+
+type Phase1 = {
+  overview: Src<Overview>;
+  poa: Src<Poa>;
+  linksToday: Src<LinksToday>;
+  top: Src<Performer[]>;
+  tasks: Src<TaskStats | null>;
+};
+
+type Phase2 = {
+  growth: Src<Growth | null>;
+  apps: Src<number>;
+  complaints: Src<number>;
+  bugs: Src<number>;
+  campaigns: Src<number>;
+  watch: Src<Watch>;
+};
+
+// ---------- display helpers ----------
+function plural(n: number, one: string, many: string): string {
+  return n === 1 ? one : many;
+}
+
+function orDash(v: number | null | undefined): string | number {
+  return v == null ? "—" : v;
+}
+
+/** "…" while the second phase is still loading, "—" when the source failed. */
+function countRow(s: Src<number> | undefined): { detail?: string; badge?: number } {
+  if (!s) return { detail: "…" };
+  if (s.state !== "ok") return { detail: "—" };
+  return s.value > 0 ? { badge: s.value } : { detail: "None open" };
+}
+
+function countTile(s: Src<number> | undefined): string | number {
+  if (!s) return "…";
+  return s.state === "ok" ? s.value : "—";
+}
+
+function watchCopy(s: Src<Watch> | undefined): { text: string; quiet: boolean } {
+  if (!s) return { text: "Checking…", quiet: false };
+  if (s.state !== "ok") return { text: "Couldn't load", quiet: false };
+  const w = s.value;
+  if (!w.live) return { text: "Not connected", quiet: false };
+  if (w.pausedUntil && Date.parse(w.pausedUntil) > Date.now()) {
+    return { text: `Paused · resumes ${fmtTime(w.pausedUntil)}`, quiet: false };
+  }
+  if (!w.windowActive) {
+    return { text: w.nextStart ? `Paused · resumes ${fmtTime(w.nextStart)}` : "Paused", quiet: false };
+  }
+  if (w.silent > 0) return { text: `${w.silent} ${plural(w.silent, "channel", "channels")} quiet`, quiet: true };
+  return { text: "All on schedule", quiet: false };
+}
+
+function campaignCopy(s: Src<number> | undefined): string {
+  if (!s) return "Checking…";
+  if (s.state !== "ok") return "Couldn't load";
+  return s.value > 0 ? `${s.value} to review or post` : "Nothing to do";
+}
+
+/** Greeting by the IST hour, independent of the device time zone. */
+function greetingIST(): string {
+  const hour = new Date(Date.now() + 330 * 60000).getUTCHours();
+  return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+}
+
+// ---------- pending approvals callout ----------
+type PendingQueue = keyof Omit<PendingCounts, "total" | "status">;
+
+const QUEUES: ReadonlyArray<{ key: PendingQueue; tab: string; one: string; many: string }> = [
+  { key: "leaves", tab: "LEAVES", one: "leave", many: "leaves" },
+  { key: "expenses", tab: "EXPENSES", one: "expense", many: "expenses" },
+  { key: "extraHours", tab: "EXTRA_HOURS", one: "extra hrs", many: "extra hrs" },
+  { key: "newEmployees", tab: "NEW_EMPLOYEES", one: "joiner", many: "joiners" },
+  { key: "documents", tab: "DOCUMENTS", one: "document", many: "documents" },
+];
+
+const CHIP_SLOP = { top: 4, bottom: 4, left: 2, right: 2 };
+
+function PendingCallout({
+  counts,
+  onOpen,
+  onRetry,
+}: {
+  counts: PendingCounts;
+  onOpen: (tab?: string) => void;
+  onRetry: () => void;
+}) {
+  const warn = toneColors("warning");
+  const anyFailed = QUEUES.some((q) => counts[q.key] === null);
+
+  if (counts.status === "ok" && counts.total === 0 && !anyFailed) {
+    return (
+      <ListGroup>
+        <ListItem
+          icon="checkmark-done-outline"
+          tint="green"
+          title="Approvals"
+          detail="Nothing pending"
+          onPress={() => onOpen()}
+        />
+      </ListGroup>
+    );
+  }
+
+  const headline =
+    counts.status === "loading"
+      ? "Pending approvals"
+      : counts.status === "failed"
+        ? "Couldn't load approvals"
+        : `${counts.total} pending ${plural(counts.total, "approval", "approvals")}`;
+  const chips =
+    counts.status === "ok"
+      ? QUEUES.filter((q) => {
+          const n = counts[q.key];
+          return n === null || n > 0;
+        })
+      : [];
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      {/* Hero */}
-      <ImageBackground source={HERO} style={styles.hero} imageStyle={styles.heroImg}>
-        <LinearGradient
-          colors={["rgba(0,0,0,0.10)", "rgba(0,0,0,0.55)", "rgba(0,0,0,0.92)"]}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.header}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>{greeting},</Text>
-            <Text style={styles.name} numberOfLines={1}>
-              {user?.name}
-            </Text>
-            <Text style={styles.heroTag}>ADMIN</Text>
-          </View>
-          <Pressable onPress={() => router.push("/admin-notifications")} style={styles.bell}>
-            <Ionicons name="notifications-outline" size={22} color="#FFFFFF" />
-          </Pressable>
-        </View>
-      </ImageBackground>
-
-      {/* Pending approvals — straight to the queues */}
-      {(data?.pendingApprovals ?? 0) > 0 && (
-        <Pressable onPress={() => router.push("/(admin)/approvals")}>
-          <Card style={{ backgroundColor: colors.amberSoft }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-              <Ionicons name="alert-circle" size={24} color={colors.amber} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.calloutTitle}>{data!.pendingApprovals} pending approval(s)</Text>
-                <Text style={styles.calloutSub}>
-                  {data!.pendingLeaveRequests ?? 0} leaves · {data!.pendingEmployees ?? 0} new joiners ·{" "}
-                  {data!.pendingDocuments ?? 0} documents
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={colors.sub} />
-            </View>
-          </Card>
-        </Pressable>
-      )}
-
-      {/* Network overview + the two admin queues that need a person today */}
-      <Card>
-        <Pressable onPress={() => router.push("/admin-overview")} style={styles.quickRow}>
-          <Ionicons name="speedometer-outline" size={18} color={colors.purple} />
-          <Text style={styles.quickText}>Overview — views, reach, revenue & trending</Text>
-          <Ionicons name="chevron-forward" size={14} color={colors.faint} />
-        </Pressable>
-        {data?.silentChannels != null ? (
-          <Pressable onPress={() => router.push("/admin-posting-watch")} style={styles.quickRow}>
-            <Ionicons name="eye-outline" size={18} color={data.silentChannels > 0 ? colors.red : colors.green} />
-            <Text style={styles.quickText}>
-              {data.silentChannels > 0 ? `${data.silentChannels} channel(s) with no new post` : "Posting watch — no channel flagged"}
-            </Text>
-            <Ionicons name="chevron-forward" size={14} color={colors.faint} />
-          </Pressable>
-        ) : null}
-        {data?.campaignsToDo != null ? (
-          <Pressable onPress={() => router.push("/admin-campaigns")} style={[styles.quickRow, { borderBottomWidth: 0 }]}>
-            <Ionicons name="megaphone-outline" size={18} color={data.campaignsToDo > 0 ? colors.yellow : colors.sub} />
-            <Text style={styles.quickText}>
-              {data.campaignsToDo > 0 ? `${data.campaignsToDo} campaign(s) to review or post` : "Campaign bookings — nothing to do"}
-            </Text>
-            <Ionicons name="chevron-forward" size={14} color={colors.faint} />
-          </Pressable>
-        ) : null}
-      </Card>
-
-      {/* Account Growth — the business headline */}
-      <SectionTitle right={<SeeAll onPress={() => router.push("/admin-growth")} />}>Account Growth · 28d</SectionTitle>
-      <Pressable onPress={() => router.push("/admin-growth")}>
-        <Card>
-          <View style={styles.growthRow}>
-            <View style={styles.growthCell}>
-              <Text style={styles.growthValue} numberOfLines={1} adjustsFontSizeToFit>{fmtCompact(g?.views)}</Text>
-              <Text style={styles.growthLabel}>Views</Text>
-            </View>
-            <View style={styles.growthCell}>
-              <Text style={styles.growthValue} numberOfLines={1} adjustsFontSizeToFit>{fmtCompact(g?.engagements)}</Text>
-              <Text style={styles.growthLabel}>Engagements</Text>
-            </View>
-            <View style={styles.growthCell}>
-              <Text style={styles.growthValue} numberOfLines={1} adjustsFontSizeToFit>{fmtCompact(g?.followers)}</Text>
-              <Text style={styles.growthLabel}>Followers</Text>
-            </View>
-            <View style={styles.growthCell}>
-              <Text style={[styles.growthValue, { color: colors.green }]} numberOfLines={1} adjustsFontSizeToFit>{fmtUsd(g?.earningsCents)}</Text>
-              <Text style={styles.growthLabel}>Revenue</Text>
-            </View>
-          </View>
-          <Text style={styles.growthFoot}>{g?.channelCount ?? "—"} connected Meta channels</Text>
-        </Card>
+    <Card variant="tinted" tone="warning">
+      <Pressable
+        onPress={() => onOpen()}
+        accessibilityRole="button"
+        accessibilityLabel={`${headline}. Open approvals`}
+        style={({ pressed }) => [styles.calloutHead, pressed ? styles.pressed : null]}
+      >
+        <Ionicons name="alert-circle" size={24} color={warn.fg} />
+        <Text maxFontSizeMultiplier={1.6} style={styles.calloutTitle}>
+          {headline}
+        </Text>
+        <Ionicons name="chevron-forward" size={16} color={colors.sub} />
       </Pressable>
-
-      {/* Team today */}
-      <SectionTitle right={<SeeAll onPress={() => router.push("/admin-employees")} />}>Team Today</SectionTitle>
-      <View style={styles.statRow}>
-        <Stat label="Employees" value={data?.totalEmployees ?? "—"} onPress={() => router.push("/admin-employees")} />
-        <Stat
-          label="Present"
-          value={data?.presentToday ?? "—"}
-          accent={colors.green}
-          onPress={() => router.push("/admin-attendance")}
-        />
-        <Stat
-          label="Submitted"
-          value={data?.submittedTodayCount ?? "—"}
-          accent={colors.purple}
-          onPress={() => router.push("/(admin)/reports")}
-        />
-        <Stat
-          label="Rate"
-          value={data?.submissionRateToday != null ? `${data.submissionRateToday}%` : "—"}
-          onPress={() => router.push("/(admin)/reports")}
-        />
-      </View>
-
-      {/* Links activity + trend */}
-      <SectionTitle right={<SeeAll onPress={() => router.push("/(admin)/reports")} />}>Links Activity</SectionTitle>
-      <View style={styles.statRow}>
-        <Stat
-          label="Today"
-          value={fmtCompact(data?.linksToday)}
-          accent={colors.purple}
-          onPress={() => router.push("/(admin)/reports")}
-        />
-        <Stat label="This Week" value={fmtCompact(data?.linksThisWeek)} onPress={() => router.push("/(admin)/reports")} />
-        <Stat label="This Month" value={fmtCompact(data?.linksThisMonth)} onPress={() => router.push("/(admin)/reports")} />
-      </View>
-      {Array.isArray(data?.linksTrend) && data.linksTrend.length > 1 && (
-        <Pressable onPress={() => router.push("/(admin)/reports")}>
-          <Card>
-            <TrendBars data={data.linksTrend.map((t: any) => t.count ?? 0)} />
-            <View style={styles.trendFoot}>
-              <Text style={styles.trendLabel}>{String(data.linksTrend[0]?.date).slice(5)}</Text>
-              <Text style={styles.trendLabel}>Links · last {data.linksTrend.length} days</Text>
-              <Text style={styles.trendLabel}>{String(data.linksTrend[data.linksTrend.length - 1]?.date).slice(5)}</Text>
-            </View>
-          </Card>
-        </Pressable>
-      )}
-
-      {/* Top performers this week */}
-      {(data?.topPerformers ?? []).length > 0 && (
-        <>
-          <SectionTitle right={<SeeAll onPress={() => router.push("/admin-leaderboard")} />}>
-            Top Performers · 7d
-          </SectionTitle>
-          <Card>
-            {data.topPerformers.map((e: any, i: number) => (
-              <Pressable
-                key={e.employeeId ?? i}
-                onPress={() =>
-                  router.push(`/admin-employee/${e.employeeId ?? e.id}?name=${encodeURIComponent(e.employeeName ?? e.name ?? "")}`)
-                }
-              >
-                <View style={[styles.perfRow, i === data.topPerformers.length - 1 && { borderBottomWidth: 0 }]}>
-                  <Text style={styles.perfRank}>{i + 1}</Text>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.perfName} numberOfLines={1}>
-                      {e.employeeName ?? e.name}
-                    </Text>
-                    <Text style={styles.perfMeta}>{e.reportCount ?? 0} report(s)</Text>
-                  </View>
-                  <Text style={styles.perfLinks}>{fmtCompact(e.totalLinks ?? 0)} links</Text>
-                  <Ionicons name="chevron-forward" size={14} color={colors.faint} />
-                </View>
-              </Pressable>
-            ))}
-          </Card>
-        </>
-      )}
-
-      {/* Tasks */}
-      <SectionTitle right={<SeeAll onPress={() => router.push("/admin-tasks")} />}>Tasks</SectionTitle>
-      <View style={styles.statRow}>
-        <Stat label="Open" value={data?.tasks?.open ?? "—"} onPress={() => router.push("/admin-tasks")} />
-        <Stat
-          label="Overdue"
-          value={data?.tasks?.overdue ?? "—"}
-          accent={(data?.tasks?.overdue ?? 0) > 0 ? colors.red : undefined}
-          onPress={() => router.push("/admin-tasks")}
-        />
-        <Stat
-          label="Done Rate"
-          value={data?.tasks?.rate != null ? `${data.tasks.rate}%` : "—"}
-          accent={colors.green}
-          onPress={() => router.push("/admin-analytics")}
-        />
-      </View>
-
-      {/* Today's POA */}
-      {data?.poaStatus ? (
-        <>
-          <SectionTitle right={<SeeAll onPress={() => router.push("/admin-employees")} />}>
-            Today's Plans (POA)
-          </SectionTitle>
-          <Card>
-            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
-              <Text style={styles.poaCount}>{data.poaStatus.submittedCount ?? 0}</Text>
-              <Text style={styles.poaOf}>
-                of {(data.poaStatus.submittedCount ?? 0) + (data.poaStatus.nonSubmitters?.length ?? 0)} submitted
-              </Text>
-            </View>
-            {(data.poaStatus.nonSubmitters ?? []).length > 0 && (
-              <Text style={styles.poaMissing} numberOfLines={2}>
-                Missing: {(data.poaStatus.nonSubmitters ?? []).slice(0, 6).map((e: any) => e.name).join(", ")}
-                {(data.poaStatus.nonSubmitters ?? []).length > 6
-                  ? ` +${data.poaStatus.nonSubmitters.length - 6} more`
-                  : ""}
-              </Text>
-            )}
-          </Card>
-        </>
+      {counts.status === "loading" ? (
+        <Text maxFontSizeMultiplier={1.6} style={styles.calloutSub}>
+          Counting the queues…
+        </Text>
       ) : null}
-
-      {/* Workspace */}
-      <SectionTitle right={<SeeAll onPress={() => router.push("/(admin)/manage")} label="Manage" />}>Workspace</SectionTitle>
-      <View style={styles.statRow}>
-        <Stat label="Teams" value={data?.activeTeams ?? "—"} onPress={() => router.push("/admin-teams")} />
-        <Stat label="Projects" value={data?.activeProjects ?? "—"} onPress={() => router.push("/admin-projects")} />
-        <Stat
-          label="Published (mo)"
-          value={data?.contentPublishedThisMonth ?? "—"}
-          onPress={() => router.push("/admin-content")}
+      {chips.length > 0 ? (
+        <View style={styles.chips}>
+          {chips.map((q) => {
+            const n = counts[q.key];
+            const label = n === null ? `? ${q.many}` : `${n} ${plural(n, q.one, q.many)}`;
+            return (
+              <Pressable
+                key={q.key}
+                onPress={() => onOpen(q.tab)}
+                hitSlop={CHIP_SLOP}
+                accessibilityRole="button"
+                accessibilityLabel={n === null ? `${q.many}: couldn't load. Open` : `${label}. Open`}
+                style={({ pressed }) => [styles.chip, { borderColor: warn.fg }, pressed ? styles.pressed : null]}
+              >
+                <Text maxFontSizeMultiplier={1.3} style={[styles.chipText, { color: warn.text }]}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+      {counts.status === "failed" || (counts.status === "ok" && anyFailed) ? (
+        <Button
+          title="Try again"
+          variant="tinted"
+          tone="warning"
+          size="sm"
+          fullWidth={false}
+          onPress={onRetry}
+          style={styles.calloutRetry}
         />
-      </View>
+      ) : null}
+    </Card>
+  );
+}
 
-      {/* Needs attention */}
-      <SectionTitle>Needs Attention</SectionTitle>
-      <View style={styles.statRow}>
-        <Stat
-          label="Applications"
-          value={data?.openApps ?? "—"}
-          accent={(data?.openApps ?? 0) > 0 ? colors.blue : undefined}
-          onPress={() => router.push("/admin-jobs")}
-        />
-        <Stat
+// ---------- screen ----------
+const DASH_OPTIONS = { refetchOnFocus: false, refetchOnForeground: true, staleMs: 300000, keepData: true };
+
+const HR_PEOPLE: ReadonlyArray<{
+  title: string;
+  icon: React.ComponentProps<typeof ListItem>["icon"];
+  tint: React.ComponentProps<typeof ListItem>["tint"];
+  path: string;
+}> = [
+  { title: "Employees", icon: "people-outline", tint: "blue", path: "/admin-employees" },
+  { title: "Attendance", icon: "time-outline", tint: "orange", path: "/admin-attendance" },
+  { title: "Teams", icon: "git-branch-outline", tint: "brand", path: "/admin-teams" },
+  { title: "Salary Slips", icon: "cash-outline", tint: "green", path: "/admin-salary-slips" },
+  { title: "Holidays", icon: "sunny-outline", tint: "orange", path: "/admin-holidays" },
+  { title: "Announcements", icon: "megaphone-outline", tint: "orange", path: "/admin-announcements" },
+  { title: "Jobs", icon: "briefcase-outline", tint: "gray", path: "/admin-jobs" },
+  { title: "Internships", icon: "school-outline", tint: "blue", path: "/admin-internships" },
+  { title: "Complaints", icon: "alert-circle-outline", tint: "orange", path: "/admin-complaints" },
+  { title: "Bug reports", icon: "bug-outline", tint: "red", path: "/admin-bug-reports" },
+];
+
+export default function AdminDashboard() {
+  const router = useRouter();
+  const { user, caps } = useAuth();
+  // HR-only staff skip the admin-only analytics endpoints (they answer 403 for them).
+  const full = caps.isAdmin || !caps.isHr;
+  const counts = usePendingCounts();
+  const reloadCounts = counts.reload;
+
+  // Phase 1: what the first paint needs.
+  const p1 = useApi<Phase1>(
+    async () => {
+      const today = todayIST();
+      const week = `startDate=${daysAgoIST(6)}&endDate=${today}`;
+      const [overview, poa, linksToday, summary, tasks] = await Promise.allSettled([
+        call(full, "/analytics/overview"),
+        call(true, "/admin/daily-reports/status"),
+        call(full, `/admin/reports/links-analytics?startDate=${today}&endDate=${today}`),
+        call(full, `/admin/reports/summary?${week}`),
+        call(full, "/analytics/tasks"),
+      ]);
+      return {
+        overview: settle(overview, parseOverview),
+        poa: settle(poa, parsePoa),
+        linksToday: settle(linksToday, parseLinksToday),
+        top: settle(summary, parseTop),
+        tasks: settle(tasks, parseTasks),
+      };
+    },
+    [full],
+    DASH_OPTIONS,
+  );
+
+  // Phase 2: started once the first paint has landed.
+  const p2 = useApi<Phase2>(
+    async () => {
+      const [growth, apps, complaints, bugs, campaigns, watch] = await Promise.allSettled([
+        call(full, "/admin/meta/channels?window=days_28"),
+        call(true, "/admin/applications"),
+        call(true, "/admin/complaints"),
+        call(true, "/admin/bug-reports"),
+        call(full, "/admin/campaigns"),
+        call(full, "/admin/meta/posting-watch"),
+      ]);
+      return {
+        growth: settle(growth, parseGrowth),
+        apps: settle(apps, parseOpenApps),
+        complaints: settle(complaints, parseOpenComplaints),
+        bugs: settle(bugs, parseOpenBugs),
+        campaigns: settle(campaigns, parseCampaignsToDo),
+        watch: settle(watch, parseWatch),
+      };
+    },
+    [full],
+    { ...DASH_OPTIONS, enabled: p1.status !== "loading" },
+  );
+
+  const refresh1 = p1.refresh;
+  const reload1 = p1.reload;
+  const reload2 = p2.reload;
+  const reloadAll = useCallback(async () => {
+    await Promise.all([reload1(), reload2(), reloadCounts()]);
+  }, [reload1, reload2, reloadCounts]);
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refresh1(), reload2(), reloadCounts()]);
+  }, [refresh1, reload2, reloadCounts]);
+
+  const today = useDayChange(() => {
+    void reloadAll();
+  });
+  useInvalidation("approvals", reloadCounts);
+
+  const go = (path: string) => router.push(path);
+  const openApprovals = (tab?: string) => go(tab ? `/(admin)/approvals?tab=${tab}` : "/(admin)/approvals");
+
+  const d1 = p1.data;
+  const d2 = p2.data;
+  const sources1: Array<Src<unknown>> = d1 ? [d1.overview, d1.poa, d1.linksToday, d1.top, d1.tasks] : [];
+  const sources2: Array<Src<unknown>> = d2
+    ? [d2.growth, d2.apps, d2.complaints, d2.bugs, d2.campaigns, d2.watch]
+    : [];
+  const tried1 = sources1.filter((s) => s.state !== "skipped");
+  const allFailed = tried1.length > 0 && tried1.every((s) => s.state === "failed");
+  const firstError = tried1.reduce<ErrorInfo | null>((acc, s) => acc ?? (s.state === "failed" ? s.error : null), null);
+  const someFailed = [...sources1, ...sources2].some((s) => s.state === "failed");
+
+  const ov = valueOf(d1?.overview);
+  const poa = valueOf(d1?.poa);
+  const linksToday = valueOf(d1?.linksToday);
+  const top = valueOf(d1?.top) ?? [];
+  const tasks = valueOf(d1?.tasks);
+
+  const subtitle = [user?.name, caps.isAdmin ? "Admin" : "HR Manager", fmtDay(today)]
+    .filter((s): s is string => !!s)
+    .join(" · ");
+
+  const poaRow = (
+    <ListItem
+      icon="clipboard-outline"
+      tint="brand"
+      title="Plan of action today"
+      subtitle={
+        d1?.poa.state === "failed" ? "Couldn't load" : poa ? `${poa.written} of ${poa.expected} written` : "—"
+      }
+      onPress={() => go("/admin-not-submitted?kind=poa")}
+    />
+  );
+
+  const renderFull = () => {
+    const watch = watchCopy(d2?.watch);
+    const growthSrc = d2?.growth;
+    const growth = valueOf(growthSrc);
+    const yesterday = ov?.linksTrend.find((t) => t.date === addDaysISO(today, -1))?.count ?? null;
+    const diff = ov?.linksToday != null && yesterday != null ? ov.linksToday - yesterday : null;
+    const deltaTone: Tone = diff == null || diff === 0 ? "neutral" : diff > 0 ? "success" : "danger";
+    const delta = diff == null ? undefined : { value: `${diff > 0 ? "+" : ""}${diff} vs yday`, tone: deltaTone };
+    const trend = ov?.linksTrend ?? [];
+    const reportsSubtitle =
+      d1?.overview.state === "failed" && d1.linksToday.state === "failed"
+        ? "Couldn't load"
+        : `${orDash(ov?.submittedTodayCount)} submitted · ${orDash(linksToday?.notYet)} not yet`;
+
+    return (
+      <>
+        <ListGroup title="Needs you">
+          <ListItem
+            icon="document-text-outline"
+            tint="blue"
+            title="Daily reports today"
+            subtitle={reportsSubtitle}
+            onPress={() => go("/admin-not-submitted?kind=links")}
+          />
+          {poaRow}
+          <ListItem
+            icon="eye-outline"
+            tint={watch.quiet ? "red" : "pink"}
+            title="Posting watch"
+            subtitle={watch.text}
+            onPress={() => go("/admin-posting-watch")}
+          />
+          <ListItem
+            icon="megaphone-outline"
+            tint="brand"
+            title="Campaign bookings"
+            subtitle={campaignCopy(d2?.campaigns)}
+            onPress={() => go("/admin-campaigns")}
+          />
+        </ListGroup>
+
+        <SectionTitle right={<SeeAll onPress={() => go("/admin-growth")} />}>Account growth · 28d</SectionTitle>
+        {growthSrc?.state === "ok" && growth === null ? (
+          <Empty compact icon="trending-up-outline" text="No Meta data in 28 days" />
+        ) : (
+          <>
+            <StatGrid columns={2}>
+              <StatTile
+                label="Views"
+                icon="eye-outline"
+                value={growthSrc ? fmtCompact(growth?.views) : "…"}
+                onPress={() => go("/admin-growth")}
+              />
+              <StatTile
+                label="Engagements"
+                icon="heart-outline"
+                tone="danger"
+                value={growthSrc ? fmtCompact(growth?.engagements) : "…"}
+                onPress={() => go("/admin-growth")}
+              />
+              <StatTile
+                label="Followers"
+                icon="person-add-outline"
+                tone="info"
+                value={growthSrc ? fmtCompact(growth?.followers) : "…"}
+                onPress={() => go("/admin-growth")}
+              />
+              <StatTile
+                label="Revenue"
+                icon="cash-outline"
+                tone="success"
+                valueColor={colors.greenText}
+                value={growthSrc ? fmtUsdCents(growth?.earningsCents) : "…"}
+                onPress={() => go("/admin-growth")}
+              />
+            </StatGrid>
+            {growth?.channelCount != null ? (
+              <Text maxFontSizeMultiplier={1.6} style={styles.note}>
+                {growth.channelCount} connected Meta {plural(growth.channelCount, "channel", "channels")}
+              </Text>
+            ) : null}
+          </>
+        )}
+
+        <SectionTitle right={<SeeAll onPress={() => go("/admin-employees")} />}>Team today</SectionTitle>
+        <StatGrid columns={2}>
+          <StatTile
+            label="Employees"
+            icon="people-outline"
+            tone="info"
+            value={orDash(ov?.totalEmployees)}
+            onPress={() => go("/admin-employees")}
+          />
+          <StatTile
+            label="Present"
+            icon="checkmark-circle-outline"
+            tone="success"
+            value={orDash(ov?.presentToday)}
+            onPress={() => go("/admin-attendance")}
+          />
+          <StatTile
+            label="Submitted"
+            icon="document-text-outline"
+            value={orDash(ov?.submittedTodayCount)}
+            onPress={() => go("/(admin)/reports")}
+          />
+          <StatTile
+            label="Rate"
+            icon="speedometer-outline"
+            value={ov?.submissionRateToday != null ? `${ov.submissionRateToday}%` : "—"}
+            progress={ov?.submissionRateToday != null ? ov.submissionRateToday / 100 : undefined}
+            onPress={() => go("/(admin)/reports")}
+          />
+        </StatGrid>
+
+        <SectionTitle right={<SeeAll onPress={() => go("/(admin)/reports")} />}>Links</SectionTitle>
+        <StatGrid columns={3}>
+          <StatTile
+            compact
+            label="Today"
+            value={ov?.linksToday != null ? fmtCompact(ov.linksToday) : "—"}
+            delta={delta}
+            onPress={() => go("/(admin)/reports")}
+          />
+          <StatTile
+            compact
+            label="This week"
+            value={ov?.linksThisWeek != null ? fmtCompact(ov.linksThisWeek) : "—"}
+            onPress={() => go("/(admin)/reports")}
+          />
+          <StatTile
+            compact
+            label="This month"
+            value={ov?.linksThisMonth != null ? fmtCompact(ov.linksThisMonth) : "—"}
+            onPress={() => go("/(admin)/reports")}
+          />
+        </StatGrid>
+        {trend.length > 1 ? (
+          <Card
+            onPress={() => go("/(admin)/reports")}
+            accessibilityLabel={`Links over the last ${trend.length} days. Open reports`}
+          >
+            <TrendBars
+              data={trend.map((t) => t.count)}
+              accessibilityLabel={`Links per day, last ${trend.length} days`}
+            />
+            <View style={styles.trendFoot}>
+              <Text maxFontSizeMultiplier={1.3} style={styles.trendLabel}>
+                {fmtDay(trend[0].date, { weekday: false })}
+              </Text>
+              <Text maxFontSizeMultiplier={1.3} style={styles.trendLabel}>
+                Links · last {trend.length} days
+              </Text>
+              <Text maxFontSizeMultiplier={1.3} style={styles.trendLabel}>
+                {fmtDay(trend[trend.length - 1].date, { weekday: false })}
+              </Text>
+            </View>
+          </Card>
+        ) : null}
+
+        {top.length > 0 ? (
+          <>
+            <SectionTitle right={<SeeAll onPress={() => go("/admin-leaderboard")} />}>Top performers · 7d</SectionTitle>
+            <ListGroup>
+              {top.map((e) => (
+                <ListItem
+                  key={e.id}
+                  leading={<Avatar name={e.name} size={32} />}
+                  title={e.name}
+                  subtitle={`${e.reports} ${plural(e.reports, "report", "reports")}`}
+                  detail={`${fmtCompact(e.links)} links`}
+                  onPress={() => go(`/admin-employee/${e.id}?name=${encodeURIComponent(e.name)}`)}
+                />
+              ))}
+            </ListGroup>
+          </>
+        ) : null}
+
+        <SectionTitle right={<SeeAll onPress={() => go("/admin-tasks")} />}>Tasks</SectionTitle>
+        <StatGrid columns={3}>
+          <StatTile compact label="Open" value={orDash(tasks?.open)} onPress={() => go("/admin-tasks")} />
+          <StatTile
+            compact
+            label="Overdue"
+            value={orDash(tasks?.overdue)}
+            valueColor={(tasks?.overdue ?? 0) > 0 ? colors.redText : undefined}
+            onPress={() => go("/admin-tasks")}
+          />
+          <StatTile
+            compact
+            label="Done rate"
+            value={tasks?.rate != null ? `${tasks.rate}%` : "—"}
+            valueColor={tasks?.rate != null ? colors.greenText : undefined}
+            onPress={() => go("/admin-analytics")}
+          />
+        </StatGrid>
+
+        <ListGroup title="Workspace & attention">
+          <ListItem
+            icon="speedometer-outline"
+            tint="orange"
+            title="Overview"
+            subtitle="Views, reach, revenue & trending"
+            onPress={() => go("/admin-overview")}
+          />
+          <ListItem
+            icon="git-branch-outline"
+            tint="brand"
+            title="Teams"
+            detail={String(orDash(ov?.activeTeams))}
+            onPress={() => go("/admin-teams")}
+          />
+          <ListItem
+            icon="folder-outline"
+            tint="teal"
+            title="Projects"
+            detail={String(orDash(ov?.activeProjects))}
+            onPress={() => go("/admin-projects")}
+          />
+          <ListItem
+            icon="images-outline"
+            tint="pink"
+            title="Content"
+            subtitle="Published this month"
+            detail={String(orDash(ov?.contentPublishedThisMonth))}
+            onPress={() => go("/admin-content")}
+          />
+          <ListItem
+            icon="briefcase-outline"
+            tint="blue"
+            title="Applications"
+            {...countRow(d2?.apps)}
+            onPress={() => go("/admin-jobs")}
+          />
+          <ListItem
+            icon="alert-circle-outline"
+            tint="orange"
+            title="Complaints"
+            {...countRow(d2?.complaints)}
+            onPress={() => go("/admin-complaints")}
+          />
+          <ListItem
+            icon="bug-outline"
+            tint="red"
+            title="Bugs"
+            {...countRow(d2?.bugs)}
+            onPress={() => go("/admin-bug-reports")}
+          />
+        </ListGroup>
+      </>
+    );
+  };
+
+  const renderHr = () => (
+    <>
+      <ListGroup title="Needs you">{poaRow}</ListGroup>
+      <ListGroup title="People">
+        {HR_PEOPLE.map((r) => (
+          <ListItem key={r.path} icon={r.icon} tint={r.tint} title={r.title} onPress={() => go(r.path)} />
+        ))}
+      </ListGroup>
+      <SectionTitle>Needs attention</SectionTitle>
+      <StatGrid columns={3}>
+        <StatTile compact label="Applications" value={countTile(d2?.apps)} onPress={() => go("/admin-jobs")} />
+        <StatTile
+          compact
           label="Complaints"
-          value={data?.openComplaints ?? "—"}
-          accent={(data?.openComplaints ?? 0) > 0 ? colors.amber : undefined}
-          onPress={() => router.push("/admin-complaints")}
+          value={countTile(d2?.complaints)}
+          onPress={() => go("/admin-complaints")}
         />
-        <Stat
-          label="Bugs"
-          value={data?.openBugs ?? "—"}
-          accent={(data?.openBugs ?? 0) > 0 ? colors.red : undefined}
-          onPress={() => router.push("/admin-bug-reports")}
+        <StatTile compact label="Bugs" value={countTile(d2?.bugs)} onPress={() => go("/admin-bug-reports")} />
+      </StatGrid>
+    </>
+  );
+
+  return (
+    <Screen header="none" onRefresh={refreshAll} refreshing={p1.refreshing}>
+      <LargeTitle
+        title={greetingIST()}
+        subtitle={subtitle}
+        right={
+          <IconButton icon="notifications-outline" label="Notifications" onPress={() => go("/admin-notifications")} />
+        }
+      />
+
+      <PendingCallout counts={counts} onOpen={openApprovals} onRetry={() => void reloadCounts()} />
+
+      {d1 === null ? (
+        <>
+          <SkeletonStatRow count={2} />
+          <SkeletonList rows={4} tile />
+        </>
+      ) : allFailed ? (
+        <LoadFailed
+          error={firstError?.message ?? "Couldn't load the dashboard."}
+          code={firstError?.code}
+          status={firstError?.status}
+          onRetry={() => void reloadAll()}
         />
-      </View>
+      ) : (
+        <>
+          {someFailed ? (
+            <ErrorBanner
+              message="Some numbers couldn't load"
+              onRetry={() => void reloadAll()}
+              style={styles.banner}
+            />
+          ) : null}
+          {full ? renderFull() : renderHr()}
+        </>
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  quickRow: {
+  calloutHead: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    gap: spacing.md,
+    minHeight: 44,
   },
-  quickText: { flex: 1, fontSize: 14, color: colors.ink, fontWeight: "500" },
-  hero: {
-    borderRadius: radius.xl,
-    overflow: "hidden",
-    marginBottom: spacing.lg,
-  },
-  heroImg: { borderRadius: radius.xl },
-  header: { flexDirection: "row", alignItems: "flex-end", padding: spacing.lg, paddingTop: 64 },
-  // Hero copy sits on a dark media image — always white, both schemes
-  greeting: { fontSize: 13, color: "rgba(255,255,255,0.75)" },
-  name: { fontSize: 20, fontWeight: "700", color: "#FFFFFF" },
-  heroTag: { fontSize: 11, fontWeight: "500", color: "rgba(255,255,255,0.65)", letterSpacing: 1.2, marginTop: 4 },
-  bell: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.full,
-    backgroundColor: "rgba(28,28,30,0.7)",
-    alignItems: "center",
+  calloutTitle: { ...type.headline, flex: 1, color: colors.ink },
+  calloutSub: { ...type.subhead, color: colors.sub, marginTop: spacing.xs },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.md },
+  chip: {
+    minHeight: 36,
+    paddingHorizontal: spacing.md,
     justifyContent: "center",
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.card,
   },
-  calloutTitle: { fontSize: 15, fontWeight: "600", color: colors.ink },
-  calloutSub: { fontSize: 12, color: colors.sub, marginTop: 2 },
-  statRow: { flexDirection: "row", gap: 8, marginBottom: spacing.lg },
-  growthRow: { flexDirection: "row" },
-  growthCell: { flex: 1, alignItems: "center", paddingHorizontal: 3 },
-  growthValue: { fontSize: 19, fontWeight: "600", color: colors.ink, fontVariant: ["tabular-nums"] },
-  growthLabel: { fontSize: 11, color: colors.sub, marginTop: 2 },
-  growthFoot: { fontSize: 12, color: colors.faint, textAlign: "center", marginTop: 10 },
-  trendFoot: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
-  trendLabel: { fontSize: 11, color: colors.faint },
-  perfRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  perfRank: {
-    width: 20,
-    fontSize: 15,
-    fontWeight: "600",
-    color: colors.faint,
-    textAlign: "center",
-    fontVariant: ["tabular-nums"],
-  },
-  perfName: { fontSize: 15, fontWeight: "600", color: colors.ink },
-  perfMeta: { fontSize: 12, color: colors.sub, marginTop: 1 },
-  perfLinks: { fontSize: 14, fontWeight: "600", color: colors.purple, fontVariant: ["tabular-nums"] },
-  poaCount: { fontSize: 28, fontWeight: "600", color: colors.ink, fontVariant: ["tabular-nums"] },
-  poaOf: { fontSize: 14, color: colors.sub },
-  poaMissing: { fontSize: 13, color: colors.sub, marginTop: 8 },
+  chipText: { ...type.subhead, fontWeight: "600" },
+  calloutRetry: { marginTop: spacing.md, alignSelf: "flex-start" },
+  pressed: { opacity: 0.7 },
+  banner: { marginBottom: spacing.md },
+  note: { ...type.footnote, color: colors.sub, marginTop: spacing.xs, marginBottom: spacing.xs },
+  trendFoot: { flexDirection: "row", justifyContent: "space-between", marginTop: spacing.sm },
+  trendLabel: { ...type.caption, color: colors.sub },
 });

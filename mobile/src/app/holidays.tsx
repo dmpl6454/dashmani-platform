@@ -1,72 +1,65 @@
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { apiFetch, fmtDate, todayIST } from "@/lib/api";
-import { colors, radius } from "@/lib/theme";
-import { Screen, Card, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
+import React, { useMemo } from "react";
+import { apiFetch, fmtDay, istDateOf, todayIST } from "@/lib/api";
 import { formatStatus } from "@/lib/theme";
+import { Screen, useApi } from "@/components/ui";
+import { DateTile, ListItem } from "@/components/list";
+import { AsyncList } from "@/components/async";
+
+type Holiday = {
+  id: string;
+  name: string;
+  date: string;
+  type?: string | null;
+  description?: string | null;
+};
+
+function dayOf(v: string): string {
+  return istDateOf(v) ?? String(v).slice(0, 10);
+}
 
 export default function HolidaysScreen() {
-  const { data, loading, refreshing, error, refresh } = useApi<any[]>(() => apiFetch("/hr/holidays"));
-
-  if (loading) return <Loading />;
-
+  const state = useApi<Holiday[]>(() => apiFetch<Holiday[]>("/hr/holidays"));
   const today = todayIST();
-  const holidays = data ?? [];
+
+  // Upcoming first (soonest first), then past (most recent first).
+  const ordered = useMemo(() => {
+    if (!state.data) return undefined;
+    const withDay = state.data.map((h) => ({ h, ymd: dayOf(h.date) }));
+    const upcoming = withDay.filter((x) => x.ymd >= today).sort((a, b) => a.ymd.localeCompare(b.ymd));
+    const past = withDay.filter((x) => x.ymd < today).sort((a, b) => b.ymd.localeCompare(a.ymd));
+    return [...upcoming, ...past].map((x) => x.h);
+  }, [state.data, today]);
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      {holidays.length === 0 ? (
-        <Card>
-          <Empty icon="sunny-outline" text="No holidays configured for this year" />
-        </Card>
-      ) : (
-        <Card>
-          {holidays.map((h: any, i: number) => {
-            const past = String(h.date).slice(0, 10) < today;
-            return (
-              <View key={h.id} style={[styles.row, i === holidays.length - 1 && { borderBottomWidth: 0 }, past && { opacity: 0.45 }]}>
-                <View style={styles.dateBox}>
-                  <Text style={styles.day}>{new Date(h.date).getDate()}</Text>
-                  <Text style={styles.mon}>{new Date(h.date).toLocaleDateString("en-IN", { month: "short" })}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name}>{h.name}</Text>
-                  <Text style={styles.sub}>
-                    {fmtDate(h.date)}
-                    {h.type ? ` · ${formatStatus(h.type)}` : ""}
-                  </Text>
-                  {h.description ? <Text style={styles.desc}>{h.description}</Text> : null}
-                </View>
-              </View>
-            );
-          })}
-        </Card>
-      )}
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncList
+        state={state}
+        items={ordered}
+        grouped
+        skeleton="rows"
+        keyExtractor={(h) => h.id}
+        sectionOf={(h) => (dayOf(h.date) >= today ? "Upcoming" : "Past")}
+        empty={{
+          icon: "sunny-outline",
+          title: "No holidays yet",
+          text: "Holidays for this year show up here once HR adds them.",
+        }}
+        renderItem={(h) => {
+          const ymd = dayOf(h.date);
+          const upcoming = ymd >= today;
+          const parts = [fmtDay(ymd, { year: true })];
+          if (h.type) parts.push(formatStatus(h.type));
+          if (h.description?.trim()) parts.push(h.description.trim());
+          return (
+            <ListItem
+              leading={<DateTile date={ymd} tone={upcoming ? "warning" : "neutral"} />}
+              title={h.name}
+              subtitle={parts.join(" · ")}
+              lines={2}
+            />
+          );
+        }}
+      />
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  dateBox: {
-    width: 46,
-    height: 46,
-    borderRadius: radius.md,
-    backgroundColor: colors.yellowSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  day: { fontSize: 17, fontWeight: "700", color: colors.ink },
-  mon: { fontSize: 10, color: colors.sub },
-  name: { fontSize: 14, fontWeight: "700", color: colors.ink },
-  sub: { fontSize: 12, color: colors.sub, marginTop: 1 },
-  desc: { fontSize: 12, color: colors.faint, marginTop: 2 },
-});

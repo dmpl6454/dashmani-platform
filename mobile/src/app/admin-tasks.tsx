@@ -1,336 +1,721 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, Modal, FlatList, Pressable, ScrollView } from "react-native";
-import { apiFetch, todayIST, fmtDate } from "@/lib/api";
-import { colors, radius, spacing, formatStatus, statusColor } from "@/lib/theme";
+// Admin · Tasks — every task in the workspace, filterable by status, with create / edit,
+// status changes and comments. All sheets are the shared DS Sheet / PickerSheet.
+//
+// API (paths unchanged): GET /tasks, POST /tasks, PUT /tasks/:id, PUT /tasks/:id/status,
+// GET /tasks/:id/comments, POST /tasks/:id/comments, GET /accounts, GET /employees.
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, type TextInput } from "react-native";
 import {
-  Screen, Card, SectionTitle, StatusPill, Button, Field, Chips, Empty, Loading, ErrorBanner, SuccessBanner, useApi,
+  addDaysISO,
+  apiFetch,
+  apiFetchPage,
+  describeError,
+  fieldErrorMap,
+  fmtDay,
+  isISODate,
+  istDateOf,
+  timeAgo,
+  todayIST,
+  withQuery,
+} from "@/lib/api";
+import { colors, formatStatus, motion, sizes, spacing, statusTone, toneColors, type } from "@/lib/theme";
+import type { Tone } from "@/lib/theme";
+import { haptic } from "@/lib/device";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Chips,
+  ErrorBanner,
+  Field,
+  Screen,
+  SectionTitle,
+  StatusPill,
+  useApi,
+  type IoniconName,
 } from "@/components/ui";
+import { ListGroup, ListItem } from "@/components/list";
+import { PickerSheet, Sheet } from "@/components/sheet";
+import { AsyncList } from "@/components/async";
+import { DateField } from "@/components/date-field";
+import { confirm, toast } from "@/components/feedback";
 
+// ---------- constants & types ----------
 const FILTERS = ["ALL", "TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"] as const;
+type Filter = (typeof FILTERS)[number];
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+type Priority = (typeof PRIORITIES)[number];
 const STATUSES = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE", "CANCELLED"] as const;
+type TaskStatus = (typeof STATUSES)[number];
 
-export default function AdminTasks() {
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
-  const [showCreate, setShowCreate] = useState(false);
-  const [statusFor, setStatusFor] = useState<any | null>(null);
-  const [commentsFor, setCommentsFor] = useState<any | null>(null);
-  const [comments, setComments] = useState<any[] | null>(null);
-  const [newComment, setNewComment] = useState("");
-  const [postingComment, setPostingComment] = useState(false);
+/** /tasks is cursor-paginated (limit max 500); the whole list is loaded so the chips can count. */
+const LIST_LIMIT = 500;
+const PICKER_LIMIT = 50;
+const NONE_ID = "__none";
+
+const STATUS_ICON: Record<TaskStatus, IoniconName> = {
+  TODO: "ellipse-outline",
+  IN_PROGRESS: "play-circle-outline",
+  IN_REVIEW: "eye-outline",
+  DONE: "checkmark-circle-outline",
+  CANCELLED: "close-circle-outline",
+};
+
+const PRIORITY_TONE: Record<Priority, Tone> = {
+  CRITICAL: "danger",
+  HIGH: "warning",
+  MEDIUM: "info",
+  LOW: "neutral",
+};
+
+type Person = { id: string; name: string; email?: string | null };
+
+type Account = {
+  id: string;
+  handle?: string | null;
+  displayName?: string | null;
+  platform?: { name?: string | null; slug?: string | null } | null;
+};
+
+type AdminTask = {
+  id: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  priority?: string | null;
+  dueDate?: string | null;
+  assignee?: Person | null;
+  account?: Account | null;
+  _count?: { comments?: number } | null;
+};
+
+type TaskComment = {
+  id: string;
+  body?: string | null;
+  content?: string | null;
+  createdAt: string;
+  author?: { name?: string | null } | null;
+};
+
+type Choice = { id: string; label: string };
+
+// ---------- helpers ----------
+function isTaskStatus(s: string): s is TaskStatus {
+  return (STATUSES as readonly string[]).includes(s);
+}
+
+function isPriority(s: string | null | undefined): s is Priority {
+  return typeof s === "string" && (PRIORITIES as readonly string[]).includes(s);
+}
+
+function statusIcon(s: string): IoniconName {
+  return isTaskStatus(s) ? STATUS_ICON[s] : "ellipse-outline";
+}
+
+function statusTint(s: string): string {
+  return toneColors(statusTone(s)).fg;
+}
+
+function accountLabel(a: Account): string {
+  return a.displayName || a.handle || "Account";
+}
+
+function accountSubtitle(a: Account): string | undefined {
+  const handle = (a.handle || "").split("?")[0];
+  const parts = [handle ? `@${handle}` : "", a.platform?.name ?? ""].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+function taskSubtitle(t: AdminTask): string {
+  const parts: string[] = [t.assignee?.name ? t.assignee.name : "Unassigned"];
+  if (t.dueDate) parts.push(`Due ${fmtDay(t.dueDate)}`);
+  if (t.account) parts.push(accountLabel(t.account));
+  const n = t._count?.comments ?? 0;
+  if (n > 0) parts.push(n === 1 ? "1 comment" : `${n} comments`);
+  return parts.join(" · ");
+}
+
+/** Server-searched options for a PickerSheet (stale answers are dropped). */
+function useRemoteOptions<T>(path: string) {
+  const [items, setItems] = useState<T[]>([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const seq = useRef(0);
+  const lastQuery = useRef("");
 
-  // create form
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<(typeof PRIORITIES)[number]>("MEDIUM");
-  const [dueDate, setDueDate] = useState(todayIST());
-  const [accountId, setAccountId] = useState<string | undefined>();
-  const [assigneeId, setAssigneeId] = useState<string | undefined>();
-  const [picker, setPicker] = useState<"account" | "assignee" | null>(null);
-  const [creating, setCreating] = useState(false);
-
-  const { data: tasks, loading, refreshing, refresh, reload } = useApi<any[]>(
-    () => apiFetch(`/tasks?pageSize=100${filter !== "ALL" ? `&status=${filter}` : ""}`),
-    [filter],
+  const search = useCallback(
+    async (q: string) => {
+      lastQuery.current = q;
+      seq.current += 1;
+      const id = seq.current;
+      setQuery(q);
+      setLoading(true);
+      setError(null);
+      try {
+        const page = await apiFetchPage<T>(withQuery(path, { search: q, limit: PICKER_LIMIT }));
+        if (id === seq.current) setItems(page.items);
+      } catch (e) {
+        if (id === seq.current) setError(describeError(e, "Couldn't load the list."));
+      } finally {
+        if (id === seq.current) setLoading(false);
+      }
+    },
+    [path],
   );
-  const { data: accounts } = useApi<any[]>(() => apiFetch("/accounts?pageSize=100"));
-  const { data: employees } = useApi<any[]>(() => apiFetch("/employees?pageSize=100"));
 
-  const createTask = async () => {
-    setError(null);
-    if (title.trim().length < 2) return setError("Title must be at least 2 characters");
-    if (!accountId) return setError("Pick an account — tasks are account-scoped");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return setError("Due date must be YYYY-MM-DD");
-    setCreating(true);
-    try {
-      await apiFetch("/tasks", {
-        method: "POST",
-        body: JSON.stringify({
-          title: title.trim(),
-          description: description.trim() || undefined,
-          priority,
-          dueDate,
-          accountId,
-          assigneeId,
-        }),
-      });
-      setShowCreate(false);
-      setTitle("");
-      setDescription("");
-      setAssigneeId(undefined);
-      setSuccessMsg("Task created");
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not create task");
-    } finally {
-      setCreating(false);
-    }
+  const retry = useCallback(() => {
+    void search(lastQuery.current);
+  }, [search]);
+
+  return { items, query, loading, error, search, retry };
+}
+
+// ---------- screen ----------
+export default function AdminTasks() {
+  const [filter, setFilter] = useState<Filter>("ALL");
+  const [truncated, setTruncated] = useState(false);
+  const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusFor, setStatusFor] = useState<AdminTask | null>(null);
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [formKey, setFormKey] = useState(0);
+  const [editing, setEditing] = useState<AdminTask | null>(null);
+
+  const tasks = useApi<AdminTask[]>(async () => {
+    const page = await apiFetchPage<AdminTask>(withQuery("/tasks", { limit: LIST_LIMIT }));
+    setTruncated(page.meta.has_more);
+    return page.items;
+  }, []);
+
+  const all = tasks.data;
+  const counts = useMemo(() => {
+    if (!all) return undefined;
+    const c: Partial<Record<Filter, number>> = { ALL: all.length };
+    FILTERS.forEach((f) => {
+      if (f !== "ALL") c[f] = all.filter((t) => t.status === f).length;
+    });
+    return c;
+  }, [all]);
+  const visible = useMemo(
+    () => (all ? (filter === "ALL" ? all : all.filter((t) => t.status === filter)) : undefined),
+    [all, filter],
+  );
+
+  const openCreate = () => {
+    setEditing(null);
+    setFormKey((k) => k + 1);
+    setFormOpen(true);
   };
 
-  const changeStatus = async (task: any, status: string) => {
-    setStatusFor(null);
+  const openEdit = (t: AdminTask) => {
+    setEditing(t);
+    setFormKey((k) => k + 1);
+    setFormOpen(true);
+  };
+
+  const onSaved = (message: string) => {
+    setFormOpen(false);
+    toast.show({ message, tone: "success" });
+    void tasks.reload();
+  };
+
+  const setBusy = (id: string, on: boolean) => {
+    setBusyIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const applyStatus = async (task: AdminTask, status: TaskStatus) => {
+    setStatusError(null);
+    setBusy(task.id, true);
     try {
       await apiFetch(`/tasks/${task.id}/status`, { method: "PUT", body: JSON.stringify({ status }) });
-      setSuccessMsg(`Status → ${formatStatus(status)}`);
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not update status");
-    }
-  };
-
-  const openComments = async (task: any) => {
-    setCommentsFor(task);
-    setComments(null);
-    try {
-      setComments(await apiFetch<any[]>(`/tasks/${task.id}/comments`));
-    } catch {
-      setComments([]);
-    }
-  };
-
-  const postComment = async () => {
-    if (!newComment.trim() || !commentsFor) return;
-    setPostingComment(true);
-    try {
-      const created = await apiFetch<any>(`/tasks/${commentsFor.id}/comments`, {
-        method: "POST",
-        body: JSON.stringify({ content: newComment.trim() }),
-      });
-      setComments((c) => [...(c ?? []), created]);
-      setNewComment("");
-    } catch (e: any) {
-      setError(e?.message || "Could not post comment");
+      tasks.mutate((prev) => (prev ? prev.map((x) => (x.id === task.id ? { ...x, status } : x)) : prev));
+      void haptic("success");
+      toast.show({ message: `Marked ${formatStatus(status)}`, tone: "success" });
+      void tasks.reload();
+    } catch (e) {
+      void haptic("error");
+      setStatusError(`Couldn't update "${task.title}": ${describeError(e)}`);
     } finally {
-      setPostingComment(false);
+      setBusy(task.id, false);
     }
   };
 
-  const accLabel = (id?: string) => {
-    const a = (accounts ?? []).find((x: any) => x.id === id);
-    return a ? `${a.displayName || a.handle}` : "Pick account *";
-  };
-  const empLabel = (id?: string) => {
-    const e = (employees ?? []).find((x: any) => x.id === id);
-    return e ? e.name : "Unassigned";
+  const askThenApply = async (task: AdminTask, status: TaskStatus) => {
+    const cancelling = status === "CANCELLED";
+    const ok = await confirm({
+      title: cancelling ? "Cancel this task?" : "Mark this task as done?",
+      message: task.title,
+      confirmLabel: cancelling ? "Cancel Task" : "Mark Done",
+      cancelLabel: cancelling ? "Keep Task" : "Not Yet",
+      destructive: cancelling,
+    });
+    if (ok) await applyStatus(task, status);
   };
 
-  const items = tasks ?? [];
+  const onPickStatus = (status: TaskStatus) => {
+    const task = statusFor;
+    if (!task || status === task.status) return;
+    if (status === "DONE" || status === "CANCELLED") {
+      // Let the picker sheet finish closing before the confirm sheet is presented.
+      setTimeout(() => {
+        void askThenApply(task, status);
+      }, motion.slow);
+      return;
+    }
+    void applyStatus(task, status);
+  };
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      <SuccessBanner message={successMsg} />
-      <Button title="+ New Task" onPress={() => { setSuccessMsg(null); setShowCreate(true); }} style={{ marginBottom: spacing.md }} />
-      <Chips options={FILTERS} value={filter} onChange={setFilter} labels={{ ALL: "All" }} />
-
-      {loading ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <Card>
-          <Empty icon="checkbox-outline" text="No tasks" />
-        </Card>
-      ) : (
-        items.map((t: any) => {
-          const pr = statusColor(t.priority ?? "");
-          return (
-            <Card key={t.id}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={[styles.title, { flex: 1 }]} numberOfLines={2}>
-                  {t.title}
-                </Text>
-                <Pressable onPress={() => setStatusFor(t)}>
-                  <StatusPill status={t.status} />
-                </Pressable>
-              </View>
-              <View style={styles.metaRow}>
-                {t.priority ? (
-                  <View style={[styles.prBadge, { backgroundColor: pr.bg }]}>
-                    <Text style={[styles.prText, { color: pr.fg }]}>{formatStatus(t.priority)}</Text>
-                  </View>
-                ) : null}
-                {t.assignee?.name ? <Text style={styles.meta}>→ {t.assignee.name}</Text> : <Text style={styles.meta}>Unassigned</Text>}
-                {t.dueDate ? <Text style={styles.meta}>Due {fmtDate(t.dueDate)}</Text> : null}
-                {t.account?.displayName ? (
-                  <Text style={styles.meta} numberOfLines={1}>
-                    @{t.account.displayName}
-                  </Text>
-                ) : null}
-              </View>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                <Text style={styles.tapHint}>Tap the status pill to change it</Text>
-                <Pressable onPress={() => openComments(t)} hitSlop={8}>
-                  <Text style={styles.commentsLink}>Comments</Text>
-                </Pressable>
-              </View>
-            </Card>
-          );
-        })
-      )}
-
-      {/* Create modal */}
-      <Modal visible={showCreate} animationType="slide" transparent onRequestClose={() => setShowCreate(false)}>
-        <View style={styles.scrim}>
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={styles.sheetTitle}>New Task</Text>
-              <ErrorBanner message={error} />
-              <Field label="Title" value={title} onChangeText={setTitle} autoCapitalize="sentences" placeholder="What needs doing?" />
-              <Field label="Description (optional)" value={description} onChangeText={setDescription} multiline autoCapitalize="sentences" />
-              <Text style={styles.fieldLabel}>Priority</Text>
-              <Chips options={PRIORITIES} value={priority} onChange={setPriority} />
-              <Field label="Due date (YYYY-MM-DD)" value={dueDate} onChangeText={setDueDate} />
-              <Text style={styles.fieldLabel}>Account (required)</Text>
-              <Pressable style={styles.pickerBtn} onPress={() => setPicker("account")}>
-                <Text style={[styles.pickerText, !accountId && { color: colors.faint }]}>{accLabel(accountId)}</Text>
-              </Pressable>
-              <Text style={styles.fieldLabel}>Assignee</Text>
-              <Pressable style={styles.pickerBtn} onPress={() => setPicker("assignee")}>
-                <Text style={[styles.pickerText, !assigneeId && { color: colors.faint }]}>{empLabel(assigneeId)}</Text>
-              </Pressable>
-              <Button title="Create Task" onPress={createTask} loading={creating} style={{ marginTop: spacing.md }} />
-              <Button title="Cancel" onPress={() => setShowCreate(false)} variant="ghost" style={{ marginTop: spacing.sm }} />
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Account / assignee picker */}
-      <Modal visible={picker !== null} animationType="slide" transparent onRequestClose={() => setPicker(null)}>
-        <View style={styles.scrim}>
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>{picker === "account" ? "Pick Account" : "Pick Assignee"}</Text>
-            <FlatList
-              data={picker === "account" ? (accounts ?? []) : (employees ?? [])}
-              keyExtractor={(x: any) => x.id}
-              style={{ maxHeight: 400 }}
-              ListHeaderComponent={
-                picker === "assignee" ? (
-                  <Pressable
-                    style={styles.optRow}
-                    onPress={() => {
-                      setAssigneeId(undefined);
-                      setPicker(null);
-                    }}
-                  >
-                    <Text style={[styles.optName, { color: colors.sub }]}>Unassigned</Text>
-                  </Pressable>
-                ) : null
-              }
-              renderItem={({ item }) => (
-                <Pressable
-                  style={styles.optRow}
-                  onPress={() => {
-                    if (picker === "account") setAccountId(item.id);
-                    else setAssigneeId(item.id);
-                    setPicker(null);
-                  }}
-                >
-                  <Text style={styles.optName}>{picker === "account" ? item.displayName || item.handle : item.name}</Text>
-                  <Text style={styles.optSub} numberOfLines={1}>
-                    {picker === "account"
-                      ? `@${(item.handle || "").split("?")[0]} · ${item.platform?.name ?? ""}`
-                      : item.email ?? ""}
-                  </Text>
-                </Pressable>
-              )}
+    <Screen onRefresh={tasks.refresh} refreshing={tasks.refreshing}>
+      <Button title="New task" icon="add" onPress={openCreate} style={styles.newButton} />
+      <ErrorBanner message={statusError} onDismiss={() => setStatusError(null)} />
+      <AsyncList<AdminTask>
+        state={tasks}
+        grouped
+        header={
+          <View style={styles.chips}>
+            <Chips
+              options={FILTERS}
+              value={filter}
+              onChange={setFilter}
+              labels={{ ALL: "All", TODO: "To do", IN_PROGRESS: "In progress", IN_REVIEW: "In review", DONE: "Done" }}
+              counts={counts}
+              mode="pills"
+              accessibilityLabel="Filter tasks by status"
             />
-            <Button title="Close" onPress={() => setPicker(null)} variant="ghost" small />
           </View>
-        </View>
-      </Modal>
+        }
+        items={visible}
+        filterActive={filter !== "ALL"}
+        onClearFilter={() => setFilter("ALL")}
+        keyExtractor={(t) => t.id}
+        empty={{
+          icon: "checkbox-outline",
+          title: "No tasks yet",
+          text: "Create a task to assign work on an account.",
+          action: { label: "New task", onPress: openCreate },
+        }}
+        footer={
+          truncated ? (
+            <Text style={styles.footnote}>Showing the first {LIST_LIMIT} tasks. Use the web portal to see older ones.</Text>
+          ) : null
+        }
+        renderItem={(t, i, rows) => {
+          const busy = busyIds.has(t.id);
+          const pr = isPriority(t.priority) ? t.priority : null;
+          const last = i === rows.length - 1;
+          // The status button is a sibling of the row's Pressable, not a child: on iOS an accessible
+          // parent hides its subtree from VoiceOver, so a nested button could never be focused.
+          return (
+            <View style={styles.taskRow}>
+              <View style={styles.taskMain}>
+                <ListItem
+                  title={t.title}
+                  subtitle={taskSubtitle(t)}
+                  icon={statusIcon(t.status)}
+                  tint={statusTint(t.status)}
+                  lines={2}
+                  chevron={false}
+                  last={last}
+                  onPress={() => openEdit(t)}
+                  accessibilityHint="Opens the task to edit it or read comments"
+                  trailing={
+                    pr ? (
+                      <View style={styles.trailing}>
+                        <Badge value={formatStatus(pr)} tone={PRIORITY_TONE[pr]} accessibilityLabel={`${formatStatus(pr)} priority`} />
+                      </View>
+                    ) : undefined
+                  }
+                />
+              </View>
+              <View style={[styles.statusCell, last ? null : styles.hairline]}>
+                {busy ? (
+                  <ActivityIndicator color={colors.sub} accessibilityLabel="Updating status" />
+                ) : (
+                  <Pressable
+                    onPress={() => {
+                      setStatusError(null);
+                      setStatusFor(t);
+                    }}
+                    hitSlop={8}
+                    style={styles.statusHit}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t.title}. Status: ${formatStatus(t.status)}. Change status`}
+                  >
+                    <StatusPill status={t.status} size="sm" />
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          );
+        }}
+      />
 
-      {/* Comments */}
-      <Modal visible={!!commentsFor} animationType="slide" transparent onRequestClose={() => setCommentsFor(null)}>
-        <View style={styles.scrim}>
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle} numberOfLines={1}>{commentsFor?.title}</Text>
-            <ScrollView style={{ maxHeight: 320 }}>
-              {comments === null ? (
-                <Text style={styles.commentMeta}>Loading…</Text>
-              ) : comments.length === 0 ? (
-                <Text style={styles.commentMeta}>No comments yet</Text>
-              ) : (
-                comments.map((c: any) => (
-                  <View key={c.id} style={styles.commentRow}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Text style={styles.commentAuthor}>{c.author?.name ?? "Unknown"}</Text>
-                      <Text style={styles.commentMeta}>{fmtDate(c.createdAt)}</Text>
-                    </View>
-                    <Text style={styles.commentBody}>{c.body ?? c.content ?? ""}</Text>
-                  </View>
-                ))
-              )}
-            </ScrollView>
-            <Field value={newComment} onChangeText={setNewComment} placeholder="Add a comment…" autoCapitalize="sentences" />
-            <Button title="Post" onPress={postComment} loading={postingComment} disabled={!newComment.trim()} small />
-            <Button title="Close" onPress={() => setCommentsFor(null)} variant="ghost" small style={{ marginTop: spacing.sm }} />
-          </View>
-        </View>
-      </Modal>
+      <PickerSheet<TaskStatus>
+        visible={statusFor !== null}
+        onClose={() => setStatusFor(null)}
+        title="Change status"
+        items={[...STATUSES]}
+        keyOf={(s) => s}
+        labelOf={(s) => formatStatus(s)}
+        iconOf={(s) => STATUS_ICON[s]}
+        tintOf={(s) => statusTint(s)}
+        selectedKey={statusFor?.status ?? null}
+        searchable={false}
+        onSelect={onPickStatus}
+      />
 
-      {/* Status changer */}
-      <Modal visible={!!statusFor} animationType="fade" transparent onRequestClose={() => setStatusFor(null)}>
-        <View style={[styles.scrim, { justifyContent: "center", padding: spacing.xl }]}>
-          <View style={[styles.sheet, { borderRadius: radius.xl }]}>
-            <Text style={styles.sheetTitle}>Update Status</Text>
-            <Text style={styles.statusTaskTitle} numberOfLines={2}>
-              {statusFor?.title}
-            </Text>
-            {STATUSES.map((s) => (
-              <Pressable key={s} style={styles.optRow} onPress={() => changeStatus(statusFor, s)}>
-                <StatusPill status={s} />
-              </Pressable>
-            ))}
-            <Button title="Cancel" onPress={() => setStatusFor(null)} variant="ghost" small style={{ marginTop: spacing.sm }} />
-          </View>
-        </View>
-      </Modal>
+      <TaskFormSheet key={formKey} visible={formOpen} task={editing} onClose={() => setFormOpen(false)} onSaved={onSaved} />
     </Screen>
   );
 }
 
+// ---------- create / edit sheet ----------
+type TaskFormSheetProps = {
+  visible: boolean;
+  /** null → create */
+  task: AdminTask | null;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+};
+
+const UNASSIGNED: Person = { id: NONE_ID, name: "Unassigned" };
+
+function TaskFormSheet({ visible, task, onClose, onSaved }: TaskFormSheetProps) {
+  const isEdit = task !== null;
+  const today = todayIST();
+  const descRef = useRef<TextInput>(null);
+
+  const [title, setTitle] = useState(task?.title ?? "");
+  const [description, setDescription] = useState(task?.description ?? "");
+  const [priority, setPriority] = useState<Priority>(isPriority(task?.priority) ? task.priority : "MEDIUM");
+  const [dueDate, setDueDate] = useState<string>(task ? (task.dueDate ? istDateOf(task.dueDate) ?? "" : "") : today);
+  const [account, setAccount] = useState<Choice | null>(
+    task?.account ? { id: task.account.id, label: accountLabel(task.account) } : null,
+  );
+  const [assignee, setAssignee] = useState<Choice | null>(
+    task?.assignee ? { id: task.assignee.id, label: task.assignee.name } : null,
+  );
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [picker, setPicker] = useState<"account" | "assignee" | null>(null);
+
+  const accounts = useRemoteOptions<Account>("/accounts");
+  const employees = useRemoteOptions<Person>("/employees");
+
+  const openPicker = (which: "account" | "assignee") => {
+    setPicker(which);
+    if (which === "account") void accounts.search("");
+    else void employees.search("");
+  };
+
+  const save = async () => {
+    const errs: Record<string, string> = {};
+    const cleanTitle = title.trim();
+    if (cleanTitle.length < 2) errs.title = "Title must be at least 2 characters";
+    if (!account) errs.accountId = "Pick an account — tasks belong to an account";
+    if (!dueDate) {
+      if (!isEdit) errs.dueDate = "Pick a due date";
+    } else if (!isISODate(dueDate)) {
+      errs.dueDate = "Pick a valid date";
+    }
+    setErrors(errs);
+    setSubmitError(null);
+    if (Object.keys(errs).length > 0 || !account) {
+      void haptic("warning");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (task) {
+        await apiFetch(`/tasks/${task.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            title: cleanTitle,
+            description: description.trim() || null,
+            priority,
+            dueDate: dueDate || null,
+            accountId: account.id,
+            assigneeId: assignee ? assignee.id : null,
+          }),
+        });
+      } else {
+        await apiFetch("/tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            title: cleanTitle,
+            description: description.trim() || undefined,
+            priority,
+            dueDate,
+            accountId: account.id,
+            assigneeId: assignee ? assignee.id : undefined,
+          }),
+        });
+      }
+      void haptic("success");
+      onSaved(isEdit ? "Task updated" : "Task created");
+    } catch (e) {
+      void haptic("error");
+      const fe = fieldErrorMap(e);
+      setErrors(fe);
+      const known = ["title", "description", "dueDate", "accountId", "assigneeId"].some((k) => fe[k]);
+      setSubmitError(known ? "Check the highlighted fields." : describeError(e, "Couldn't save the task."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const employeeItems = employees.query === "" ? [UNASSIGNED, ...employees.items] : employees.items;
+
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={isEdit ? "Edit task" : "New task"}
+      detent="large"
+      dismissable={!saving}
+      footer={
+        <View>
+          {submitError ? (
+            <Text style={styles.errorText} accessibilityLiveRegion="polite">
+              {submitError}
+            </Text>
+          ) : null}
+          <Button title={isEdit ? "Save changes" : "Create task"} onPress={save} loading={saving} />
+        </View>
+      }
+    >
+      <Field
+        label="Title"
+        value={title}
+        onChangeText={setTitle}
+        placeholder="What needs doing?"
+        autoCapitalize="sentences"
+        returnKeyType="next"
+        blurOnSubmit={false}
+        onSubmitEditing={() => descRef.current?.focus()}
+        error={errors.title}
+        required
+        maxLength={200}
+      />
+      <Field
+        ref={descRef}
+        label="Description"
+        value={description}
+        onChangeText={setDescription}
+        placeholder="Optional details"
+        multiline
+        autoCapitalize="sentences"
+        error={errors.description}
+        maxLength={5000}
+      />
+
+      <SectionTitle variant="grouped">Priority</SectionTitle>
+      <View style={styles.block}>
+        <Chips
+          options={PRIORITIES}
+          value={priority}
+          onChange={setPriority}
+          labels={{ LOW: "Low", MEDIUM: "Medium", HIGH: "High", CRITICAL: "Critical" }}
+          mode="segmented"
+          accessibilityLabel="Priority"
+        />
+      </View>
+
+      <DateField
+        label="Due date"
+        value={dueDate}
+        onChange={setDueDate}
+        error={errors.dueDate}
+        required={!isEdit}
+        quick={[
+          { label: "Today", value: today },
+          { label: "Tomorrow", value: addDaysISO(today, 1) },
+          { label: "In a week", value: addDaysISO(today, 7) },
+        ]}
+      />
+
+      <ListGroup title="Account">
+        <ListItem
+          icon="at-outline"
+          tint={account ? "brand" : "orange"}
+          title={account ? account.label : "Choose account"}
+          subtitle={account ? undefined : "Required — the account this task is for"}
+          chevron
+          onPress={() => openPicker("account")}
+          accessibilityLabel={account ? `Account: ${account.label}. Change account` : "Choose account"}
+        />
+      </ListGroup>
+      {errors.accountId ? <Text style={styles.errorText}>{errors.accountId}</Text> : null}
+
+      <ListGroup title="Assignee">
+        <ListItem
+          icon="person-outline"
+          tint={assignee ? "blue" : "gray"}
+          title={assignee ? assignee.label : "Unassigned"}
+          chevron
+          onPress={() => openPicker("assignee")}
+          accessibilityLabel={assignee ? `Assignee: ${assignee.label}. Change assignee` : "Choose assignee"}
+        />
+      </ListGroup>
+      {errors.assigneeId ? <Text style={styles.errorText}>{errors.assigneeId}</Text> : null}
+
+      {task ? <TaskComments taskId={task.id} /> : null}
+
+      <PickerSheet<Account>
+        visible={picker === "account"}
+        onClose={() => setPicker(null)}
+        title="Choose account"
+        items={accounts.items}
+        keyOf={(a) => a.id}
+        labelOf={accountLabel}
+        subtitleOf={accountSubtitle}
+        selectedKey={account?.id ?? null}
+        onSelect={(a) => {
+          setAccount({ id: a.id, label: accountLabel(a) });
+          setErrors((prev) => ({ ...prev, accountId: "" }));
+        }}
+        onSearch={(q) => {
+          void accounts.search(q);
+        }}
+        loading={accounts.loading}
+        error={accounts.error}
+        onRetry={accounts.retry}
+        emptyText={accounts.query ? "No accounts match that search" : "No accounts yet"}
+      />
+      <PickerSheet<Person>
+        visible={picker === "assignee"}
+        onClose={() => setPicker(null)}
+        title="Choose assignee"
+        items={employeeItems}
+        keyOf={(p) => p.id}
+        labelOf={(p) => p.name}
+        subtitleOf={(p) => (p.id === NONE_ID ? "No one yet" : p.email ?? undefined)}
+        selectedKey={assignee?.id ?? NONE_ID}
+        onSelect={(p) => {
+          setAssignee(p.id === NONE_ID ? null : { id: p.id, label: p.name });
+          setErrors((prev) => ({ ...prev, assigneeId: "" }));
+        }}
+        onSearch={(q) => {
+          void employees.search(q);
+        }}
+        loading={employees.loading}
+        error={employees.error}
+        onRetry={employees.retry}
+        emptyText={employees.query ? "No employees match that search" : "No employees yet"}
+      />
+    </Sheet>
+  );
+}
+
+// ---------- comments ----------
+function TaskComments({ taskId }: { taskId: string }) {
+  const comments = useApi<TaskComment[]>(() => apiFetch<TaskComment[]>(`/tasks/${taskId}/comments`), [taskId]);
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
+
+  const post = async () => {
+    const text = draft.trim();
+    if (!text) return;
+    setPosting(true);
+    setPostError(null);
+    try {
+      const created = await apiFetch<TaskComment>(`/tasks/${taskId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: text }),
+      });
+      comments.mutate((prev) => [...(prev ?? []), created]);
+      setDraft("");
+      void haptic("success");
+    } catch (e) {
+      void haptic("error");
+      setPostError(describeError(e, "Couldn't post the comment."));
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  return (
+    <View style={styles.comments}>
+      <SectionTitle variant="grouped">Comments</SectionTitle>
+      <AsyncList<TaskComment>
+        state={comments}
+        skeletonCount={2}
+        keyExtractor={(c) => c.id}
+        empty={{ icon: "chatbubbles-outline", title: "No comments yet", text: "Notes from the team show up here." }}
+        renderItem={(c) => {
+          const author = c.author?.name || "Unknown";
+          return (
+            <View style={styles.commentRow}>
+              <Avatar name={author} size={28} />
+              <View style={styles.commentText}>
+                <View style={styles.commentHead}>
+                  <Text style={styles.commentAuthor} numberOfLines={1}>
+                    {author}
+                  </Text>
+                  <Text style={styles.commentTime}>{timeAgo(c.createdAt)}</Text>
+                </View>
+                <Text style={styles.commentBody}>{c.body ?? c.content ?? ""}</Text>
+              </View>
+            </View>
+          );
+        }}
+      />
+      <Field
+        value={draft}
+        onChangeText={setDraft}
+        placeholder="Add a comment…"
+        multiline
+        autoCapitalize="sentences"
+        accessibilityLabel="New comment"
+        maxLength={5000}
+      />
+      <Button
+        title="Post"
+        variant="tinted"
+        size="sm"
+        onPress={post}
+        loading={posting}
+        disabled={!draft.trim()}
+        fullWidth={false}
+      />
+      {postError ? <Text style={styles.errorText}>{postError}</Text> : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  title: { fontSize: 15, fontWeight: "700", color: colors.ink },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" },
-  meta: { fontSize: 12, color: colors.sub },
-  prBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full },
-  prText: { fontSize: 10, fontWeight: "700" },
-  tapHint: { fontSize: 10, color: colors.faint },
-  commentsLink: { fontSize: 13, color: colors.purple, fontWeight: "500" },
-  commentRow: { paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  commentAuthor: { fontSize: 13, fontWeight: "600", color: colors.ink },
-  commentMeta: { fontSize: 12, color: colors.faint },
-  commentBody: { fontSize: 13, color: colors.ink, marginTop: 3, lineHeight: 18 },
-  scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
-  sheet: {
-    backgroundColor: colors.cardHigh,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.lg,
-    paddingBottom: spacing.xxl,
-    maxHeight: "88%",
+  newButton: { marginBottom: spacing.md },
+  chips: { marginBottom: spacing.md },
+  taskRow: { flexDirection: "row", alignItems: "stretch" },
+  taskMain: { flex: 1, minWidth: 0 },
+  trailing: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginLeft: spacing.sm },
+  statusCell: { justifyContent: "center", alignItems: "flex-end", paddingRight: spacing.lg },
+  hairline: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  statusHit: { minHeight: sizes.touch, justifyContent: "center" },
+  footnote: { ...type.footnote, color: colors.tertiary, marginTop: spacing.sm, textAlign: "center" },
+  block: { marginBottom: spacing.lg },
+  errorText: { ...type.footnote, color: colors.redText, marginBottom: spacing.sm },
+  comments: { marginTop: spacing.section, gap: spacing.sm },
+  commentRow: {
+    flexDirection: "row",
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink, marginBottom: 12 },
-  fieldLabel: { fontSize: 13, fontWeight: "600", color: colors.ink, marginBottom: 6 },
-  pickerBtn: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.cardHigh,
-    paddingHorizontal: 12,
-    height: 46,
-    justifyContent: "center",
-    marginBottom: spacing.md,
-  },
-  pickerText: { fontSize: 15, color: colors.ink },
-  optRow: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  optName: { fontSize: 14, fontWeight: "600", color: colors.ink },
-  optSub: { fontSize: 12, color: colors.sub, marginTop: 2 },
-  statusTaskTitle: { fontSize: 13, color: colors.sub, marginBottom: 10 },
+  commentText: { flex: 1 },
+  commentHead: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: spacing.sm },
+  commentAuthor: { ...type.subhead, fontWeight: "600", color: colors.ink, flexShrink: 1 },
+  commentTime: { ...type.footnote, color: colors.tertiary },
+  commentBody: { ...type.subhead, color: colors.ink, marginTop: 2 },
 });

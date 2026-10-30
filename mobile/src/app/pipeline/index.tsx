@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, RefreshControl, Platform } from "react-native";
+import { Platform, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { Stack, useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { todayIST } from "@/lib/api";
-import { colors, spacing, radius } from "@/lib/theme";
-import { Card, Chips, Empty, ErrorBanner, Loading } from "@/components/ui";
+import { errorStatus, isNetworkError, todayIST } from "@/lib/api";
+import { colors, radius, spacing, type } from "@/lib/theme";
+import { Chips, Empty, ErrorBanner, LoadFailed, Screen, useApi } from "@/components/ui";
+import { AsyncBlock } from "@/components/async";
+import { HeaderButton, ListGroup, ListItem } from "@/components/list";
+import { SkeletonList } from "@/components/skeleton";
 import { AvatarStack, usePolling } from "@/components/pipeline";
 import {
   PIPELINE_CLIENT_BUILD,
@@ -18,7 +20,6 @@ import {
   getDirectory,
   phaseColor,
   pipe,
-  type Bootstrap,
   type BoardSnapshot,
   type Directory,
   type MineEntry,
@@ -30,33 +31,28 @@ import {
 // shows that phase alone. Polls POST /pipeline/sync at the server's board cadence while this
 // screen is focused and the app is in the foreground.
 
-const continuous = Platform.OS === "ios" ? ({ borderCurve: "continuous" } as any) : null;
+const continuous: ViewStyle | null = Platform.OS === "ios" ? { borderCurve: "continuous" } : null;
 type Scope = "all" | "mine";
+type SyncFailure = { message: string; code: string | null; status: number | null };
 
 export default function PipelineBoard() {
   const router = useRouter();
   const today = todayIST();
-  const [boot, setBoot] = useState<Bootstrap | null>(null);
+  const boot = useApi(() => getBootstrap(true), []);
   const [board, setBoard] = useState<BoardSnapshot | null>(null);
   const [mine, setMine] = useState<MineEntry[]>([]);
   const [dir, setDir] = useState<Directory | null>(null);
   const [scope, setScope] = useState<Scope>("all");
   const [phase, setPhase] = useState<string>("all");
   const [banner, setBanner] = useState<string | null>(null);
-  const [paused, setPaused] = useState(false);
+  const [syncPaused, setSyncPaused] = useState(false);
+  const [syncFailure, setSyncFailure] = useState<SyncFailure | null>(null);
   const [mustUpdate, setMustUpdate] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [firstError, setFirstError] = useState<string | null>(null);
   const v = useRef(-1);
   const mineH = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    getBootstrap(true)
-      .then((b) => {
-        setBoot(b);
-        if (b && !b.enabled) setPaused(true);
-      })
-      .catch((e) => setFirstError(classify(e).message));
     getDirectory().then(setDir).catch(() => undefined);
   }, []);
 
@@ -76,29 +72,42 @@ export default function PipelineBoard() {
       }
       setMustUpdate(r.reload);
       setBanner(r.boardUnavailable ? "The board is catching up — showing the last update." : null);
-      setPaused(false);
+      setSyncPaused(false);
+      setSyncFailure(null);
       return (r.pollMs ?? DEFAULT_POLL_MS).board;
     } catch (e) {
       const c = classify(e);
-      if (c.kind === "paused") setPaused(true);
-      else setBanner(c.message);
+      if (c.kind === "paused") {
+        setSyncPaused(true);
+      } else {
+        setBanner(c.message);
+        setSyncFailure({ message: c.message, code: isNetworkError(e) ? "NETWORK_ERROR" : null, status: errorStatus(e) });
+      }
       return c.retryAfterMs || DEFAULT_POLL_MS.board;
     }
   }, []);
 
-  const enabled = !!boot && boot.enabled;
+  const enabled = !!boot.data && boot.data.enabled;
+  const paused = syncPaused || (!!boot.data && !boot.data.enabled);
   usePolling(sync, enabled);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    v.current = -1; // ask for a fresh snapshot
-    await sync();
-    getDirectory(true).then(setDir).catch(() => undefined);
+    if (!boot.data) {
+      await boot.reload();
+    } else {
+      v.current = -1; // ask for a fresh snapshot
+      await sync();
+      getDirectory(true).then(setDir).catch(() => undefined);
+    }
     setRefreshing(false);
   };
 
   const unreadOf = useMemo(() => new Map(mine.map((m) => [m.projectId, m.unread])), [mine]);
-  const phases = useMemo(() => [...(board?.phases ?? (boot?.enabled ? boot.phases : []))].sort((a, b) => a.position - b.position), [board, boot]);
+  const phases = useMemo(() => {
+    const fromBoot = boot.data && boot.data.enabled ? boot.data.phases : [];
+    return [...(board?.phases ?? fromBoot)].sort((a, b) => a.position - b.position);
+  }, [board, boot.data]);
   const cards = useMemo(() => {
     const all = [...(board?.cards ?? [])].sort((a, b) => compareRank(a.rank, b.rank));
     return scope === "mine" ? all.filter((c) => unreadOf.has(c.id)) : all;
@@ -108,143 +117,161 @@ export default function PipelineBoard() {
     .filter((p) => phase === "all" || p.id === phase)
     .map((p) => ({ phase: p, cards: cards.filter((c) => c.phaseId === p.id), count: board?.perPhase?.[p.id] }));
 
-  const header = (
-    <Stack.Screen
-      options={{
-        title: "Pipeline",
-        headerRight: () =>
-          enabled && !paused ? (
-            <Pressable onPress={() => router.push("/pipeline/new")} hitSlop={10} accessibilityLabel="New project">
-              <Ionicons name="add" size={26} color={colors.purple} />
-            </Pressable>
-          ) : null,
-      }}
-    />
-  );
-
-  if (firstError && !board) {
-    return (
-      <View style={styles.fill}>
-        {header}
-        <View style={{ padding: spacing.lg }}>
-          <ErrorBanner message={firstError} />
-        </View>
-      </View>
-    );
-  }
-  if (!boot && !paused) {
-    return (
-      <View style={styles.fill}>
-        {header}
-        <Loading />
-      </View>
-    );
-  }
-  if (paused || (boot && !boot.enabled)) {
-    return (
-      <View style={styles.fill}>
-        {header}
-        <Empty icon="pause-circle-outline" text="Pipeline is paused. It will come back on its own." />
-      </View>
-    );
-  }
-
   const phaseOptions = ["all", ...phases.map((p) => p.id)];
-  const phaseLabels: Record<string, string> = { all: `All · ${cards.length}` };
-  for (const p of phases) phaseLabels[p.id] = `${p.name} · ${cards.filter((c) => c.phaseId === p.id).length}`;
+  const phaseLabels: Record<string, string> = { all: "All" };
+  const phaseCounts: Record<string, number> = { all: cards.length };
+  for (const p of phases) {
+    phaseLabels[p.id] = p.name;
+    phaseCounts[p.id] = cards.filter((c) => c.phaseId === p.id).length;
+  }
+
+  let list: React.ReactNode;
+  if (!board) {
+    list = syncFailure ? (
+      <LoadFailed
+        error={syncFailure.message}
+        code={syncFailure.code}
+        status={syncFailure.status}
+        onRetry={() => {
+          void onRefresh();
+        }}
+      />
+    ) : (
+      <SkeletonList rows={6} />
+    );
+  } else if (sections.every((s) => s.cards.length === 0)) {
+    list =
+      phase !== "all" ? (
+        <Empty
+          icon="git-branch-outline"
+          title="No projects in this stage"
+          text="Nothing is in this stage right now."
+          action={{ label: "Show all stages", onPress: () => setPhase("all") }}
+        />
+      ) : (
+        <Empty
+          icon="git-branch-outline"
+          title={scope === "mine" ? "No projects of yours" : "No projects yet"}
+          text={scope === "mine" ? "You're not on any project yet." : "No projects here yet."}
+        />
+      );
+  } else {
+    list = sections
+      .filter((s) => s.cards.length > 0)
+      .map((s) => {
+        const countText = s.count?.truncated ? `${s.count.shown} of ${s.count.total}` : String(s.cards.length);
+        return (
+          <ListGroup key={s.phase.id} title={`${s.phase.name} · ${countText}`}>
+            {s.cards.map((c) => {
+              const due = dueState(c.dueDate, s.phase.isTerminal, today);
+              const dc = dueColors(due);
+              const unread = unreadOf.get(c.id) ?? 0;
+              const dueText = c.dueDate ? `Due ${dayLabel(c.dueDate, today)}` : undefined;
+              const flag = due === "overdue" ? "Overdue" : due === "today" ? "Today" : null;
+              return (
+                <ListItem
+                  key={c.id}
+                  title={c.title}
+                  subtitle={dueText}
+                  lines={2}
+                  leading={
+                    <View style={styles.dotWrap}>
+                      <View style={[styles.dot, { backgroundColor: phaseColor(s.phase.color) }]} />
+                    </View>
+                  }
+                  trailing={
+                    <View style={styles.trailing}>
+                      {flag ? (
+                        <View style={[styles.flag, continuous, { backgroundColor: dc.bg }]}>
+                          <Text maxFontSizeMultiplier={1.3} style={[styles.flagText, { color: dc.fg }]}>
+                            {flag}
+                          </Text>
+                        </View>
+                      ) : null}
+                      <AvatarStack ids={c.preview} byId={dir?.byId} extra={Math.max(0, c.memberCount - c.preview.length)} />
+                    </View>
+                  }
+                  badge={unread > 0 ? unread : undefined}
+                  onPress={() => router.push(`/pipeline/${c.id}`)}
+                  accessibilityLabel={[
+                    c.title,
+                    flag === "Overdue" ? "overdue" : flag === "Today" ? "due today" : undefined,
+                    dueText,
+                    unread > 0 ? `${unread} unread` : undefined,
+                  ]
+                    .filter((x): x is string => !!x)
+                    .join(", ")}
+                />
+              );
+            })}
+          </ListGroup>
+        );
+      });
+  }
 
   return (
-    <View style={styles.fill}>
-      {header}
-      <ScrollView
-        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.sub} />}
+    <Screen onRefresh={onRefresh} refreshing={refreshing}>
+      <Stack.Screen
+        options={{
+          title: "Pipeline",
+          headerRight: () =>
+            enabled && !paused ? (
+              <HeaderButton icon="add" label="New project" onPress={() => router.push("/pipeline/new")} />
+            ) : null,
+        }}
+      />
+      <AsyncBlock
+        state={boot}
+        skeleton={<SkeletonList rows={6} />}
+        empty={
+          <Empty
+            icon="lock-closed-outline"
+            title="Pipeline needs the employee portal"
+            text="Sign in to the employee portal to see the board."
+          />
+        }
       >
-        {mustUpdate ? <ErrorBanner message="A newer version of the app is needed for Pipeline. Update from TestFlight / the App Store." /> : null}
-        {banner ? <Text style={styles.banner}>{banner}</Text> : null}
+        {() =>
+          paused ? (
+            <Empty icon="pause-circle-outline" title="Pipeline is paused" text="It will come back on its own." />
+          ) : (
+            <>
+              {mustUpdate ? (
+                <ErrorBanner message="A newer version of the app is needed for Pipeline. Update from TestFlight / the App Store." />
+              ) : null}
+              {banner && board ? <Text style={styles.banner}>{banner}</Text> : null}
 
-        <Chips options={["all", "mine"] as const} value={scope} onChange={setScope} labels={{ all: "All projects", mine: "My projects" }} />
-        <Chips options={phaseOptions} value={phase} onChange={setPhase} labels={phaseLabels} />
+              <Chips
+                options={["all", "mine"] as const}
+                value={scope}
+                onChange={setScope}
+                labels={{ all: "All projects", mine: "My projects" }}
+                accessibilityLabel="Projects to show"
+              />
+              <Chips
+                options={phaseOptions}
+                value={phase}
+                onChange={setPhase}
+                labels={phaseLabels}
+                counts={phaseCounts}
+                mode="pills"
+                accessibilityLabel="Stage"
+              />
 
-        {!board ? (
-          <Loading />
-        ) : sections.every((s) => s.cards.length === 0) ? (
-          <Empty icon="git-branch-outline" text={scope === "mine" ? "You're not on any project yet." : "No projects here yet."} />
-        ) : (
-          sections.map((s) =>
-            s.cards.length === 0 && phase === "all" ? null : (
-              <View key={s.phase.id} style={{ marginBottom: spacing.lg }}>
-                <View style={styles.sectionHead}>
-                  <View style={[styles.dot, { backgroundColor: phaseColor(s.phase.color) }]} />
-                  <Text style={styles.sectionTitle}>{s.phase.name.toUpperCase()}</Text>
-                  <Text style={styles.sectionCount}>
-                    {s.count?.truncated ? `${s.count.shown} of ${s.count.total}` : s.cards.length}
-                  </Text>
-                </View>
-                <Card style={{ padding: 0 }}>
-                  {s.cards.length === 0 ? (
-                    <Text style={styles.none}>No projects in this stage.</Text>
-                  ) : (
-                    s.cards.map((c, i) => {
-                      const due = dueState(c.dueDate, s.phase.isTerminal, today);
-                      const dc = dueColors(due);
-                      const unread = unreadOf.get(c.id) ?? 0;
-                      return (
-                        <Pressable
-                          key={c.id}
-                          onPress={() => router.push(`/pipeline/${c.id}`)}
-                          style={({ pressed }) => [styles.card, i > 0 && styles.cardDivider, pressed && { opacity: 0.7 }]}
-                        >
-                          <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text style={[styles.title, unread > 0 && { fontWeight: "700" }]} numberOfLines={2}>
-                              {c.title}
-                            </Text>
-                            <View style={styles.meta}>
-                              {c.dueDate ? (
-                                <View style={[styles.due, continuous, { backgroundColor: dc.bg }]}>
-                                  <Text style={[styles.dueText, { color: dc.fg }]}>
-                                    {due === "overdue" ? "Overdue · " : due === "today" ? "Due today · " : "Due "}
-                                    {dayLabel(c.dueDate, today)}
-                                  </Text>
-                                </View>
-                              ) : null}
-                              <AvatarStack ids={c.preview} byId={dir?.byId} extra={Math.max(0, c.memberCount - c.preview.length)} />
-                            </View>
-                          </View>
-                          {unread > 0 ? (
-                            <View style={styles.badge}>
-                              <Text style={styles.badgeText}>{unread > 99 ? "99+" : unread}</Text>
-                            </View>
-                          ) : null}
-                          <Ionicons name="chevron-forward" size={15} color={colors.faint} />
-                        </Pressable>
-                      );
-                    })
-                  )}
-                </Card>
-              </View>
-            ),
+              {list}
+            </>
           )
-        )}
-      </ScrollView>
-    </View>
+        }
+      </AsyncBlock>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, backgroundColor: colors.bg },
-  banner: { fontSize: 12.5, color: colors.sub, marginBottom: spacing.md },
-  sectionHead: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8, paddingHorizontal: 4 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  sectionTitle: { fontSize: 13, color: colors.sub, fontWeight: "500", flex: 1 },
-  sectionCount: { fontSize: 13, color: colors.faint, fontVariant: ["tabular-nums"] },
-  none: { fontSize: 13, color: colors.faint, padding: spacing.lg },
-  card: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 12, paddingHorizontal: spacing.lg },
-  cardDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  title: { fontSize: 15.5, color: colors.ink, fontWeight: "500" },
-  meta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" },
-  due: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.sm },
-  dueText: { fontSize: 11.5, fontWeight: "600" },
-  badge: { minWidth: 20, height: 20, borderRadius: 10, backgroundColor: colors.purple, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
-  badgeText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  banner: { ...type.footnote, color: colors.sub, marginBottom: spacing.md },
+  dotWrap: { width: 12, alignItems: "center", justifyContent: "center" },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  trailing: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginLeft: spacing.xs },
+  flag: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.sm },
+  flagText: { ...type.caption2, fontWeight: "600" },
 });

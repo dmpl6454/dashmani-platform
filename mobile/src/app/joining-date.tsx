@@ -1,68 +1,138 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import React, { useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { apiFetch, fmtDate } from "@/lib/api";
-import { colors, spacing } from "@/lib/theme";
-import { Screen, Card, Button, Field, Loading, ErrorBanner, SuccessBanner, useApi } from "@/components/ui";
+import { apiFetch, describeError, fieldErrorMap, fmtDay, isISODate, istDateOf } from "@/lib/api";
+import { colors, spacing, toneColors, type, type Tone } from "@/lib/theme";
+import { haptic } from "@/lib/device";
+import { Button, Card, ErrorBanner, Screen, useApi, type IoniconName } from "@/components/ui";
+import { Sheet } from "@/components/sheet";
+import { AsyncBlock } from "@/components/async";
+import { SkeletonCard } from "@/components/skeleton";
+import { DateField } from "@/components/date-field";
+import { toast } from "@/components/feedback";
+
+type JoiningDate = { joiningDate: string | null; joiningDateApproved: boolean };
+
+function currentOf(d: JoiningDate | null): string | null {
+  return d?.joiningDate ? istDateOf(d.joiningDate) : null;
+}
+
+function StatusCard({ data, onEdit }: { data: JoiningDate; onEdit: () => void }) {
+  const current = currentOf(data);
+  const approved = !!data.joiningDateApproved && !!current;
+  const tone: Tone = approved ? "success" : current ? "warning" : "neutral";
+  const icon: IoniconName = approved ? "checkmark-circle" : current ? "time-outline" : "calendar-outline";
+  const tc = toneColors(tone);
+  const status = approved ? "Approved" : current ? "Awaiting admin approval" : "No joining date on record yet";
+
+  return (
+    <>
+      <Card variant="tinted" tone={tone}>
+        <View style={styles.row}>
+          <Ionicons name={icon} size={28} color={tc.fg} />
+          <View style={styles.flex}>
+            <Text style={styles.label} maxFontSizeMultiplier={1.6}>
+              Joining date
+            </Text>
+            <Text style={styles.value} maxFontSizeMultiplier={1.6}>
+              {current ? fmtDay(current, { year: true }) : "Not set"}
+            </Text>
+            <Text style={[styles.status, { color: tc.text }]} maxFontSizeMultiplier={1.6}>
+              {status}
+            </Text>
+          </View>
+        </View>
+      </Card>
+      {approved ? (
+        <Text style={styles.note} maxFontSizeMultiplier={1.6}>
+          Your joining date is approved and locked. Contact HR to change it.
+        </Text>
+      ) : (
+        <Button
+          title={current ? "Change joining date" : "Set joining date"}
+          icon="calendar-outline"
+          onPress={onEdit}
+        />
+      )}
+    </>
+  );
+}
 
 export default function JoiningDateScreen() {
+  const state = useApi<JoiningDate>(() => apiFetch<JoiningDate>("/hr/joining-date"));
+
+  const [open, setOpen] = useState(false);
   const [date, setDate] = useState("");
+  const [dateError, setDateError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const { data, loading, refreshing, refresh, reload } = useApi<any>(() => apiFetch("/hr/joining-date"));
-
-  useEffect(() => {
-    if (data?.joiningDate) setDate(String(data.joiningDate).slice(0, 10));
-  }, [data?.joiningDate]);
+  const openForm = () => {
+    setDate(currentOf(state.data) ?? "");
+    setDateError(null);
+    setSubmitError(null);
+    setOpen(true);
+  };
 
   const save = async () => {
-    setError(null);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      setError("Date must be YYYY-MM-DD");
+    setSubmitError(null);
+    if (!isISODate(date)) {
+      setDateError("Pick your joining date");
+      void haptic("error");
       return;
     }
     setSaving(true);
     try {
       await apiFetch("/hr/joining-date", { method: "POST", body: JSON.stringify({ joiningDate: date }) });
-      setSuccessMsg("Joining date submitted for admin approval");
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not save");
+      setOpen(false);
+      void haptic("success");
+      toast.show({ message: "Joining date submitted for admin approval", tone: "success" });
+      void state.reload();
+    } catch (e) {
+      const fe = fieldErrorMap(e);
+      if (fe.joiningDate) setDateError(fe.joiningDate);
+      setSubmitError(describeError(e, "Could not save"));
+      void haptic("error");
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) return <Loading />;
-
-  const approved = data?.joiningDateApproved;
-
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      <SuccessBanner message={successMsg} />
-      <Card style={{ backgroundColor: approved ? colors.greenSoft : colors.amberSoft, borderColor: "transparent" }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Ionicons name={approved ? "checkmark-circle" : "time-outline"} size={24} color={approved ? colors.green : colors.amber} />
-          <Text style={styles.statusText}>
-            {data?.joiningDate
-              ? `${fmtDate(data.joiningDate)} · ${approved ? "Approved" : "Awaiting approval"}`
-              : "No joining date on record — set it below"}
-          </Text>
-        </View>
-      </Card>
-      <Card>
-        <Field label="Joining date (YYYY-MM-DD)" value={date} onChangeText={setDate} placeholder="2025-01-15" />
-        <Button title="Submit for Approval" onPress={save} loading={saving} disabled={approved} />
-        {approved ? <Text style={styles.note}>Your joining date is approved and locked. Contact HR to change it.</Text> : null}
-      </Card>
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncBlock state={state} skeleton={<SkeletonCard lines={3} />}>
+        {(d) => <StatusCard data={d} onEdit={openForm} />}
+      </AsyncBlock>
+
+      <Sheet
+        visible={open}
+        onClose={() => setOpen(false)}
+        title="Joining date"
+        subtitle="An admin approves it before it is locked"
+        dismissable={!saving}
+        footer={<Button title="Submit for approval" onPress={save} loading={saving} />}
+      >
+        <ErrorBanner message={submitError} onDismiss={() => setSubmitError(null)} />
+        <DateField
+          label="Joining date"
+          value={date}
+          onChange={(v) => {
+            setDate(v);
+            setDateError(null);
+          }}
+          error={dateError}
+          required
+        />
+      </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  statusText: { fontSize: 14, fontWeight: "600", color: colors.ink, flex: 1 },
-  note: { fontSize: 11, color: colors.faint, textAlign: "center", marginTop: spacing.sm },
+  row: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  flex: { flex: 1, minWidth: 0 },
+  label: { ...type.footnote, color: colors.sub },
+  value: { ...type.title3, color: colors.ink, marginTop: 2 },
+  status: { ...type.subhead, fontWeight: "600", marginTop: 2 },
+  note: { ...type.footnote, color: colors.sub, textAlign: "center", marginTop: spacing.xs },
 });

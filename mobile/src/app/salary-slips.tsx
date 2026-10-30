@@ -1,119 +1,194 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable, Modal, ScrollView } from "react-native";
+import { Platform, Share, StyleSheet, Text, View } from "react-native";
 import { apiFetch, fmtMoney, MONTHS } from "@/lib/api";
-import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, StatusPill, Empty, Loading, ErrorBanner, Button, useApi } from "@/components/ui";
+import { colors, spacing, type } from "@/lib/theme";
+import { Button, Card, Screen, StatusPill, useApi } from "@/components/ui";
+import { ListGroup, ListItem } from "@/components/list";
+import { Sheet } from "@/components/sheet";
+import { AsyncList } from "@/components/async";
+import { toast } from "@/components/feedback";
+
+type SalarySlip = {
+  id: string;
+  month: number;
+  year: number;
+  basicSalary: number;
+  hra: number;
+  conveyance: number;
+  medicalAllowance: number;
+  specialAllowance: number;
+  otherEarnings: number;
+  pf: number;
+  esi: number;
+  tax: number;
+  otherDeductions: number;
+  netSalary: number;
+  status: string;
+  remarks?: string | null;
+};
+
+type Line = { label: string; value: number };
+
+function periodOf(s: SalarySlip): string {
+  const name = MONTHS[(s.month ?? 1) - 1] ?? "";
+  return `${name} ${s.year}`.trim();
+}
+
+function earningsOf(s: SalarySlip): Line[] {
+  return [
+    { label: "Basic salary", value: s.basicSalary },
+    { label: "HRA", value: s.hra },
+    { label: "Conveyance", value: s.conveyance },
+    { label: "Medical allowance", value: s.medicalAllowance },
+    { label: "Special allowance", value: s.specialAllowance },
+    { label: "Other earnings", value: s.otherEarnings },
+  ];
+}
+
+function deductionsOf(s: SalarySlip): Line[] {
+  return [
+    { label: "PF", value: s.pf },
+    { label: "ESI", value: s.esi },
+    { label: "Tax", value: s.tax },
+    { label: "Other deductions", value: s.otherDeductions },
+  ];
+}
+
+function total(lines: Line[]): number {
+  return lines.reduce((acc, l) => acc + (Number(l.value) || 0), 0);
+}
+
+function isProvisional(status: string): boolean {
+  return status === "PENDING_APPROVAL" || status === "DRAFT";
+}
+
+function summaryOf(s: SalarySlip): string {
+  const earnings = earningsOf(s);
+  const deductions = deductionsOf(s);
+  return [
+    `Salary slip — ${periodOf(s)}`,
+    `Gross earnings: ${fmtMoney(total(earnings))}`,
+    `Deductions: ${fmtMoney(total(deductions))}`,
+    `Net salary: ${fmtMoney(s.netSalary)}`,
+    isProvisional(s.status) ? "Status: awaiting approval" : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function SlipDetail({ slip }: { slip: SalarySlip }) {
+  const earnings = earningsOf(slip);
+  const deductions = deductionsOf(slip);
+  return (
+    <View>
+      <Card variant="tinted" tone="success">
+        <View style={styles.netRow}>
+          <View style={styles.flex}>
+            <Text style={styles.netLabel} maxFontSizeMultiplier={1.6}>
+              Net salary
+            </Text>
+            <Text style={styles.netValue} maxFontSizeMultiplier={1.3}>
+              {fmtMoney(slip.netSalary)}
+            </Text>
+          </View>
+          <StatusPill status={slip.status} size="sm" />
+        </View>
+        {isProvisional(slip.status) ? (
+          <Text style={styles.provisional} maxFontSizeMultiplier={1.6}>
+            This slip is awaiting approval — the figures may still change.
+          </Text>
+        ) : null}
+      </Card>
+
+      <ListGroup title="Earnings" footer={`Gross ${fmtMoney(total(earnings))}`}>
+        {earnings.map((l) => (
+          <ListItem key={l.label} title={l.label} detail={fmtMoney(l.value)} />
+        ))}
+      </ListGroup>
+
+      <ListGroup title="Deductions" footer={`Total ${fmtMoney(total(deductions))}`}>
+        {deductions.map((l) => (
+          <ListItem key={l.label} title={l.label} detail={`−${fmtMoney(l.value)}`} />
+        ))}
+      </ListGroup>
+
+      {slip.remarks ? (
+        <Text style={styles.remarks} maxFontSizeMultiplier={1.6}>
+          Note: {slip.remarks}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
 
 export default function SalarySlipsScreen() {
-  const [selected, setSelected] = useState<any | null>(null);
-  const { data: slips, loading, refreshing, error, refresh } = useApi<any[]>(() => apiFetch("/hr/salary-slips"));
+  const state = useApi<SalarySlip[]>(() => apiFetch<SalarySlip[]>("/hr/salary-slips"));
+  const [selected, setSelected] = useState<SalarySlip | null>(null);
+  const [open, setOpen] = useState(false);
 
-  if (loading) return <Loading />;
+  const show = (s: SalarySlip) => {
+    setSelected(s);
+    setOpen(true);
+  };
 
-  const earnRows = (s: any) => [
-    ["Basic Salary", s.basicSalary],
-    ["HRA", s.hra],
-    ["Conveyance", s.conveyance],
-    ["Medical Allowance", s.medicalAllowance],
-    ["Special Allowance", s.specialAllowance],
-    ["Other Earnings", s.otherEarnings],
-  ];
-  const dedRows = (s: any) => [
-    ["PF", s.pf],
-    ["ESI", s.esi],
-    ["Tax", s.tax],
-    ["Other Deductions", s.otherDeductions],
-  ];
+  const share = async (s: SalarySlip) => {
+    try {
+      await Share.share({ message: summaryOf(s) });
+    } catch {
+      toast.show({ message: "Couldn't open the share sheet", tone: "danger" });
+    }
+  };
+
+  const canShare = Platform.OS !== "web";
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      {(slips ?? []).length === 0 ? (
-        <Card>
-          <Empty icon="cash-outline" text="No salary slips yet" />
-        </Card>
-      ) : (
-        slips!.map((s) => (
-          <Pressable key={s.id} onPress={() => setSelected(s)}>
-            <Card>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.month}>
-                    {MONTHS[(s.month ?? 1) - 1]} {s.year}
-                  </Text>
-                  <Text style={styles.net}>{fmtMoney(s.netSalary)} net</Text>
-                </View>
-                <StatusPill status={s.status} />
-              </View>
-            </Card>
-          </Pressable>
-        ))
-      )}
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncList
+        state={state}
+        grouped
+        skeleton="rows"
+        keyExtractor={(s) => s.id}
+        empty={{
+          icon: "cash-outline",
+          title: "No salary slips yet",
+          text: "Your monthly slips appear here once HR generates them.",
+        }}
+        renderItem={(s) => (
+          <ListItem
+            title={periodOf(s)}
+            subtitle={`${fmtMoney(s.netSalary)} net`}
+            icon="cash-outline"
+            tint="green"
+            trailing={<StatusPill status={s.status} size="sm" />}
+            onPress={() => show(s)}
+            accessibilityHint="Opens the salary breakdown"
+          />
+        )}
+      />
 
-      <Modal visible={!!selected} animationType="slide" transparent onRequestClose={() => setSelected(null)}>
-        <View style={styles.scrim}>
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
-            {selected && (
-              <ScrollView>
-                <Text style={styles.sheetTitle}>
-                  {MONTHS[(selected.month ?? 1) - 1]} {selected.year}
-                </Text>
-                <Text style={styles.section}>Earnings</Text>
-                {earnRows(selected).map(([label, val]) => (
-                  <View key={String(label)} style={styles.lineRow}>
-                    <Text style={styles.lineLabel}>{label}</Text>
-                    <Text style={styles.lineVal}>{fmtMoney(val as number)}</Text>
-                  </View>
-                ))}
-                <Text style={styles.section}>Deductions</Text>
-                {dedRows(selected).map(([label, val]) => (
-                  <View key={String(label)} style={styles.lineRow}>
-                    <Text style={styles.lineLabel}>{label}</Text>
-                    <Text style={[styles.lineVal, { color: colors.red }]}>−{fmtMoney(val as number).replace("₹", "₹")}</Text>
-                  </View>
-                ))}
-                <View style={[styles.lineRow, styles.netRow]}>
-                  <Text style={styles.netLabel}>Net Salary</Text>
-                  <Text style={styles.netVal}>{fmtMoney(selected.netSalary)}</Text>
-                </View>
-                {selected.remarks ? <Text style={styles.remarks}>Note: {selected.remarks}</Text> : null}
-              </ScrollView>
-            )}
-            <Button title="Close" onPress={() => setSelected(null)} variant="ghost" style={{ marginTop: spacing.md }} />
-          </View>
-        </View>
-      </Modal>
+      <Sheet
+        visible={open}
+        onClose={() => setOpen(false)}
+        title={selected ? periodOf(selected) : undefined}
+        subtitle="Salary slip"
+        detent="large"
+        footer={
+          selected && canShare ? (
+            <Button title="Share summary" variant="plain" icon="share-outline" onPress={() => share(selected)} />
+          ) : undefined
+        }
+      >
+        {selected ? <SlipDetail slip={selected} /> : null}
+      </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  month: { fontSize: 15, fontWeight: "700", color: colors.ink },
-  net: { fontSize: 13, color: colors.purple, marginTop: 2, fontWeight: "600" },
-  scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
-  sheet: {
-    backgroundColor: colors.cardHigh,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.lg,
-    paddingBottom: spacing.xxl,
-    maxHeight: "80%",
-  },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink, marginBottom: 8 },
-  section: { fontSize: 13, fontWeight: "700", color: colors.sub, marginTop: 14, marginBottom: 4, textTransform: "uppercase" },
-  lineRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 7,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  lineLabel: { fontSize: 14, color: colors.ink },
-  lineVal: { fontSize: 14, fontWeight: "600", color: colors.ink },
-  netRow: { borderBottomWidth: 0, marginTop: 8, backgroundColor: colors.yellowSoft, borderRadius: radius.sm, paddingHorizontal: 10 },
-  netLabel: { fontSize: 15, fontWeight: "700", color: colors.ink },
-  netVal: { fontSize: 16, fontWeight: "700", color: colors.ink },
-  remarks: { fontSize: 12, color: colors.sub, marginTop: 10 },
+  flex: { flex: 1, minWidth: 0 },
+  netRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  netLabel: { ...type.subhead, color: colors.sub },
+  netValue: { ...type.title1, ...type.numeric, color: colors.ink, marginTop: 2 },
+  provisional: { ...type.footnote, color: colors.warningText, marginTop: spacing.sm },
+  remarks: { ...type.subhead, color: colors.sub, marginTop: spacing.sm },
 });

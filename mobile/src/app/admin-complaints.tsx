@@ -1,126 +1,173 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Modal } from "react-native";
-import { apiFetch, fmtDate } from "@/lib/api";
-import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, StatusPill, Button, Field, Empty, Loading, ErrorBanner, SuccessBanner, useApi } from "@/components/ui";
+import { StyleSheet, Text, View } from "react-native";
+import { apiFetch, errorMessage, fmtDate } from "@/lib/api";
+import { colors, formatStatus, radius, spacing, toneColors, type } from "@/lib/theme";
+import { haptic } from "@/lib/device";
+import { Button, Card, ErrorBanner, Field, Screen, StatusPill, useApi } from "@/components/ui";
+import { AsyncList } from "@/components/async";
+import { Sheet } from "@/components/sheet";
+import { toast } from "@/components/feedback";
+
+type Complaint = {
+  id: string;
+  subject: string;
+  description?: string | null;
+  category?: string | null;
+  status: string;
+  createdAt: string;
+  adminResponse?: string | null;
+  employee?: { name?: string | null } | null;
+};
+
+const success = toneColors("success");
+
+function metaLine(c: Complaint): string {
+  return [c.employee?.name ?? "Employee", c.category ? formatStatus(c.category) : null, fmtDate(c.createdAt)]
+    .filter((s): s is string => !!s)
+    .join(" · ");
+}
 
 export default function AdminComplaints() {
-  const [respondTo, setRespondTo] = useState<any | null>(null);
-  const [response, setResponse] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const state = useApi<Complaint[]>(() => apiFetch<Complaint[]>("/admin/complaints"));
 
-  const { data, loading, refreshing, refresh, reload } = useApi<any[]>(() => apiFetch("/admin/complaints"));
+  const [respondTo, setRespondTo] = useState<Complaint | null>(null);
+  const [response, setResponse] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const openRespond = (c: Complaint) => {
+    setInputError(null);
+    setSubmitError(null);
+    setRespondTo(c);
+  };
+
+  const closeRespond = () => {
+    if (!saving) setRespondTo(null);
+  };
 
   const submit = async () => {
-    if (!respondTo || !response.trim()) {
-      setError("Write a response first");
+    if (!respondTo) return;
+    const text = response.trim();
+    if (!text) {
+      setInputError("Write a response first");
       return;
     }
     setSaving(true);
-    setError(null);
+    setInputError(null);
+    setSubmitError(null);
     try {
       await apiFetch(`/admin/complaints/${respondTo.id}/respond`, {
         method: "POST",
-        body: JSON.stringify({ response: response.trim(), status: "RESOLVED" }),
+        body: JSON.stringify({ response: text, status: "RESOLVED" }),
       });
       setRespondTo(null);
       setResponse("");
-      setSuccessMsg("Response sent — complaint resolved");
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not respond");
+      void haptic("success");
+      toast.show({ message: "Response sent — complaint resolved", tone: "success" });
+      await state.reload();
+    } catch (e) {
+      void haptic("error");
+      setSubmitError(errorMessage(e, "Could not send the response"));
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) return <Loading />;
-  const items = data ?? [];
-
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      <SuccessBanner message={successMsg} />
-      {items.length === 0 ? (
-        <Card>
-          <Empty icon="megaphone-outline" text="No complaints" />
-        </Card>
-      ) : (
-        items.map((c: any) => (
-          <Card key={c.id}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={[styles.subject, { flex: 1 }]} numberOfLines={1}>
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncList
+        state={state}
+        skeleton="cards"
+        keyExtractor={(c) => c.id}
+        empty={{
+          icon: "megaphone-outline",
+          title: "No complaints",
+          text: "Complaints employees raise from the app appear here.",
+          tone: "success",
+        }}
+        renderItem={(c) => (
+          <Card>
+            <View style={styles.head}>
+              <Text style={styles.subject} numberOfLines={2} maxFontSizeMultiplier={1.6}>
                 {c.subject}
               </Text>
-              <StatusPill status={c.status} />
+              <StatusPill status={c.status} size="sm" />
             </View>
-            <Text style={styles.meta}>
-              {c.employee?.name ?? "Employee"} · {c.category} · {fmtDate(c.createdAt)}
+            <Text style={styles.meta} maxFontSizeMultiplier={1.6}>
+              {metaLine(c)}
             </Text>
-            <Text style={styles.desc}>{c.description}</Text>
+            {c.description ? (
+              <Text style={styles.desc} maxFontSizeMultiplier={1.6}>
+                {c.description}
+              </Text>
+            ) : null}
             {c.adminResponse ? (
               <View style={styles.responseBox}>
-                <Text style={styles.responseLabel}>Response</Text>
-                <Text style={styles.responseText}>{c.adminResponse}</Text>
+                <Text style={styles.responseLabel} maxFontSizeMultiplier={1.3}>
+                  Response
+                </Text>
+                <Text style={styles.responseText} maxFontSizeMultiplier={1.6}>
+                  {c.adminResponse}
+                </Text>
               </View>
             ) : (
               <Button
-                title="Respond & Resolve"
-                small
-                onPress={() => {
-                  setSuccessMsg(null);
-                  setRespondTo(c);
-                }}
-                style={{ marginTop: spacing.md }}
+                title="Respond & resolve"
+                icon="chatbubble-ellipses-outline"
+                variant="tinted"
+                size="md"
+                fullWidth={false}
+                onPress={() => openRespond(c)}
+                style={styles.action}
               />
             )}
           </Card>
-        ))
-      )}
+        )}
+      />
 
-      <Modal visible={!!respondTo} animationType="slide" transparent onRequestClose={() => setRespondTo(null)}>
-        <View style={styles.scrim}>
-          <View style={styles.sheet}>
-            <View style={styles.handle} />
-            <Text style={styles.sheetTitle}>Respond to Complaint</Text>
-            <Text style={styles.sheetSub} numberOfLines={2}>
-              {respondTo?.subject}
-            </Text>
-            <ErrorBanner message={error} />
-            <Field
-              value={response}
-              onChangeText={setResponse}
-              multiline
-              autoCapitalize="sentences"
-              placeholder="Your response to the employee…"
-            />
-            <Button title="Send & Resolve" onPress={submit} loading={saving} />
-            <Button title="Cancel" onPress={() => setRespondTo(null)} variant="ghost" style={{ marginTop: spacing.sm }} />
-          </View>
-        </View>
-      </Modal>
+      <Sheet
+        visible={!!respondTo}
+        onClose={closeRespond}
+        title="Respond to complaint"
+        subtitle={respondTo?.subject}
+        dismissable={!saving}
+        footer={<Button title="Send & resolve" onPress={submit} loading={saving} />}
+      >
+        {respondTo?.description ? (
+          <Text style={styles.sheetDesc} numberOfLines={4} maxFontSizeMultiplier={1.6}>
+            {respondTo.description}
+          </Text>
+        ) : null}
+        <Field
+          label="Response"
+          value={response}
+          onChangeText={(t) => {
+            setResponse(t);
+            if (inputError) setInputError(null);
+          }}
+          multiline
+          autoCapitalize="sentences"
+          autoCorrect
+          placeholder="Your response to the employee…"
+          error={inputError}
+          hint="The employee is emailed your response and the complaint is marked resolved."
+        />
+        <ErrorBanner message={submitError} onDismiss={() => setSubmitError(null)} style={styles.sheetError} />
+      </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  subject: { fontSize: 15, fontWeight: "700", color: colors.ink },
-  meta: { fontSize: 12, color: colors.faint, marginTop: 4 },
-  desc: { fontSize: 13, color: colors.ink, marginTop: 8, lineHeight: 19 },
-  responseBox: { backgroundColor: colors.greenSoft, borderRadius: radius.sm, padding: 10, marginTop: 10 },
-  responseLabel: { fontSize: 10, fontWeight: "700", color: colors.green, textTransform: "uppercase" },
-  responseText: { fontSize: 13, color: colors.ink, marginTop: 2 },
-  scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
-  sheet: {
-    backgroundColor: colors.cardHigh,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink },
-  sheetSub: { fontSize: 13, color: colors.sub, marginVertical: 8 },
+  head: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
+  subject: { ...type.headline, color: colors.ink, flex: 1 },
+  meta: { ...type.footnote, color: colors.sub, marginTop: spacing.xs },
+  desc: { ...type.subhead, color: colors.ink, marginTop: spacing.sm, lineHeight: 21 },
+  responseBox: { backgroundColor: success.bg, borderRadius: radius.control, padding: spacing.md, marginTop: spacing.md },
+  responseLabel: { ...type.caption, fontWeight: "600", color: success.text },
+  responseText: { ...type.subhead, color: colors.ink, marginTop: 2 },
+  action: { marginTop: spacing.md },
+  sheetDesc: { ...type.subhead, color: colors.sub, marginBottom: spacing.md },
+  sheetError: { marginTop: spacing.md },
 });

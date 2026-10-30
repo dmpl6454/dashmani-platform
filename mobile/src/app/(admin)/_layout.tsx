@@ -1,14 +1,33 @@
+import type { ColorValue } from "react-native";
 import React, { useEffect } from "react";
 import { StyleSheet } from "react-native";
 import { Tabs, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/lib/auth";
 import { colors } from "@/lib/theme";
-import { Loading } from "@/components/ui";
+import { Loading, type IoniconName } from "@/components/ui";
+import { usePendingTotal } from "@/lib/hooks/shared";
+
+function tabIcon(filled: IoniconName, outline: IoniconName) {
+  function TabIcon({ color, size, focused }: { color: ColorValue; size: number; focused: boolean }) {
+    return <Ionicons name={focused ? filled : outline} size={size} color={color} />;
+  }
+  return TabIcon;
+}
+
+const ICONS = {
+  index: tabIcon("speedometer", "speedometer-outline"),
+  reports: tabIcon("bar-chart", "bar-chart-outline"),
+  approvals: tabIcon("checkmark-done", "checkmark-done-outline"),
+  manage: tabIcon("albums", "albums-outline"),
+  more: tabIcon("grid", "grid-outline"),
+};
 
 export default function AdminTabsLayout() {
   const { user, mode, loading } = useAuth();
   const router = useRouter();
+  // Subscribe-only: the Dashboard / Approvals screens load the counts.
+  const pendingTotal = usePendingTotal();
 
   useEffect(() => {
     if (loading) return;
@@ -20,64 +39,42 @@ export default function AdminTabsLayout() {
     } else if (!user) {
       router.replace("/login?mode=admin");
     }
-  }, [loading, user, mode]);
+  }, [loading, user, mode, router]);
 
   if (loading || !user || mode === "hr") return <Loading />;
 
   return (
     <Tabs
       screenOptions={{
-        headerStyle: { backgroundColor: colors.bg },
-        headerTitleStyle: { fontWeight: "700", color: colors.ink },
-        headerShadowVisible: false,
+        // Tab roots draw their own LargeTitle in content.
+        headerShown: false,
         tabBarActiveTintColor: colors.purple,
-        tabBarInactiveTintColor: colors.faint,
+        tabBarInactiveTintColor: colors.sub,
+        // No fixed height: react-navigation computes 49 + the bottom safe-area inset.
         tabBarStyle: {
           backgroundColor: colors.barBg,
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.borderStrong,
-          height: 84,
-          paddingTop: 6,
+          borderTopColor: colors.border,
+          paddingTop: 4,
         },
+        tabBarAllowFontScaling: true,
         tabBarLabelStyle: { fontSize: 10, fontWeight: "500" },
+        tabBarBadgeStyle: { backgroundColor: colors.red, color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Dashboard",
-          tabBarIcon: ({ color, size }) => <Ionicons name="speedometer" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="reports"
-        options={{
-          title: "Reports",
-          tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
-        }}
-      />
+      <Tabs.Screen name="index" options={{ title: "Dashboard", tabBarIcon: ICONS.index }} />
+      <Tabs.Screen name="reports" options={{ title: "Reports", tabBarIcon: ICONS.reports }} />
       <Tabs.Screen
         name="approvals"
         options={{
           title: "Approvals",
-          tabBarIcon: ({ color, size }) => <Ionicons name="checkmark-done" size={size} color={color} />,
+          tabBarIcon: ICONS.approvals,
+          tabBarBadge: pendingTotal ? pendingTotal : undefined,
         }}
       />
-      <Tabs.Screen
-        name="manage"
-        options={{
-          title: "Manage",
-          tabBarIcon: ({ color, size }) => <Ionicons name="albums" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="more"
-        options={{
-          title: "More",
-          tabBarIcon: ({ color, size }) => <Ionicons name="grid" size={size} color={color} />,
-        }}
-      />
+      <Tabs.Screen name="manage" options={{ title: "Manage", tabBarIcon: ICONS.manage }} />
+      <Tabs.Screen name="more" options={{ title: "More", tabBarIcon: ICONS.more }} />
     </Tabs>
   );
 }

@@ -1,104 +1,181 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { apiFetch, fmtDate, fmtMoney } from "@/lib/api";
-import { colors, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, StatusPill, Button, Field, Chips, ErrorBanner, SuccessBanner, Empty, Loading, useApi } from "@/components/ui";
+import { StyleSheet, Text } from "react-native";
+import { apiFetch, describeError, fieldErrorMap, fmtDay, fmtMoney } from "@/lib/api";
+import { colors, formatStatus, spacing, type, type TintKey } from "@/lib/theme";
+import { haptic } from "@/lib/device";
+import { Button, Chips, ErrorBanner, Field, Screen, SectionTitle, StatusPill, useApi, type IoniconName } from "@/components/ui";
+import { ListItem } from "@/components/list";
+import { Sheet } from "@/components/sheet";
+import { AsyncList } from "@/components/async";
+import { toast } from "@/components/feedback";
 
 const CATEGORIES = ["TRAVEL", "FOOD", "EQUIPMENT", "SOFTWARE", "OTHER"] as const;
+type Category = (typeof CATEGORIES)[number];
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  TRAVEL: "Travel",
+  FOOD: "Food",
+  EQUIPMENT: "Equipment",
+  SOFTWARE: "Software",
+  OTHER: "Other",
+};
+
+const CATEGORY_GLYPHS: Record<string, { icon: IoniconName; tint: TintKey }> = {
+  TRAVEL: { icon: "car-outline", tint: "blue" },
+  FOOD: { icon: "restaurant-outline", tint: "orange" },
+  EQUIPMENT: { icon: "hardware-chip-outline", tint: "indigo" },
+  SOFTWARE: { icon: "code-slash-outline", tint: "teal" },
+  OTHER: { icon: "receipt-outline", tint: "gray" },
+};
+
+type Expense = {
+  id: string;
+  title: string;
+  amount: number;
+  category: string;
+  description?: string | null;
+  status: string;
+  createdAt: string;
+};
+
+type FormErrors = { title?: string; amount?: string };
 
 export default function ExpensesScreen() {
-  const [showForm, setShowForm] = useState(false);
+  const state = useApi<Expense[]>(() => apiFetch<Expense[]>("/hr/expenses"));
+
+  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>("OTHER");
+  const [category, setCategory] = useState<Category>("OTHER");
   const [description, setDescription] = useState("");
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const { data, loading, refreshing, refresh, reload } = useApi<any[]>(() => apiFetch("/hr/expenses"));
+  const openForm = () => {
+    setErrors({});
+    setSubmitError(null);
+    setOpen(true);
+  };
 
   const submit = async () => {
-    setError(null);
-    const amt = parseFloat(amount);
-    if (!title.trim() || !amt || amt <= 0) {
-      setError("Enter a title and a valid amount");
+    const next: FormErrors = {};
+    if (!title.trim()) next.title = "Give the claim a title";
+    const amt = parseFloat(amount.replace(",", "."));
+    if (!Number.isFinite(amt) || amt <= 0) next.amount = "Enter an amount above ₹0";
+    setErrors(next);
+    setSubmitError(null);
+    if (next.title || next.amount) {
+      void haptic("error");
       return;
     }
     setSubmitting(true);
     try {
       await apiFetch("/hr/expenses", {
         method: "POST",
-        body: JSON.stringify({ title: title.trim(), amount: amt, category, description: description || undefined }),
+        body: JSON.stringify({ title: title.trim(), amount: amt, category, description: description.trim() || undefined }),
       });
       setTitle("");
       setAmount("");
       setDescription("");
-      setShowForm(false);
-      setSuccessMsg("Expense claim submitted for approval");
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not submit claim");
+      setCategory("OTHER");
+      setOpen(false);
+      void haptic("success");
+      toast.show({ message: "Expense claim submitted for approval", tone: "success" });
+      void state.reload();
+    } catch (e) {
+      const fe = fieldErrorMap(e);
+      setErrors({ title: fe.title, amount: fe.amount });
+      setSubmitError(describeError(e, "Could not submit claim"));
+      void haptic("error");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading) return <Loading />;
-
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <SuccessBanner message={successMsg} />
-      {!showForm && <Button title="+ New Expense Claim" onPress={() => { setSuccessMsg(null); setShowForm(true); }} style={{ marginBottom: spacing.md }} />}
+    <Screen
+      onRefresh={state.refresh}
+      refreshing={state.refreshing}
+      footer={<Button title="New expense claim" icon="add" onPress={openForm} />}
+      footerInset
+    >
+      <AsyncList
+        state={state}
+        grouped
+        skeleton="rows"
+        header={<SectionTitle>My claims</SectionTitle>}
+        keyExtractor={(e) => e.id}
+        empty={{
+          icon: "wallet-outline",
+          title: "No expense claims yet",
+          text: "Claims you submit go to HR for approval.",
+        }}
+        renderItem={(e) => {
+          const glyph = CATEGORY_GLYPHS[e.category] ?? CATEGORY_GLYPHS.OTHER;
+          return (
+            <ListItem
+              icon={glyph.icon}
+              tint={glyph.tint}
+              title={e.title}
+              subtitle={`${fmtMoney(e.amount)} · ${formatStatus(e.category || "OTHER")} · ${fmtDay(e.createdAt, { weekday: false })}`}
+              trailing={<StatusPill status={e.status} size="sm" />}
+            />
+          );
+        }}
+      />
 
-      {showForm && (
-        <>
-          <SectionTitle>New Claim</SectionTitle>
-          <Card>
-            <ErrorBanner message={error} />
-            <Field label="Title" value={title} onChangeText={setTitle} placeholder="e.g. Client travel" autoCapitalize="sentences" />
-            <Field label="Amount (₹)" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0" />
-            <Text style={styles.label}>Category</Text>
-            <Chips options={CATEGORIES} value={category} onChange={setCategory} />
-            <Field label="Description (optional)" value={description} onChangeText={setDescription} multiline autoCapitalize="sentences" />
-            <Button title="Submit Claim" onPress={submit} loading={submitting} />
-            <Button title="Cancel" onPress={() => setShowForm(false)} variant="ghost" style={{ marginTop: spacing.sm }} />
-          </Card>
-        </>
-      )}
-
-      <SectionTitle>My Claims</SectionTitle>
-      <Card>
-        {(data ?? []).length === 0 ? (
-          <Empty icon="wallet-outline" text="No expense claims yet" />
-        ) : (
-          data!.map((e: any, i: number) => (
-            <View key={e.id} style={[styles.row, i === data!.length - 1 && { borderBottomWidth: 0 }]}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.title}>{e.title}</Text>
-                <Text style={styles.sub}>
-                  {fmtMoney(e.amount)} · {e.category} · {fmtDate(e.createdAt)}
-                </Text>
-              </View>
-              <StatusPill status={e.status} />
-            </View>
-          ))
-        )}
-      </Card>
+      <Sheet
+        visible={open}
+        onClose={() => setOpen(false)}
+        title="New expense claim"
+        subtitle="Goes to HR for approval"
+        dismissable={!submitting}
+        footer={<Button title="Submit claim" onPress={submit} loading={submitting} />}
+      >
+        <ErrorBanner message={submitError} onDismiss={() => setSubmitError(null)} />
+        <Field
+          label="Title"
+          value={title}
+          onChangeText={(t) => {
+            setTitle(t);
+            setErrors((p) => ({ ...p, title: undefined }));
+          }}
+          placeholder="e.g. Client travel"
+          autoCapitalize="sentences"
+          error={errors.title}
+          required
+        />
+        <Field
+          label="Amount (₹)"
+          value={amount}
+          onChangeText={(t) => {
+            setAmount(t);
+            setErrors((p) => ({ ...p, amount: undefined }));
+          }}
+          keyboardType="decimal-pad"
+          inputMode="decimal"
+          placeholder="0"
+          error={errors.amount}
+          required
+        />
+        <Text style={styles.label} maxFontSizeMultiplier={1.6}>
+          Category
+        </Text>
+        <Chips options={CATEGORIES} value={category} onChange={setCategory} labels={CATEGORY_LABELS} accessibilityLabel="Category" />
+        <Field
+          label="Description (optional)"
+          value={description}
+          onChangeText={setDescription}
+          multiline
+          autoCapitalize="sentences"
+          autoCorrect
+        />
+      </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  label: { fontSize: 13, fontWeight: "600", color: colors.ink, marginBottom: 6 },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  title: { fontSize: 14, fontWeight: "700", color: colors.ink },
-  sub: { fontSize: 12, color: colors.sub, marginTop: 2 },
+  label: { ...type.footnote, fontWeight: "500", color: colors.sub, marginTop: spacing.xs, marginBottom: spacing.sm },
 });

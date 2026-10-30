@@ -1,89 +1,78 @@
 import React from "react";
-import { View, Text, StyleSheet, Image } from "react-native";
-import { apiFetch, API_BASE } from "@/lib/api";
+import { StyleSheet, Text, View } from "react-native";
+import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
+import { colors, spacing, type } from "@/lib/theme";
+import { Avatar, Screen, useApi } from "@/components/ui";
+import { ListItem, StatGrid, StatTile } from "@/components/list";
+import { AsyncList } from "@/components/async";
+
+type LeaderEntry = {
+  rank: number;
+  employee?: { id: string; name?: string | null; profileImageUrl?: string | null } | null;
+  totalReports?: number | null;
+  totalLinks?: number | null;
+  currentStreak?: number | null;
+};
 
 export default function LeaderboardScreen() {
   const { user } = useAuth();
-  const { data, loading, refreshing, error, refresh } = useApi<any[]>(() => apiFetch("/hr/leaderboard"));
+  const myId = user?.id ?? null;
+  const state = useApi<LeaderEntry[]>(() => apiFetch<LeaderEntry[]>("/hr/leaderboard"));
 
-  if (loading) return <Loading />;
-
-  const rows = data ?? [];
+  const mine = myId ? (state.data ?? []).find((e) => e.employee?.id === myId) : undefined;
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      {rows.length === 0 ? (
-        <Card>
-          <Empty icon="trophy-outline" text="No leaderboard data yet" />
-        </Card>
-      ) : (
-        <Card>
-          {rows.map((e: any, i: number) => {
-            const me = e.employee?.id === user?.id;
-            const img = e.employee?.profileImageUrl
-              ? e.employee.profileImageUrl.startsWith("http")
-                ? e.employee.profileImageUrl
-                : `${API_BASE}${e.employee.profileImageUrl}`
-              : null;
-            const top3 = e.rank <= 3;
-            return (
-              <View
-                key={e.employee?.id ?? i}
-                style={[
-                  styles.row,
-                  me && { backgroundColor: colors.purpleSoft, borderRadius: radius.sm, paddingHorizontal: 8 },
-                  i === rows.length - 1 && { borderBottomWidth: 0 },
-                ]}
-              >
-                <Text style={[styles.rank, top3 && { color: colors.yellow }]}>{e.rank}</Text>
-                {img ? (
-                  <Image source={{ uri: img }} style={styles.avatar} />
-                ) : (
-                  <View style={[styles.avatar, styles.avatarFallback]}>
-                    <Text style={styles.avatarLetter}>{(e.employee?.name || "?").charAt(0)}</Text>
-                  </View>
-                )}
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[styles.name, me && { color: colors.purpleDark }]} numberOfLines={1}>
-                    {e.employee?.name} {me ? "(You)" : ""}
-                  </Text>
-                  <Text style={styles.meta}>
-                    {e.totalReports ?? 0} reports · {e.totalLinks ?? 0} links
-                  </Text>
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncList
+        state={state}
+        grouped
+        keyExtractor={(e, i) => e.employee?.id ?? String(i)}
+        empty={{
+          icon: "trophy-outline",
+          title: "No rankings yet",
+          text: "Submit your daily report to get on the board.",
+        }}
+        header={
+          mine ? (
+            <StatGrid>
+              <StatTile label="Your rank" value={`#${mine.rank}`} icon="trophy-outline" tone="warning" />
+              <StatTile label="Day streak" value={mine.currentStreak ?? 0} icon="flame-outline" tone="brand" />
+            </StatGrid>
+          ) : null
+        }
+        renderItem={(e) => {
+          const me = !!myId && e.employee?.id === myId;
+          const name = e.employee?.name || "Unknown";
+          return (
+            <ListItem
+              leading={
+                <View style={styles.lead}>
+                  <Text style={[styles.rank, e.rank <= 3 ? styles.rankTop : null]}>{e.rank}</Text>
+                  <Avatar name={name} uri={e.employee?.profileImageUrl} size={36} ring={me} />
                 </View>
+              }
+              title={me ? `${name} (You)` : name}
+              subtitle={`${e.totalReports ?? 0} reports · ${e.totalLinks ?? 0} links`}
+              trailing={
                 <View style={styles.streak}>
                   <Text style={styles.streakVal}>{e.currentStreak ?? 0}</Text>
                   <Text style={styles.streakLabel}>day streak</Text>
                 </View>
-              </View>
-            );
-          })}
-        </Card>
-      )}
+              }
+            />
+          );
+        }}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  rank: { width: 30, fontSize: 15, fontWeight: "600", color: colors.faint, textAlign: "center", fontVariant: ["tabular-nums"] },
-  avatar: { width: 36, height: 36, borderRadius: radius.full },
-  avatarFallback: { backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
-  avatarLetter: { fontSize: 15, fontWeight: "700", color: colors.inkOnAccent },
-  name: { fontSize: 14, fontWeight: "700", color: colors.ink },
-  meta: { fontSize: 12, color: colors.sub, marginTop: 1 },
-  streak: { alignItems: "center" },
-  streakVal: { fontSize: 14, fontWeight: "700", color: colors.ink },
-  streakLabel: { fontSize: 10, color: colors.sub },
+  lead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  rank: { ...type.subhead, ...type.numeric, width: 28, fontWeight: "600", color: colors.sub, textAlign: "center" },
+  rankTop: { color: colors.warningText, fontWeight: "700" },
+  streak: { alignItems: "center", minWidth: 56 },
+  streakVal: { ...type.subhead, ...type.numeric, fontWeight: "700", color: colors.ink },
+  streakLabel: { ...type.caption2, color: colors.sub },
 });

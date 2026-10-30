@@ -1,27 +1,64 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { apiFetch, fmtDate } from "@/lib/api";
-import { colors, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, StatusPill, Button, Field, Chips, ErrorBanner, SuccessBanner, Empty, Loading, useApi } from "@/components/ui";
+import { StyleSheet, Text } from "react-native";
+import { apiFetch, errorMessage, fmtDate } from "@/lib/api";
+import { colors, formatStatus, spacing, type } from "@/lib/theme";
+import type { TintKey } from "@/lib/theme";
+import { Button, Card, Chips, ErrorBanner, Field, Screen, SectionTitle, StatusPill, useApi } from "@/components/ui";
+import { AsyncList } from "@/components/async";
+import { ListItem } from "@/components/list";
+import { toast } from "@/components/feedback";
+import { haptic } from "@/lib/device";
 
 const SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+type Severity = (typeof SEVERITIES)[number];
+
+const SEVERITY_LABELS: Record<Severity, string> = {
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+  CRITICAL: "Critical",
+};
+
+type BugReport = {
+  id: string;
+  title: string;
+  severity: string;
+  status: string;
+  resolution: string | null;
+  createdAt: string;
+};
+
+type FormErrors = { title?: string; description?: string };
+
+function severityTint(severity: string): TintKey {
+  if (severity === "CRITICAL" || severity === "HIGH") return "red";
+  if (severity === "MEDIUM") return "orange";
+  return "gray";
+}
+
+function subtitleOf(b: BugReport): string {
+  const base = `${formatStatus(b.severity)} · ${fmtDate(b.createdAt)}`;
+  return b.resolution ? `${base}\n${b.resolution}` : base;
+}
 
 export default function BugReportScreen() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [severity, setSeverity] = useState<(typeof SEVERITIES)[number]>("MEDIUM");
+  const [severity, setSeverity] = useState<Severity>("MEDIUM");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const { data, loading, refreshing, refresh, reload } = useApi<any[]>(() => apiFetch("/hr/bug-reports"));
+  const state = useApi<BugReport[]>(() => apiFetch<BugReport[]>("/hr/bug-reports"));
 
   const submit = async () => {
-    setError(null);
-    if (!title.trim() || !description.trim()) {
-      setError("Title and description are required");
-      return;
-    }
+    const next: FormErrors = {};
+    if (!title.trim()) next.title = "Add a short title";
+    if (!description.trim()) next.description = "Describe what happened";
+    setFieldErrors(next);
+    setSubmitError(null);
+    if (next.title || next.description) return;
+
     setSubmitting(true);
     try {
       await apiFetch("/hr/bug-reports", {
@@ -30,71 +67,85 @@ export default function BugReportScreen() {
       });
       setTitle("");
       setDescription("");
-      setSuccessMsg("Bug report submitted — thank you!");
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not submit");
+      setSeverity("MEDIUM");
+      toast.show({ message: "Bug report submitted — thank you!", tone: "success" });
+      void haptic("success");
+      void state.reload();
+    } catch (e) {
+      setSubmitError(errorMessage(e, "Could not submit your bug report. Please try again."));
+      void haptic("error");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading) return <Loading />;
-
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <SuccessBanner message={successMsg} />
-      <SectionTitle>Report a Bug</SectionTitle>
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <SectionTitle>Report a bug</SectionTitle>
       <Card>
-        <ErrorBanner message={error} />
-        <Field label="Title" value={title} onChangeText={setTitle} autoCapitalize="sentences" placeholder="What went wrong?" />
-        <Text style={styles.label}>Severity</Text>
-        <Chips options={SEVERITIES} value={severity} onChange={setSeverity} />
+        <Field
+          label="Title"
+          value={title}
+          onChangeText={(t) => {
+            setTitle(t);
+            if (fieldErrors.title) setFieldErrors((f) => ({ ...f, title: undefined }));
+          }}
+          autoCapitalize="sentences"
+          placeholder="What went wrong?"
+          error={fieldErrors.title}
+          required
+        />
+        <Text maxFontSizeMultiplier={1.6} style={styles.label}>
+          Severity
+        </Text>
+        <Chips
+          options={SEVERITIES}
+          value={severity}
+          onChange={setSeverity}
+          labels={SEVERITY_LABELS}
+          accessibilityLabel="Bug severity"
+        />
         <Field
           label="Description"
           value={description}
-          onChangeText={setDescription}
+          onChangeText={(t) => {
+            setDescription(t);
+            if (fieldErrors.description) setFieldErrors((f) => ({ ...f, description: undefined }));
+          }}
           multiline
           autoCapitalize="sentences"
           placeholder="Steps to reproduce, what you expected, what happened…"
+          error={fieldErrors.description}
+          required
         />
-        <Button title="Submit Bug Report" onPress={submit} loading={submitting} />
+        <ErrorBanner message={submitError} />
+        <Button title="Submit bug report" icon="bug-outline" onPress={submit} loading={submitting} />
       </Card>
 
-      <SectionTitle>My Reports</SectionTitle>
-      <Card>
-        {(data ?? []).length === 0 ? (
-          <Empty icon="bug-outline" text="No bug reports yet" />
-        ) : (
-          data!.map((b: any, i: number) => (
-            <View key={b.id} style={[styles.row, i === data!.length - 1 && { borderBottomWidth: 0 }]}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.title} numberOfLines={1}>
-                  {b.title}
-                </Text>
-                <Text style={styles.sub}>
-                  {b.severity} · {fmtDate(b.createdAt)}
-                </Text>
-              </View>
-              <StatusPill status={b.status} />
-            </View>
-          ))
+      <SectionTitle>My reports</SectionTitle>
+      <AsyncList
+        state={state}
+        grouped
+        keyExtractor={(b) => b.id}
+        renderItem={(b) => (
+          <ListItem
+            title={b.title}
+            subtitle={subtitleOf(b)}
+            icon="bug-outline"
+            tint={severityTint(b.severity)}
+            trailing={<StatusPill status={b.status} size="sm" />}
+          />
         )}
-      </Card>
+        empty={{
+          icon: "bug-outline",
+          title: "No bug reports yet",
+          text: "Bugs you report will appear here with their status.",
+        }}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  label: { fontSize: 13, fontWeight: "600", color: colors.ink, marginBottom: 6 },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  title: { fontSize: 14, fontWeight: "700", color: colors.ink },
-  sub: { fontSize: 12, color: colors.sub, marginTop: 2 },
+  label: { ...type.footnote, fontWeight: "600", color: colors.ink, marginBottom: spacing.sm },
 });

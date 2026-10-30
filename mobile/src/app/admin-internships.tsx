@@ -1,75 +1,129 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Modal, Pressable } from "react-native";
-import { apiFetch, fmtDate } from "@/lib/api";
-import { colors, radius, spacing, formatStatus } from "@/lib/theme";
-import { Screen, Card, StatusPill, Button, Empty, Loading, ErrorBanner, SuccessBanner, useApi } from "@/components/ui";
+import { StyleSheet, View } from "react-native";
+import { apiFetch, errorMessage, fmtDate } from "@/lib/api";
+import { formatStatus, motion, radius, statusColor } from "@/lib/theme";
+import { haptic } from "@/lib/device";
+import { Avatar, ErrorBanner, Screen, StatusPill, useApi } from "@/components/ui";
+import { ListGroup, ListItem } from "@/components/list";
+import { Sheet } from "@/components/sheet";
+import { AsyncList } from "@/components/async";
+import { confirm, toast } from "@/components/feedback";
 
-const STATUSES = ["PENDING", "REVIEWING", "ACCEPTED", "REJECTED"] as const;
+// InternshipApplication.status is the ApplicationStatus enum (packages/db/prisma/schema.prisma).
+const STATUSES = ["RECEIVED", "REVIEWING", "SHORTLISTED", "INTERVIEW", "OFFERED", "ACCEPTED", "REJECTED"] as const;
+/** Decisive moves: asked for confirmation first (AD-13). */
+const CONFIRM_STATUSES: readonly string[] = ["OFFERED", "ACCEPTED", "REJECTED"];
+/** The API emails the applicant on these moves. */
+const EMAILED_STATUSES: readonly string[] = ["SHORTLISTED", "INTERVIEW", "OFFERED", "REJECTED"];
+
+type Internship = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  college?: string | null;
+  course?: string | null;
+  status?: string | null;
+  createdAt: string;
+};
+
+/** Lets one bottom sheet finish closing before the next one is presented (iOS Modal stacking). */
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function joinParts(parts: Array<string | null | undefined>, sep = " · "): string {
+  return parts.filter((p): p is string => typeof p === "string" && p.trim() !== "").join(sep);
+}
 
 export default function AdminInternships() {
-  const [statusFor, setStatusFor] = useState<any | null>(null);
+  const [statusFor, setStatusFor] = useState<Internship | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const { data, loading, refreshing, refresh, reload } = useApi<any[]>(() => apiFetch("/admin/internships"));
 
-  const changeStatus = async (app: any, status: string) => {
+  const list = useApi<Internship[]>(async () => {
+    const rows = await apiFetch<Internship[]>("/admin/internships");
+    return Array.isArray(rows) ? rows : [];
+  });
+
+  const changeStatus = async (app: Internship, status: string) => {
     setStatusFor(null);
+    if (status === (app.status ?? "RECEIVED")) return;
+    if (CONFIRM_STATUSES.includes(status)) {
+      await pause(motion.slow);
+      const rejecting = status === "REJECTED";
+      const ok = await confirm({
+        title: `Move ${app.name} to ${formatStatus(status)}?`,
+        message: EMAILED_STATUSES.includes(status)
+          ? `${app.name} gets an email about this decision.`
+          : "This marks the application as decided.",
+        confirmLabel: rejecting ? "Reject" : formatStatus(status),
+        destructive: rejecting,
+      });
+      if (!ok) return;
+    }
+    setError(null);
+    setUpdatingId(app.id);
     try {
       await apiFetch(`/admin/internships/${app.id}/status`, { method: "POST", body: JSON.stringify({ status }) });
-      setSuccessMsg(`Application → ${formatStatus(status)}`);
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not update");
+      void haptic("success");
+      toast.show({ message: `${app.name} → ${formatStatus(status)}`, tone: "success" });
+      await list.reload();
+    } catch (e) {
+      void haptic("error");
+      setError(errorMessage(e, "Could not update the application"));
+    } finally {
+      setUpdatingId(null);
     }
   };
 
-  if (loading) return <Loading />;
-  const items = data ?? [];
+  const currentStatus = statusFor?.status ?? "RECEIVED";
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      <SuccessBanner message={successMsg} />
-      {items.length === 0 ? (
-        <Card><Empty icon="school-outline" text="No internship applications" /></Card>
-      ) : (
-        items.map((a: any) => (
-          <Card key={a.id}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={[styles.name, { flex: 1 }]} numberOfLines={1}>{a.name}</Text>
-              <Pressable onPress={() => setStatusFor(a)}>
-                <StatusPill status={a.status ?? "PENDING"} />
-              </Pressable>
-            </View>
-            <Text style={styles.sub}>{a.email} {a.phone ? `· ${a.phone}` : ""}</Text>
-            {a.college ? <Text style={styles.meta}>{a.college}</Text> : null}
-            <Text style={styles.meta}>Applied {fmtDate(a.createdAt)}</Text>
-          </Card>
-        ))
-      )}
-      <Modal visible={!!statusFor} animationType="fade" transparent onRequestClose={() => setStatusFor(null)}>
-        <View style={styles.scrim}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Application Status</Text>
-            {STATUSES.map((s) => (
-              <Pressable key={s} style={styles.optRow} onPress={() => changeStatus(statusFor, s)}>
-                <StatusPill status={s} />
-              </Pressable>
-            ))}
-            <Button title="Cancel" onPress={() => setStatusFor(null)} variant="ghost" small style={{ marginTop: spacing.sm }} />
-          </View>
-        </View>
-      </Modal>
+    <Screen onRefresh={list.refresh} refreshing={list.refreshing}>
+      <AsyncList
+        state={list}
+        grouped
+        header={<ErrorBanner message={error} onDismiss={() => setError(null)} />}
+        keyExtractor={(a) => a.id}
+        renderItem={(a) => (
+          <ListItem
+            leading={<Avatar name={a.name} size={32} />}
+            title={a.name}
+            subtitle={joinParts(
+              [joinParts([a.email, a.phone]), joinParts([a.college, `Applied ${fmtDate(a.createdAt)}`])],
+              "\n",
+            )}
+            trailing={<StatusPill status={a.status ?? "RECEIVED"} size="sm" />}
+            onPress={() => setStatusFor(a)}
+            disabled={updatingId === a.id}
+            accessibilityHint="Changes this applicant's status"
+          />
+        )}
+        empty={{
+          icon: "school-outline",
+          title: "No internship applications",
+          text: "Applications from the internships page appear here.",
+        }}
+      />
+
+      <Sheet visible={!!statusFor} onClose={() => setStatusFor(null)} title="Application status" subtitle={statusFor?.name}>
+        <ListGroup>
+          {STATUSES.map((s) => (
+            <ListItem
+              key={s}
+              title={formatStatus(s)}
+              leading={<View style={[styles.dot, { backgroundColor: statusColor(s).dot }]} />}
+              selected={currentStatus === s}
+              onPress={() => {
+                if (statusFor) void changeStatus(statusFor, s);
+              }}
+            />
+          ))}
+        </ListGroup>
+      </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  name: { fontSize: 15, fontWeight: "700", color: colors.ink },
-  sub: { fontSize: 12, color: colors.sub, marginTop: 3 },
-  meta: { fontSize: 11, color: colors.faint, marginTop: 2 },
-  scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", padding: spacing.xl },
-  sheet: { backgroundColor: colors.cardHigh, borderRadius: radius.xl, padding: spacing.lg },
-  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink, marginBottom: 12 },
-  optRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  dot: { width: 10, height: 10, borderRadius: radius.full },
 });

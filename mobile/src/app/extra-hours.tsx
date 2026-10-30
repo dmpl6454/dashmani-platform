@@ -1,101 +1,157 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { apiFetch, fmtDate, todayIST } from "@/lib/api";
-import { colors, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, StatusPill, Button, Field, ErrorBanner, SuccessBanner, Empty, Loading, useApi } from "@/components/ui";
+import { addDaysISO, apiFetch, describeError, fieldErrorMap, fmtDay, isISODate, istDateOf, todayIST } from "@/lib/api";
+import { haptic } from "@/lib/device";
+import { Button, ErrorBanner, Field, Screen, SectionTitle, StatusPill, useApi } from "@/components/ui";
+import { DateTile, ListItem } from "@/components/list";
+import { Sheet } from "@/components/sheet";
+import { AsyncList } from "@/components/async";
+import { DateField } from "@/components/date-field";
+import { toast } from "@/components/feedback";
+
+type ExtraHour = {
+  id: string;
+  date: string;
+  hours: number;
+  description?: string | null;
+  status: string;
+};
+
+type FormErrors = { date?: string; hours?: string };
+
+function dayOf(v: string): string {
+  return istDateOf(v) ?? String(v).slice(0, 10);
+}
 
 export default function ExtraHoursScreen() {
-  const [showForm, setShowForm] = useState(false);
+  const state = useApi<ExtraHour[]>(() => apiFetch<ExtraHour[]>("/hr/extra-hours"));
+
+  const [open, setOpen] = useState(false);
   const [date, setDate] = useState(todayIST());
   const [hours, setHours] = useState("");
   const [description, setDescription] = useState("");
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const { data, loading, refreshing, refresh, reload } = useApi<any[]>(() => apiFetch("/hr/extra-hours"));
+  const today = todayIST();
+
+  const openForm = () => {
+    setErrors({});
+    setSubmitError(null);
+    setOpen(true);
+  };
 
   const submit = async () => {
-    setError(null);
-    const h = parseFloat(hours);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !h || h <= 0) {
-      setError("Enter a valid date (YYYY-MM-DD) and hours");
+    const next: FormErrors = {};
+    if (!isISODate(date)) next.date = "Pick the day you worked";
+    const h = parseFloat(hours.replace(",", "."));
+    if (!Number.isFinite(h) || h <= 0) next.hours = "Enter the hours you worked, e.g. 2.5";
+    else if (h > 24) next.hours = "A day has at most 24 hours";
+    setErrors(next);
+    setSubmitError(null);
+    if (next.date || next.hours) {
+      void haptic("error");
       return;
     }
     setSubmitting(true);
     try {
       await apiFetch("/hr/extra-hours", {
         method: "POST",
-        body: JSON.stringify({ date, hours: h, description: description || undefined }),
+        body: JSON.stringify({ date, hours: h, description: description.trim() || undefined }),
       });
       setHours("");
       setDescription("");
-      setShowForm(false);
-      setSuccessMsg("Extra hours logged for approval");
-      reload();
-    } catch (e: any) {
-      setError(e?.message || "Could not log hours");
+      setOpen(false);
+      void haptic("success");
+      toast.show({ message: "Extra hours logged for approval", tone: "success" });
+      void state.reload();
+    } catch (e) {
+      const fe = fieldErrorMap(e);
+      setErrors({ date: fe.date, hours: fe.hours });
+      setSubmitError(describeError(e, "Could not log hours"));
+      void haptic("error");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading) return <Loading />;
-
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <SuccessBanner message={successMsg} />
-      {!showForm && <Button title="+ Log Extra Hours" onPress={() => { setSuccessMsg(null); setShowForm(true); }} style={{ marginBottom: spacing.md }} />}
+    <Screen
+      onRefresh={state.refresh}
+      refreshing={state.refreshing}
+      footer={<Button title="Log extra hours" icon="add" onPress={openForm} />}
+      footerInset
+    >
+      <AsyncList
+        state={state}
+        grouped
+        skeleton="rows"
+        header={<SectionTitle>My logged hours</SectionTitle>}
+        keyExtractor={(e) => e.id}
+        empty={{
+          icon: "hourglass-outline",
+          title: "No extra hours yet",
+          text: "Hours you log go to your manager for approval.",
+        }}
+        renderItem={(e) => {
+          const ymd = dayOf(e.date);
+          const desc = e.description?.trim();
+          return (
+            <ListItem
+              leading={<DateTile date={ymd} tone="info" />}
+              title={`${e.hours} h extra`}
+              subtitle={`${fmtDay(ymd, { year: true })}${desc ? ` · ${desc}` : ""}`}
+              trailing={<StatusPill status={e.status} size="sm" />}
+            />
+          );
+        }}
+      />
 
-      {showForm && (
-        <>
-          <SectionTitle>Log Hours</SectionTitle>
-          <Card>
-            <ErrorBanner message={error} />
-            <Field label="Date (YYYY-MM-DD)" value={date} onChangeText={setDate} placeholder={todayIST()} />
-            <Field label="Hours" value={hours} onChangeText={setHours} keyboardType="decimal-pad" placeholder="e.g. 2.5" />
-            <Field label="What did you work on?" value={description} onChangeText={setDescription} multiline autoCapitalize="sentences" />
-            <Button title="Submit" onPress={submit} loading={submitting} />
-            <Button title="Cancel" onPress={() => setShowForm(false)} variant="ghost" style={{ marginTop: spacing.sm }} />
-          </Card>
-        </>
-      )}
-
-      <SectionTitle>My Logged Hours</SectionTitle>
-      <Card>
-        {(data ?? []).length === 0 ? (
-          <Empty icon="hourglass-outline" text="No extra hours logged yet" />
-        ) : (
-          data!.map((e: any, i: number) => (
-            <View key={e.id} style={[styles.row, i === data!.length - 1 && { borderBottomWidth: 0 }]}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.title}>
-                  {e.hours}h · {fmtDate(e.date)}
-                </Text>
-                {e.description ? (
-                  <Text style={styles.sub} numberOfLines={2}>
-                    {e.description}
-                  </Text>
-                ) : null}
-              </View>
-              <StatusPill status={e.status} />
-            </View>
-          ))
-        )}
-      </Card>
+      <Sheet
+        visible={open}
+        onClose={() => setOpen(false)}
+        title="Log extra hours"
+        subtitle="Goes to your manager for approval"
+        dismissable={!submitting}
+        footer={<Button title="Submit for approval" onPress={submit} loading={submitting} />}
+      >
+        <ErrorBanner message={submitError} onDismiss={() => setSubmitError(null)} />
+        <DateField
+          label="Date worked"
+          value={date}
+          onChange={(v) => {
+            setDate(v);
+            setErrors((p) => ({ ...p, date: undefined }));
+          }}
+          error={errors.date}
+          quick={[
+            { label: "Today", value: today },
+            { label: "Yesterday", value: addDaysISO(today, -1) },
+          ]}
+          required
+        />
+        <Field
+          label="Hours"
+          value={hours}
+          onChangeText={(t) => {
+            setHours(t);
+            setErrors((p) => ({ ...p, hours: undefined }));
+          }}
+          keyboardType="decimal-pad"
+          inputMode="decimal"
+          placeholder="e.g. 2.5"
+          error={errors.hours}
+          required
+        />
+        <Field
+          label="What did you work on?"
+          value={description}
+          onChangeText={setDescription}
+          multiline
+          autoCapitalize="sentences"
+          autoCorrect
+        />
+      </Sheet>
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  title: { fontSize: 14, fontWeight: "700", color: colors.ink },
-  sub: { fontSize: 12, color: colors.sub, marginTop: 2 },
-});

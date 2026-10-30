@@ -1,9 +1,13 @@
-import React, { useState } from "react";
-import { Text, StyleSheet } from "react-native";
+import React, { useRef, useState } from "react";
+import { StyleSheet, Text, View, type TextInput } from "react-native";
 import { useRouter } from "expo-router";
-import { apiFetch } from "@/lib/api";
-import { colors, spacing } from "@/lib/theme";
-import { Screen, Card, Button, Field, ErrorBanner, SuccessBanner } from "@/components/ui";
+import { apiFetch, describeError, fieldErrorMap } from "@/lib/api";
+import { colors, spacing, type } from "@/lib/theme";
+import { haptic } from "@/lib/device";
+import { Button, Card, ErrorBanner, Field, Screen } from "@/components/ui";
+import { toast } from "@/components/feedback";
+
+const MIN_LENGTH = 6;
 
 export default function ChangePasswordScreen() {
   const router = useRouter();
@@ -12,20 +16,25 @@ export default function ChangePasswordScreen() {
   const [confirm, setConfirm] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [fieldErrs, setFieldErrs] = useState<Record<string, string>>({});
+
+  const newRef = useRef<TextInput>(null);
+  const confirmRef = useRef<TextInput>(null);
 
   const submit = async () => {
+    if (saving) return;
     setError(null);
-    if (!currentPassword || !newPassword) {
+    setFieldErrs({});
+    if (!currentPassword || !newPassword || !confirm) {
       setError("Fill in all fields");
       return;
     }
-    if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters");
+    if (newPassword.length < MIN_LENGTH) {
+      setFieldErrs({ newPassword: `Use at least ${MIN_LENGTH} characters` });
       return;
     }
     if (newPassword !== confirm) {
-      setError("New passwords don't match");
+      setFieldErrs({ confirm: "New passwords don't match" });
       return;
     }
     setSaving(true);
@@ -34,33 +43,82 @@ export default function ChangePasswordScreen() {
         method: "POST",
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      setSuccessMsg("Password changed successfully");
       setCurrentPassword("");
       setNewPassword("");
       setConfirm("");
-      setTimeout(() => router.back(), 1200);
-    } catch (e: any) {
-      setError(e?.message || "Could not change password");
+      void haptic("success");
+      toast.show({ message: "Password changed", tone: "success" });
+      router.back();
+    } catch (e: unknown) {
+      void haptic("error");
+      setFieldErrs(fieldErrorMap(e));
+      setError(describeError(e, "Could not change password"));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Screen>
+    <Screen
+      footerInset
+      footer={
+        <View>
+          <Button title="Change password" variant="primary" onPress={submit} loading={saving} />
+          <ErrorBanner message={error} style={styles.error} />
+        </View>
+      }
+    >
       <Card>
-        <ErrorBanner message={error} />
-        <SuccessBanner message={successMsg} />
-        <Field label="Current password" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry />
-        <Field label="New password" value={newPassword} onChangeText={setNewPassword} secureTextEntry />
-        <Field label="Confirm new password" value={confirm} onChangeText={setConfirm} secureTextEntry />
-        <Button title="Change Password" onPress={submit} loading={saving} />
-        <Text style={styles.hint}>Use at least 6 characters. You'll stay signed in on this device.</Text>
+        <Field
+          label="Current password"
+          value={currentPassword}
+          onChangeText={setCurrentPassword}
+          secureTextEntry
+          revealToggle
+          textContentType="password"
+          autoComplete="current-password"
+          returnKeyType="next"
+          blurOnSubmit={false}
+          onSubmitEditing={() => newRef.current?.focus()}
+          error={fieldErrs.currentPassword || null}
+        />
+        <Field
+          ref={newRef}
+          label="New password"
+          value={newPassword}
+          onChangeText={setNewPassword}
+          secureTextEntry
+          revealToggle
+          textContentType="newPassword"
+          autoComplete="new-password"
+          returnKeyType="next"
+          blurOnSubmit={false}
+          onSubmitEditing={() => confirmRef.current?.focus()}
+          error={fieldErrs.newPassword || null}
+          hint={`At least ${MIN_LENGTH} characters`}
+        />
+        <Field
+          ref={confirmRef}
+          label="Confirm new password"
+          value={confirm}
+          onChangeText={setConfirm}
+          secureTextEntry
+          revealToggle
+          textContentType="newPassword"
+          autoComplete="new-password"
+          returnKeyType="go"
+          onSubmitEditing={() => {
+            void submit();
+          }}
+          error={fieldErrs.confirm || null}
+        />
       </Card>
+      <Text style={styles.hint}>You&apos;ll stay signed in on this device.</Text>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  hint: { fontSize: 12, color: colors.sub, textAlign: "center", marginTop: spacing.md },
+  error: { marginTop: spacing.md, marginBottom: 0 },
+  hint: { ...type.footnote, color: colors.sub, textAlign: "center", marginTop: spacing.md },
 });

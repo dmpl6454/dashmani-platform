@@ -1,11 +1,11 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { apiFetch, fmtDate } from "@/lib/api";
-import { colors, radius } from "@/lib/theme";
-import { Screen, Card, Chips, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
-import { BOOKING_STATUS, rupees } from "@/lib/campaigns";
+import { apiFetch, fmtMoney, fmtRange } from "@/lib/api";
+import { formatStatus } from "@/lib/theme";
+import { Screen, Chips, StatusPill, useApi } from "@/components/ui";
+import { ListItem } from "@/components/list";
+import { AsyncList } from "@/components/async";
+import { BOOKING_STATUS } from "@/lib/campaigns";
 
 // Campaign bookings — the internal portal's /campaigns queue (GET /admin/campaigns, Admin /
 // Super Admin only): self-serve client bookings to review, post and deliver.
@@ -44,59 +44,73 @@ const MATCH: Record<Filter, (s: string) => boolean> = {
   all: () => true,
 };
 
+/** Booking status → the shared status enum whose tone the pill should take. */
+const BOOKING_PILL: Record<string, string> = {
+  draft: "DRAFT",
+  awaiting_payment: "PENDING",
+  paid_pending_review: "PENDING",
+  changes_requested: "PENDING",
+  approved: "QUEUED",
+  publishing: "QUEUED",
+  completed: "DONE",
+  partially_published: "DONE",
+  rejected: "REJECTED",
+  refunded: "CANCELLED",
+  cancelled: "CANCELLED",
+  expired: "CANCELLED",
+};
+
+/** Paise → "₹1,23,456". */
+function money(paise: number | null | undefined): string {
+  return paise == null ? "—" : fmtMoney(paise / 100);
+}
+
 export default function AdminCampaigns() {
   const router = useRouter();
   const [filter, setFilter] = useState<Filter>("todo");
-  const { data, loading, refreshing, error, refresh } = useApi<Row[]>(() => apiFetch("/admin/campaigns"));
-  const rows = (data ?? []).filter((r) => MATCH[filter](r.status));
-  const counts = Object.fromEntries(FILTERS.map((f) => [f, (data ?? []).filter((r) => MATCH[f](r.status)).length])) as Record<Filter, number>;
+  const state = useApi<Row[]>(() => apiFetch<Row[]>("/admin/campaigns"));
+  const all = state.data ?? [];
+  const rows = all.filter((r) => MATCH[filter](r.status));
+  const counts: Partial<Record<Filter, number>> | undefined = state.data
+    ? Object.fromEntries(FILTERS.map((f) => [f, all.filter((r) => MATCH[f](r.status)).length]))
+    : undefined;
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <Chips options={FILTERS} value={filter} onChange={setFilter} labels={Object.fromEntries(FILTERS.map((f) => [f, `${FILTER_LABEL[f]} ${counts[f]}`])) as Record<Filter, string>} />
-      <ErrorBanner message={error} />
-      {loading && !data ? (
-        <Loading />
-      ) : (
-        <Card>
-          {rows.length === 0 ? (
-            <Empty icon="megaphone-outline" text={filter === "todo" ? "Nothing to review or post right now" : "No campaigns here"} />
-          ) : (
-            rows.map((r, i) => {
-              const st = BOOKING_STATUS[r.status] ?? { label: r.status, color: colors.sub };
-              return (
-                <Pressable key={r.id} onPress={() => router.push(`/admin-campaign/${r.id}`)}>
-                  <View style={[styles.row, i === rows.length - 1 && { borderBottomWidth: 0 }]}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.name} numberOfLines={1}>{r.name}</Text>
-                      <Text style={styles.sub} numberOfLines={1}>
-                        {r.client} · {r.itemCount} account{r.itemCount === 1 ? "" : "s"}
-                        {r.liveCount ? ` · ${r.liveCount} live` : ""}
-                      </Text>
-                      <Text style={styles.sub} numberOfLines={1}>
-                        {r.launchFrom ? `${fmtDate(r.launchFrom)} – ${fmtDate(r.launchTo)}` : "No dates"} · {rupees(r.totalPaise)}
-                        {r.paidAt ? " · paid online" : ""}
-                      </Text>
-                    </View>
-                    <View style={[styles.pill, { backgroundColor: st.color + "26" }]}>
-                      <Text style={[styles.pillText, { color: st.color }]}>{st.label}</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={15} color={colors.faint} />
-                  </View>
-                </Pressable>
-              );
-            })
-          )}
-        </Card>
-      )}
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncList<Row>
+        state={state}
+        items={rows}
+        grouped
+        header={
+          <Chips
+            options={FILTERS}
+            value={filter}
+            onChange={setFilter}
+            labels={FILTER_LABEL}
+            counts={counts}
+            accessibilityLabel="Filter campaigns"
+          />
+        }
+        keyExtractor={(r) => r.id}
+        empty={{
+          icon: "megaphone-outline",
+          title: filter === "todo" ? "Nothing to review or post right now" : "No campaigns here",
+        }}
+        renderItem={(r) => {
+          const label = BOOKING_STATUS[r.status]?.label ?? formatStatus(r.status);
+          const accounts = `${r.itemCount} account${r.itemCount === 1 ? "" : "s"}${r.liveCount ? ` · ${r.liveCount} live` : ""}`;
+          const when = r.launchFrom ? fmtRange(r.launchFrom, r.launchTo) : "No dates";
+          return (
+            <ListItem
+              title={r.name}
+              subtitle={`${r.client} · ${accounts}\n${when} · ${money(r.totalPaise)}${r.paidAt ? " · paid online" : ""}`}
+              trailing={<StatusPill status={BOOKING_PILL[r.status] ?? r.status} label={label} size="sm" />}
+              onPress={() => router.push(`/admin-campaign/${r.id}`)}
+              accessibilityLabel={`${r.name}, ${label}, ${r.client}, ${accounts}, ${when}, ${money(r.totalPaise)}`}
+            />
+          );
+        }}
+      />
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  row: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  name: { fontSize: 15, fontWeight: "600", color: colors.ink },
-  sub: { fontSize: 12, color: colors.sub, marginTop: 2 },
-  pill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.full, maxWidth: 130 },
-  pillText: { fontSize: 11, fontWeight: "700" },
-});

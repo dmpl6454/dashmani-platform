@@ -1,70 +1,103 @@
 import React from "react";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/lib/auth";
-import { Screen, Card, SectionTitle, Row } from "@/components/ui";
+import type { TintKey } from "@/lib/theme";
+import { Screen, type IoniconName } from "@/components/ui";
+import { LargeTitle, ListGroup, ListItem } from "@/components/list";
+
+/** "admin" rows call Admin / Super Admin-only APIs; "hr" rows work for HR Managers too. */
+type Need = "admin" | "hr";
+
+type ManageRow = { title: string; subtitle: string; icon: IoniconName; tint: TintKey; path: string; needs: Need };
+
+type ManageSection = { title: string; rows: ManageRow[] };
+
+const SECTIONS: ManageSection[] = [
+  {
+    title: "People",
+    rows: [
+      { title: "Employees", subtitle: "Directory, status & roles", icon: "people-outline", tint: "blue", path: "/admin-employees", needs: "hr" },
+      { title: "Teams", subtitle: "Org units & members", icon: "git-branch-outline", tint: "brand", path: "/admin-teams", needs: "hr" },
+      { title: "Attendance", subtitle: "Team attendance records", icon: "time-outline", tint: "orange", path: "/admin-attendance", needs: "hr" },
+      { title: "Salary Slips", subtitle: "Review & approve payslips", icon: "cash-outline", tint: "green", path: "/admin-salary-slips", needs: "hr" },
+    ],
+  },
+  {
+    title: "Work",
+    rows: [
+      { title: "Tasks", subtitle: "Assign & track tasks", icon: "checkbox-outline", tint: "orange", path: "/admin-tasks", needs: "hr" },
+      { title: "Social Accounts", subtitle: "Channels & assignments", icon: "at-outline", tint: "blue", path: "/admin-accounts", needs: "admin" },
+      { title: "Account Growth", subtitle: "Connected Meta channels: views, reach & revenue", icon: "trending-up-outline", tint: "green", path: "/admin-growth", needs: "admin" },
+      { title: "Leaderboard", subtitle: "Report performance ranking", icon: "trophy-outline", tint: "yellow", path: "/admin-leaderboard", needs: "admin" },
+      { title: "Holidays", subtitle: "The company holiday calendar", icon: "sunny-outline", tint: "orange", path: "/admin-holidays", needs: "hr" },
+      { title: "Workload", subtitle: "Accounts & open tasks per employee", icon: "pulse-outline", tint: "pink", path: "/admin-workload", needs: "admin" },
+      { title: "Analytics", subtitle: "Tasks, attendance, content & projects", icon: "bar-chart-outline", tint: "blue", path: "/admin-analytics", needs: "admin" },
+    ],
+  },
+  {
+    title: "Insights",
+    rows: [
+      { title: "Overview", subtitle: "Views, reach, revenue & trending across the network", icon: "speedometer-outline", tint: "orange", path: "/admin-overview", needs: "admin" },
+      { title: "Posting Watch", subtitle: "Assigned channels with no new post for 2h+", icon: "eye-outline", tint: "pink", path: "/admin-posting-watch", needs: "admin" },
+      { title: "Top Links", subtitle: "Best performing posts per platform", icon: "flame-outline", tint: "orange", path: "/admin-top-links", needs: "admin" },
+      { title: "Link Search", subtitle: "Find posts by celebrity, brand or topic", icon: "search-outline", tint: "gray", path: "/admin-link-search", needs: "admin" },
+      { title: "AI Assistant", subtitle: "Draft, summarize and plan with Claude", icon: "sparkles-outline", tint: "brand", path: "/admin-ai", needs: "admin" },
+    ],
+  },
+  {
+    title: "Clients & Delivery",
+    rows: [
+      { title: "Campaign Bookings", subtitle: "Review, approve & record client campaign posts", icon: "megaphone-outline", tint: "brand", path: "/admin-campaigns", needs: "admin" },
+      { title: "Clients", subtitle: "Client directory", icon: "business-outline", tint: "gray", path: "/admin-clients", needs: "admin" },
+      { title: "Projects", subtitle: "Active & past projects", icon: "folder-outline", tint: "teal", path: "/admin-projects", needs: "admin" },
+      { title: "Content", subtitle: "Content posts & approvals", icon: "images-outline", tint: "pink", path: "/admin-content", needs: "admin" },
+    ],
+  },
+  {
+    title: "Hiring & Comms",
+    rows: [
+      { title: "Jobs & Applications", subtitle: "Openings & candidates", icon: "briefcase-outline", tint: "gray", path: "/admin-jobs", needs: "hr" },
+      { title: "Announcements", subtitle: "Broadcast to the team", icon: "megaphone-outline", tint: "orange", path: "/admin-announcements", needs: "hr" },
+      { title: "Internships", subtitle: "Internship applications", icon: "school-outline", tint: "blue", path: "/admin-internships", needs: "hr" },
+      { title: "Devices", subtitle: "Assigned device inventory", icon: "laptop-outline", tint: "gray", path: "/admin-devices", needs: "hr" },
+    ],
+  },
+  {
+    title: "Feedback",
+    rows: [
+      { title: "Complaints", subtitle: "Respond to employee concerns", icon: "alert-circle-outline", tint: "orange", path: "/admin-complaints", needs: "hr" },
+      { title: "Bug Reports", subtitle: "Portal issues from the team", icon: "bug-outline", tint: "red", path: "/admin-bug-reports", needs: "hr" },
+    ],
+  },
+];
 
 export default function AdminManage() {
   const router = useRouter();
-  const { user } = useAuth();
-  // Posting watch and campaign bookings are Admin / Super Admin only on the API (an HR Manager
-  // signs in to this portal too and would get 403s).
-  const isAdmin = (user?.roles ?? []).some((r) => r === "Admin" || r === "Super Admin");
+  const { caps } = useAuth();
+  // HR-only staff never see rows whose APIs answer 403 for them.
+  const adminView = caps.isAdmin || !caps.isHr;
 
   return (
-    <Screen>
-      <SectionTitle>People</SectionTitle>
-      <Card>
-        <Row icon="people-outline" iconColor="#0A84FF" title="Employees" subtitle="Directory, status & roles" onPress={() => router.push("/admin-employees")} />
-        <Row icon="git-branch-outline" iconColor="#F0568C" title="Teams" subtitle="Org units & members" onPress={() => router.push("/admin-teams")} />
-        <Row icon="time-outline" iconColor="#FF9F0A" title="Attendance" subtitle="Team attendance records" onPress={() => router.push("/admin-attendance")} />
-        <Row icon="cash-outline" iconColor="#30D158" title="Salary Slips" subtitle="Review & approve payslips" onPress={() => router.push("/admin-salary-slips")} />
-      </Card>
-
-      <SectionTitle>Work</SectionTitle>
-      <Card>
-        <Row icon="checkbox-outline" iconColor="#FF9F0A" title="Tasks" subtitle="Assign & track tasks" onPress={() => router.push("/admin-tasks")} />
-        <Row icon="at-outline" iconColor="#0A84FF" title="Social Accounts" subtitle="Channels & assignments" onPress={() => router.push("/admin-accounts")} />
-        <Row icon="trending-up-outline" iconColor="#30D158" title="Account Growth" subtitle="Connected Meta channels — views, reach & revenue" onPress={() => router.push("/admin-growth")} />
-        <Row icon="trophy-outline" iconColor="#FFD60A" title="Leaderboard" subtitle="Report performance ranking" onPress={() => router.push("/admin-leaderboard")} />
-        <Row icon="sunny-outline" iconColor="#FF9F0A" title="Holidays" subtitle="Manage the holiday calendar" onPress={() => router.push("/admin-holidays")} />
-        <Row icon="pulse-outline" iconColor="#FF375F" title="Workload" subtitle="Accounts & open tasks per employee" onPress={() => router.push("/admin-workload")} />
-        <Row icon="bar-chart-outline" iconColor="#0A84FF" title="Analytics" subtitle="Tasks, attendance, content & projects" onPress={() => router.push("/admin-analytics")} />
-      </Card>
-
-      <SectionTitle>Insights</SectionTitle>
-      <Card>
-        <Row icon="speedometer-outline" iconColor="#F9A64A" title="Overview" subtitle="Views, reach, revenue & trending — whole network" onPress={() => router.push("/admin-overview")} />
-        {isAdmin ? (
-          <Row icon="eye-outline" iconColor="#FF375F" title="Posting Watch" subtitle="Assigned channels with no new post for 2h+" onPress={() => router.push("/admin-posting-watch")} />
-        ) : null}
-        <Row icon="flame-outline" iconColor="#FF9F0A" title="Top Links" subtitle="Best performing posts per platform" onPress={() => router.push("/admin-top-links")} />
-        <Row icon="search-outline" iconColor="#8E8E93" title="Link Search" subtitle="Find posts by celebrity, brand or topic" onPress={() => router.push("/admin-link-search")} />
-        <Row icon="sparkles-outline" iconColor="#F0568C" title="AI Assistant" subtitle="Draft, summarize, plan — powered by Claude" onPress={() => router.push("/admin-ai")} />
-      </Card>
-
-      <SectionTitle>Clients & Delivery</SectionTitle>
-      <Card>
-        {isAdmin ? (
-          <Row icon="megaphone-outline" iconColor="#F0568C" title="Campaign Bookings" subtitle="Review, approve & record client campaign posts" onPress={() => router.push("/admin-campaigns")} />
-        ) : null}
-        <Row icon="business-outline" iconColor="#8E8E93" title="Clients" subtitle="Client directory" onPress={() => router.push("/admin-clients")} />
-        <Row icon="folder-outline" iconColor="#64D2FF" title="Projects" subtitle="Active & past projects" onPress={() => router.push("/admin-projects")} />
-        <Row icon="images-outline" iconColor="#FF375F" title="Content" subtitle="Content posts & approvals" onPress={() => router.push("/admin-content")} />
-      </Card>
-
-      <SectionTitle>Hiring & Comms</SectionTitle>
-      <Card>
-        <Row icon="briefcase-outline" iconColor="#8E8E93" title="Jobs & Applications" subtitle="Openings & candidates" onPress={() => router.push("/admin-jobs")} />
-        <Row icon="megaphone-outline" iconColor="#FF9F0A" title="Announcements" subtitle="Broadcast to the team" onPress={() => router.push("/admin-announcements")} />
-        <Row icon="school-outline" iconColor="#0A84FF" title="Internships" subtitle="Internship applications" onPress={() => router.push("/admin-internships")} />
-        <Row icon="laptop-outline" iconColor="#8E8E93" title="Devices" subtitle="Assigned device inventory" onPress={() => router.push("/admin-devices")} />
-      </Card>
-
-      <SectionTitle>Feedback</SectionTitle>
-      <Card>
-        <Row icon="alert-circle-outline" iconColor="#FF9F0A" title="Complaints" subtitle="Respond to employee concerns" onPress={() => router.push("/admin-complaints")} />
-        <Row icon="bug-outline" iconColor="#FF453A" title="Bug Reports" subtitle="Portal issues from the team" onPress={() => router.push("/admin-bug-reports")} />
-      </Card>
+    <Screen header="none">
+      <LargeTitle title="Manage" subtitle={adminView ? undefined : "HR tools"} />
+      {SECTIONS.map((section) => {
+        const rows = section.rows.filter((r) => r.needs === "hr" || adminView);
+        if (rows.length === 0) return null;
+        return (
+          <ListGroup key={section.title} title={section.title}>
+            {rows.map((r) => (
+              <ListItem
+                key={r.path}
+                icon={r.icon}
+                tint={r.tint}
+                title={r.title}
+                subtitle={r.subtitle}
+                onPress={() => router.push(r.path)}
+              />
+            ))}
+          </ListGroup>
+        );
+      })}
     </Screen>
   );
 }

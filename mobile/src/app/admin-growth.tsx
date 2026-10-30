@@ -1,240 +1,294 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Image } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { apiFetch, fmtCompact, fmtDate, fmtDateTime } from "@/lib/api";
-import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Chips, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
+import { StyleSheet, Text, View } from "react-native";
+import { apiFetch, fmtCompact, fmtDateTime, fmtDay, fmtUsdCents } from "@/lib/api";
+import { colors, sizes, spacing, type } from "@/lib/theme";
+import { Avatar, Chips, Empty, Field, IconButton, Screen, useApi, useDebounce } from "@/components/ui";
+import { ListGroup, ListItem, StatGrid, StatTile } from "@/components/list";
+import { AsyncBlock } from "@/components/async";
+import { SkeletonList, SkeletonStatRow } from "@/components/skeleton";
 
 // The ONLY windows Meta can answer (FB: day/week/days_28; IG caps spans at 30d).
 // "today" is Instagram-only and deliberately partial — FB publishes only
 // completed days, so its cells show dashes under Today.
-const WINDOWS = [
-  { key: "day", label: "Yesterday" },
-  { key: "week", label: "7d" },
-  { key: "days_28", label: "28d" },
-  { key: "today", label: "Today (so far)" },
-] as const;
-type WinKey = (typeof WINDOWS)[number]["key"];
+const WINDOW_KEYS = ["day", "week", "days_28", "today"] as const;
+type WinKey = (typeof WINDOW_KEYS)[number];
 
-const PLATFORMS = ["all", "facebook", "instagram"] as const;
-type Platform = (typeof PLATFORMS)[number];
+const WINDOW_LABELS: Record<WinKey, string> = {
+  day: "Yesterday",
+  week: "7d",
+  days_28: "28d",
+  today: "Today",
+};
 
-/** Meta earnings are USD. null ≠ 0 — IG has no earnings metric at all. */
-function fmtUsd(cents: number | null | undefined): string {
-  if (cents == null) return "—";
-  return "$" + (cents / 100).toLocaleString("en-US", { maximumFractionDigits: 0 });
-}
+/** Longer wording for the stat tiles' hint line. */
+const WINDOW_HINTS: Record<WinKey, string> = {
+  day: "Yesterday",
+  week: "Last 7 days",
+  days_28: "Last 28 days",
+  today: "Today so far",
+};
+
+const PLATFORM_FILTERS = ["all", "facebook", "instagram"] as const;
+type PlatformFilter = (typeof PLATFORM_FILTERS)[number];
+
+const PLATFORM_LABELS: Record<PlatformFilter, string> = {
+  all: "All",
+  facebook: "Facebook",
+  instagram: "Instagram",
+};
+
+type Channel = {
+  id: string;
+  name: string;
+  username?: string | null;
+  platform?: string | null;
+  pictureUrl?: string | null;
+  metricsError?: string | boolean | null;
+  followers?: number | null;
+  followerDelta?: number | null;
+  followerDeltaDays?: number | null;
+  earningsCents?: number | null;
+  views28d?: number | null;
+  engagements28d?: number | null;
+};
+
+type Totals = {
+  views?: number | null;
+  engagements?: number | null;
+  reach?: number | null;
+  followers?: number | null;
+  earningsCents?: number | null;
+};
+
+type GrowthResponse = {
+  items?: Channel[] | null;
+  totals?: Totals | null;
+  channelCount?: number | null;
+  dataThroughDay?: string | null;
+  dayStarts?: { instagram?: string | null } | null;
+  erroredChannels?: number | null;
+};
 
 /** null means "Meta does not publish this" — render a dash, never 0. */
 function dashCompact(n: number | null | undefined): string {
   return n == null ? "—" : fmtCompact(n);
 }
 
-export default function AdminGrowth() {
-  const [win, setWin] = useState<WinKey>("days_28");
-  const [platform, setPlatform] = useState<Platform>("all");
-  const [search, setSearch] = useState("");
+function fmtDelta(c: Channel): string | null {
+  const d = c.followerDelta;
+  if (d == null) return null;
+  const sign = d >= 0 ? "+" : "−";
+  const days = c.followerDeltaDays ? ` in ${c.followerDeltaDays}d` : "";
+  return `${sign}${fmtCompact(Math.abs(d))}${days}`;
+}
 
-  const { data, loading, refreshing, error, refresh } = useApi<any>(() => {
-    const qs = new URLSearchParams();
-    qs.set("window", win);
-    if (platform !== "all") qs.set("platform", platform);
-    if (search.trim()) qs.set("q", search.trim());
-    return apiFetch(`/admin/meta/channels?${qs.toString()}`);
-  }, [win, platform, search]);
-
-  const items: any[] = data?.items ?? [];
-  const totals = data?.totals;
-  const winLabel = WINDOWS.find((w) => w.key === win)?.label ?? "";
+function channelItem(c: Channel): React.ReactElement {
+  const isInstagram = c.platform === "instagram";
+  const line1 = [
+    c.metricsError ? "⚠ Not refreshed" : null,
+    c.username ? `@${c.username}` : null,
+    isInstagram ? "Instagram" : "Facebook",
+  ]
+    .filter((s): s is string => !!s)
+    .join(" · ");
+  const line2 = [
+    `${dashCompact(c.followers)} followers`,
+    fmtDelta(c),
+    c.earningsCents != null && c.earningsCents > 0 ? `${fmtUsdCents(c.earningsCents)} earned` : null,
+  ]
+    .filter((s): s is string => !!s)
+    .join(" · ");
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <Chips
-        options={WINDOWS.map((w) => w.key) as unknown as readonly WinKey[]}
-        value={win}
-        onChange={setWin}
-        labels={Object.fromEntries(WINDOWS.map((w) => [w.key, w.label])) as any}
-      />
-      <Chips
-        options={PLATFORMS}
-        value={platform}
-        onChange={setPlatform}
-        labels={{ all: "All", facebook: "Facebook", instagram: "Instagram" }}
-      />
-      <TextInput
-        value={search}
-        onChangeText={setSearch}
-        placeholder="Search channels…"
-        placeholderTextColor={colors.faint}
-        autoCapitalize="none"
-        style={styles.search}
-      />
-      <ErrorBanner message={error} />
-
-      {loading ? (
-        <Loading />
-      ) : (
-        <>
-          {/* Summary tiles — followers is a STOCK (now), the rest are the period's flows */}
-          {totals ? (
-            <>
-              <View style={styles.tileRow}>
-                <View style={styles.tile}>
-                  <Text style={styles.tileValue}>{dashCompact(totals.views)}</Text>
-                  <Text style={styles.tileLabel}>Views · {winLabel}</Text>
-                </View>
-                <View style={styles.tile}>
-                  <Text style={styles.tileValue}>{dashCompact(totals.engagements)}</Text>
-                  <Text style={styles.tileLabel}>Engage · {winLabel}</Text>
-                </View>
-                <View style={styles.tile}>
-                  <Text style={styles.tileValue}>{dashCompact(totals.reach)}</Text>
-                  <Text style={styles.tileLabel}>Reach · {winLabel}</Text>
-                </View>
-              </View>
-              <View style={styles.tileRow}>
-                <View style={styles.tile}>
-                  <Text style={styles.tileValue}>{dashCompact(totals.followers)}</Text>
-                  <Text style={styles.tileLabel}>Followers (now)</Text>
-                </View>
-                <View style={styles.tile}>
-                  <Text style={[styles.tileValue, { color: colors.green }]}>{fmtUsd(totals.earningsCents)}</Text>
-                  <Text style={styles.tileLabel}>Revenue · {winLabel}</Text>
-                </View>
-              </View>
-            </>
-          ) : null}
-
-          <SectionTitle>
-            Connected Channels ({data?.channelCount ?? items.length})
-          </SectionTitle>
-          {/* The last CLOSED calendar day the figures cover (dataThrough is the instant that day
-              closed — rendering it as a time read a day late). Today's figures are partial and
-              start at each platform's own midnight. */}
-          {win === "today" && data?.dayStarts ? (
-            <Text style={styles.dataThrough}>
-              So far today · Instagram since {fmtDateTime(data.dayStarts.instagram)} · Facebook publishes no figure until its day closes
-            </Text>
-          ) : data?.dataThroughDay ? (
-            <Text style={styles.dataThrough}>Figures through {fmtDate(data.dataThroughDay)}</Text>
-          ) : null}
-          {data?.erroredChannels ? (
-            <Text style={styles.dataThrough}>
-              {data.erroredChannels} channel(s) couldn't be refreshed (marked ⚠) — their last good figures are still counted.
-            </Text>
-          ) : null}
-
-          <Card>
-            {items.length === 0 ? (
-              <Empty icon="trending-up-outline" text="No connected channels match" />
-            ) : (
-              items.map((c: any, i: number) => (
-                <View key={c.id} style={[styles.row, i === items.length - 1 && { borderBottomWidth: 0 }]}>
-                  {c.pictureUrl ? (
-                    <Image source={{ uri: c.pictureUrl }} style={styles.avatar} />
-                  ) : (
-                    <View style={[styles.avatar, styles.avatarFallback]}>
-                      <Ionicons
-                        name={c.platform === "instagram" ? "logo-instagram" : "logo-facebook"}
-                        size={18}
-                        color={colors.purple}
-                      />
-                    </View>
-                  )}
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      <Text style={styles.name} numberOfLines={1}>
-                        {c.name}
-                      </Text>
-                      {c.metricsError ? (
-                        <Ionicons name="warning-outline" size={13} color={colors.amber} />
-                      ) : null}
-                    </View>
-                    <Text style={styles.sub} numberOfLines={1}>
-                      {c.username ? `@${c.username} · ` : ""}
-                      {c.platform === "instagram" ? "Instagram" : "Facebook"}
-                    </Text>
-                    <View style={styles.metaRow}>
-                      <Text style={styles.followers}>{dashCompact(c.followers)} followers</Text>
-                      {c.followerDelta != null ? (
-                        <Text
-                          style={[
-                            styles.delta,
-                            { color: c.followerDelta >= 0 ? colors.green : colors.red },
-                          ]}
-                        >
-                          {c.followerDelta >= 0 ? "+" : ""}
-                          {fmtCompact(c.followerDelta)}
-                          {c.followerDeltaDays ? ` · ${c.followerDeltaDays}d` : ""}
-                        </Text>
-                      ) : null}
-                      {c.earningsCents != null && c.earningsCents > 0 ? (
-                        <Text style={[styles.delta, { color: colors.green }]}>{fmtUsd(c.earningsCents)}</Text>
-                      ) : null}
-                    </View>
-                  </View>
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Text style={styles.views}>{dashCompact(c.views28d)}</Text>
-                    <Text style={styles.viewsLabel}>views</Text>
-                    <Text style={styles.eng}>{dashCompact(c.engagements28d)}</Text>
-                    <Text style={styles.viewsLabel}>engage</Text>
-                  </View>
-                </View>
-              ))
-            )}
-          </Card>
-          <Text style={styles.note}>
-            A dash means Meta doesn't publish that metric for the channel — not zero. "Today (so far)" is
-            Instagram-only; Facebook publishes completed days only.
+    <ListItem
+      key={c.id}
+      title={c.name}
+      subtitle={`${line1}\n${line2}`}
+      icon={isInstagram ? "logo-instagram" : "logo-facebook"}
+      tint={isInstagram ? "pink" : "blue"}
+      leading={c.pictureUrl ? <Avatar name={c.name} uri={c.pictureUrl} size={sizes.iconTile + 4} /> : undefined}
+      trailing={
+        <View
+          style={styles.metrics}
+          accessible
+          accessibilityLabel={`${dashCompact(c.views28d)} views, ${dashCompact(c.engagements28d)} engagements`}
+        >
+          <Text maxFontSizeMultiplier={1.3} style={styles.metricValue}>
+            {dashCompact(c.views28d)}
           </Text>
-        </>
-      )}
+          <Text maxFontSizeMultiplier={1.3} style={styles.metricLabel}>
+            views
+          </Text>
+          <Text maxFontSizeMultiplier={1.3} style={styles.metricValueSmall}>
+            {dashCompact(c.engagements28d)}
+          </Text>
+          <Text maxFontSizeMultiplier={1.3} style={styles.metricLabel}>
+            engage
+          </Text>
+        </View>
+      }
+    />
+  );
+}
+
+export default function AdminGrowth() {
+  const [win, setWin] = useState<WinKey>("days_28");
+  const [platform, setPlatform] = useState<PlatformFilter>("all");
+  const [search, setSearch] = useState("");
+  const query = useDebounce(search.trim(), 350);
+
+  const state = useApi<GrowthResponse>(
+    () => {
+      const qs = new URLSearchParams();
+      qs.set("window", win);
+      if (platform !== "all") qs.set("platform", platform);
+      if (query) qs.set("q", query);
+      return apiFetch<GrowthResponse>(`/admin/meta/channels?${qs.toString()}`);
+    },
+    [win, platform, query],
+    { keepData: true },
+  );
+
+  const hint = WINDOW_HINTS[win];
+  const filtered = query !== "" || platform !== "all";
+  const clearFilters = () => {
+    setSearch("");
+    setPlatform("all");
+  };
+
+  return (
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <View style={styles.controls}>
+        <Chips
+          options={WINDOW_KEYS}
+          value={win}
+          onChange={setWin}
+          labels={WINDOW_LABELS}
+          accessibilityLabel="Time window"
+        />
+        <Chips
+          options={PLATFORM_FILTERS}
+          value={platform}
+          onChange={setPlatform}
+          labels={PLATFORM_LABELS}
+          accessibilityLabel="Platform"
+        />
+        <Field
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search channels"
+          accessibilityLabel="Search channels"
+          leading="search-outline"
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          trailing={
+            search ? (
+              <IconButton
+                icon="close-circle"
+                label="Clear search"
+                onPress={() => setSearch("")}
+                glyph={18}
+                tint={colors.faint}
+              />
+            ) : undefined
+          }
+        />
+      </View>
+
+      <AsyncBlock
+        state={state}
+        skeleton={
+          <>
+            <SkeletonStatRow count={3} />
+            <SkeletonList rows={5} tile />
+          </>
+        }
+      >
+        {(data) => {
+          const items: Channel[] = Array.isArray(data.items) ? data.items : [];
+          const totals = data.totals;
+          const count = data.channelCount ?? items.length;
+          return (
+            <View style={state.fetching && !state.refreshing ? styles.stale : null}>
+              {/* Summary tiles — followers is a STOCK (now), the rest are the period's flows */}
+              {totals ? (
+                <>
+                  <StatGrid columns={3}>
+                    <StatTile compact label="Views" value={dashCompact(totals.views)} hint={hint} />
+                    <StatTile compact label="Engage" value={dashCompact(totals.engagements)} hint={hint} />
+                    <StatTile compact label="Reach" value={dashCompact(totals.reach)} hint={hint} />
+                  </StatGrid>
+                  <StatGrid columns={2} style={styles.gridGap}>
+                    <StatTile label="Followers" value={dashCompact(totals.followers)} hint="Now" />
+                    <StatTile
+                      label="Revenue"
+                      value={fmtUsdCents(totals.earningsCents)}
+                      valueColor={colors.greenText}
+                      tone="success"
+                      hint={hint}
+                    />
+                  </StatGrid>
+                </>
+              ) : null}
+
+              {/* The last CLOSED calendar day the figures cover (dataThrough is the instant that day
+                  closed — rendering it as a time read a day late). Today's figures are partial and
+                  start at each platform's own midnight. */}
+              {win === "today" && data.dayStarts ? (
+                <Text maxFontSizeMultiplier={1.6} style={styles.note}>
+                  So far today · Instagram since {fmtDateTime(data.dayStarts.instagram)} · Facebook publishes no
+                  figure until its day closes
+                </Text>
+              ) : data.dataThroughDay ? (
+                <Text maxFontSizeMultiplier={1.6} style={styles.note}>
+                  Figures through {fmtDay(data.dataThroughDay, { year: true })}
+                </Text>
+              ) : null}
+              {data.erroredChannels ? (
+                <Text maxFontSizeMultiplier={1.6} style={[styles.note, styles.warning]}>
+                  {data.erroredChannels} channel(s) couldn&apos;t be refreshed (marked ⚠) — their last good figures
+                  are still counted.
+                </Text>
+              ) : null}
+
+              {items.length === 0 ? (
+                filtered ? (
+                  <Empty
+                    icon="search-outline"
+                    title="No matches"
+                    text="No connected channels match this search or filter."
+                    action={{ label: "Show all", onPress: clearFilters }}
+                  />
+                ) : (
+                  <Empty icon="trending-up-outline" title="No connected channels" text="Connect a Facebook page or Instagram account on the web portal." />
+                )
+              ) : (
+                <ListGroup
+                  title={`Connected channels · ${count}`}
+                  footer={
+                    "A dash means Meta doesn't publish that metric for the channel — not zero. \"Today\" is Instagram-only; Facebook publishes completed days only."
+                  }
+                >
+                  {items.map(channelItem)}
+                </ListGroup>
+              )}
+            </View>
+          );
+        }}
+      </AsyncBlock>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  search: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.cardHigh,
-    paddingHorizontal: 12,
-    height: 44,
-    fontSize: 15,
-    color: colors.ink,
-    marginBottom: spacing.md,
-  },
-  tileRow: { flexDirection: "row", gap: 8, marginBottom: 8 },
-  tile: {
-    flex: 1,
-    backgroundColor: colors.cardHigh,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    alignItems: "center",
-  },
-  tileValue: { fontSize: 18, fontWeight: "700", color: colors.ink },
-  tileLabel: { fontSize: 10, color: colors.sub, marginTop: 2, textAlign: "center" },
-  dataThrough: { fontSize: 11, color: colors.faint, marginBottom: spacing.sm },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 11,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  avatar: { width: 40, height: 40, borderRadius: radius.full },
-  avatarFallback: { backgroundColor: colors.purpleSoft, alignItems: "center", justifyContent: "center" },
-  name: { fontSize: 14, fontWeight: "700", color: colors.ink, flexShrink: 1 },
-  sub: { fontSize: 11, color: colors.sub, marginTop: 1 },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3, flexWrap: "wrap" },
-  followers: { fontSize: 11, fontWeight: "600", color: colors.ink },
-  delta: { fontSize: 11, fontWeight: "700" },
-  views: { fontSize: 14, fontWeight: "700", color: colors.purple },
-  eng: { fontSize: 12, fontWeight: "700", color: colors.ink, marginTop: 2 },
-  viewsLabel: { fontSize: 9, color: colors.sub },
-  note: { fontSize: 11, color: colors.faint, marginTop: 4, lineHeight: 16 },
+  controls: { gap: spacing.sm, marginBottom: spacing.md },
+  gridGap: { marginTop: spacing.sm },
+  stale: { opacity: 0.6 },
+  note: { ...type.footnote, color: colors.sub, marginTop: spacing.md },
+  warning: { color: colors.warningText },
+  metrics: { alignItems: "flex-end", marginLeft: spacing.sm },
+  metricValue: { ...type.subhead, ...type.numeric, fontWeight: "700", color: colors.purpleText },
+  metricValueSmall: { ...type.caption, ...type.numeric, fontWeight: "700", color: colors.ink, marginTop: 2 },
+  metricLabel: { ...type.caption2, color: colors.sub },
 });

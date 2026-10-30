@@ -1,245 +1,468 @@
-import React from "react";
-import { View, Text, StyleSheet, Pressable, Image, ImageBackground } from "react-native";
+import React, { useMemo } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/lib/auth";
-import { apiFetch, API_BASE, fmtDate, todayIST } from "@/lib/api";
-import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Stat, SeeAll, Empty, useApi } from "@/components/ui";
+import { apiFetch, errorMessage, fmtDay, fmtTime, istDateOf } from "@/lib/api";
+import { colors, spacing, toneColors, type } from "@/lib/theme";
+import type { TintKey } from "@/lib/theme";
+import { tasksCache, useBadges, useDayChange, useTaskList, type Task } from "@/lib/hooks/shared";
+import {
+  Avatar,
+  Button,
+  Card,
+  IconButton,
+  LoadFailed,
+  Screen,
+  SectionTitle,
+  SeeAll,
+  useApi,
+  useInvalidation,
+} from "@/components/ui";
+import { DateTile, LargeTitle, ListGroup, ListItem, StatGrid, StatTile } from "@/components/list";
+import { SkeletonCard, SkeletonList, SkeletonStatRow } from "@/components/skeleton";
 
-const HERO = require("../../../assets/visuals/hero-employee.jpg");
-
+// ---------- API shapes ----------
 type Attendance =
   | { isEmployee: false }
   | { totalWorkdays: number; present: number; late: number; halfDay: number; absent: number; rate: number };
 
-type Dash = {
-  attendance: Attendance | null;
-  leaveBalance: any;
-  holidays: any[];
-  unread: number;
-  todayReport: any;
+type LeaveBucket = { total: number; used: number; balance: number };
+type LeaveBalance = Partial<Record<"casual" | "sick" | "earned", LeaveBucket>>;
+
+type Holiday = { id: string; name: string; date: string };
+
+type TodayLink = { url?: string | null; isScheduled?: boolean | null };
+type TodayReport = { submittedAt?: string | null; links?: TodayLink[] | null };
+/** Wrapped so a loaded "no report today" (API null) is never confused with "not loaded". */
+type TodayState = { report: TodayReport | null };
+
+type Section<T> = { status: "ok"; value: T } | { status: "failed"; error: string };
+
+type Rest = {
+  attendance: Section<Attendance>;
+  leave: Section<LeaveBalance>;
+  holidays: Section<Holiday[]>;
+  tasks: Section<Task[]>;
 };
 
-async function loadDashboard(): Promise<Dash> {
-  const [attendance, leaveBalance, holidays, count, todayReport] = await Promise.allSettled([
+function settle<T>(r: PromiseSettledResult<T>): Section<T> {
+  return r.status === "fulfilled"
+    ? { status: "ok", value: r.value }
+    : { status: "failed", error: errorMessage(r.reason, "Couldn't load this") };
+}
+
+async function loadToday(): Promise<TodayState> {
+  const report = await apiFetch<TodayReport | null>("/hr/reports/today");
+  return { report: report ?? null };
+}
+
+/** Everything on Home except today's report. Never rejects: each section carries its own status. */
+async function loadRest(): Promise<Rest> {
+  const [attendance, leave, holidays, tasks] = await Promise.allSettled([
     apiFetch<Attendance>("/hr/attendance"),
-    apiFetch<any>("/hr/leave-balance"),
-    apiFetch<any[]>("/hr/holidays"),
-    apiFetch<{ count: number }>("/hr/notifications/count"),
-    apiFetch<any>("/hr/reports/today"),
+    apiFetch<LeaveBalance>("/hr/leave-balance"),
+    apiFetch<Holiday[]>("/hr/holidays"),
+    apiFetch<Task[]>("/hr/tasks"),
   ]);
+  if (tasks.status === "fulfilled") tasksCache.setList(Array.isArray(tasks.value) ? tasks.value : []);
+  const hol = settle(holidays);
   return {
-    attendance: attendance.status === "fulfilled" ? attendance.value : null,
-    leaveBalance: leaveBalance.status === "fulfilled" ? leaveBalance.value : null,
-    holidays: holidays.status === "fulfilled" ? holidays.value ?? [] : [],
-    unread: count.status === "fulfilled" ? count.value?.count ?? 0 : 0,
-    todayReport: todayReport.status === "fulfilled" ? todayReport.value : null,
+    attendance: settle(attendance),
+    leave: settle(leave),
+    holidays: hol.status === "ok" ? { status: "ok", value: Array.isArray(hol.value) ? hol.value : [] } : hol,
+    tasks: settle(tasks),
   };
 }
+
+// ---------- helpers ----------
+function istGreeting(): string {
+  const hour = Math.floor((Date.now() / 3600000 + 5.5) % 24);
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function dayNumber(ymd: string): number {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return Date.UTC(y, m - 1, d) / 86400000;
+}
+
+function untilLabel(day: string, today: string): string {
+  const n = Math.round(dayNumber(day) - dayNumber(today));
+  if (n <= 0) return "Today";
+  if (n === 1) return "Tomorrow";
+  return `In ${n} days`;
+}
+
+function priorityTint(priority: string | null | undefined): TintKey {
+  switch ((priority ?? "").toUpperCase()) {
+    case "CRITICAL":
+    case "HIGH":
+      return "red";
+    case "MEDIUM":
+      return "orange";
+    case "LOW":
+      return "blue";
+    default:
+      return "gray";
+  }
+}
+
+function accountLabel(t: Task): string {
+  if (t.account?.displayName) return t.account.displayName;
+  if (t.account?.handle) return `@${t.account.handle}`;
+  return "";
+}
+
+type DueTask = { task: Task; day: string; overdue: boolean };
 
 export default function HomeScreen() {
   const { user } = useAuth();
   const router = useRouter();
-  const { data, refreshing, refresh } = useApi(loadDashboard);
+  const { unread } = useBadges();
 
-  const att = data?.attendance;
-  const isEmployee = att && "rate" in att;
-  const upcoming = (data?.holidays ?? [])
-    .filter((h) => String(h.date).slice(0, 10) >= todayIST())
-    .slice(0, 3);
-  const linksToday = data?.todayReport?.links?.filter((l: any) => !l.isScheduled && l.url)?.length ?? 0;
+  // The ONLY focus / foreground refetch on Home (one request).
+  const todayQ = useApi<TodayState>(loadToday, [], {
+    refetchOnFocus: true,
+    refetchOnForeground: true,
+    staleMs: 30000,
+    keepData: true,
+  });
+  // Attendance, leave, holidays, tasks: pull-to-refresh, invalidation and day change only.
+  const restQ = useApi<Rest>(loadRest, [], { keepData: true });
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  useInvalidation("report", () => {
+    void todayQ.reload();
+  });
+  useInvalidation("leave", () => {
+    void restQ.reload();
+  });
+  const today = useDayChange(() => {
+    void todayQ.reload();
+    void restQ.reload();
+  });
 
-  const avatarUrl = user?.profileImageUrl
-    ? user.profileImageUrl.startsWith("http")
-      ? user.profileImageUrl
-      : `${API_BASE}${user.profileImageUrl}`
-    : null;
+  const refreshAll = async () => {
+    await Promise.all([todayQ.refresh(), restQ.refresh()]);
+  };
 
-  return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      {/* Header — Seedance hero */}
-      <ImageBackground source={HERO} style={styles.hero} imageStyle={styles.heroImg}>
-        <LinearGradient
-          colors={["rgba(10,9,19,0.10)", "rgba(10,9,19,0.55)", "rgba(10,9,19,0.92)"]}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.header}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1 }}>
-          {avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-          ) : (
-            <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={styles.avatarLetter}>{(user?.name || "?").charAt(0).toUpperCase()}</Text>
+  const rest = restQ.data;
+  const taskList = useTaskList();
+
+  const dueTasks = useMemo<DueTask[] | null>(() => {
+    if (!taskList) return null;
+    const out: DueTask[] = [];
+    for (const task of taskList) {
+      const s = (task.status || "").toUpperCase();
+      if (s === "DONE" || s === "CANCELLED") continue;
+      const day = task.dueDate ? istDateOf(task.dueDate) : null;
+      if (!day || day > today) continue;
+      out.push({ task, day, overdue: day < today });
+    }
+    out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+    return out.slice(0, 3);
+  }, [taskList, today]);
+
+  const upcoming = useMemo<Array<{ holiday: Holiday; day: string }>>(() => {
+    if (!rest || rest.holidays.status !== "ok") return [];
+    const out: Array<{ holiday: Holiday; day: string }> = [];
+    for (const holiday of rest.holidays.value) {
+      const day = istDateOf(holiday.date);
+      if (day && day >= today) out.push({ holiday, day });
+    }
+    out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+    return out.slice(0, 3);
+  }, [rest, today]);
+
+  const firstName = (user?.name ?? "").trim().split(/\s+/)[0] ?? "";
+  const subtitle = [fmtDay(today, { weekday: true }), firstName].filter(Boolean).join(" · ");
+
+  // ---------- report card ----------
+  let reportCard: React.ReactNode;
+  if (todayQ.data) {
+    const report = todayQ.data.report;
+    const links = (report?.links ?? []).filter((l) => !l.isScheduled && !!l.url?.trim());
+    const count = links.length;
+    if (report && count > 0) {
+      const t = toneColors("success");
+      const at = report.submittedAt ? fmtTime(report.submittedAt) : "";
+      reportCard = (
+        <Card
+          variant="tinted"
+          tone="success"
+          onPress={() => router.push("/(tabs)/report")}
+          accessibilityLabel={`${count} link${count === 1 ? "" : "s"} submitted today. Opens the daily report.`}
+        >
+          <View style={styles.reportRow}>
+            <Ionicons name="checkmark-circle" size={28} color={t.fg} />
+            <View style={styles.flex}>
+              <Text maxFontSizeMultiplier={1.6} style={[styles.reportTitle, { color: t.text }]}>
+                {`${count} link${count === 1 ? "" : "s"} submitted today${at && at !== "—" ? ` · ${at}` : ""}`}
+              </Text>
+              <Text maxFontSizeMultiplier={1.6} style={styles.reportSub}>
+                Tap to add more links
+              </Text>
             </View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>{greeting},</Text>
-            <Text style={styles.name} numberOfLines={1}>
-              {user?.name}
+            <Ionicons name="chevron-forward" size={16} color={colors.faint} />
+          </View>
+        </Card>
+      );
+    } else {
+      const t = toneColors("warning");
+      reportCard = (
+        <Card variant="tinted" tone="warning">
+          <View style={styles.reportRow}>
+            <Ionicons name="alert-circle" size={28} color={t.fg} />
+            <View style={styles.flex}>
+              <Text maxFontSizeMultiplier={1.6} style={[styles.reportTitle, { color: t.text }]}>
+                No report yet today
+              </Text>
+              <Text maxFontSizeMultiplier={1.6} style={styles.reportSub}>
+                Paste the links you posted today and submit.
+              </Text>
+            </View>
+          </View>
+          <Button
+            size="md"
+            title="Paste today's links"
+            icon="clipboard-outline"
+            onPress={() => router.push("/(tabs)/report?paste=1")}
+            style={styles.reportButton}
+          />
+        </Card>
+      );
+    }
+  } else if (todayQ.status === "failed" && !todayQ.fetching) {
+    reportCard = (
+      <Card>
+        <View style={styles.reportRow}>
+          <Ionicons name="cloud-offline-outline" size={28} color={colors.sub} />
+          <View style={styles.flex}>
+            <Text maxFontSizeMultiplier={1.6} style={styles.reportTitleNeutral}>
+              Couldn't check today's report
+            </Text>
+            <Text maxFontSizeMultiplier={1.6} style={styles.reportSub}>
+              Your submitted links are safe. Check your connection and try again.
             </Text>
           </View>
         </View>
-        <Pressable onPress={() => router.push("/notifications")} style={styles.bell}>
-          <Ionicons name="notifications-outline" size={22} color="#FFFFFF" />
-          {(data?.unread ?? 0) > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{data!.unread > 9 ? "9+" : data!.unread}</Text>
-            </View>
-          )}
-        </Pressable>
-        </View>
-      </ImageBackground>
-
-      {/* Today's report status */}
-      <Pressable onPress={() => router.push("/(tabs)/report")}>
-        <Card style={{ backgroundColor: linksToday > 0 ? colors.greenSoft : colors.yellowSoft, borderColor: "transparent" }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <Ionicons
-              name={linksToday > 0 ? "checkmark-circle" : "alert-circle"}
-              size={28}
-              color={linksToday > 0 ? colors.green : colors.amber}
-            />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.reportTitle}>
-                {linksToday > 0 ? `${linksToday} link${linksToday === 1 ? "" : "s"} submitted today` : "No report submitted today"}
-              </Text>
-              <Text style={styles.reportSub}>
-                {linksToday > 0 ? "Tap to add more links" : "Tap to submit your daily report"}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.sub} />
-          </View>
-        </Card>
-      </Pressable>
-
-      {/* Attendance */}
-      {isEmployee && (
-        <>
-          <SectionTitle
-            right={<SeeAll onPress={() => router.push("/attendance")} label="Details" />}
-          >
-            Attendance · This Month
-          </SectionTitle>
-          <View style={styles.statRow}>
-            <Stat label="Present" value={(att as any).present} accent={colors.green} onPress={() => router.push("/attendance")} />
-            <Stat label="Absent" value={(att as any).absent} accent={colors.red} onPress={() => router.push("/attendance")} />
-            <Stat label="Late" value={(att as any).late} accent={colors.amber} onPress={() => router.push("/attendance")} />
-            <Stat label="Rate" value={`${(att as any).rate}%`} accent={colors.purple} onPress={() => router.push("/attendance")} />
-          </View>
-        </>
-      )}
-
-      {/* Leave balance */}
-      {data?.leaveBalance && (
-        <>
-          <SectionTitle
-            right={<SeeAll onPress={() => router.push("/(tabs)/leave")} label="Apply" />}
-          >
-            Leave Balance
-          </SectionTitle>
-          <View style={styles.statRow}>
-            <Stat label="Casual" value={data.leaveBalance.casual?.balance ?? "—"} onPress={() => router.push("/(tabs)/leave")} />
-            <Stat label="Sick" value={data.leaveBalance.sick?.balance ?? "—"} onPress={() => router.push("/(tabs)/leave")} />
-            <Stat label="Earned" value={data.leaveBalance.earned?.balance ?? "—"} onPress={() => router.push("/(tabs)/leave")} />
-          </View>
-        </>
-      )}
-
-      {/* Upcoming holidays */}
-      <SectionTitle
-        right={<SeeAll onPress={() => router.push("/holidays")} label="See All" />}
-      >
-        Upcoming Holidays
-      </SectionTitle>
-      <Card>
-        {upcoming.length === 0 ? (
-          <Empty icon="sunny-outline" text="No upcoming holidays this year" />
-        ) : (
-          upcoming.map((h, i) => (
-            <View key={h.id} style={[styles.holidayRow, i === upcoming.length - 1 && { borderBottomWidth: 0 }]}>
-              <View style={styles.holidayDate}>
-                <Text style={styles.holidayDay}>{new Date(h.date).getDate()}</Text>
-                <Text style={styles.holidayMon}>
-                  {new Date(h.date).toLocaleDateString("en-IN", { month: "short" })}
-                </Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.holidayName}>{h.name}</Text>
-                <Text style={styles.holidaySub}>{fmtDate(h.date)}</Text>
-              </View>
-            </View>
-          ))
-        )}
+        <Button
+          size="sm"
+          variant="tinted"
+          title="Try again"
+          icon="refresh"
+          fullWidth={false}
+          onPress={() => todayQ.reload()}
+          style={styles.reportButton}
+        />
       </Card>
+    );
+  } else {
+    reportCard = <SkeletonCard lines={2} />;
+  }
+
+  // ---------- today's tasks ----------
+  let tasksNode: React.ReactNode;
+  if (dueTasks) {
+    tasksNode =
+      dueTasks.length === 0 ? (
+        <ListGroup>
+          <ListItem
+            icon="checkmark-done-outline"
+            tint="green"
+            title="Nothing due today"
+            subtitle="You're all caught up"
+          />
+        </ListGroup>
+      ) : (
+        <ListGroup>
+          {dueTasks.map(({ task, day, overdue }) => {
+            const acct = accountLabel(task);
+            const when = overdue ? `Overdue · ${fmtDay(day, { weekday: false })}` : "Due today";
+            return (
+              <ListItem
+                key={task.id}
+                icon={overdue ? "alert-circle-outline" : "time-outline"}
+                tint={priorityTint(task.priority)}
+                title={task.title}
+                subtitle={acct ? `${when} · ${acct}` : when}
+                onPress={() => router.push(`/task/${task.id}`)}
+              />
+            );
+          })}
+        </ListGroup>
+      );
+  } else if (rest && rest.tasks.status === "failed") {
+    tasksNode = (
+      <Card>
+        <LoadFailed error={rest.tasks.error} compact onRetry={() => restQ.reload()} />
+      </Card>
+    );
+  } else {
+    tasksNode = <SkeletonList rows={2} tile />;
+  }
+
+  // ---------- this month ----------
+  let monthNode: React.ReactNode;
+  if (!rest) {
+    monthNode = <SkeletonStatRow count={2} />;
+  } else {
+    const att = rest.attendance;
+    const leave = rest.leave;
+    const tiles: React.ReactNode[] = [];
+
+    if (att.status === "ok") {
+      const a = att.value;
+      if ("totalWorkdays" in a) {
+        tiles.push(
+          <StatTile
+            key="att"
+            label="Present days"
+            value={`${a.present}/${a.totalWorkdays}`}
+            icon="calendar-outline"
+            tone="success"
+            progress={a.totalWorkdays > 0 ? a.present / a.totalWorkdays : undefined}
+            hint={`${a.rate}% · ${a.late} late`}
+            onPress={() => router.push("/attendance")}
+          />,
+        );
+      }
+    } else {
+      tiles.push(
+        <StatTile
+          key="att"
+          label="Attendance"
+          value="—"
+          icon="cloud-offline-outline"
+          tone="danger"
+          hint="Couldn't load · tap to retry"
+          onPress={() => restQ.reload()}
+        />,
+      );
+    }
+
+    if (leave.status === "ok") {
+      const b = leave.value;
+      const casual = b.casual?.balance ?? 0;
+      const sick = b.sick?.balance ?? 0;
+      const earned = b.earned?.balance ?? 0;
+      tiles.push(
+        <StatTile
+          key="leave"
+          label="Leave days left"
+          value={casual + sick + earned}
+          icon="airplane-outline"
+          tone="info"
+          hint={`Casual ${casual} · Sick ${sick} · Earned ${earned}`}
+          onPress={() => router.push("/(tabs)/leave")}
+        />,
+      );
+    } else {
+      tiles.push(
+        <StatTile
+          key="leave"
+          label="Leave balance"
+          value="—"
+          icon="cloud-offline-outline"
+          tone="danger"
+          hint="Couldn't load · tap to retry"
+          onPress={() => restQ.reload()}
+        />,
+      );
+    }
+
+    monthNode = <StatGrid columns={2}>{tiles}</StatGrid>;
+  }
+
+  // ---------- holidays ----------
+  let holidaysNode: React.ReactNode;
+  if (!rest) {
+    holidaysNode = <SkeletonList rows={2} tile />;
+  } else if (rest.holidays.status === "failed") {
+    holidaysNode = (
+      <ListGroup>
+        <ListItem
+          icon="cloud-offline-outline"
+          tint="red"
+          title="Couldn't load holidays"
+          subtitle="Tap to retry"
+          chevron={false}
+          trailing={<Ionicons name="refresh" size={18} color={colors.purple} />}
+          onPress={() => restQ.reload()}
+        />
+      </ListGroup>
+    );
+  } else if (upcoming.length === 0) {
+    holidaysNode = (
+      <ListGroup>
+        <ListItem icon="sunny-outline" tint="orange" title="No upcoming holidays this year" />
+      </ListGroup>
+    );
+  } else {
+    holidaysNode = (
+      <ListGroup>
+        {upcoming.map(({ holiday, day }) => (
+          <ListItem
+            key={holiday.id}
+            leading={<DateTile date={day} />}
+            title={holiday.name}
+            subtitle={`${fmtDay(day, { weekday: true })} · ${untilLabel(day, today)}`}
+          />
+        ))}
+      </ListGroup>
+    );
+  }
+
+  return (
+    <Screen header="none" onRefresh={refreshAll} refreshing={todayQ.refreshing || restQ.refreshing}>
+      <LargeTitle
+        title={istGreeting()}
+        subtitle={subtitle}
+        right={
+          <View style={styles.titleRight}>
+            <IconButton
+              icon="notifications-outline"
+              label={unread ? `Notifications, ${unread} unread` : "Notifications"}
+              badge={unread}
+              onPress={() => router.push("/notifications")}
+            />
+            <Pressable
+              onPress={() => router.push("/profile")}
+              accessibilityRole="button"
+              accessibilityLabel="My profile"
+              hitSlop={4}
+              style={({ pressed }) => (pressed ? styles.pressed : null)}
+            >
+              <Avatar name={user?.name ?? ""} uri={user?.profileImageUrl} size={36} ring />
+            </Pressable>
+          </View>
+        }
+      />
+
+      {reportCard}
+
+      <SectionTitle right={<SeeAll onPress={() => router.push("/(tabs)/tasks")} />}>Today</SectionTitle>
+      {tasksNode}
+
+      <SectionTitle right={<SeeAll onPress={() => router.push("/attendance")} label="Details" />}>
+        This month
+      </SectionTitle>
+      {monthNode}
+
+      <SectionTitle right={<SeeAll onPress={() => router.push("/holidays")} />}>Upcoming holidays</SectionTitle>
+      {holidaysNode}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  hero: {
-    borderRadius: radius.xl,
-    overflow: "hidden",
-    marginBottom: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  heroImg: { borderRadius: radius.xl },
-  header: { flexDirection: "row", alignItems: "flex-end", padding: spacing.lg, paddingTop: 64 },
-  avatar: { width: 46, height: 46, borderRadius: radius.full },
-  avatarFallback: { backgroundColor: colors.purple, alignItems: "center", justifyContent: "center" },
-  avatarLetter: { color: "#fff", fontSize: 20, fontWeight: "700" },
-  greeting: { fontSize: 13, color: "rgba(255,255,255,0.75)" },
-  name: { fontSize: 18, fontWeight: "700", color: "#FFFFFF" },
-  bell: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.full,
-    backgroundColor: colors.cardHigh,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  badge: {
-    position: "absolute",
-    top: -2,
-    right: -2,
-    backgroundColor: colors.red,
-    borderRadius: radius.full,
-    minWidth: 17,
-    height: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 3,
-  },
-  badgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  reportTitle: { fontSize: 15, fontWeight: "700", color: colors.ink },
-  reportSub: { fontSize: 12, color: colors.sub, marginTop: 2 },
-  statRow: { flexDirection: "row", gap: 8, marginBottom: spacing.md },
-  link: { color: colors.purple, fontSize: 13, fontWeight: "600" },
-  holidayRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  holidayDate: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.yellowSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  holidayDay: { fontSize: 16, fontWeight: "700", color: colors.ink },
-  holidayMon: { fontSize: 10, color: colors.sub },
-  holidayName: { fontSize: 14, fontWeight: "600", color: colors.ink },
-  holidaySub: { fontSize: 12, color: colors.sub },
+  flex: { flex: 1, minWidth: 0 },
+  titleRight: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  pressed: { opacity: 0.6 },
+  reportRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  reportTitle: { ...type.headline },
+  reportTitleNeutral: { ...type.headline, color: colors.ink },
+  reportSub: { ...type.footnote, color: colors.sub, marginTop: 2 },
+  reportButton: { marginTop: spacing.md },
 });

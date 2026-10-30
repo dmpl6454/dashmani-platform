@@ -1,11 +1,15 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable, TextInput, Image, Linking, Alert } from "react-native";
+import { View, Text, StyleSheet, Pressable, Image, Linking } from "react-native";
 import { useLocalSearchParams, useNavigation } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { apiFetch, API_BASE, fmtDate, fmtDateTime } from "@/lib/api";
-import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Button, Loading, ErrorBanner, SuccessBanner, useApi } from "@/components/ui";
-import { BOOKING_STATUS, ITEM_STATUS, PLATFORM_LABEL, formatLabel, rupees } from "@/lib/campaigns";
+import { apiFetch, API_BASE, errorMessage, fmtDateTime, fmtMoney, fmtRange } from "@/lib/api";
+import { colors, radius, spacing, type, formatStatus } from "@/lib/theme";
+import { Screen, Card, SectionTitle, Button, Field, ErrorBanner, IconButton, StatusPill, useApi } from "@/components/ui";
+import { AsyncBlock } from "@/components/async";
+import { SkeletonCard } from "@/components/skeleton";
+import { confirm, toast, type ConfirmOptions } from "@/components/feedback";
+import { haptic, openFile } from "@/lib/device";
+import { BOOKING_STATUS, ITEM_STATUS, PLATFORM_LABEL, formatLabel } from "@/lib/campaigns";
 
 // One campaign booking for staff — internal portal /campaigns/[id] (Admin / Super Admin only).
 // Same actions and the same guards as the web page; every action that refunds, rejects or
@@ -54,80 +58,141 @@ type Booking = {
   events: Array<{ id: string; actorType: string; toStatus: string | null; note: string | null; createdAt: string }>;
   autoPublish: { enabled: boolean; dueAt: string | null };
 };
-type MediaUrls = { media: Array<{ id: string; kind: string; role: string; renderStatus: string; preview: string | null; original: string | null }> };
+type MediaUrl = { id: string; kind: string; role: string; renderStatus: string; preview: string | null; original: string | null };
+type MediaUrls = { media: MediaUrl[] };
+
+/** Booking status → the shared status enum whose tone the pill should take. */
+const BOOKING_PILL: Record<string, string> = {
+  draft: "DRAFT",
+  awaiting_payment: "PENDING",
+  paid_pending_review: "PENDING",
+  changes_requested: "PENDING",
+  approved: "QUEUED",
+  publishing: "QUEUED",
+  completed: "DONE",
+  partially_published: "DONE",
+  rejected: "REJECTED",
+  refunded: "CANCELLED",
+  cancelled: "CANCELLED",
+  expired: "CANCELLED",
+};
+
+/** Item status → the shared status enum whose tone the pill should take. */
+const ITEM_PILL: Record<string, string> = {
+  pending: "PENDING",
+  manual_pending: "TODO",
+  queued: "QUEUED",
+  posted_manual: "DONE",
+  published: "DONE",
+  failed: "REJECTED",
+  refunded: "CANCELLED",
+};
+
+/** Paise → "₹1,23,456". */
+function money(paise: number | null | undefined): string {
+  return paise == null ? "—" : fmtMoney(paise / 100);
+}
+
+function openLink(url: string) {
+  Linking.openURL(url).catch(() => toast.show({ message: "Couldn't open that link.", tone: "danger" }));
+}
 
 export default function AdminCampaign() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const navigation = useNavigation();
-  const { data: b, loading, refreshing, error, refresh, reload } = useApi<Booking>(async () => {
+  const booking = useApi<Booking>(async () => {
     const r = await apiFetch<Booking>(`/admin/campaigns/${id}`);
     navigation.setOptions({ title: r.name });
     return r;
   }, [id]);
-  const { data: urls } = useApi<MediaUrls>(() => apiFetch(`/admin/campaigns/${id}/media-urls`), [id]);
+  const urls = useApi<MediaUrls>(() => apiFetch<MediaUrls>(`/admin/campaigns/${id}/media-urls`), [id]);
 
+  const onRefresh = async () => {
+    await Promise.all([booking.refresh(), urls.reload()]);
+  };
+
+  return (
+    <Screen onRefresh={onRefresh} refreshing={booking.refreshing}>
+      <AsyncBlock
+        state={booking}
+        skeleton={
+          <>
+            <SkeletonCard lines={6} />
+            <SkeletonCard lines={4} />
+          </>
+        }
+      >
+        {(b) => <CampaignBody b={b} media={urls.data?.media ?? []} reload={booking.reload} />}
+      </AsyncBlock>
+    </Screen>
+  );
+}
+
+type ActOptions = {
+  /** busy key (drives the spinner on the pressed button) */
+  key: string;
+  /** where the error is shown: "review", "resend" or `item-<id>` */
+  scope: string;
+  path: string;
+  body?: unknown;
+  ok: string;
+  ask?: ConfirmOptions;
+};
+
+function CampaignBody({ b, media, reload }: { b: Booking; media: MediaUrl[]; reload: () => Promise<void> }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [fail, setFail] = useState<{ scope: string; message: string } | null>(null);
   const [links, setLinks] = useState<Record<string, string>>({});
   const [failing, setFailing] = useState<string | null>(null);
   const [failNote, setFailNote] = useState("");
-
-  if (loading && !b) return <Loading />;
-  if (!b) return <Screen onRefresh={refresh} refreshing={refreshing}><ErrorBanner message={error ?? "Campaign not found"} /></Screen>;
 
   // No online payment on a submitted booking = it is settled offline (refund becomes "drop").
   const offline = b.payments.length === 0 && !["draft", "awaiting_payment"].includes(b.status);
   const reviewable = b.status === "paid_pending_review";
   const rejectable = ["paid_pending_review", "changes_requested", "approved"].includes(b.status);
   const postable = ["approved", "publishing", "completed", "partially_published"].includes(b.status);
-  const st = BOOKING_STATUS[b.status] ?? { label: b.status, color: colors.sub };
+  const statusLabel = BOOKING_STATUS[b.status]?.label ?? formatStatus(b.status);
+  const noteOk = note.trim().length >= 3;
 
-  /** POST an action; `confirm` (title, message) asks first. Returns true on success. */
-  const act = (key: string, path: string, body?: unknown, okText?: string, confirm?: [string, string]) =>
-    new Promise<boolean>((resolve) => {
-      const run = async () => {
-        setBusy(key);
-        setErr(null);
-        setMsg(null);
-        try {
-          await apiFetch(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
-          if (okText) setMsg(okText);
-          await reload();
-          resolve(true);
-        } catch (e: any) {
-          setErr(e?.message || "That didn't work. Try again.");
-          resolve(false);
-        } finally {
-          setBusy(null);
-        }
-      };
-      if (!confirm) return void run();
-      Alert.alert(confirm[0], confirm[1], [
-        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-        { text: "Confirm", style: "destructive", onPress: () => void run() },
-      ]);
-    });
+  /** POST an action (asking first when `ask` is set). Resolves true on success. */
+  const act = async ({ key, scope, path, body, ok, ask }: ActOptions): Promise<boolean> => {
+    if (ask && !(await confirm(ask))) return false;
+    setBusy(key);
+    setFail(null);
+    try {
+      await apiFetch(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+      void haptic("success");
+      toast.show({ message: ok, tone: "success" });
+      await reload();
+      return true;
+    } catch (e) {
+      void haptic("error");
+      setFail({ scope, message: errorMessage(e, "That didn't work. Try again.") });
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
 
-  const creatives = (urls?.media ?? []).filter((m) => m.role !== "thumbnail");
-  const thumb = (urls?.media ?? []).find((m) => m.role === "thumbnail");
+  const errorFor = (scope: string): string | null => (fail && fail.scope === scope ? fail.message : null);
+
+  const creatives = media.filter((m) => m.role !== "thumbnail");
+  const thumb = media.find((m) => m.role === "thumbnail");
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <View style={[styles.pill, { backgroundColor: st.color + "26", alignSelf: "flex-start" }]}>
-        <Text style={[styles.pillText, { color: st.color }]}>{st.label}</Text>
+    <>
+      <View style={styles.pillRow}>
+        <StatusPill status={BOOKING_PILL[b.status] ?? b.status} label={statusLabel} />
       </View>
-      <ErrorBanner message={err} />
-      <SuccessBanner message={msg} />
 
       <Card>
         <Kv k="Client" v={`${b.client.companyName} · ${b.client.contactName}`} />
         <Kv k="Contact" v={[b.client.email, b.client.phone].filter(Boolean).join(" · ")} />
         <Kv k="Brand" v={b.brand} />
         <Kv k="Type" v={b.campaignType === "entertainment" ? "Entertainment (film, OTT, music)" : "Brand promotion"} />
-        <Kv k="Window" v={b.launchFrom ? `${fmtDate(b.launchFrom)} – ${fmtDate(b.launchTo)}` : "—"} />
-        <Kv k="Total" v={`${rupees(b.totalPaise)}${offline ? " · to collect offline" : b.paidAt ? " · paid online" : ""}`} />
+        <Kv k="Window" v={b.launchFrom ? fmtRange(b.launchFrom, b.launchTo) : "—"} />
+        <Kv k="Total" v={`${money(b.totalPaise)}${offline ? " · to collect offline" : b.paidAt ? " · paid online" : ""}`} />
         {b.audioIntegration ? <Kv k="Song" v={b.audioTrack || "Yes"} /> : null}
         {b.objective ? <Kv k="Objective" v={b.objective} /> : null}
         {b.reviewNote ? <Kv k="Review note" v={b.reviewNote} /> : null}
@@ -139,21 +204,49 @@ export default function AdminCampaign() {
           {creatives.length === 0 ? (
             <Text style={styles.muted}>No files.</Text>
           ) : (
-            creatives.map((m, n) =>
-              m.preview && m.kind === "image" ? (
-                <Pressable key={m.id} onPress={() => Linking.openURL(API_BASE + m.preview)}>
-                  <Image source={{ uri: API_BASE + m.preview }} style={styles.media} />
+            creatives.map((m, n) => {
+              const num = creatives.length > 1 ? ` ${n + 1}` : "";
+              const preview = m.preview;
+              if (preview && m.kind === "image") {
+                return (
+                  <Pressable
+                    key={m.id}
+                    onPress={() => void openFile(API_BASE + preview)}
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel={`Open image${num}`}
+                  >
+                    <Image source={{ uri: API_BASE + preview }} style={styles.media} />
+                  </Pressable>
+                );
+              }
+              return (
+                <Pressable
+                  key={m.id}
+                  disabled={!preview}
+                  onPress={() => {
+                    if (preview) void openFile(API_BASE + preview);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={preview ? `Play video${num}` : m.renderStatus === "failed" ? "Render failed" : "Video still preparing"}
+                  accessibilityState={{ disabled: !preview }}
+                  style={[styles.media, styles.mediaVideo]}
+                >
+                  <Ionicons name={preview ? "play-circle" : "hourglass-outline"} size={28} color={colors.purple} />
+                  <Text style={styles.mediaLabel}>
+                    {preview ? `Play${num}` : m.renderStatus === "failed" ? "Render failed" : "Preparing…"}
+                  </Text>
                 </Pressable>
-              ) : (
-                <Pressable key={m.id} disabled={!m.preview} onPress={() => m.preview && Linking.openURL(API_BASE + m.preview)} style={[styles.media, styles.mediaVideo]}>
-                  <Ionicons name={m.preview ? "play-circle" : "hourglass-outline"} size={28} color={colors.purple} />
-                  <Text style={styles.mediaLabel}>{m.preview ? `Play ${creatives.length > 1 ? n + 1 : ""}` : m.renderStatus === "failed" ? "Render failed" : "Preparing…"}</Text>
-                </Pressable>
-              ),
-            )
+              );
+            })
           )}
           {thumb?.preview ? (
-            <Pressable onPress={() => Linking.openURL(API_BASE + thumb.preview)}>
+            <Pressable
+              onPress={() => {
+                if (thumb.preview) void openFile(API_BASE + thumb.preview);
+              }}
+              accessibilityRole="imagebutton"
+              accessibilityLabel="Open thumbnail"
+            >
               <Image source={{ uri: API_BASE + thumb.preview }} style={styles.media} />
               <Text style={styles.mediaLabel}>Thumbnail</Text>
             </Pressable>
@@ -165,42 +258,59 @@ export default function AdminCampaign() {
         {b.hashtags.length ? <Kv k="Hashtags" v={b.hashtags.map((h) => `#${h}`).join(" ")} /> : null}
       </Card>
 
-      {(reviewable || rejectable) && (
+      {reviewable || rejectable ? (
         <>
           <SectionTitle>Review</SectionTitle>
           <Card>
             {reviewable ? (
               <Button
                 title="Approve"
+                icon="checkmark-circle-outline"
                 loading={busy === "approve"}
                 disabled={!!busy}
                 onPress={() =>
-                  act("approve", `/admin/campaigns/${b.id}/approve`, undefined, "Approved — the accounts are queued to post.", [
-                    "Approve this campaign?",
-                    `${b.items.length} account${b.items.length === 1 ? "" : "s"} will be queued to post.`,
-                  ])
+                  act({
+                    key: "approve",
+                    scope: "review",
+                    path: `/admin/campaigns/${b.id}/approve`,
+                    ok: "Approved — the accounts are queued to post.",
+                    ask: {
+                      title: "Approve this campaign?",
+                      message: `${b.items.length} account${b.items.length === 1 ? "" : "s"} will be queued to post.`,
+                      confirmLabel: "Approve",
+                    },
+                  })
                 }
               />
             ) : null}
-            <TextInput
+            <Field
+              label="Note to the client"
               value={note}
               onChangeText={setNote}
-              placeholder="Note to the client (needed to request changes or reject)"
-              placeholderTextColor={colors.faint}
+              placeholder="What should the client change, or why is it rejected?"
+              hint="Needed to request changes or reject (at least 3 characters)."
+              autoCapitalize="sentences"
               multiline
-              style={styles.note}
+              style={styles.noteField}
             />
-            <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={styles.buttonRow}>
               {reviewable ? (
                 <Button
                   title="Request changes"
                   variant="secondary"
                   small
-                  style={{ flex: 1 }}
-                  disabled={!!busy || note.trim().length < 3}
+                  style={styles.flex}
+                  disabled={!!busy || !noteOk}
                   loading={busy === "changes"}
                   onPress={async () => {
-                    if (await act("changes", `/admin/campaigns/${b.id}/request-changes`, { note: note.trim() }, "Changes requested — the client was told.")) setNote("");
+                    const done = await act({
+                      key: "changes",
+                      scope: "review",
+                      path: `/admin/campaigns/${b.id}/request-changes`,
+                      body: { note: note.trim() },
+                      ok: "Changes requested — the client was told.",
+                    });
+                    if (done) setNote("");
                   }}
                 />
               ) : null}
@@ -208,54 +318,76 @@ export default function AdminCampaign() {
                 title="Reject"
                 variant="danger"
                 small
-                style={{ flex: 1 }}
-                disabled={!!busy || note.trim().length < 3}
+                style={styles.flex}
+                disabled={!!busy || !noteOk}
                 loading={busy === "reject"}
                 onPress={async () => {
-                  const ok = await act("reject", `/admin/campaigns/${b.id}/reject`, { note: note.trim() }, "Rejected.", [
-                    "Reject this campaign?",
-                    offline ? `Reject the booking from ${b.client.companyName}?` : `Reject and refund ${rupees(b.totalPaise)} to ${b.client.companyName}?`,
-                  ]);
-                  if (ok) setNote("");
+                  const done = await act({
+                    key: "reject",
+                    scope: "review",
+                    path: `/admin/campaigns/${b.id}/reject`,
+                    body: { note: note.trim() },
+                    ok: "Rejected.",
+                    ask: {
+                      title: "Reject this campaign?",
+                      message: offline
+                        ? `Reject the booking from ${b.client.companyName}?`
+                        : `Reject and refund ${money(b.totalPaise)} to ${b.client.companyName}?`,
+                      confirmLabel: offline ? "Reject" : "Reject and refund",
+                      destructive: true,
+                    },
+                  });
+                  if (done) setNote("");
                 }}
               />
             </View>
+            <ErrorBanner message={errorFor("review")} onDismiss={() => setFail(null)} style={styles.inlineError} />
           </Card>
         </>
-      )}
+      ) : null}
 
-      <SectionTitle>Accounts ({b.items.length})</SectionTitle>
+      <SectionTitle>{`Accounts (${b.items.length})`}</SectionTitle>
       {postable && b.items.some((i) => i.status === "queued") && !b.autoPublish.enabled ? (
-        <Text style={styles.warn}>Auto-publishing is switched off — accounts marked Auto-publish won't post by themselves. Choose "Post by hand instead" on each.</Text>
+        <Card variant="tinted" tone="warning" style={styles.warnCard}>
+          <Text style={styles.warn}>
+            Auto-publishing is switched off — accounts marked Auto-publish won't post by themselves. Choose "Post by hand instead" on each.
+          </Text>
+        </Card>
       ) : null}
       <Card>
         {b.items.map((i, n) => {
-          const ist = ITEM_STATUS[i.status] ?? { label: i.status, color: colors.sub };
+          const itemLabel = ITEM_STATUS[i.status]?.label ?? formatStatus(i.status);
+          const platform = PLATFORM_LABEL[i.platform] ?? i.platform;
           const open = ["manual_pending", "queued", "failed"].includes(i.status);
           const queued = i.status === "queued";
           const live = i.status === "posted_manual" || i.status === "published";
           const link = links[i.id] ?? i.permalink ?? "";
+          const permalink = i.permalink;
+          const scope = `item-${i.id}`;
           return (
-            <View key={i.id} style={[styles.item, n === b.items.length - 1 && { borderBottomWidth: 0 }]}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
+            <View key={i.id} style={[styles.item, n === b.items.length - 1 ? styles.itemLast : null]}>
+              <View style={styles.itemHead}>
+                <View style={styles.itemText}>
                   <Text style={styles.name} numberOfLines={1}>
                     {i.accountName}
                     {i.accountHandle ? <Text style={styles.muted}> @{i.accountHandle.replace(/^@/, "")}</Text> : null}
                   </Text>
                   <Text style={styles.muted}>
-                    {PLATFORM_LABEL[i.platform] ?? i.platform} · {formatLabel(i.platform, i.format)} · {rupees(i.pricePaise)}
-                    {i.audioAddonPaise > 0 ? ` (incl. ${rupees(i.audioAddonPaise)} song)` : ""}
+                    {platform} · {formatLabel(i.platform, i.format)} · {money(i.pricePaise)}
+                    {i.audioAddonPaise > 0 ? ` (incl. ${money(i.audioAddonPaise)} song)` : ""}
                     {i.postedAt ? ` · posted ${fmtDateTime(i.postedAt)}` : ""}
                   </Text>
                 </View>
-                <View style={[styles.pill, { backgroundColor: ist.color + "26" }]}>
-                  <Text style={[styles.pillText, { color: ist.color }]}>{ist.label}</Text>
-                </View>
-                {i.permalink ? (
-                  <Pressable hitSlop={8} onPress={() => Linking.openURL(i.permalink!)}>
-                    <Ionicons name="open-outline" size={16} color={colors.purple} />
-                  </Pressable>
+                <StatusPill status={ITEM_PILL[i.status] ?? i.status} label={itemLabel} size="sm" />
+                {permalink ? (
+                  <IconButton
+                    icon="open-outline"
+                    label={`Open the ${platform} post for ${i.accountName}`}
+                    size={32}
+                    glyph={18}
+                    tint={colors.purpleText}
+                    onPress={() => openLink(permalink)}
+                  />
                 ) : null}
               </View>
               {i.captionOverride != null ? <Text style={styles.small}>Own caption: {i.captionOverride || "(hashtags only)"}</Text> : null}
@@ -271,29 +403,43 @@ export default function AdminCampaign() {
                 </Text>
               ) : null}
               {i.lastError && i.status !== "refunded" && i.status !== "posted_manual" ? (
-                <Text style={[styles.small, { color: i.status === "manual_pending" ? colors.yellow : queued ? colors.sub : colors.red }]}>
+                <Text
+                  style={[
+                    styles.small,
+                    { color: i.status === "manual_pending" ? colors.warningText : queued ? colors.sub : colors.redText },
+                  ]}
+                >
                   {queued ? `Last try: ${i.lastError}` : i.status === "manual_pending" ? `Post by hand — ${i.lastError}` : i.lastError}
                 </Text>
               ) : null}
 
               {postable && !queued && (open || live) ? (
                 <View style={styles.linkRow}>
-                  <TextInput
+                  <Field
                     value={link}
                     onChangeText={(v) => setLinks((s) => ({ ...s, [i.id]: v }))}
-                    placeholder={`Paste the ${PLATFORM_LABEL[i.platform] ?? i.platform} post link`}
-                    placeholderTextColor={colors.faint}
-                    autoCapitalize="none"
+                    placeholder={`Paste the ${platform} post link`}
+                    accessibilityLabel={`${platform} post link for ${i.accountName}`}
                     autoCorrect={false}
                     keyboardType="url"
-                    style={styles.linkInput}
+                    style={styles.flex}
                   />
                   <Button
                     title={live ? "Save" : "Posted"}
                     small
+                    fullWidth={false}
+                    accessibilityLabel={`${live ? "Save link" : "Mark posted"} for ${i.accountName}`}
                     disabled={!!busy || !link.trim() || link.trim() === i.permalink}
                     loading={busy === `post-${i.id}`}
-                    onPress={() => act(`post-${i.id}`, `/admin/campaigns/${b.id}/items/${i.id}/posted`, { url: link.trim() }, `Link saved for ${i.accountName}.`)}
+                    onPress={() =>
+                      act({
+                        key: `post-${i.id}`,
+                        scope,
+                        path: `/admin/campaigns/${b.id}/items/${i.id}/posted`,
+                        body: { url: link.trim() },
+                        ok: `Link saved for ${i.accountName}.`,
+                      })
+                    }
                   />
                 </View>
               ) : null}
@@ -302,28 +448,81 @@ export default function AdminCampaign() {
                 <View style={styles.actions}>
                   {queued ? (
                     <>
-                      <TextAction label="Publish now" onPress={() => act(`now-${i.id}`, `/admin/campaigns/${b.id}/items/${i.id}/publish-now`, undefined, "Publishing now.")} disabled={!!busy} />
-                      <TextAction label="Post by hand instead" onPress={() => act(`manual-${i.id}`, `/admin/campaigns/${b.id}/items/${i.id}/manual`, undefined, "Moved to post by hand.")} disabled={!!busy} />
+                      <TextAction
+                        label="Publish now"
+                        a11y={`Publish now — ${i.accountName}`}
+                        disabled={!!busy}
+                        onPress={() =>
+                          void act({
+                            key: `now-${i.id}`,
+                            scope,
+                            path: `/admin/campaigns/${b.id}/items/${i.id}/publish-now`,
+                            ok: "Publishing now.",
+                          })
+                        }
+                      />
+                      <TextAction
+                        label="Post by hand instead"
+                        a11y={`Post by hand instead — ${i.accountName}`}
+                        disabled={!!busy}
+                        onPress={() =>
+                          void act({
+                            key: `manual-${i.id}`,
+                            scope,
+                            path: `/admin/campaigns/${b.id}/items/${i.id}/manual`,
+                            ok: "Moved to post by hand.",
+                          })
+                        }
+                      />
                     </>
                   ) : null}
                   {b.autoPublish.enabled && i.status === "manual_pending" ? (
-                    <TextAction label="Try auto-publish" onPress={() => act(`now-${i.id}`, `/admin/campaigns/${b.id}/items/${i.id}/publish-now`, undefined, "Queued to publish.")} disabled={!!busy} />
+                    <TextAction
+                      label="Try auto-publish"
+                      a11y={`Try auto-publish — ${i.accountName}`}
+                      disabled={!!busy}
+                      onPress={() =>
+                        void act({
+                          key: `now-${i.id}`,
+                          scope,
+                          path: `/admin/campaigns/${b.id}/items/${i.id}/publish-now`,
+                          ok: "Queued to publish.",
+                        })
+                      }
+                    />
                   ) : null}
                   {i.status === "manual_pending" || queued ? (
-                    <TextAction label="Mark failed" onPress={() => { setFailing(failing === i.id ? null : i.id); setFailNote(""); }} disabled={!!busy} />
+                    <TextAction
+                      label="Mark failed"
+                      a11y={`Mark failed — ${i.accountName}`}
+                      disabled={!!busy}
+                      onPress={() => {
+                        setFailing(failing === i.id ? null : i.id);
+                        setFailNote("");
+                      }}
+                    />
                   ) : null}
                   {open ? (
                     <TextAction
                       danger
                       label={offline ? "Drop this account" : "Refund this account"}
+                      a11y={`${offline ? "Drop" : "Refund"} ${i.accountName}`}
                       disabled={!!busy}
                       onPress={() =>
-                        act(`refund-${i.id}`, `/admin/campaigns/${b.id}/items/${i.id}/refund`, undefined, offline ? "Account dropped." : "Refund started.", [
-                          offline ? "Drop this account?" : "Refund this account?",
-                          offline
-                            ? `Drop ${i.accountName} (${rupees(i.pricePaise)})? It won't be posted and won't be charged.`
-                            : `Refund ${rupees(i.pricePaise)} for ${i.accountName}? It won't be posted.`,
-                        ])
+                        void act({
+                          key: `refund-${i.id}`,
+                          scope,
+                          path: `/admin/campaigns/${b.id}/items/${i.id}/refund`,
+                          ok: offline ? "Account dropped." : "Refund started.",
+                          ask: {
+                            title: offline ? "Drop this account?" : "Refund this account?",
+                            message: offline
+                              ? `Drop ${i.accountName} (${money(i.pricePaise)})? It won't be posted and won't be charged.`
+                              : `Refund ${money(i.pricePaise)} for ${i.accountName}? It won't be posted.`,
+                            confirmLabel: offline ? "Drop" : "Refund",
+                            destructive: true,
+                          },
+                        })
                       }
                     />
                   ) : null}
@@ -332,55 +531,86 @@ export default function AdminCampaign() {
 
               {failing === i.id ? (
                 <View style={styles.linkRow}>
-                  <TextInput
+                  <Field
                     value={failNote}
                     onChangeText={setFailNote}
                     placeholder="Why couldn't it be posted?"
-                    placeholderTextColor={colors.faint}
-                    style={styles.linkInput}
+                    accessibilityLabel={`Why ${i.accountName} couldn't be posted`}
+                    autoCapitalize="sentences"
+                    style={styles.flex}
                   />
                   <Button
                     title="Mark failed"
                     variant="danger"
                     small
+                    fullWidth={false}
                     disabled={!!busy || failNote.trim().length < 3}
                     loading={busy === `fail-${i.id}`}
                     onPress={async () => {
-                      const ok = await act(`fail-${i.id}`, `/admin/campaigns/${b.id}/items/${i.id}/failed`, { note: failNote.trim() }, "Marked failed.", [
-                        "Mark as failed?",
-                        `${i.accountName} will be recorded as not posted.`,
-                      ]);
-                      if (ok) setFailing(null);
+                      const done = await act({
+                        key: `fail-${i.id}`,
+                        scope,
+                        path: `/admin/campaigns/${b.id}/items/${i.id}/failed`,
+                        body: { note: failNote.trim() },
+                        ok: "Marked failed.",
+                        ask: {
+                          title: "Mark as failed?",
+                          message: `${i.accountName} will be recorded as not posted.`,
+                          confirmLabel: "Mark failed",
+                          destructive: true,
+                        },
+                      });
+                      if (done) setFailing(null);
                     }}
                   />
                 </View>
               ) : null}
+
+              <ErrorBanner message={errorFor(scope)} onDismiss={() => setFail(null)} style={styles.inlineError} />
             </View>
           );
         })}
       </Card>
 
       {["completed", "partially_published"].includes(b.status) ? (
-        <Button
-          title="Resend delivery email"
-          variant="secondary"
-          style={{ marginTop: spacing.md }}
-          loading={busy === "resend"}
-          disabled={!!busy}
-          onPress={() => act("resend", `/admin/campaigns/${b.id}/resend-delivery`, undefined, `Delivery email sent to ${b.client.email}.`, ["Resend the delivery email?", `It goes to ${b.client.email}.`])}
-        />
+        <View style={styles.resend}>
+          <Button
+            title="Resend delivery email"
+            variant="secondary"
+            icon="mail-outline"
+            loading={busy === "resend"}
+            disabled={!!busy}
+            onPress={() =>
+              act({
+                key: "resend",
+                scope: "resend",
+                path: `/admin/campaigns/${b.id}/resend-delivery`,
+                ok: `Delivery email sent to ${b.client.email}.`,
+                ask: { title: "Resend the delivery email?", message: `It goes to ${b.client.email}.`, confirmLabel: "Resend" },
+              })
+            }
+          />
+          <ErrorBanner message={errorFor("resend")} onDismiss={() => setFail(null)} style={styles.inlineError} />
+        </View>
       ) : null}
 
       <SectionTitle>History</SectionTitle>
       <Card>
-        {b.events.map((e, n) => (
-          <View key={e.id} style={[styles.event, n === b.events.length - 1 && { borderBottomWidth: 0 }]}>
-            <Text style={styles.small}>{fmtDateTime(e.createdAt)} · {e.actorType}{e.toStatus ? ` → ${BOOKING_STATUS[e.toStatus]?.label ?? e.toStatus}` : ""}</Text>
-            {e.note ? <Text style={styles.eventNote}>{e.note}</Text> : null}
-          </View>
-        ))}
+        {b.events.length === 0 ? (
+          <Text style={styles.muted}>No history yet.</Text>
+        ) : (
+          b.events.map((e, n) => (
+            <View key={e.id} style={[styles.event, n === b.events.length - 1 ? styles.itemLast : null]}>
+              <Text style={styles.small}>
+                {fmtDateTime(e.createdAt)} · {e.actorType}
+                {e.toStatus ? ` → ${BOOKING_STATUS[e.toStatus]?.label ?? formatStatus(e.toStatus)}` : ""}
+              </Text>
+              {e.note ? <Text style={styles.eventNote}>{e.note}</Text> : null}
+            </View>
+          ))
+        )}
       </Card>
-    </Screen>
+    </>
   );
 }
 
@@ -388,60 +618,69 @@ function Kv({ k, v }: { k: string; v: string }) {
   return (
     <View style={styles.kv}>
       <Text style={styles.k}>{k}</Text>
-      <Text style={styles.v} selectable>{v}</Text>
+      <Text style={styles.v} selectable>
+        {v}
+      </Text>
     </View>
   );
 }
 
-function TextAction({ label, onPress, disabled, danger }: { label: string; onPress: () => void; disabled?: boolean; danger?: boolean }) {
+function TextAction({
+  label,
+  a11y,
+  onPress,
+  disabled = false,
+  danger = false,
+}: {
+  label: string;
+  a11y: string;
+  onPress: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
   return (
-    <Pressable onPress={onPress} disabled={disabled} hitSlop={6} style={({ pressed }) => ({ opacity: disabled ? 0.4 : pressed ? 0.6 : 1 })}>
-      <Text style={[styles.textAction, danger && { color: colors.red }]}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => [styles.textActionHit, { opacity: disabled ? 0.4 : pressed ? 0.6 : 1 }]}
+    >
+      <Text style={[styles.textAction, danger ? styles.textActionDanger : null]}>{label}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  pill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.full, marginBottom: spacing.sm },
-  pillText: { fontSize: 11, fontWeight: "700" },
-  kv: { flexDirection: "row", gap: 10, paddingVertical: 5 },
-  k: { width: 92, fontSize: 12, color: colors.sub },
-  v: { flex: 1, fontSize: 13, color: colors.ink, lineHeight: 18 },
-  muted: { fontSize: 12, color: colors.sub, fontWeight: "400" },
-  mediaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: spacing.sm },
-  media: { width: 96, height: 128, borderRadius: 10, backgroundColor: colors.cardHigh },
-  mediaVideo: { alignItems: "center", justifyContent: "center", gap: 4 },
-  mediaLabel: { fontSize: 11, color: colors.sub, textAlign: "center", marginTop: 2 },
-  note: {
-    minHeight: 64,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.cardHigh,
-    padding: 10,
-    fontSize: 14,
-    color: colors.ink,
-    marginVertical: spacing.sm,
-    textAlignVertical: "top",
-  },
-  warn: { fontSize: 12, color: colors.yellow, marginBottom: spacing.sm, lineHeight: 17 },
-  item: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 4 },
-  name: { fontSize: 14, fontWeight: "600", color: colors.ink },
-  small: { fontSize: 12, color: colors.sub, lineHeight: 17 },
-  linkRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
-  linkInput: {
-    flex: 1,
-    height: 38,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.cardHigh,
-    paddingHorizontal: 10,
-    fontSize: 13,
-    color: colors.ink,
-  },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: 6 },
-  textAction: { fontSize: 13, fontWeight: "600", color: colors.purple },
-  event: { paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  eventNote: { fontSize: 13, color: colors.ink, marginTop: 2 },
+  flex: { flex: 1 },
+  pillRow: { flexDirection: "row", marginBottom: spacing.md },
+  kv: { flexDirection: "row", gap: spacing.md, paddingVertical: 5 },
+  k: { ...type.footnote, width: 92, color: colors.sub },
+  v: { ...type.subhead, flex: 1, color: colors.ink, lineHeight: 20 },
+  muted: { ...type.footnote, color: colors.sub },
+  mediaRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.sm },
+  media: { width: 96, height: 128, borderRadius: radius.md, backgroundColor: colors.cardHigh },
+  mediaVideo: { alignItems: "center", justifyContent: "center", gap: spacing.xs },
+  mediaLabel: { ...type.caption2, color: colors.sub, textAlign: "center", marginTop: 2 },
+  noteField: { marginTop: spacing.md },
+  buttonRow: { flexDirection: "row", gap: spacing.sm },
+  inlineError: { marginTop: spacing.sm },
+  warnCard: { marginBottom: spacing.md },
+  warn: { ...type.footnote, color: colors.warningText, lineHeight: 18 },
+  item: { paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: spacing.xs },
+  itemLast: { borderBottomWidth: 0 },
+  itemHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  itemText: { flex: 1, minWidth: 0 },
+  name: { ...type.subhead, fontWeight: "600", color: colors.ink },
+  small: { ...type.caption, color: colors.sub, lineHeight: 17 },
+  linkRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 6 },
+  actions: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing.lg, marginTop: 2 },
+  textActionHit: { minHeight: 36, justifyContent: "center" },
+  textAction: { ...type.footnote, fontWeight: "600", color: colors.purpleText },
+  textActionDanger: { color: colors.redText },
+  resend: { marginTop: spacing.md },
+  event: { paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  eventNote: { ...type.footnote, color: colors.ink, marginTop: 2 },
 });

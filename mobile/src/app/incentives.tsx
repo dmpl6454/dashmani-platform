@@ -1,61 +1,81 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { StyleSheet, Text } from "react-native";
 import { apiFetch, fmtDate, fmtMoney, MONTHS } from "@/lib/api";
-import { colors } from "@/lib/theme";
-import { Screen, Card, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
+import { colors, type } from "@/lib/theme";
+import { Screen, useApi } from "@/components/ui";
+import { AsyncList } from "@/components/async";
+import { ListItem, StatGrid, StatTile } from "@/components/list";
+
+type Incentive = {
+  id: string;
+  amount: number;
+  reason: string;
+  month: number | null;
+  year: number | null;
+  createdAt: string;
+};
+
+function periodOf(i: Incentive): string {
+  if (i.month && i.year) {
+    const month = MONTHS[i.month - 1];
+    return month ? `${month} ${i.year}` : String(i.year);
+  }
+  return fmtDate(i.createdAt);
+}
 
 export default function IncentivesScreen() {
-  const { data, loading, refreshing, error, refresh } = useApi<any[]>(() => apiFetch("/hr/incentives"));
+  const state = useApi<Incentive[]>(() => apiFetch<Incentive[]>("/hr/incentives"));
 
-  if (loading) return <Loading />;
-
-  const items = data ?? [];
-  const total = items.reduce((s, i) => s + (i.amount || 0), 0);
+  const items = state.data ?? [];
+  const total = items.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
 
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      {items.length > 0 && (
-        <Card style={{ backgroundColor: colors.greenSoft, borderColor: "transparent", alignItems: "center" }}>
-          <Text style={styles.totalLabel}>Total earned</Text>
-          <Text style={styles.totalValue}>{fmtMoney(total)}</Text>
-        </Card>
-      )}
-      {items.length === 0 ? (
-        <Card>
-          <Empty icon="gift-outline" text="No incentives awarded yet" />
-        </Card>
-      ) : (
-        <Card>
-          {items.map((inc: any, i: number) => (
-            <View key={inc.id} style={[styles.row, i === items.length - 1 && { borderBottomWidth: 0 }]}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.reason}>{inc.reason}</Text>
-                <Text style={styles.sub}>
-                  {inc.month && inc.year ? `${MONTHS[inc.month - 1]} ${inc.year}` : fmtDate(inc.createdAt)}
-                </Text>
-              </View>
-              <Text style={styles.amount}>{fmtMoney(inc.amount)}</Text>
-            </View>
-          ))}
-        </Card>
-      )}
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncList
+        state={state}
+        grouped
+        skeleton="stats"
+        keyExtractor={(i) => i.id}
+        header={
+          items.length > 0 ? (
+            <StatGrid>
+              <StatTile
+                key="total"
+                label="Total earned"
+                value={fmtMoney(total)}
+                icon="gift-outline"
+                tone="success"
+                valueColor={colors.greenText}
+              />
+              <StatTile key="count" label="Awards" value={items.length} icon="ribbon-outline" tone="brand" />
+            </StatGrid>
+          ) : null
+        }
+        renderItem={(i) => (
+          <ListItem
+            title={i.reason}
+            subtitle={periodOf(i)}
+            icon="gift-outline"
+            tint="green"
+            lines={2}
+            accessibilityLabel={`${i.reason}, ${periodOf(i)}, ${fmtMoney(i.amount)}`}
+            trailing={
+              <Text maxFontSizeMultiplier={1.4} style={styles.amount}>
+                {fmtMoney(i.amount)}
+              </Text>
+            }
+          />
+        )}
+        empty={{
+          icon: "gift-outline",
+          title: "No incentives yet",
+          text: "Incentives HR awards you will appear here.",
+        }}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  totalLabel: { fontSize: 12, color: colors.green, fontWeight: "600" },
-  totalValue: { fontSize: 26, fontWeight: "700", color: colors.green, marginTop: 2 },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  reason: { fontSize: 14, fontWeight: "600", color: colors.ink },
-  sub: { fontSize: 12, color: colors.sub, marginTop: 2 },
-  amount: { fontSize: 15, fontWeight: "700", color: colors.green },
+  amount: { ...type.subhead, ...type.numeric, fontWeight: "700", color: colors.greenText },
 });

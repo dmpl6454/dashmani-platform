@@ -1,75 +1,155 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { apiFetch, fmtDate } from "@/lib/api";
-import { colors, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Stat, StatusPill, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
+import { StyleSheet, Text, View } from "react-native";
+import { apiFetch, fmtDay, fmtTime, istDateOf, MONTHS, todayIST } from "@/lib/api";
+import { colors, formatStatus, spacing, type } from "@/lib/theme";
+import { Card, Empty, Screen, SectionTitle, StatusPill, useApi } from "@/components/ui";
+import { DateTile, ListGroup, ListItem, StatGrid, StatTile } from "@/components/list";
+import { AsyncBlock } from "@/components/async";
+import { SkeletonCard, SkeletonList, SkeletonStatRow } from "@/components/skeleton";
 
-export default function AttendanceScreen() {
-  const { data, loading, refreshing, error, refresh } = useApi<any>(() => apiFetch("/hr/attendance"));
+type AttendanceRecord = {
+  id?: string;
+  date: string;
+  checkIn?: string | null;
+  checkOut?: string | null;
+  status: string;
+};
 
-  if (loading) return <Loading />;
+type Attendance = {
+  isEmployee?: boolean;
+  totalWorkdays?: number;
+  present?: number;
+  absent?: number;
+  late?: number;
+  halfDay?: number;
+  rate?: number | null;
+  records?: AttendanceRecord[];
+};
 
-  if (data && data.isEmployee === false) {
+function dayOf(v: string): string {
+  return istDateOf(v) ?? String(v).slice(0, 10);
+}
+
+function timesOf(r: AttendanceRecord): string | undefined {
+  if (!r.checkIn) return undefined;
+  return `In ${fmtTime(r.checkIn)}${r.checkOut ? ` · Out ${fmtTime(r.checkOut)}` : ""}`;
+}
+
+function monthLabel(today: string): string {
+  const [y, m] = today.split("-").map(Number);
+  return `${MONTHS[m - 1] ?? "This month"} ${y}`;
+}
+
+function TodayCard({ record, today }: { record: AttendanceRecord | undefined; today: string }) {
+  let line: string;
+  if (record?.checkIn) {
+    line = `In ${fmtTime(record.checkIn)}${record.checkOut ? ` · Out ${fmtTime(record.checkOut)}` : " · not checked out yet"}`;
+  } else if (record) {
+    line = formatStatus(record.status);
+  } else {
+    line = "No check-in recorded yet";
+  }
+  return (
+    <Card>
+      <View style={styles.todayRow}>
+        <View style={styles.flex}>
+          <Text style={styles.todayLabel} maxFontSizeMultiplier={1.6}>
+            Today · {fmtDay(today)}
+          </Text>
+          <Text style={styles.todayLine} maxFontSizeMultiplier={1.6}>
+            {line}
+          </Text>
+        </View>
+        {record ? <StatusPill status={record.status} size="sm" /> : null}
+      </View>
+    </Card>
+  );
+}
+
+function AttendanceBody({ data }: { data: Attendance }) {
+  if (data.isEmployee === false) {
     return (
-      <Screen>
-        <Card>
-          <Empty icon="briefcase-outline" text="Attendance isn't tracked for admin accounts" />
-        </Card>
-      </Screen>
+      <Card>
+        <Empty icon="briefcase-outline" title="Not tracked" text="Attendance isn't tracked for admin accounts." />
+      </Card>
     );
   }
 
+  const today = todayIST();
+  const records = data.records ?? [];
+  const todayRecord = records.find((r) => dayOf(r.date) === today);
+  const rate = data.rate;
+
   return (
-    <Screen onRefresh={refresh} refreshing={refreshing}>
-      <ErrorBanner message={error} />
-      <SectionTitle>This Month</SectionTitle>
-      <View style={styles.statRow}>
-        <Stat label="Workdays" value={data?.totalWorkdays ?? "—"} />
-        <Stat label="Present" value={data?.present ?? "—"} accent={colors.green} />
-        <Stat label="Absent" value={data?.absent ?? "—"} accent={colors.red} />
-      </View>
-      <View style={styles.statRow}>
-        <Stat label="Late" value={data?.late ?? "—"} accent={colors.amber} />
-        <Stat label="Half Days" value={data?.halfDay ?? "—"} />
-        <Stat label="Rate" value={data?.rate != null ? `${data.rate}%` : "—"} accent={colors.purple} />
-      </View>
+    <>
+      <TodayCard record={todayRecord} today={today} />
+
+      <SectionTitle>{monthLabel(today)}</SectionTitle>
+      <StatGrid columns={3}>
+        <StatTile compact label="Workdays" value={data.totalWorkdays ?? "—"} icon="calendar-outline" tone="neutral" />
+        <StatTile compact label="Present" value={data.present ?? "—"} icon="checkmark-circle-outline" tone="success" />
+        <StatTile compact label="Absent" value={data.absent ?? "—"} icon="close-circle-outline" tone="danger" />
+        <StatTile compact label="Late" value={data.late ?? "—"} icon="time-outline" tone="warning" />
+        <StatTile compact label="Half days" value={data.halfDay ?? "—"} icon="contrast-outline" tone="info" />
+        <StatTile
+          compact
+          label="Rate"
+          value={rate != null ? `${rate}%` : "—"}
+          icon="trending-up-outline"
+          tone="brand"
+          progress={rate != null ? Math.max(0, Math.min(1, rate / 100)) : undefined}
+        />
+      </StatGrid>
 
       <SectionTitle>Records</SectionTitle>
-      <Card>
-        {(data?.records ?? []).length === 0 ? (
-          <Empty icon="time-outline" text="No attendance records this month" />
-        ) : (
-          data.records.map((r: any, i: number) => (
-            <View key={r.id ?? i} style={[styles.recRow, i === data.records.length - 1 && { borderBottomWidth: 0 }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.recDate}>{fmtDate(r.date)}</Text>
-                {r.checkIn ? (
-                  <Text style={styles.recTime}>
-                    In {new Date(r.checkIn).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}
-                    {r.checkOut
-                      ? ` · Out ${new Date(r.checkOut).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}`
-                      : ""}
-                  </Text>
-                ) : null}
-              </View>
-              <StatusPill status={r.status} />
-            </View>
-          ))
-        )}
-      </Card>
+      {records.length === 0 ? (
+        <Card>
+          <Empty icon="time-outline" title="No records yet" text="No attendance records this month." compact />
+        </Card>
+      ) : (
+        <ListGroup>
+          {records.map((r, i) => {
+            const ymd = dayOf(r.date);
+            return (
+              <ListItem
+                key={r.id ?? `${ymd}-${i}`}
+                leading={<DateTile date={ymd} tone={ymd === today ? "brand" : "neutral"} />}
+                title={fmtDay(ymd)}
+                subtitle={timesOf(r)}
+                trailing={<StatusPill status={r.status} size="sm" />}
+              />
+            );
+          })}
+        </ListGroup>
+      )}
+    </>
+  );
+}
+
+export default function AttendanceScreen() {
+  const state = useApi<Attendance>(() => apiFetch<Attendance>("/hr/attendance"));
+
+  return (
+    <Screen onRefresh={state.refresh} refreshing={state.refreshing}>
+      <AsyncBlock
+        state={state}
+        skeleton={
+          <>
+            <SkeletonCard lines={2} />
+            <SkeletonStatRow count={3} />
+            <SkeletonList rows={4} tile />
+          </>
+        }
+      >
+        {(d) => <AttendanceBody data={d} />}
+      </AsyncBlock>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  statRow: { flexDirection: "row", gap: 8, marginBottom: spacing.sm },
-  recRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  recDate: { fontSize: 14, fontWeight: "600", color: colors.ink },
-  recTime: { fontSize: 12, color: colors.sub, marginTop: 2 },
+  flex: { flex: 1, minWidth: 0 },
+  todayRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  todayLabel: { ...type.headline, color: colors.ink },
+  todayLine: { ...type.subhead, color: colors.sub, marginTop: 2 },
 });

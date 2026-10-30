@@ -550,6 +550,21 @@ export function describeError(e: unknown, fallback = "Something went wrong. Plea
 export async function loginWithPassword(mode: PortalMode, identifier: string, password: string) {
   const endpoint = mode === "admin" ? "/auth/login" : "/hr/auth/login";
   const body = mode === "admin" ? { email: identifier, password } : { identifier, password };
+  return postLogin(mode, endpoint, body, "Invalid credentials");
+}
+
+/**
+ * Sign in with a Google ID token (from the iOS app's own Google client). The API verifies it
+ * with Google and signs in the account with that verified email: /auth/google never creates an
+ * admin-portal account; /hr/auth/google creates an employee account for a new email, exactly as
+ * the HR website does.
+ */
+export async function loginWithGoogle(mode: PortalMode, credential: string) {
+  const endpoint = mode === "admin" ? "/auth/google" : "/hr/auth/google";
+  return postLogin(mode, endpoint, { credential }, "Google sign-in failed");
+}
+
+async function postLogin(mode: PortalMode, endpoint: string, body: Record<string, unknown>, fallback: string) {
   const { res, text } = await send(`${API_URL}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -574,7 +589,7 @@ export async function loginWithPassword(mode: PortalMode, identifier: string, pa
     err.status = res.status;
     throw err;
   }
-  if (!json.success) throw errorFromBody(json, res, "Invalid credentials");
+  if (!json.success) throw errorFromBody(json, res, fallback);
 
   const d = isRecord(json.data) ? json.data : null;
   const sessionUser = d ? toSessionUser(d.user) : null;

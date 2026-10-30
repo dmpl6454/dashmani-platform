@@ -9,6 +9,7 @@ import {
   hasSession,
   clearSession,
   loginWithPassword,
+  loginWithGoogle,
   setSessionExpiredHandler,
 } from "./api";
 
@@ -37,6 +38,8 @@ type AuthState = {
   resumePath: string | null;
   setResumePath: (p: string | null) => void;
   login: (mode: PortalMode, identifier: string, password: string) => Promise<void>;
+  /** Sign in with a Google ID token from the app's own Google client. */
+  loginGoogle: (mode: PortalMode, credential: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Switch active portal. Returns true (and switches) only if the target portal already has a session;
    *  otherwise returns false and changes nothing — the caller sends the person to /login. */
@@ -51,6 +54,7 @@ const AuthContext = createContext<AuthState>({
   resumePath: null,
   setResumePath: () => {},
   login: async () => {},
+  loginGoogle: async () => {},
   logout: async () => {},
   switchMode: async () => false,
 });
@@ -98,6 +102,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u);
   }, []);
 
+  const loginGoogle = useCallback(async (m: PortalMode, credential: string) => {
+    const previousMode = await getMode();
+    const u = await loginWithGoogle(m, credential);
+    if (m === "admin" && !capsFor(u.roles).canUseAdminPortal) {
+      await clearSession("admin");
+      await persistMode(previousMode);
+      throw new ApiError(
+        "This account can't use the Admin portal. Switch to Employee and sign in there.",
+        "FORBIDDEN_PORTAL",
+      );
+    }
+    setModeState(m);
+    setUser(u);
+  }, []);
+
   const logout = useCallback(async () => {
     await clearSession(mode);
     setResumePathState(null);
@@ -115,8 +134,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const caps = useMemo(() => capsFor(user?.roles), [user]);
 
   const value = useMemo<AuthState>(
-    () => ({ user, mode, loading, caps, resumePath, setResumePath, login, logout, switchMode }),
-    [user, mode, loading, caps, resumePath, setResumePath, login, logout, switchMode],
+    () => ({ user, mode, loading, caps, resumePath, setResumePath, login, loginGoogle, logout, switchMode }),
+    [user, mode, loading, caps, resumePath, setResumePath, login, loginGoogle, logout, switchMode],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

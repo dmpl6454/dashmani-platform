@@ -1,28 +1,71 @@
-import React from "react";
-import { Stack } from "expo-router";
+import React, { useEffect } from "react";
+import { Appearance, Platform } from "react-native";
+import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { AuthProvider } from "@/lib/auth";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { AuthProvider, useAuth } from "@/lib/auth";
 import { colors, isDark } from "@/lib/theme";
+import { ConfirmHost, ToastHost } from "@/components/feedback";
 
-export default function RootLayout() {
+/**
+ * Remembers the screen the person was on (or deep-linked to) so login can return there.
+ * Recorded regardless of `loading` / `user`: a cold deep link to e.g. /salary-slips with no
+ * session is stored before Stack.Protected sends the person to /login.
+ * Login consumes and clears it; logout() clears it.
+ */
+function ResumePathRecorder() {
+  const pathname = usePathname();
+  const { setResumePath } = useAuth();
+  useEffect(() => {
+    if (!pathname || pathname === "/" || pathname === "/login" || pathname.startsWith("/login?")) return;
+    setResumePath(pathname);
+  }, [pathname, setResumePath]);
+  return null;
+}
+
+/** Pin native chrome (keyboards, pickers, alerts) to the scheme the palette was resolved for. */
+function useLockColorScheme() {
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (typeof Appearance.setColorScheme !== "function") return;
+    try {
+      Appearance.setColorScheme(isDark ? "dark" : "light");
+    } catch {
+      /* unsupported on this platform */
+    }
+  }, []);
+}
+
+function RootStack() {
+  const { user, loading } = useAuth();
+  const largeTitle =
+    Platform.OS === "ios"
+      ? {
+          headerLargeTitleEnabled: true,
+          headerLargeTitleShadowVisible: false,
+          headerLargeTitleStyle: { fontWeight: "700", color: colors.ink },
+        }
+      : {};
+
   return (
-    <AuthProvider>
-      <StatusBar style={isDark ? "light" : "dark"} />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: colors.bg },
-          headerTintColor: colors.ink,
-          headerTitleStyle: { fontWeight: "700" },
-          headerShadowVisible: false,
-          // The tab groups' route names are "(tabs)" / "(admin)"; without this every screen
-          // opened from a tab showed "< (tabs)" as its back button.
-          headerBackTitle: "Back",
-          contentStyle: { backgroundColor: colors.bg },
-        }}
-      >
+    <Stack
+      screenOptions={{
+        headerStyle: { backgroundColor: colors.bg },
+        headerTintColor: colors.ink,
+        headerTitleStyle: { fontWeight: "700" },
+        headerShadowVisible: false,
+        // The tab groups' route names are "(tabs)" / "(admin)"; without this every screen
+        // opened from a tab showed "< (tabs)" as its back button.
+        headerBackTitle: "Back",
+        contentStyle: { backgroundColor: colors.bg },
+        ...largeTitle,
+      }}
+    >
+      {/* Unprotected: the only screen reachable without a session. */}
+      <Stack.Screen name="login" options={{ headerShown: false }} />
+      <Stack.Protected guard={loading || !!user}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="(admin)" options={{ headerShown: false }} />
-        <Stack.Screen name="login" options={{ headerShown: false }} />
         {/* Employee stack screens */}
         <Stack.Screen name="task/[id]" options={{ title: "Task" }} />
         <Stack.Screen name="attendance" options={{ title: "Attendance" }} />
@@ -53,6 +96,7 @@ export default function RootLayout() {
         <Stack.Screen name="admin-employees" options={{ title: "Employees" }} />
         <Stack.Screen name="admin-employee/[id]" options={{ title: "Employee Reports" }} />
         <Stack.Screen name="admin-tasks" options={{ title: "Tasks" }} />
+        <Stack.Screen name="admin-not-submitted" options={{ title: "Not submitted today" }} />
         <Stack.Screen name="admin-accounts" options={{ title: "Social Accounts" }} />
         <Stack.Screen name="admin-growth" options={{ title: "Account Growth" }} />
         <Stack.Screen name="admin-teams" options={{ title: "Teams" }} />
@@ -79,7 +123,22 @@ export default function RootLayout() {
         <Stack.Screen name="admin-posting-watch" options={{ title: "Posting Watch" }} />
         <Stack.Screen name="admin-campaigns" options={{ title: "Campaign Bookings" }} />
         <Stack.Screen name="admin-campaign/[id]" options={{ title: "Campaign" }} />
-      </Stack>
-    </AuthProvider>
+      </Stack.Protected>
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  useLockColorScheme();
+  return (
+    <SafeAreaProvider style={{ flex: 1, backgroundColor: colors.bg }}>
+      <AuthProvider>
+        <StatusBar style={isDark ? "light" : "dark"} />
+        <ResumePathRecorder />
+        <RootStack />
+        <ToastHost />
+        <ConfirmHost />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

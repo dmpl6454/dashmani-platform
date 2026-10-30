@@ -45,6 +45,8 @@ const L = {
   redText: "#B3261E",
 };
 
+// React Native resolves image assets through require(); there are no module typings for .png here.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const LOGO = require("../../assets/images/logo-mark.png");
 const continuous: ViewStyle | null = Platform.OS === "ios" ? { borderCurve: "continuous" } : null;
 

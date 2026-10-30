@@ -18,6 +18,7 @@ import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
 import { schedulePipelineMaintenance } from "./services/pipeline/jobs";
 import { scheduleApiUsageRollup } from "./services/api-usage-rollup.service";
+import { startDiskWatch } from "./services/disk-watch.service";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
 // The 2026-07-08 outage was an unhandled promise rejection (a P2024 pool timeout in an
@@ -245,6 +246,10 @@ app.listen(PORT, () => {
 
   // Campaign booking: render worker (30 s, one file per tick, low priority) + retention (6 h).
   startCampaignCrons();
+
+  // Low-disk alert (hourly, first +5 min): emails the admin inbox at most once a day when
+  // free space drops below DISK_ALERT_FREE_GB / DISK_ALERT_FREE_PCT. Kill switch DISK_WATCH_ENABLED=0.
+  startDiskWatch();
 
   // Creator portal: daily token health (emails at 14 and 3 days left), page stats within
   // CREATOR_METRICS_CALL_BUDGET, and oauth-state pruning. First run +25 min. Dark unless

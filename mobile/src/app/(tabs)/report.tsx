@@ -449,6 +449,20 @@ export default function ReportScreen() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsState, setAccountsState] = useState<LoadState>("loading");
   const [todayReport, setTodayReport] = useState<TodayReport | null>(null);
+  // The loaded report for the form's day, readable from callbacks (day change). Written in the
+  // same step as the state, so a day change right after a submit compares against what was sent.
+  const reportRef = useRef<TodayReport | null>(null);
+  // True once the form's day has a report answer from the server (a report or "none yet").
+  const reportKnownRef = useRef(false);
+  const setReportBoth = useCallback((r: TodayReport | null) => {
+    reportRef.current = r;
+    reportKnownRef.current = true;
+    setTodayReport(r);
+  }, []);
+  // Notes carried from the ended day, merged once today's report is known (see load).
+  const carriedNotesRef = useRef("");
+  // Set when a day change has already told the user what happened to the ended day's form.
+  const dayToastShownRef = useRef(false);
   // "failed" = the report for the form's day did not load. Then we do NOT know what is already
   // submitted, and the server's delete-and-recreate could replace it — submitting is refused.
   const [todayState, setTodayState] = useState<LoadState>("loading");
@@ -593,7 +607,7 @@ export default function ReportScreen() {
 
       const fresh = today.status === "fulfilled" ? (today.value ?? null) : null;
       if (today.status === "fulfilled") {
-        setTodayReport(fresh);
+        setReportBoth(fresh);
         setTodayState("ok");
       } else {
         setTodayState("failed");
@@ -626,8 +640,10 @@ export default function ReportScreen() {
           }
         } else {
           // An earlier load could not read the draft and the form already has content: fold the
-          // draft INTO it (never replace what is on screen), then save the union.
-          if (draftNewer) {
+          // draft INTO it (never replace what is on screen), then save the union. The draft's links
+          // are folded in even when the draft is older than the report: the union is saved next,
+          // so dropping them here would delete them from the draft.
+          {
             const keys = new Set<string>();
             next.forEach((r) => {
               const k = dedupeKey(r);
@@ -640,6 +656,8 @@ export default function ReportScreen() {
               return true;
             });
             if (extra.length > 0) next = [...next, ...extra];
+          }
+          if (draftNewer) {
             const dn = (d?.notes ?? "").trim();
             const cur = notesRef.current.trim();
             if (dn && dn !== cur) {
@@ -652,6 +670,9 @@ export default function ReportScreen() {
             const m = mergeServer(next, serverLinks(fresh));
             next = m.rows;
             added = m.added;
+            // Like the other branches: an empty notes box takes the notes already submitted
+            // today, so an Update re-sends them rather than replacing them with nothing.
+            if (!notesRef.current.trim() && fresh.notes) setNotesBoth(fresh.notes);
           }
           armAfter = true;
         }
@@ -666,12 +687,25 @@ export default function ReportScreen() {
         }
       }
 
+      // Notes carried from the ended day join today's once today's report is known, after the
+      // notes already submitted today (so an Update can never replace those). Applied once.
+      let notesChanged = false;
+      const carriedNotes = carriedNotesRef.current;
+      if (carriedNotes && today.status === "fulfilled") {
+        carriedNotesRef.current = "";
+        const cur = notesRef.current.trim();
+        if (!cur.includes(carriedNotes.trim())) {
+          setNotesBoth(cur ? `${notesRef.current.trimEnd()}\n${carriedNotes}` : carriedNotes);
+          notesChanged = true;
+        }
+      }
+
       next = decorateAll(next, accountList, priorRef.current, defaultIdOf(defaultRef.current));
       if (next !== rowsRef.current) {
         rowsRef.current = next;
         setRows(next);
       }
-      if (armAfter) {
+      if (armAfter || (notesChanged && restoredRef.current)) {
         // The on-screen form now differs from the saved draft (it is the union of both).
         draftGenRef.current += 1;
         armDraftTimer();
@@ -690,71 +724,35 @@ export default function ReportScreen() {
   }, [load]);
 
   /**
-   * Before the form moves on to a new day, keep what was typed for the day that ended: its
-   * pending autosave is about to be cancelled, so the old day's draft is written now. When that
-   * day's draft was never read, it is read first and the form is folded INTO it, so a draft we
-   * have not seen is never overwritten. Unsent links can no longer be submitted (the app only
-   * POSTs for the current IST day), so the user is told where they went.
+   * Links typed for the day that ended but never submitted. They move into the new day's form
+   * rather than into a past-day draft: nothing reads a past day's draft (the app and the web
+   * portal only open today's), and keeping them on screen needs no network request at midnight. Rows already submitted, links submitted on earlier days, and
+   * typed copies of a link the server already has are not carried. Until today's draft is read and
+   * saved they live in memory (as every unsaved edit does); a pending save for the ended day is
+   * flushed at the change, so links already on that day's draft are on the server either way.
    */
-  const keepOldDay = useCallback((date: string) => {
+  const unsentRows = useCallback((): LinkRow[] => {
     const rowsNow = rowsRef.current;
-    const notesNow = notesRef.current;
-    const wasRestored = restoredRef.current;
-    const pending = draftTimer.current !== null || savedGenRef.current !== draftGenRef.current;
-    const unsentKeys = new Set<string>();
+    const serverKeys = new Set<string>();
+    rowsNow.forEach((r) => {
+      if (!r.server) return;
+      const k = dedupeKey(r);
+      if (k) serverKeys.add(k);
+    });
+    const byKey = new Map<string, LinkRow>();
     rowsNow.forEach((r) => {
       if (r.server || r.priorDate) return;
       const k = dedupeKey(r);
-      if (k) unsentKeys.add(k);
-    });
-    const unsent = unsentKeys.size;
-    if (wasRestored ? !pending : unsent === 0 && !notesNow.trim()) return;
-
-    const byId = new Map(accountsRef.current.map((a) => [a.id, a] as const));
-    const liveRows = rowsNow.filter((r) => !isScheduledRow(r) && !!r.url.trim());
-    const run = async (): Promise<void> => {
-      let rowsOut = liveRows;
-      let notesOut = notesNow;
-      if (!wasRestored) {
-        const d = await apiFetch<DraftData | null>(`/hr/reports/draft?date=${date}`);
-        const keys = new Set<string>();
-        const union: LinkRow[] = [];
-        [...liveRows, ...draftRowsOf(d ?? null)].forEach((r) => {
-          const k = dedupeKey(r);
-          if (!k || keys.has(k)) return;
-          keys.add(k);
-          union.push(r);
-        });
-        rowsOut = union;
-        const dn = (d?.notes ?? "").trim();
-        const cur = notesNow.trim();
-        if (dn && !cur.includes(dn)) notesOut = cur ? `${notesNow.trimEnd()}\n${dn}` : (d?.notes ?? "");
+      if (!k || serverKeys.has(k)) return;
+      const had = byKey.get(k);
+      // One row per link; an account chosen on any copy is kept.
+      if (had) {
+        if (!had.accountId && r.accountId) byKey.set(k, { ...had, accountId: r.accountId });
+        return;
       }
-      await apiFetch("/hr/reports/draft", {
-        method: "PUT",
-        body: JSON.stringify({ date, notes: notesOut, links: rowsOut.map((r) => toDraftLink(r, byId)) }),
-      });
-    };
-    const p = lastDraftPut.current.then(run);
-    lastDraftPut.current = p.catch(() => undefined);
-    if (unsent === 0) {
-      p.catch(() => undefined);
-      return;
-    }
-    const what = plural(unsent, "unsent link");
-    const day = fmtDay(date, { weekday: true });
-    p.then(
-      () =>
-        toast.show({
-          message: `A new day has started · ${what} from ${day} ${unsent === 1 ? "was" : "were"} kept in that day's draft, not submitted`,
-          tone: "warning",
-        }),
-      () =>
-        toast.show({
-          message: `A new day has started · ${what} from ${day} couldn't be saved`,
-          tone: "danger",
-        }),
-    );
+      byKey.set(k, { key: r.key, url: r.url, accountId: r.accountId, source: "local" });
+    });
+    return [...byKey.values()];
   }, []);
 
   // A new IST day: start a fresh form for that day.
@@ -767,7 +765,32 @@ export default function ReportScreen() {
         return;
       }
       pendingDayRef.current = null;
-      keepOldDay(loadedDateRef.current);
+      dayToastShownRef.current = false;
+      const endedDay = loadedDateRef.current;
+      const carried = unsentRows();
+      // If the ended day's report never loaded, we can't tell which links or notes were sent.
+      const endedKnown = reportKnownRef.current;
+      // Notes travel when they differ from what that day's report holds (when that is unknown they
+      // travel too, and the message asks the user to check).
+      const sentNotes = (reportRef.current?.notes ?? "").trim();
+      const typedNotes = notesRef.current.trim();
+      // Only the part not already in that day's report travels.
+      const unsentNotes =
+        sentNotes && typedNotes.startsWith(sentNotes) ? typedNotes.slice(sentNotes.length).trim() : typedNotes;
+      const carriedNotes = typedNotes && typedNotes !== sentNotes ? unsentNotes : "";
+      // A save of the ended day's form still waiting on the 3 s debounce is written now, so the
+      // carried rows are on the server somewhere even before today's draft has been read.
+      if (restoredRef.current && (draftTimer.current !== null || savedGenRef.current !== draftGenRef.current)) {
+        const byId = new Map(accountsRef.current.map((a) => [a.id, a] as const));
+        const body = JSON.stringify({
+          date: endedDay,
+          notes: notesRef.current,
+          links: rowsRef.current.filter((r) => !isScheduledRow(r) && r.url.trim()).map((r) => toDraftLink(r, byId)),
+        });
+        lastDraftPut.current = lastDraftPut.current
+          .then(() => apiFetch("/hr/reports/draft", { method: "PUT", body }))
+          .catch(() => undefined);
+      }
       loadedDateRef.current = today;
       setFormDate(today);
       loadSeq.current += 1;
@@ -776,9 +799,16 @@ export default function ReportScreen() {
       draftGenRef.current = 0;
       savedGenRef.current = 0;
       skipNextAutosave.current = true;
-      commitRows([]);
+      commitRows(carried);
       setNotesBoth("");
-      setTodayReport(null);
+      // A carry still waiting for a report load (e.g. offline across two midnights) is kept.
+      const pendingNotes = carriedNotesRef.current;
+      carriedNotesRef.current =
+        pendingNotes && carriedNotes && !carriedNotes.includes(pendingNotes.trim())
+          ? `${pendingNotes.trimEnd()}\n${carriedNotes}`
+          : carriedNotes || pendingNotes;
+      setReportBoth(null);
+      reportKnownRef.current = false;
       setTodayState("loading");
       setDraftLoadState("loading");
       setResult(null);
@@ -790,8 +820,20 @@ export default function ReportScreen() {
       setRefreshing(false);
       setInitialLoading(true);
       void load("initial");
+      if (carried.length > 0 || carriedNotes) {
+        const n = carried.length;
+        const what = n > 0 ? `${plural(n, "link")}${carriedNotes ? " and notes" : ""}` : "Notes";
+        const from = fmtDay(endedDay, { weekday: true });
+        toast.show({
+          message: endedKnown
+            ? `A new day has started · ${what} from ${from} ${n === 1 || n === 0 ? "wasn't" : "weren't"} submitted — moved to today's form`
+            : `A new day has started · ${what} from ${from} moved to today's form — check before submitting, some may already be in that day's report`,
+          tone: "warning",
+        });
+        dayToastShownRef.current = true;
+      }
     },
-    [keepOldDay, clearDraftTimer, commitRows, setNotesBoth, load],
+    [unsentRows, clearDraftTimer, commitRows, setNotesBoth, load],
   );
 
   useEffect(() => {
@@ -806,7 +848,12 @@ export default function ReportScreen() {
 
   // ---------- autosave (3 s debounce) ----------
   useEffect(() => {
-    if (!restoredRef.current) return;
+    if (!restoredRef.current) {
+      // Nothing is saved until today's draft has been read; a skip set for a load that never
+      // restored must not swallow the first real edit after a later load succeeds.
+      skipNextAutosave.current = false;
+      return;
+    }
     if (skipNextAutosave.current) {
       skipNextAutosave.current = false;
       return;
@@ -1007,7 +1054,10 @@ export default function ReportScreen() {
     const now = todayIST();
     if (now !== date) {
       newDayRef.current(now);
-      toast.show({ message: "A new day has started — the form is now for today", tone: "warning" });
+      // The day change may already have said where unsent links went; don't replace that.
+      if (!dayToastShownRef.current) {
+        toast.show({ message: "A new day has started — the form is now for today", tone: "warning" });
+      }
       void haptic("warning");
       return;
     }
@@ -1051,7 +1101,7 @@ export default function ReportScreen() {
         toast.show({ message: "A new day has started — the form is now for today", tone: "warning" });
         return;
       }
-      setTodayReport(fresh ?? null);
+      setReportBoth(fresh ?? null);
       setTodayState("ok");
       const merged = mergeServer(rowsRef.current, serverLinks(fresh));
       commitRows(decorateAll(merged.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
@@ -1115,7 +1165,7 @@ export default function ReportScreen() {
       skipNextAutosave.current = true;
       const after = mergeServer(later, serverLinks(report));
       commitRows(decorateAll(after.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
-      setTodayReport(report);
+      setReportBoth(report);
       setTodayState("ok");
       setAttempted(false);
       setMergeNote(null);

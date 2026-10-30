@@ -18,6 +18,7 @@ import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
 import { schedulePipelineMaintenance } from "./services/pipeline/jobs";
 import { scheduleApiUsageRollup } from "./services/api-usage-rollup.service";
+import { scheduleRecurringInvoices } from "./services/sales/recurring.service";
 import { startDiskWatch } from "./services/disk-watch.service";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
@@ -64,6 +65,10 @@ app.listen(PORT, () => {
   // folded into one row per Cost Sheet group — exact for every reader — at 04:20 IST, never
   // at boot, once per IST day (marker). See api-usage-rollup.service.ts.
   scheduleApiUsageRollup();
+
+  // Recurring / retainer invoices: bills every due period at 06:30 IST, never at boot, once per
+  // IST day (marker). Kill switch SALES_RECURRING_ENABLED=0. See sales/recurring.service.ts.
+  scheduleRecurringInvoices();
 
   // Pipeline hourly `[pipeline] stats` line (spec §12 step 8): counters only, no DB.
   startPipelineStatsLog(Number(process.env.PIPELINE_STATS_INTERVAL_MS) || 60 * 60 * 1000);

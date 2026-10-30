@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { companyScope, computeTotals, lineAmountPaise, taxModeFor, todayIST, type CompanyKey, type LineItemInput, type OrderUpsertInput, type QuoteUpsertInput, type TaxMode, registrationFor } from "@dashmani/shared";
+import { companyScope, computeTotals, findRegistration, lineAmountPaise, registrationChoice, SALES_COMPANIES, taxModeFor, todayIST, type CompanyKey, type LineItemInput, type OrderUpsertInput, type QuoteUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { getSellerOrDefaults, type SellerProfile } from "./settings.service";
@@ -15,11 +15,23 @@ export interface ResolvedTax {
   placeOfSupplyCode: string | null;
   taxMode: TaxMode;
   gstRateBp: number;
+  /** The GST registration chosen by hand (normalised), or null for the automatic choice. */
+  sellerGstin: string | null;
+}
+
+/** A hand-picked registration must be one the company actually holds (checked on every save). */
+export function assertSellerRegistration(seller: SellerProfile, gstin: string | null | undefined, company: CompanyKey): string | null {
+  if (!gstin) return null;
+  const reg = findRegistration(seller, gstin);
+  if (!reg?.gstin) {
+    throw new AppError(400, "UNKNOWN_REGISTRATION", `${gstin} is not one of ${SALES_COMPANIES[company].name}'s GST registrations in Settings — pick one of its GSTINs, or Automatic`);
+  }
+  return reg.gstin;
 }
 
 export async function resolveDocumentTax(
   clientId: string,
-  input: { placeOfSupplyCode?: string | null; taxMode?: TaxMode; gstRateBp?: number },
+  input: { placeOfSupplyCode?: string | null; taxMode?: TaxMode; gstRateBp?: number; sellerGstin?: string | null },
   company: CompanyKey,
 ): Promise<ResolvedTax> {
   const [seller, client] = await Promise.all([
@@ -27,10 +39,12 @@ export async function resolveDocumentTax(
     prisma.client.findUnique({ where: { id: clientId }, select: { id: true, billingProfile: { select: { stateCode: true, country: true } } } }),
   ]);
   if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
+  const sellerGstin = assertSellerRegistration(seller, input.sellerGstin, company);
   const placeOfSupplyCode = input.placeOfSupplyCode ?? client.billingProfile?.stateCode ?? null;
-  const taxMode = input.taxMode ?? taxModeFor(registrationFor(seller, placeOfSupplyCode).stateCode, placeOfSupplyCode, client.billingProfile?.country ?? "IN");
+  const reg = registrationChoice(seller, placeOfSupplyCode, sellerGstin);
+  const taxMode = input.taxMode ?? taxModeFor(reg.stateCode, placeOfSupplyCode, client.billingProfile?.country ?? "IN");
   const gstRateBp = input.gstRateBp ?? seller.defaultGstRateBp;
-  return { seller, placeOfSupplyCode, taxMode, gstRateBp };
+  return { seller, placeOfSupplyCode, taxMode, gstRateBp, sellerGstin };
 }
 
 export function buildLines(items: LineItemInput[], defaultSac: string) {

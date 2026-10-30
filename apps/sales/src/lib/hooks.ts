@@ -2,7 +2,7 @@
 import useSWR, { type SWRConfiguration } from "swr";
 import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
-import type { BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, SalesEvent, SellerSettings, Statement } from "./sales-types";
+import type { BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
 // SWR hooks over /v1/sales/*. A null key skips the request (no id yet, or a detail page
 // opened without ?id=). keepPreviousData keeps a list on screen while a filter changes.
@@ -64,3 +64,10 @@ export const useCreditNotes = (f: { invoiceId?: string; clientId?: string }) => 
 export const useBookings = (f: { stage?: string; q?: string; clientId?: string }) => useSWR<BookingRow[]>(`/sales/bookings${qs(f)}`, fetcher, opts);
 export const useBooking = (id: string | null) => useSWR<BookingDetail>(id ? `/sales/bookings/${id}` : null, fetcher, opts);
 export const useEvents = (entityType: string, entityId: string | null) => useSWR<SalesEvent[]>(entityId ? `/sales/events${qs({ entityType, entityId })}` : null, fetcher, opts);
+
+/** Recurring invoices of the current company (or one client's, across companies when clientId is given). */
+export const useRecurringList = (f: { clientId?: string; status?: string } = {}) => {
+  const { company } = useCompany();
+  return useSWR<Recurring[]>(`/sales/recurring${qs(f.clientId ? f : { ...f, company })}`, fetcher, opts);
+};
+export const useRecurring = (id: string | null) => useSWR<Recurring>(id ? `/sales/recurring/${id}` : null, fetcher, opts);

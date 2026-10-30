@@ -11,6 +11,7 @@ import type { BillingProfile } from "@/lib/sales-types";
 import { Empty, Field, LoadError, Loading, Money, PageHead, Stat, StatusPill, Toast, titleCase } from "@/components/sales-ui";
 import { GST_STATE_CODES, stateCodeFromGstin } from "@dashmani/shared/src/sales/gst";
 import { ClientLogins } from "@/components/client-logins";
+import { ClientRecurring } from "@/components/recurring-table";
 
 const EMPTY: BillingProfile = { legalName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "", pincode: "", country: "IN", billingEmail: "", billingPhone: "", notes: "" };
 
@@ -107,6 +108,7 @@ function ClientView() {
           <p className="text-xs text-ink-4 mt-4">{client.contactName} · {client.email}{client.phone ? ` · ${client.phone}` : ""}</p>
         </section>
         <ClientLogins clientId={client.id} onToast={setToast} />
+        <ClientRecurring clientId={client.id} />
         </div>
         <section className="card p-4 lg:col-span-2">
           <h2 className="font-bold mb-3">Invoices</h2>

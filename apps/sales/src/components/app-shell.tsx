@@ -7,7 +7,7 @@ import { PortalSwitcher } from "./portal-switcher";
 import { CompanySwitcher } from "./company-switcher";
 import { COMPANY_LOGO, useCompany } from "@/lib/company";
 
-// The signed-in frame: brand, the billing company, the nine sections, the portal switcher and sign-out. Nav wraps rather than scrolls so
+// The signed-in frame: brand, the billing company, the ten sections, the portal switcher and sign-out. Nav wraps rather than scrolls so
 // nothing overflows at 390px.
 const NAV = [
   { href: "/dashboard", label: "Dashboard" },
@@ -17,6 +17,7 @@ const NAV = [
   { href: "/orders", label: "Orders" },
   { href: "/bookings", label: "Bookings" },
   { href: "/invoices", label: "Invoices" },
+  { href: "/recurring", label: "Recurring" },
   { href: "/payments", label: "Payments" },
   { href: "/settings", label: "Settings" },
 ];

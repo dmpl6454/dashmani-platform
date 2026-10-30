@@ -58,6 +58,8 @@ export interface InvoiceItem { id?: string; description: string; sac: string | n
 export interface Invoice extends DocumentTotals {
   id: string; companyKey: string; number: string | null; kind: "tax_invoice" | "proforma"; status: string; derivedStatus: DerivedInvoiceStatus; clientId: string; orderId: string | null;
   campaignBookingId: string | null; issueDate: string | null; dueDate: string | null; taxMode: TaxMode; gstRateBp: number; placeOfSupplyCode: string | null;
+  /** The GST registration picked by hand (null = automatic), and the recurring invoice that made it. */
+  sellerGstin: string | null; recurringId: string | null;
   roundOffPaise: number; paidPaise: number; tdsPaise: number; creditedPaise: number; balancePaise: number; amountInWords: string | null;
   notes: string | null; terms: string | null; internalNotes: string | null; cancelReason: string | null; issuedAt: string | null; sentAt: string | null; paidAt: string | null; createdAt: string;
   sellerSnapshot: Record<string, string | null> | null; buyerSnapshot: Record<string, string | null> | null;
@@ -115,4 +117,16 @@ export interface Dashboard {
   outstandingPaise: number; outstandingCount: number; overduePaise: number; overdueCount: number;
   openQuotes: { count: number; totalPaise: number }; acceptedQuotes: { count: number; totalPaise: number }; activeOrders: { count: number; totalPaise: number }; deliveredOrders: { count: number; totalPaise: number };
   topClients: Array<{ clientId: string; name: string; invoicedPaise: number }>; byPlatform: Array<{ platform: string; lines: number; amountPaise: number }>; recent: SalesEvent[];
+}
+
+/** A recurring (retainer) invoice template. Dates are IST days. */
+export interface RecurringLine { description: string; sac?: string | null; quantity: number; unitPricePaise: number; discountPaise: number }
+export interface Recurring {
+  id: string; companyKey: string; client: { id: string; companyName: string }; title: string; kind: "tax_invoice" | "proforma";
+  frequency: "monthly" | "quarterly" | "yearly"; dayOfMonth: number; startDate: string; endDate: string | null; nextRunDate: string; nextPeriodLabel: string;
+  mode: "draft" | "issue"; placeOfSupplyCode: string | null; taxMode: TaxMode | null; gstRateBp: number | null; sellerGstin: string | null;
+  discountPaise: number; dueDays: number | null; notes: string | null; lines: RecurringLine[]; status: "active" | "paused" | "ended";
+  lastInvoiceId: string | null; lastRunAt: string | null; lastError: string | null; createdAt: string; updatedAt: string;
+  lastInvoice?: { id: string; number: string | null; status: string; totalPaise: number } | null;
+  invoices?: Array<{ id: string; number: string | null; kind: string; status: string; issueDate: string | null; totalPaise: number; notes: string | null }>;
 }

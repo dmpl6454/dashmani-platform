@@ -132,6 +132,7 @@ function InvoiceView() {
       </PageHead>
       {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; nothing can be edited after that.</div>}
       {inv.einvoice && inv.einvoice.status !== "cancelled" && <EInvoicePanel e={inv.einvoice} onRetry={() => retryEInvoice(`/sales/invoices/${inv.id}/einvoice`)} />}
+      {inv.recurringId && <div className="card p-3 text-sm mb-4">Made by a <Link href={`/recurring/view?id=${inv.recurringId}`} className="underline hover:text-indigo-light">recurring invoice</Link>.</div>}
       {inv.convertedFrom && <div className="card p-3 text-sm mb-4">Made from proforma <Link href={`/invoices/view?id=${inv.convertedFrom.id}`} className="font-mono hover:text-indigo-light">{inv.convertedFrom.number}</Link>. Issuing it moves the proforma&apos;s payments onto this invoice and retires the proforma.</div>}
       {liveConversion && <div className="card p-3 text-sm mb-4">Converted to <Link href={`/invoices/view?id=${liveConversion.id}`} className="font-mono hover:text-indigo-light">{liveConversion.number ?? "a draft tax invoice"}</Link>{liveConversion.number ? "" : " — issue it to move this proforma's payments across"}.</div>}
       {ds === "cancelled" && <div className="card border-danger p-3 text-sm mb-4">Cancelled{inv.cancelReason ? ` — ${inv.cancelReason}` : ""}. The number is kept on record and never reused.</div>}
@@ -144,6 +145,7 @@ function InvoiceView() {
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Issue date</dt><dd>{fmtDate(inv.issueDate)}</dd></div>
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Due date</dt><dd>{fmtDate(inv.dueDate)}</dd></div>
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Place of supply</dt><dd>{inv.placeOfSupplyCode ? `${inv.placeOfSupplyCode} · ${GST_STATE_CODES[inv.placeOfSupplyCode] ?? ""}` : "—"}</dd></div>
+              {inv.sellerGstin && <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Billed from (picked)</dt><dd className="font-mono">{inv.sellerGstin}</dd></div>}
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Tax</dt><dd>{inv.taxMode === "intra" ? `CGST + SGST ${pct(inv.gstRateBp)}` : inv.taxMode === "inter" ? `IGST ${pct(inv.gstRateBp)}` : "No GST"}</dd></div>
             </dl>
           </section>

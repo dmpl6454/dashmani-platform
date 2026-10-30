@@ -1,5 +1,5 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, registrationFor, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
+import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, findRegistration, registrationChoice, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { assertSameCompany, resolveDocumentTax, type ResolvedTax } from "./documents.service";
@@ -96,6 +96,8 @@ export async function getInvoice(id: string) {
     cancelReason: row.cancelReason,
     gstRateBp: row.gstRateBp,
     placeOfSupplyCode: row.placeOfSupplyCode,
+    sellerGstin: row.sellerGstin,
+    recurringId: row.recurringId,
     client,
     order,
     convertedFrom,
@@ -138,7 +140,7 @@ async function assertOrderCompany(orderId: string | null | undefined, company: C
   if (order && order.companyKey !== company) throw new AppError(409, "COMPANY_MISMATCH", `${order.number} is ${SALES_COMPANIES[order.companyKey as CompanyKey]?.name ?? "the other company"}'s order — invoice it from that company`);
 }
 
-export async function createInvoice(input: InvoiceUpsertInput, actorId: string, link: { convertedFromId?: string } = {}) {
+export async function createInvoice(input: InvoiceUpsertInput, actorId: string, link: { convertedFromId?: string; recurringId?: string } = {}) {
   await assertOrderCompany(input.orderId, input.companyKey);
   const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
   const lines = invoiceLines(input.items, tax.seller.defaultSac);
@@ -155,11 +157,13 @@ export async function createInvoice(input: InvoiceUpsertInput, actorId: string, 
       placeOfSupplyCode: tax.placeOfSupplyCode,
       taxMode: tax.taxMode,
       gstRateBp: tax.gstRateBp,
+      sellerGstin: tax.sellerGstin,
       ...totals,
       notes: input.notes ?? null,
       terms: input.terms ?? tax.seller.terms ?? null,
       internalNotes: input.internalNotes ?? null,
       convertedFromId: link.convertedFromId ?? null,
+      recurringId: link.recurringId ?? null,
       createdById: actorId,
       items: { create: lines },
     },
@@ -198,6 +202,7 @@ export async function updateInvoice(id: string, input: InvoiceUpsertInput, actor
         placeOfSupplyCode: tax.placeOfSupplyCode,
         taxMode: tax.taxMode,
         gstRateBp: tax.gstRateBp,
+        sellerGstin: tax.sellerGstin,
         ...totals,
         notes: input.notes ?? null,
         terms: input.terms ?? null,
@@ -352,8 +357,12 @@ export async function issueInvoice(
     // deliberate place of supply).
     const buyerProfile = inv.client.billingProfile;
     const expectedPos = buyerProfile?.stateCode ?? inv.placeOfSupplyCode ?? null;
-    // The registration this supply is billed from (the client's state if we are registered there).
-    const reg = registrationFor(seller, expectedPos);
+    // The registration this supply is billed from: the one chosen on the draft, else the client's
+    // state if we are registered there, else the principal one.
+    if (inv.sellerGstin && !findRegistration(seller, inv.sellerGstin)) {
+      throw new AppError(409, "REGISTRATION_GONE", `This draft bills from ${inv.sellerGstin}, which is no longer one of ${SALES_COMPANIES[company].name}'s registrations in Settings — pick another in the invoice, or Automatic`);
+    }
+    const reg = registrationChoice(seller, expectedPos, inv.sellerGstin);
     const expectedMode = taxModeFor(reg.stateCode, expectedPos, buyerProfile?.country ?? "IN");
     const storedMode = inv.taxMode as TaxMode;
     const taxChanged = expectedMode !== storedMode || expectedPos !== (inv.placeOfSupplyCode ?? null);
@@ -587,6 +596,7 @@ export async function convertProforma(id: string, actorId: string) {
       taxMode: pf.taxMode as TaxMode,
       gstRateBp: pf.gstRateBp,
       discountPaise: pf.discountPaise,
+      sellerGstin: pf.sellerGstin,
       notes: `Against proforma ${pf.number}${pf.notes ? ` — ${pf.notes}` : ""}`,
       terms: pf.terms,
       internalNotes: pf.internalNotes,

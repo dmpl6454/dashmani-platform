@@ -136,6 +136,50 @@ function draftRowsOf(d: DraftData | null): LinkRow[] {
   return out;
 }
 
+/** Field-by-field equality of two rows (same object identity is not required). */
+function sameRow(a: LinkRow, b: LinkRow): boolean {
+  return (
+    a.key === b.key &&
+    a.url === b.url &&
+    a.accountId === b.accountId &&
+    a.source === b.source &&
+    a.server === b.server &&
+    a.auto === b.auto &&
+    a.mismatch === b.mismatch &&
+    (a.priorDate ?? null) === (b.priorDate ?? null) &&
+    a.error === b.error
+  );
+}
+
+/**
+ * mergeServerRows, plus two guarantees the form relies on:
+ *  - only the FIRST row per url key is marked as submitted (`server`). A duplicate the user typed
+ *    of an already-submitted link stays an ordinary, removable row (buildSend dedupes it anyway);
+ *  - a row the merge did not actually change keeps its object identity, so a refresh never makes
+ *    an unchanged row look like a new edit.
+ */
+function mergeServer(local: LinkRow[], server: ServerLink[]): { rows: LinkRow[]; added: number } {
+  const m = mergeServerRows(local, server, newKey);
+  const before = new Map(local.map((r) => [r.key, r] as const));
+  const claimed = new Set<string>();
+  const rows = m.rows.map((r) => {
+    if (isScheduledRow(r)) return r;
+    const orig = before.get(r.key);
+    let out = r;
+    const k = dedupeKey(r);
+    if (r.server && k) {
+      if (claimed.has(k)) {
+        out = orig && !orig.server ? orig : { ...r, server: undefined, source: "local" };
+      } else {
+        claimed.add(k);
+      }
+    }
+    if (orig && out !== orig && sameRow(out, orig)) out = orig;
+    return out;
+  });
+  return { rows, added: m.added };
+}
+
 /**
  * Prior-day marking + auto-assign (single account / unique host match / Posting-to default) +
  * platform-mismatch flag. Returns the same object when nothing changed (keeps memoised rows).
@@ -430,7 +474,15 @@ export default function ReportScreen() {
   const restoredRef = useRef(false);
   const skipNextAutosave = useRef(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Edit generation of the form vs the newest generation a draft PUT confirmed. They differ while
+  // edits are not yet in the saved draft (debounce pending, save in flight or failed).
+  const draftGenRef = useRef(0);
+  const savedGenRef = useRef(0);
+  // Draft writes (PUT / DELETE) run one after another, so an older write can never land last.
+  const lastDraftPut = useRef<Promise<unknown>>(Promise.resolve());
   const submittingRef = useRef(false);
+  // A new IST day noticed while a submit was in flight; applied when the submit settles.
+  const pendingDayRef = useRef<string | null>(null);
   const loadSeq = useRef(0);
   const rowsRef = useRef<LinkRow[]>([]);
   const notesRef = useRef("");
@@ -469,6 +521,7 @@ export default function ReportScreen() {
   const armDraftTimer = useCallback(() => {
     if (!restoredRef.current || submittingRef.current) return;
     const date = loadedDateRef.current;
+    const gen = draftGenRef.current;
     clearDraftTimer();
     draftTimer.current = setTimeout(() => {
       draftTimer.current = null;
@@ -477,19 +530,20 @@ export default function ReportScreen() {
       const links = rowsRef.current
         .filter((r) => !isScheduledRow(r) && r.url.trim())
         .map((r) => toDraftLink(r, byId));
+      const body = JSON.stringify({ date, notes: notesRef.current, links });
       setDraftStatus({ kind: "saving" });
-      apiFetch<{ savedAt?: string | null } | null>("/hr/reports/draft", {
-        method: "PUT",
-        body: JSON.stringify({ date, notes: notesRef.current, links }),
-      })
+      const p = lastDraftPut.current
+        .then(() => apiFetch<{ savedAt?: string | null } | null>("/hr/reports/draft", { method: "PUT", body }))
         .then((res) => {
           if (date !== loadedDateRef.current) return;
+          if (savedGenRef.current < gen) savedGenRef.current = gen;
           setDraftStatus({ kind: "saved", at: res?.savedAt || new Date().toISOString() });
         })
         .catch(() => {
           if (date !== loadedDateRef.current) return;
           setDraftStatus({ kind: "failed" });
         });
+      lastDraftPut.current = p;
     }, AUTOSAVE_MS);
   }, [clearDraftTimer]);
 
@@ -566,7 +620,7 @@ export default function ReportScreen() {
             if (fresh?.notes) setNotesBoth(fresh.notes);
           }
           if (fresh) {
-            const m = mergeServerRows(next, serverLinks(fresh), newKey);
+            const m = mergeServer(next, serverLinks(fresh));
             next = m.rows;
             if (useDraft) added = m.added;
           }
@@ -595,7 +649,7 @@ export default function ReportScreen() {
             }
           }
           if (fresh) {
-            const m = mergeServerRows(next, serverLinks(fresh), newKey);
+            const m = mergeServer(next, serverLinks(fresh));
             next = m.rows;
             added = m.added;
           }
@@ -605,7 +659,7 @@ export default function ReportScreen() {
         if (!restoredRef.current) setDraftLoadState("failed");
         if (fresh) {
           // Every fulfilled report load folds the submitted links in (never removes a live row).
-          const m = mergeServerRows(next, serverLinks(fresh), newKey);
+          const m = mergeServer(next, serverLinks(fresh));
           next = m.rows;
           added = m.added;
           if (!notesRef.current.trim() && fresh.notes) setNotesBoth(fresh.notes);
@@ -617,7 +671,11 @@ export default function ReportScreen() {
         rowsRef.current = next;
         setRows(next);
       }
-      if (armAfter) armDraftTimer();
+      if (armAfter) {
+        // The on-screen form now differs from the saved draft (it is the union of both).
+        draftGenRef.current += 1;
+        armDraftTimer();
+      }
       if (added > 0) {
         setMergeNote(`${plural(added, "link")} submitted earlier today ${added === 1 ? "is" : "are"} included`);
       }
@@ -631,15 +689,92 @@ export default function ReportScreen() {
     void load("refresh");
   }, [load]);
 
+  /**
+   * Before the form moves on to a new day, keep what was typed for the day that ended: its
+   * pending autosave is about to be cancelled, so the old day's draft is written now. When that
+   * day's draft was never read, it is read first and the form is folded INTO it, so a draft we
+   * have not seen is never overwritten. Unsent links can no longer be submitted (the app only
+   * POSTs for the current IST day), so the user is told where they went.
+   */
+  const keepOldDay = useCallback((date: string) => {
+    const rowsNow = rowsRef.current;
+    const notesNow = notesRef.current;
+    const wasRestored = restoredRef.current;
+    const pending = draftTimer.current !== null || savedGenRef.current !== draftGenRef.current;
+    const unsentKeys = new Set<string>();
+    rowsNow.forEach((r) => {
+      if (r.server || r.priorDate) return;
+      const k = dedupeKey(r);
+      if (k) unsentKeys.add(k);
+    });
+    const unsent = unsentKeys.size;
+    if (wasRestored ? !pending : unsent === 0 && !notesNow.trim()) return;
+
+    const byId = new Map(accountsRef.current.map((a) => [a.id, a] as const));
+    const liveRows = rowsNow.filter((r) => !isScheduledRow(r) && !!r.url.trim());
+    const run = async (): Promise<void> => {
+      let rowsOut = liveRows;
+      let notesOut = notesNow;
+      if (!wasRestored) {
+        const d = await apiFetch<DraftData | null>(`/hr/reports/draft?date=${date}`);
+        const keys = new Set<string>();
+        const union: LinkRow[] = [];
+        [...liveRows, ...draftRowsOf(d ?? null)].forEach((r) => {
+          const k = dedupeKey(r);
+          if (!k || keys.has(k)) return;
+          keys.add(k);
+          union.push(r);
+        });
+        rowsOut = union;
+        const dn = (d?.notes ?? "").trim();
+        const cur = notesNow.trim();
+        if (dn && !cur.includes(dn)) notesOut = cur ? `${notesNow.trimEnd()}\n${dn}` : (d?.notes ?? "");
+      }
+      await apiFetch("/hr/reports/draft", {
+        method: "PUT",
+        body: JSON.stringify({ date, notes: notesOut, links: rowsOut.map((r) => toDraftLink(r, byId)) }),
+      });
+    };
+    const p = lastDraftPut.current.then(run);
+    lastDraftPut.current = p.catch(() => undefined);
+    if (unsent === 0) {
+      p.catch(() => undefined);
+      return;
+    }
+    const what = plural(unsent, "unsent link");
+    const day = fmtDay(date, { weekday: true });
+    p.then(
+      () =>
+        toast.show({
+          message: `A new day has started · ${what} from ${day} ${unsent === 1 ? "was" : "were"} kept in that day's draft, not submitted`,
+          tone: "warning",
+        }),
+      () =>
+        toast.show({
+          message: `A new day has started · ${what} from ${day} couldn't be saved`,
+          tone: "danger",
+        }),
+    );
+  }, []);
+
   // A new IST day: start a fresh form for that day.
   const startNewDay = useCallback(
     (today: string) => {
       if (today === loadedDateRef.current) return;
+      // A submit is in flight: let it finish for the day it belongs to, then move on.
+      if (submittingRef.current) {
+        pendingDayRef.current = today;
+        return;
+      }
+      pendingDayRef.current = null;
+      keepOldDay(loadedDateRef.current);
       loadedDateRef.current = today;
       setFormDate(today);
       loadSeq.current += 1;
       clearDraftTimer();
       restoredRef.current = false;
+      draftGenRef.current = 0;
+      savedGenRef.current = 0;
       skipNextAutosave.current = true;
       commitRows([]);
       setNotesBoth("");
@@ -656,7 +791,7 @@ export default function ReportScreen() {
       setInitialLoading(true);
       void load("initial");
     },
-    [clearDraftTimer, commitRows, setNotesBoth, load],
+    [keepOldDay, clearDraftTimer, commitRows, setNotesBoth, load],
   );
 
   useEffect(() => {
@@ -676,6 +811,7 @@ export default function ReportScreen() {
       skipNextAutosave.current = false;
       return;
     }
+    draftGenRef.current += 1;
     armDraftTimer();
   }, [rows, notes, armDraftTimer]);
 
@@ -917,12 +1053,8 @@ export default function ReportScreen() {
       }
       setTodayReport(fresh ?? null);
       setTodayState("ok");
-      const merged = mergeServerRows(rowsRef.current, serverLinks(fresh), newKey);
-      if (merged.added > 0 || merged.rows.length !== rowsRef.current.length) {
-        commitRows(decorateAll(merged.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
-      } else {
-        commitRows(decorateAll(merged.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
-      }
+      const merged = mergeServer(rowsRef.current, serverLinks(fresh));
+      commitRows(decorateAll(merged.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
       if (merged.added > 0) {
         setMergeNote(
           `${plural(merged.added, "link")} submitted earlier today ${merged.added === 1 ? "is" : "are"} included`,
@@ -940,6 +1072,13 @@ export default function ReportScreen() {
       sent = send;
       // Row objects as they were sent: anything added or edited during the POST is a new object.
       const snapshot = new Set<LinkRow>(rowsRef.current);
+      const snapshotByKey = new Map(rowsRef.current.map((r) => [r.key, r] as const));
+      // url key -> account each live link was sent with.
+      const sentAccount = new Map<string, string | undefined>();
+      send.forEach((r) => {
+        const k = dedupeKey(r);
+        if (k) sentAccount.set(k, r.accountId);
+      });
       const notesSent = notesRef.current;
       const byId = new Map(accountsRef.current.map((a) => [a.id, a] as const));
       const report = await apiFetch<TodayReport>("/hr/reports", {
@@ -950,19 +1089,31 @@ export default function ReportScreen() {
       // A new day started while posting: the form now belongs to that day — leave it alone.
       if (date !== loadedDateRef.current) return;
 
-      // Rows added or edited while the request was in flight were not sent: keep them.
-      const later = rowsRef.current.filter((r) => !snapshot.has(r) && !isScheduledRow(r));
-      const laterLive = later.filter((r) => !!r.url.trim()).length;
+      // Rows added or edited while the request was in flight were not sent: keep them. A row that
+      // was merely re-created (a refresh during the POST) with the url and account it had, or
+      // that carries a url + account exactly as sent, is not a change.
+      const later = rowsRef.current.filter((r) => {
+        if (snapshot.has(r) || isScheduledRow(r)) return false;
+        const before = snapshotByKey.get(r.key);
+        if (before && before.url.trim() === r.url.trim() && before.accountId === r.accountId) return false;
+        const k = dedupeKey(r);
+        return !(k !== null && sentAccount.has(k) && sentAccount.get(k) === r.accountId);
+      });
+      const laterLive = later.filter((r) => !!r.url.trim() && !(r.priorDate && !r.server)).length;
       dirty = later.length > 0 || notesRef.current !== notesSent;
 
       // Clear the draft for the SAME date we just posted — only when this screen read that draft
       // (otherwise it may hold links we never saw). Unsent edits are re-saved below.
       if (restoredRef.current) {
-        apiFetch(`/hr/reports/draft?date=${date}`, { method: "DELETE" }).catch(() => undefined);
+        lastDraftPut.current = lastDraftPut.current
+          .then(() => apiFetch(`/hr/reports/draft?date=${date}`, { method: "DELETE" }))
+          .catch(() => undefined);
       }
       clearDraftTimer();
+      // Everything on the form is on the server now unless something changed during the POST.
+      if (!dirty) savedGenRef.current = draftGenRef.current;
       skipNextAutosave.current = true;
-      const after = mergeServerRows(later, serverLinks(report), newKey);
+      const after = mergeServer(later, serverLinks(report));
       commitRows(decorateAll(after.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
       setTodayReport(report);
       setTodayState("ok");
@@ -1009,6 +1160,11 @@ export default function ReportScreen() {
       // The pending autosave was cancelled above: on every exit that did not leave the server in
       // sync with the form, save the current rows + notes as the draft.
       if ((!posted || dirty) && date === loadedDateRef.current) armDraftTimer();
+      const pendingDay = pendingDayRef.current;
+      if (pendingDay !== null) {
+        pendingDayRef.current = null;
+        newDayRef.current(pendingDay);
+      }
     }
   }, [armDraftTimer, clearDraftTimer, commitRows, scrollToRow, updateRows]);
 

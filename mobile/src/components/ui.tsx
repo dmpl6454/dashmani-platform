@@ -992,6 +992,8 @@ export function Chips<T extends string>({
 
 // ---------- Empty state (only for a LOADED empty answer) ----------
 export type EmptyProps = {
+  // `string & {}` keeps editor autocompletion for icon names while accepting any string.
+  // eslint-disable-next-line @typescript-eslint/ban-types
   icon?: IoniconName | (string & {});
   title?: string;
   text: string;
@@ -1290,6 +1292,8 @@ export type RowProps = {
   right?: React.ReactNode;
   value?: string;
   onPress?: () => void;
+  // `string & {}` keeps editor autocompletion for icon names while accepting any string.
+  // eslint-disable-next-line @typescript-eslint/ban-types
   icon?: IoniconName | (string & {});
   iconColor?: string;
   tint?: TintKey | string;

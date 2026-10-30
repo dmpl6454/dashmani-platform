@@ -191,7 +191,6 @@ export function useApi<T>(
     }
     if (!enabled) return;
     void run(keepDataRef.current && dataRef.current !== null ? "keep" : "reset");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, enabled]);
 
   const refresh = useCallback(() => run("refresh"), [run]);

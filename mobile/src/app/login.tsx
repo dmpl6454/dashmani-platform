@@ -110,7 +110,6 @@ export default function LoginScreen() {
     if (!error || Platform.OS === "web") return;
     const text = lockUntil !== null ? "Too many attempts. Wait a minute, then try again." : error.message;
     AccessibilityInfo.announceForAccessibility(text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [error]);
 
   // Already signed in (or the session was restored): leave for the resume path or home.

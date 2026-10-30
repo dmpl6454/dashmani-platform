@@ -139,7 +139,10 @@ function loadPending(force: boolean): Promise<void> {
   }
   if (!force && pendingFetchedAt > 0 && Date.now() - pendingFetchedAt < PENDING_TTL_MS) return Promise.resolve();
 
+  // Declared before assignment on purpose: the body refers to `run`, and a `const` would be read
+  // in its temporal dead zone if the body reached that line before the first await.
   let run!: Promise<void>;
+  // eslint-disable-next-line prefer-const
   run = (async () => {
     try {
       const results = await Promise.allSettled(PENDING_SOURCES.map(([, path]) => apiFetch<unknown>(path)));
@@ -313,7 +316,10 @@ function loadUnread(force: boolean): Promise<void> {
   if (!force && unreadFetchedAt > 0 && Date.now() - unreadFetchedAt < UNREAD_TTL_MS) return Promise.resolve();
 
   const gen = unreadGeneration;
+  // Declared before assignment on purpose: the body refers to `run`, and a `const` would be read
+  // in its temporal dead zone if the body reached that line before the first await.
   let run!: Promise<void>;
+  // eslint-disable-next-line prefer-const
   run = (async () => {
     try {
       const r = await apiFetch<unknown>("/hr/notifications/count");

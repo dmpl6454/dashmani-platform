@@ -122,24 +122,25 @@ export default function HomeScreen() {
   const router = useRouter();
   const { unread } = useBadges();
 
+  // The IST day is part of both queries' deps: a day rollover is a deps change, so useApi
+  // refetches and, if that refetch fails, drops yesterday's data instead of showing it as
+  // today's. No explicit reload is needed here.
+  const today = useDayChange(() => undefined);
+
   // The ONLY focus / foreground refetch on Home (one request).
-  const todayQ = useApi<TodayState>(loadToday, [], {
+  const todayQ = useApi<TodayState>(loadToday, [today], {
     refetchOnFocus: true,
     refetchOnForeground: true,
     staleMs: 30000,
     keepData: true,
   });
   // Attendance, leave, holidays, tasks: pull-to-refresh, invalidation and day change only.
-  const restQ = useApi<Rest>(loadRest, [], { keepData: true });
+  const restQ = useApi<Rest>(loadRest, [today], { keepData: true });
 
   useInvalidation("report", () => {
     void todayQ.reload();
   });
   useInvalidation("leave", () => {
-    void restQ.reload();
-  });
-  const today = useDayChange(() => {
-    void todayQ.reload();
     void restQ.reload();
   });
 

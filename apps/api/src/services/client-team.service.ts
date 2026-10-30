@@ -41,9 +41,37 @@ export async function emailInUse(email: string, exceptMemberId?: string): Promis
 
 const memberSelect = {
   id: true, email: true, name: true, status: true, invitedBy: true, lastLoginAt: true, createdAt: true, tokenPurpose: true, tokenExpiresAt: true,
+  emailCampaigns: true, emailInvoices: true,
 } as const;
 
-function shapeMember(m: { id: string; email: string; name: string; status: string; invitedBy: string | null; lastLoginAt: Date | null; createdAt: Date; tokenPurpose: string | null; tokenExpiresAt: Date | null }) {
+/**
+ * The company's team logins who also want this kind of email: ACTIVE logins only (an invited
+ * person has not joined, a disabled one is off), with that choice switched on. Lowercased,
+ * de-duplicated. The owner (clients.email) is NOT included — callers already address it.
+ */
+export async function teamEmailRecipients(clientId: string, kind: "campaigns" | "invoices"): Promise<string[]> {
+  const rows = await prisma.clientUser.findMany({
+    where: { clientId, status: "active", ...(kind === "campaigns" ? { emailCampaigns: true } : { emailInvoices: true }) },
+    select: { email: true },
+  });
+  return [...new Set(rows.map((r) => r.email.toLowerCase()))];
+}
+
+/** A login changes its own email choices (owner logins have none: they always receive both). */
+export async function setMyEmailChoices(clientId: string, memberId: string, input: { emailCampaigns?: boolean; emailInvoices?: boolean }) {
+  const m = await requireMember(clientId, memberId);
+  const updated = await prisma.clientUser.update({
+    where: { id: m.id },
+    data: {
+      ...(typeof input.emailCampaigns === "boolean" ? { emailCampaigns: input.emailCampaigns } : {}),
+      ...(typeof input.emailInvoices === "boolean" ? { emailInvoices: input.emailInvoices } : {}),
+    },
+    select: memberSelect,
+  });
+  return shapeMember(updated);
+}
+
+function shapeMember(m: { id: string; email: string; name: string; status: string; invitedBy: string | null; lastLoginAt: Date | null; createdAt: Date; tokenPurpose: string | null; tokenExpiresAt: Date | null; emailCampaigns: boolean; emailInvoices: boolean }) {
   return {
     id: m.id,
     email: m.email,
@@ -54,6 +82,8 @@ function shapeMember(m: { id: string; email: string; name: string; status: strin
     lastLoginAt: m.lastLoginAt,
     createdAt: m.createdAt,
     inviteExpiresAt: m.status === "invited" && m.tokenPurpose === "invite" ? m.tokenExpiresAt : null,
+    emailCampaigns: m.emailCampaigns,
+    emailInvoices: m.emailInvoices,
   };
 }
 

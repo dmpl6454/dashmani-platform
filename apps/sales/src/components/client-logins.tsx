@@ -20,6 +20,8 @@ interface Login {
   lastLoginAt: string | null;
   createdAt: string;
   inviteExpiresAt: string | null;
+  emailCampaigns: boolean;
+  emailInvoices: boolean;
 }
 interface Logins {
   owner: { name: string; email: string; status: string };
@@ -94,6 +96,7 @@ export function ClientLogins({ clientId, onToast }: { clientId: string; onToast:
                 <span className="text-xs text-ink-4">
                   {m.status === "invited" ? `Invited ${fmtDate(m.createdAt)}` : `Last sign-in ${m.lastLoginAt ? fmtDate(m.lastLoginAt) : "never"}`}
                   {m.invitedBy ? ` · by ${m.invitedBy}` : ""}
+                  {m.status === "active" ? ` · emails: ${[m.emailCampaigns && "campaigns", m.emailInvoices && "invoices"].filter(Boolean).join(", ") || "none"}` : ""}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {m.status === "invited" && (

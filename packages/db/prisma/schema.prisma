@@ -553,6 +553,11 @@ model ClientUser {
   tokenExpiresAt DateTime? @map("token_expires_at")
   /// Who added the login, for the record ("Sales: Priya", "Owner").
   invitedBy      String?   @map("invited_by") @db.VarChar(200)
+  /// This person also receives the company's campaign emails (submitted, approved, changes
+  /// needed, post live, delivered). Each login sets its own; the owner always receives them.
+  emailCampaigns Boolean   @default(true) @map("email_campaigns")
+  /// This person also receives the company's invoice emails (with the PDF).
+  emailInvoices  Boolean   @default(true) @map("email_invoices")
   lastLoginAt    DateTime? @map("last_login_at")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")

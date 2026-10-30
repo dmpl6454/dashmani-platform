@@ -21,6 +21,8 @@ interface Member {
   lastLoginAt: string | null;
   createdAt: string;
   inviteExpiresAt: string | null;
+  emailCampaigns: boolean;
+  emailInvoices: boolean;
 }
 interface Team {
   companyName: string;
@@ -88,6 +90,9 @@ export default function TeamPage() {
       setCopied(false);
     });
   const toggle = (m: Member) => run(m.id, () => apiFetch(`${KEY}/${m.id}/${m.status === "disabled" ? "enable" : "disable"}`, { method: "POST" }));
+  const setEmailChoice = (m: Member, field: "emailCampaigns" | "emailInvoices", on: boolean) =>
+    run(`${m.id}:${field}`, () => apiFetch(`${KEY}/me/email`, { method: "PUT", body: JSON.stringify({ [field]: on }) }));
+
   const remove = (m: Member) => {
     if (!window.confirm(`Remove ${m.name} (${m.email})? They will be signed out and can no longer sign in.`)) return;
     void run(m.id, () => apiFetch(`${KEY}/${m.id}`, { method: "DELETE" }));
@@ -117,7 +122,7 @@ export default function TeamPage() {
         ) : data ? (
           <>
             <p className="text-[13px] text-ink-3">
-              Everyone here signs in with their own email and password and sees everything on this account — campaigns, approvals, files and invoices.
+              Everyone here signs in with their own email and password and sees everything on this account — campaigns, approvals, files and invoices. Campaign and invoice emails go to the owner and to everyone who keeps them switched on.
               {isOwner ? " You can add up to " + data.max + " people." : ` Only ${data.owner.name}, the account owner, can add or remove people.`}
             </p>
 
@@ -146,6 +151,26 @@ export default function TeamPage() {
                       : `Last signed in ${when(m.lastLoginAt)}`}
                     {m.invitedBy ? ` · added by ${m.invitedBy}` : ""}
                   </div>
+                  {data.you === m.id ? (
+                    <div className="pl-10 grid grid-cols-1 gap-1.5 text-[12.5px]" role="group" aria-label="Your emails">
+                      <span className="text-ink-3">Email me:</span>
+                      {(
+                        [
+                          ["emailCampaigns", "Campaign updates (approved, changes needed, posts live)"],
+                          ["emailInvoices", "Invoices"],
+                        ] as const
+                      ).map(([field, label]) => (
+                        <label key={field} className="inline-flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={m[field]} disabled={busy !== null} onChange={(e) => setEmailChoice(m, field, e.target.checked)} />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : m.status === "active" ? (
+                    <div className="pl-10 text-[11.5px] text-ink-4">
+                      Gets {[m.emailCampaigns && "campaign updates", m.emailInvoices && "invoices"].filter(Boolean).join(" and ") || "no emails"}
+                    </div>
+                  ) : null}
                   {isOwner && (
                     <div className="flex flex-wrap gap-2 pl-10">
                       {m.status === "invited" && <Button size="sm" disabled={busy !== null} onClick={() => resend(m)}>New invite link</Button>}

@@ -1,3 +1,4 @@
+import { teamEmailRecipients } from "../client-team.service";
 import { prisma } from "@dashmani/db";
 import { SALES_COMPANIES, type CompanyKey } from "@dashmani/shared";
 import { sendEmail } from "../email.service";
@@ -28,7 +29,9 @@ const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null
 /** The client's addresses (frozen billing email first) and the company's own billing addresses. */
 export async function invoiceRecipients(inv: Awaited<ReturnType<typeof getInvoice>>) {
   const buyer = inv.buyerSnapshot as Snapshot;
-  const client = [str(buyer?.email), str(inv.client?.billingProfile?.billingEmail), str(inv.client?.email)];
+  // Team logins of the company who chose invoice emails get it too (lookup failure: just the usual addresses).
+  const team = inv.clientId ? await teamEmailRecipients(inv.clientId, "invoices").catch(() => [] as string[]) : [];
+  const client = [str(buyer?.email), str(inv.client?.billingProfile?.billingEmail), str(inv.client?.email), ...team];
   const seller = await getSellerOrDefaults(inv.companyKey as CompanyKey);
   const internal = [str(seller.email), ...(seller.billingEmails ?? []).map(str)];
   const norm = (list: Array<string | null>) => [...new Set(list.filter((x): x is string => !!x).map((x) => x.toLowerCase()))];

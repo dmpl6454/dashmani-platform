@@ -2,6 +2,17 @@ import { prisma } from "@dashmani/db";
 import { canonicalKey, CAMPAIGN_TYPE_LABELS, formatLabelFor, formatPaise, LIVE_ITEM_STATUSES, SETTLED_ITEM_STATUSES, type CampaignType, type ItemStatus } from "@dashmani/shared";
 import { sendEmail, notifyAdminByEmail } from "../email.service";
 import { campaignConfig } from "./config";
+import { teamEmailRecipients } from "../client-team.service";
+
+/**
+ * The company's team logins that chose campaign emails, as a cc (the owner stays the "to").
+ * A lookup failure never stops the owner's email.
+ */
+async function teamCc(clientId: string, ownerEmail: string): Promise<{ cc?: string }> {
+  const team = await teamEmailRecipients(clientId, "campaigns").catch(() => [] as string[]);
+  const cc = team.filter((e) => e !== ownerEmail.toLowerCase());
+  return cc.length ? { cc: cc.join(", ") } : {};
+}
 
 // Client emails for the campaign lifecycle, and the results the client sees in the portal.
 //
@@ -56,7 +67,7 @@ async function bookingWithClient(bookingId: string) {
       audioTrack: true,
       launchFrom: true,
       launchTo: true,
-      client: { select: { email: true, contactName: true, companyName: true } },
+      client: { select: { id: true, email: true, contactName: true, companyName: true } },
       items: {
         orderBy: { createdAt: "asc" },
         select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, pricePaise: true },
@@ -137,7 +148,7 @@ ${refundNote}
 <p>You can also see these links, and views and likes as they come in, in your portal.</p>
 <p>${button(portalLink(b.id), "See campaign results")}</p>`);
 
-  await sendEmail({ to: b.client.email, subject: anyLive ? `Delivered: ${b.name} — your post links` : `Delivered: ${b.name} — final status`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: anyLive ? `Delivered: ${b.name} — your post links` : `Delivered: ${b.name} — final status`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   await sendEmail({ to: campaignConfig.teamEmail(), subject: `[Copy] Delivered: ${b.name} (${b.client.companyName})`, html, fromName: "Digital Sukoon" });
   return true;
 }
@@ -168,7 +179,7 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
 <p>Your ${esc(formatLabelFor(item.platform, item.format))} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
 <p>${button(item.permalink, "View post")}</p>
 ${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
-  await sendEmail({ to: b.client.email, subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   return true;
 }
 
@@ -217,6 +228,7 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
   const c = copy[kind];
   await sendEmail({
     to: b.client.email,
+    ...(await teamCc(b.client.id, b.client.email)),
     subject: c.subject,
     html: shell(c.title, `<p>Hi ${esc(b.client.contactName)},</p>${c.body}<p>${button(portalLink(b.id), "Open campaign")}</p>`),
     fromName: "Digital Sukoon",

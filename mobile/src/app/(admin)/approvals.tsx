@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
-import { API_BASE, apiFetch, describeError, fmtDate, fmtDateTime, fmtDay, fmtMoney, fmtRange } from "@/lib/api";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { API_BASE, ApiError, apiFetch, describeError, fmtDate, fmtDateTime, fmtDay, fmtMoney, fmtRange } from "@/lib/api";
 import { colors, formatStatus, spacing, type } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
 import { haptic, openFile } from "@/lib/device";
@@ -43,6 +43,12 @@ const COUNT_KEY: Record<Tab, CountKey | null> = {
   JOINING: null,
 };
 
+/** Queues where the API refuses a self-review, and what the card says instead of the buttons. */
+const OWN_NOTE: Partial<Record<Tab, string>> = {
+  LEAVES: "Your own request — another admin must approve it",
+  DOCUMENTS: "Your own document — another admin must review it",
+};
+
 const TAB_ALIASES: Record<string, Tab> = {
   LEAVE: "LEAVES",
   EXPENSE: "EXPENSES",
@@ -60,6 +66,7 @@ const TAB_ALIASES: Record<string, Tab> = {
 const UNDO = "This can't be undone.";
 const POST: RequestInit = { method: "POST" };
 const PUT: RequestInit = { method: "PUT" };
+const ALREADY_HANDLED = "Already reviewed elsewhere — list refreshed";
 
 type Person = { id?: string | null; name?: string | null; email?: string | null };
 
@@ -106,9 +113,19 @@ type CardDetails = {
 /** The bulk-review answer says the document was already reviewed (or not found). */
 class AlreadyReviewedError extends Error {
   constructor() {
-    super("Already reviewed elsewhere — list refreshed");
+    super(ALREADY_HANDLED);
     this.name = "AlreadyReviewedError";
   }
+}
+
+/** The server says the item is no longer pending (someone else, or an earlier tap, already handled it). */
+function isAlreadyHandled(e: unknown): boolean {
+  if (e instanceof AlreadyReviewedError) return true;
+  if (e instanceof ApiError) {
+    if (e.code === "ALREADY_PROCESSED" || e.code === "ALREADY_REVIEWED") return true;
+    return e.status === 409;
+  }
+  return false;
 }
 
 function parseTab(raw: string | string[] | undefined): Tab | null {
@@ -170,6 +187,10 @@ async function reviewDocument(id: string, action: "APPROVE" | "REJECT"): Promise
 
 function keyOf(item: ApprovalItem): string {
   return item.id ?? item.userId ?? item.user?.id ?? "";
+}
+
+function busyKeyOf(tab: Tab, item: ApprovalItem): string {
+  return `${tab}:${keyOf(item)}`;
 }
 
 function whoOf(tab: Tab, item: ApprovalItem): string {
@@ -352,14 +373,24 @@ function restore(prev: ApprovalItem[] | null, item: ApprovalItem, index: number)
   return next;
 }
 
+/** The note shown instead of the buttons when the signed-in admin filed this item themself. */
+function ownNoteFor(tab: Tab, item: ApprovalItem, userId: string | undefined): string | null {
+  const note = OWN_NOTE[tab];
+  if (!note || !userId) return null;
+  return item.employeeId === userId || item.employee?.id === userId ? note : null;
+}
+
 type ApprovalCardProps = {
   tab: Tab;
   item: ApprovalItem;
-  ownRequest: boolean;
+  /** set → the admin's own item: the note replaces the buttons (the API refuses self-review) */
+  ownNote: string | null;
+  /** a decision on this item is being confirmed or sent */
+  busy: boolean;
   onAct: (item: ApprovalItem, spec: ActionSpec) => Promise<void>;
 };
 
-function ApprovalCard({ tab, item, ownRequest, onAct }: ApprovalCardProps) {
+function ApprovalCard({ tab, item, ownNote, busy, onAct }: ApprovalCardProps) {
   const who = whoOf(tab, item);
   const d = detailsOf(tab, item);
   const actions = actionsFor(tab, item);
@@ -406,9 +437,9 @@ function ApprovalCard({ tab, item, ownRequest, onAct }: ApprovalCardProps) {
           last
         />
       ) : null}
-      {ownRequest ? (
+      {ownNote ? (
         <Text maxFontSizeMultiplier={1.6} style={styles.own}>
-          Your own request — another admin must approve it
+          {ownNote}
         </Text>
       ) : (
         <View style={styles.actions}>
@@ -418,6 +449,7 @@ function ApprovalCard({ tab, item, ownRequest, onAct }: ApprovalCardProps) {
             tone="success"
             size="md"
             onPress={() => onAct(item, actions.approve)}
+            disabled={busy}
             style={styles.flex}
             accessibilityLabel={`Approve, ${who}`}
           />
@@ -431,6 +463,7 @@ function ApprovalCard({ tab, item, ownRequest, onAct }: ApprovalCardProps) {
                 const spec = actions.reject;
                 return spec ? onAct(item, spec) : undefined;
               }}
+              disabled={busy}
               style={styles.flex}
               accessibilityLabel={`Reject, ${who}`}
             />
@@ -443,6 +476,7 @@ function ApprovalCard({ tab, item, ownRequest, onAct }: ApprovalCardProps) {
 
 export default function AdminApprovals() {
   const { user } = useAuth();
+  const router = useRouter();
   const counts = usePendingCounts();
   const params = useLocalSearchParams<{ tab?: string }>();
   const paramTab = parseTab(params.tab);
@@ -450,13 +484,15 @@ export default function AdminApprovals() {
   const [chosen, setChosen] = useState<Tab | null>(paramTab);
   const [error, setError] = useState<string | null>(null);
 
-  // A deep link (?tab=…) wins whenever it changes.
+  // A deep link (?tab=…) wins every time it arrives. The param is consumed after use: this tab screen
+  // stays mounted, so an unchanged ?tab= on the next dashboard tap would otherwise be ignored.
   useEffect(() => {
     if (paramTab) {
       setChosen(paramTab);
       setError(null);
+      router.setParams({ tab: "" });
     }
-  }, [paramTab]);
+  }, [paramTab, router]);
 
   // Otherwise open the first queue with something waiting, once the counts are known; then freeze it.
   const autoTab: Tab | null = counts.status === "loading" ? null : firstWaiting(counts);
@@ -469,6 +505,16 @@ export default function AdminApprovals() {
   useEffect(() => {
     tabRef.current = tab;
   }, [tab]);
+
+  // Items with a decision in flight (confirm sheet open or request running). The ref is the
+  // synchronous guard against a double tap; the state drives the disabled buttons.
+  const busyRef = useRef<Set<string>>(new Set());
+  const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const setBusy = (key: string, on: boolean) => {
+    if (on) busyRef.current.add(key);
+    else busyRef.current.delete(key);
+    setBusyKeys(new Set(busyRef.current));
+  };
 
   const list = useApi<ApprovalItem[]>(() => (tab ? fetchQueue(tab) : Promise.resolve([])), [tab], {
     refetchOnFocus: true,
@@ -493,9 +539,7 @@ export default function AdminApprovals() {
     await Promise.all([list.refresh(), counts.reload()]);
   };
 
-  const act = async (item: ApprovalItem, spec: ActionSpec) => {
-    const startTab = tabRef.current;
-    if (!startTab) return;
+  const run = async (startTab: Tab, item: ApprovalItem, spec: ActionSpec) => {
     setError(null);
     const ok = await confirm(spec.confirm);
     if (!ok) return;
@@ -514,14 +558,33 @@ export default function AdminApprovals() {
       invalidatePendingCounts();
     } catch (e) {
       void haptic("error");
-      if (e instanceof AlreadyReviewedError) {
-        setError(e.message);
-        if (tabRef.current === startTab) void list.reload();
+      const sameTab = tabRef.current === startTab;
+      if (isAlreadyHandled(e)) {
+        // No longer pending: never put it back as actionable; show the server's truth instead.
+        setError(ALREADY_HANDLED);
+        if (sameTab) void list.reload();
         invalidatePendingCounts();
         return;
       }
-      if (tabRef.current === startTab) list.setData((prev) => restore(prev, item, index));
+      if (sameTab) {
+        // Only restore an item that was still listed when the decision was confirmed.
+        if (index >= 0) list.setData((prev) => restore(prev, item, index));
+        else void list.reload();
+      }
       setError(describeError(e, "Couldn't complete that. Please try again."));
+    }
+  };
+
+  const act = async (item: ApprovalItem, spec: ActionSpec) => {
+    const startTab = tabRef.current;
+    if (!startTab) return;
+    const busyKey = busyKeyOf(startTab, item);
+    if (busyRef.current.has(busyKey)) return;
+    setBusy(busyKey, true);
+    try {
+      await run(startTab, item, spec);
+    } finally {
+      setBusy(busyKey, false);
     }
   };
 
@@ -555,7 +618,8 @@ export default function AdminApprovals() {
           <ApprovalCard
             tab={queue}
             item={item}
-            ownRequest={queue === "LEAVES" && !!user?.id && item.employeeId === user.id}
+            ownNote={ownNoteFor(queue, item, user?.id)}
+            busy={busyKeys.has(busyKeyOf(queue, item))}
             onAct={act}
           />
         )}

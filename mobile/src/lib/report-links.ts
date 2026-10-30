@@ -3,7 +3,8 @@
 // - extractUrls / splitGlued / toUrl: ported from the original report.tsx paste parser;
 //   extractUrls now also counts non-empty lines that produced no link.
 // - detectPlatform / matchAccount: auto-assign a pasted link to an account.
-// - mergeServerRows: fold the links already submitted today into the form (never removes).
+// - mergeServerRows: fold the links already submitted today into the form (never removes a
+//   live link; scheduled rows mirror the server's current set).
 // - toPayloadLink (= toSubmitLink) / toDraftLink: the ONLY builders of link payloads.
 //   reportLinkSchema accepts `undefined` but REJECTS `null` for description, mediaUrl,
 //   likes, comments, shares and views, so those keys are omitted when empty.
@@ -269,12 +270,6 @@ function isScheduledServer(s: ServerLink): boolean {
   return s.isScheduled === true || !(s.url ?? "").trim();
 }
 
-/** Stable key of a scheduled / url-less server row (never canonicalKey("")). */
-function scheduledKey(s: ServerLink): string {
-  if (s.id) return `id:${s.id}`;
-  return `sched:${[s.scheduledFor ?? "", s.accountId ?? "", s.description ?? "", s.mediaUrl ?? ""].join("|")}`;
-}
-
 /** True for a row that came from the server as scheduled (or url-less): shown read-only, re-sent as-is. */
 export function isScheduledRow(row: LinkRow): boolean {
   return !!row.server && isScheduledServer(row.server);
@@ -290,45 +285,60 @@ export function dedupeKey(row: LinkRow): string | null {
   return u ? canonicalKey(u) : null;
 }
 
-function mergeKeyOfRow(row: LinkRow): string | null {
-  if (row.server && isScheduledServer(row.server)) return scheduledKey(row.server);
-  const u = (row.url || "").trim();
-  return u ? canonicalKey(u) : null;
-}
-
-function mergeKeyOfServer(s: ServerLink): string {
-  return isScheduledServer(s) ? scheduledKey(s) : canonicalKey(s.url);
+function scheduledRowOf(s: ServerLink, key: string): LinkRow {
+  return { key, url: (s.url ?? "").trim(), accountId: s.accountId || undefined, source: "server", server: s };
 }
 
 /**
- * Fold the server's links into the form rows. Server rows that the form does not have go in
- * FRONT (source "server"); rows already present gain `server` (and its accountId when they
- * have none). Never removes a row.
+ * Fold the server's links into the form rows.
+ *  - Live links: server links the form does not have go in FRONT (source "server"); rows already
+ *    present gain `server` (and its accountId when they have none). Never removes a live row.
+ *  - Scheduled / url-less links have no stable identity (the server deletes and recreates every
+ *    row, so ids change on each submit, and two identical scheduled posts are legitimate), so
+ *    the form's scheduled rows are REPLACED by the server's current scheduled set, in place.
+ *    `added` counts only scheduled rows beyond the ones the form already had.
  */
 export function mergeServerRows(
   local: LinkRow[],
   server: ServerLink[],
   newKey: () => string,
 ): { rows: LinkRow[]; added: number } {
+  const list = (Array.isArray(server) ? server : []).filter((s) => isRecord(s));
+  const scheduled = list.filter((s) => isScheduledServer(s));
   const serverByKey = new Map<string, ServerLink>();
-  (Array.isArray(server) ? server : []).forEach((s) => {
-    if (!isRecord(s)) return;
-    const k = mergeKeyOfServer(s);
+  list.forEach((s) => {
+    if (isScheduledServer(s)) return;
+    const k = canonicalKey(s.url);
     if (!k || serverByKey.has(k)) return;
     serverByKey.set(k, s);
   });
 
   const seen = new Set<string>();
-  const rows = local.map((r) => {
-    const k = mergeKeyOfRow(r);
-    if (k === null) return r;
+  let schedIdx = 0;
+  const rows: LinkRow[] = [];
+  for (const r of local) {
+    if (isScheduledRow(r)) {
+      const s = scheduled[schedIdx];
+      if (!s) continue;
+      schedIdx += 1;
+      rows.push(r.server === s ? r : scheduledRowOf(s, r.key));
+      continue;
+    }
+    const u = (r.url || "").trim();
+    const k = u ? canonicalKey(u) : null;
+    if (k === null) {
+      rows.push(r);
+      continue;
+    }
     seen.add(k);
     const s = serverByKey.get(k);
-    if (!s) return r;
-    return { ...r, server: s, accountId: r.accountId ?? (s.accountId || undefined) };
-  });
+    rows.push(s ? { ...r, server: s, accountId: r.accountId ?? (s.accountId || undefined) } : r);
+  }
 
   const added: LinkRow[] = [];
+  for (; schedIdx < scheduled.length; schedIdx += 1) {
+    added.push(scheduledRowOf(scheduled[schedIdx], newKey()));
+  }
   serverByKey.forEach((s, k) => {
     if (seen.has(k)) return;
     seen.add(k);
@@ -361,12 +371,18 @@ function finiteNumber(v: unknown): v is number {
  *  - description / mediaUrl / likes / comments / shares / views echoed from the server row,
  *    OMITTED when null, undefined or "" (the schema rejects null)
  *  - isScheduled / scheduledFor echoed as the server gave them
+ * Server fields are echoed ONLY when the row still is that server link (same canonical url, or
+ * a scheduled / url-less server row): another post's caption, media and stats must never be
+ * stamped onto a different url.
  */
 export function toPayloadLink(row: LinkRow, accountsById: Map<string, Account>): SubmitLink {
-  const s = row.server;
+  const trimmed = (row.url || "").trim();
+  const raw = row.server;
+  const sameLink =
+    !!raw && (isScheduledServer(raw) || (!!trimmed && canonicalKey(trimmed) === canonicalKey(raw.url)));
+  const s = sameLink ? raw : undefined;
   const accountId = row.accountId || s?.accountId || "";
   const acc = accountId ? accountsById.get(accountId) : undefined;
-  const trimmed = (row.url || "").trim();
   const scheduled = s?.isScheduled === true;
   const fromAccount = accountSlug(acc);
   const fromServer = (s?.platformSlug || s?.platform || "").trim().toLowerCase();

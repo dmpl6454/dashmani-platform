@@ -3,7 +3,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import type { LayoutChangeEvent, ScrollView, TextInput } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { apiFetch, describeError, fmtDay, fmtTime, rowErrors, todayIST } from "@/lib/api";
+import { addDaysISO, apiFetch, describeError, fmtDay, fmtTime, rowErrors, todayIST } from "@/lib/api";
 import { colors, spacing, toneColors, type } from "@/lib/theme";
 import type { Tone } from "@/lib/theme";
 import { Button, Card, Chips, Empty, Field, IconButton, LoadFailed, Screen, SectionTitle, invalidate } from "@/components/ui";
@@ -32,9 +32,10 @@ import {
 import type { Account, LinkRow, ServerLink } from "@/lib/report-links";
 
 // ---------- types ----------
-/** GET /hr/reports/today (null when nothing is submitted) and the POST /hr/reports answer. */
+/** One report of GET /hr/reports (null when nothing is submitted) and the POST /hr/reports answer. */
 type TodayReport = {
   id?: string;
+  date?: string | null;
   notes?: string | null;
   submittedAt?: string | null;
   links?: ServerLink[] | null;
@@ -59,6 +60,10 @@ let keySeq = 0;
 const newKey = (): string => `r${++keySeq}`;
 
 // ---------- helpers ----------
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -79,6 +84,25 @@ function liveServerCount(r: TodayReport | null | undefined): number {
 function timeMs(s: string | null | undefined): number {
   const t = s ? Date.parse(s) : NaN;
   return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * The report stored for exactly `date` (YYYY-MM-DD, IST), or null when there is none.
+ * Unlike GET /hr/reports/today (the SERVER's current day), this always answers for the date the
+ * form will POST, so a request that lands after midnight can never hide that day's report.
+ * Reports are stored at IST midnight, so a ±1 day window is queried and matched on `date`.
+ */
+async function fetchReportFor(date: string): Promise<TodayReport | null> {
+  const list = await apiFetch<unknown>(
+    `/hr/reports?startDate=${addDaysISO(date, -1)}&endDate=${addDaysISO(date, 1)}`,
+  );
+  if (!Array.isArray(list)) throw new Error("Unexpected reports response");
+  for (const item of list as unknown[]) {
+    if (isRecord(item) && typeof item.date === "string" && item.date.slice(0, 10) === date) {
+      return item as TodayReport;
+    }
+  }
+  return null;
 }
 
 function hostLabel(url: string): string {
@@ -112,19 +136,16 @@ function draftRowsOf(d: DraftData | null): LinkRow[] {
   return out;
 }
 
-function serverRowsOf(r: TodayReport | null | undefined): LinkRow[] {
-  return mergeServerRows([], serverLinks(r), newKey).rows;
-}
-
 /**
  * Prior-day marking + auto-assign (single account / unique host match / Posting-to default) +
  * platform-mismatch flag. Returns the same object when nothing changed (keeps memoised rows).
+ * A row that is already on this day's report (`server`) is never marked as a prior-day link.
  */
 function decorate(row: LinkRow, accounts: Account[], prior: Map<string, string>, defaultId?: string): LinkRow {
   if (isScheduledRow(row)) return row;
   const url = row.url.trim();
   if (!url) return row;
-  const priorDate = priorDateOf(url, prior);
+  const priorDate = row.server ? null : priorDateOf(url, prior);
   let next: LinkRow = (row.priorDate ?? null) === priorDate ? row : { ...row, priorDate };
   const assigned = next.accountId;
   if (!assigned) {
@@ -163,10 +184,13 @@ function replaceRow(rows: LinkRow[], key: string, fn: (r: LinkRow) => LinkRow): 
 
 /**
  * What a submit sends: trimmed, deduped by canonicalKey, prior-day rows excluded; scheduled /
- * url-less server rows are carried through untouched (never deduped).
+ * url-less server rows are carried through untouched (never deduped). A row already on this
+ * day's report (`server`) is ALWAYS sent — the server deletes and recreates the report, so
+ * leaving one out would delete it. When a local row and a server row share a key, the server
+ * row is the one sent.
  */
 function buildSend(rows: LinkRow[]): { send: LinkRow[]; skipped: number } {
-  const seen = new Set<string>();
+  const at = new Map<string, number>();
   const send: LinkRow[] = [];
   let skipped = 0;
   for (const r of rows) {
@@ -176,17 +200,20 @@ function buildSend(rows: LinkRow[]): { send: LinkRow[]; skipped: number } {
     }
     const url = r.url.trim();
     if (!url) continue;
-    if (r.priorDate) {
+    if (r.priorDate && !r.server) {
       skipped += 1;
       continue;
     }
+    const row = url === r.url ? r : { ...r, url };
     const k = canonicalKey(url);
-    if (seen.has(k)) {
+    const i = at.get(k);
+    if (i !== undefined) {
       skipped += 1;
+      if (row.server && !send[i].server) send[i] = row;
       continue;
     }
-    seen.add(k);
-    send.push(url === r.url ? r : { ...r, url });
+    at.set(k, send.length);
+    send.push(row);
   }
   return { send, skipped };
 }
@@ -239,6 +266,9 @@ const LinkRowItem = memo(function LinkRowItem({
     );
   }
 
+  // A link already on today's report: its url is read-only and it cannot be removed (the next
+  // Update would re-send it anyway — submitted links are never dropped).
+  const submitted = !!row.server;
   const muted = !!row.priorDate;
   const url = row.url.trim();
   const icon = account ? platformIcon(account.platformSlug || account.platform) : null;
@@ -250,23 +280,42 @@ const LinkRowItem = memo(function LinkRowItem({
         <Text style={styles.index} maxFontSizeMultiplier={1.6}>
           {n}
         </Text>
-        <Field
-          ref={(node) => registerInput(row.key, node)}
-          value={row.url}
-          onChangeText={(t) => onChangeUrl(row.key, t)}
-          onBlur={() => onBlurUrl(row.key)}
-          placeholder="https://…"
-          keyboardType="url"
-          textContentType="URL"
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType={isLastEditable ? "done" : "next"}
-          blurOnSubmit={isLastEditable}
-          onSubmitEditing={() => onNext(row.key)}
-          accessibilityLabel={`Link ${n}`}
-          style={styles.urlField}
-        />
-        <IconButton icon="close-circle" label={`Remove link ${n}`} tint={colors.faint} onPress={() => onRemove(row.key)} />
+        {submitted ? (
+          <Text
+            style={styles.serverUrl}
+            numberOfLines={2}
+            selectable
+            maxFontSizeMultiplier={1.6}
+            accessibilityLabel={`Link ${n}, already submitted: ${url}`}
+          >
+            {url}
+          </Text>
+        ) : (
+          <>
+            <Field
+              ref={(node) => registerInput(row.key, node)}
+              value={row.url}
+              onChangeText={(t) => onChangeUrl(row.key, t)}
+              onBlur={() => onBlurUrl(row.key)}
+              placeholder="https://…"
+              keyboardType="url"
+              textContentType="URL"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType={isLastEditable ? "done" : "next"}
+              blurOnSubmit={isLastEditable}
+              onSubmitEditing={() => onNext(row.key)}
+              accessibilityLabel={`Link ${n}`}
+              style={styles.urlField}
+            />
+            <IconButton
+              icon="close-circle"
+              label={`Remove link ${n}`}
+              tint={colors.faint}
+              onPress={() => onRemove(row.key)}
+            />
+          </>
+        )}
       </View>
       <View style={muted ? styles.muted : null}>
         {row.accountId && icon ? (
@@ -303,6 +352,11 @@ const LinkRowItem = memo(function LinkRowItem({
         )}
       </View>
       <View style={styles.messages}>
+        {submitted ? (
+          <Text style={styles.note} maxFontSizeMultiplier={1.6}>
+            Submitted · contact your lead to remove or change it
+          </Text>
+        ) : null}
         {row.priorDate ? (
           <Text style={styles.note} maxFontSizeMultiplier={1.6}>
             {`Submitted on ${fmtDay(row.priorDate, { weekday: false })} · won't be sent again`}
@@ -344,12 +398,20 @@ export default function ReportScreen() {
   const rowY = useRef(new Map<string, number>());
   const listY = useRef(0);
 
+  // The IST day this form belongs to — the ONLY date it ever loads or POSTs for. It changes only
+  // through startNewDay (useDayChange on focus / foreground, or a day check in load / submit).
+  const loadedDateRef = useRef(todayIST());
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsState, setAccountsState] = useState<LoadState>("loading");
   const [todayReport, setTodayReport] = useState<TodayReport | null>(null);
-  // "failed" = GET /hr/reports/today did not answer. Then we do NOT know what is already
+  // "failed" = the report for the form's day did not load. Then we do NOT know what is already
   // submitted, and the server's delete-and-recreate could replace it — submitting is refused.
   const [todayState, setTodayState] = useState<LoadState>("loading");
+  // "failed" = the saved draft did not load. Autosave stays OFF until it does, so the next
+  // autosave can never overwrite a draft we have not seen.
+  const [draftLoadState, setDraftLoadState] = useState<LoadState>("loading");
+  const [formDate, setFormDate] = useState<string>(() => loadedDateRef.current);
   const [rows, setRows] = useState<LinkRow[]>([]);
   const [notes, setNotes] = useState("");
   const [pasteText, setPasteText] = useState("");
@@ -364,8 +426,7 @@ export default function ReportScreen() {
   const [result, setResult] = useState<ResultMsg | null>(null);
   const [mergeNote, setMergeNote] = useState<string | null>(null);
 
-  // The IST day this form belongs to — frozen per load; changed only by useDayChange.
-  const loadedDateRef = useRef(todayIST());
+  // true only once the draft for loadedDateRef has been READ — autosave is off until then.
   const restoredRef = useRef(false);
   const skipNextAutosave = useRef(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -377,6 +438,7 @@ export default function ReportScreen() {
   const priorRef = useRef<Map<string, string>>(new Map());
   const defaultRef = useRef<string>(AUTO);
   const pendingFocus = useRef<string | null>(null);
+  const newDayRef = useRef<(today: string) => void>(() => undefined);
 
   const commitRows = useCallback((next: LinkRow[]) => {
     if (next === rowsRef.current) return;
@@ -403,126 +465,14 @@ export default function ReportScreen() {
     }
   }, []);
 
-  // ---------- load ----------
-  const load = useCallback(
-    async (mode: "initial" | "refresh") => {
-      const date = loadedDateRef.current;
-      const seq = ++loadSeq.current;
-      if (mode === "refresh") setRefreshing(true);
-      const [accs, today, draft, prior] = await Promise.allSettled([
-        apiFetch<Account[]>("/hr/accounts"),
-        apiFetch<TodayReport | null>("/hr/reports/today"),
-        apiFetch<DraftData | null>(`/hr/reports/draft?date=${date}`),
-        apiFetch<unknown>("/hr/reports/my-link-urls?days=90"),
-      ]);
-      // A newer load (pull, retry, day change) owns the screen now.
-      if (seq !== loadSeq.current || date !== loadedDateRef.current) return;
-
-      let accountList = accountsRef.current;
-      if (accs.status === "fulfilled") {
-        accountList = Array.isArray(accs.value) ? accs.value : [];
-        accountsRef.current = accountList;
-        setAccounts(accountList);
-        setAccountsState("ok");
-      } else {
-        setAccountsState("failed");
-      }
-      if (prior.status === "fulfilled") priorRef.current = parsePriorUrls(prior.value);
-
-      const fresh = today.status === "fulfilled" ? (today.value ?? null) : null;
-      if (today.status === "fulfilled") {
-        setTodayReport(fresh);
-        setTodayState("ok");
-      } else {
-        setTodayState("failed");
-      }
-
-      let next = rowsRef.current;
-      let added = 0;
-      if (!restoredRef.current) {
-        restoredRef.current = true;
-        skipNextAutosave.current = true;
-        const d = draft.status === "fulfilled" ? (draft.value ?? null) : null;
-        const draftRows = draftRowsOf(d);
-        // Prefer the newer of draft vs submitted snapshot (a draft survives adds after a submit).
-        const draftNewer =
-          draftRows.length > 0 && (!fresh?.submittedAt || timeMs(d?.savedAt) > timeMs(fresh.submittedAt));
-        if (draftNewer) {
-          next = draftRows;
-          setNotesBoth(d?.notes ?? "");
-        } else {
-          next = [];
-          if (fresh?.notes) setNotesBoth(fresh.notes);
-        }
-        if (fresh) {
-          const m = mergeServerRows(next, serverLinks(fresh), newKey);
-          next = m.rows;
-          if (draftNewer) added = m.added;
-        }
-      } else if (fresh) {
-        // Every fulfilled today-load folds the submitted links in (never removes a row).
-        const m = mergeServerRows(next, serverLinks(fresh), newKey);
-        next = m.rows;
-        added = m.added;
-        if (!notesRef.current.trim() && fresh.notes) setNotesBoth(fresh.notes);
-      }
-
-      next = decorateAll(next, accountList, priorRef.current, defaultIdOf(defaultRef.current));
-      if (!restoredRef.current || next !== rowsRef.current) {
-        rowsRef.current = next;
-        setRows(next);
-      }
-      if (added > 0) {
-        setMergeNote(`${plural(added, "link")} submitted earlier today ${added === 1 ? "is" : "are"} included`);
-      }
-      if (mode === "initial") setInitialLoading(false);
-      setRefreshing(false);
-    },
-    [setNotesBoth],
-  );
-
-  const reload = useCallback(() => {
-    void load("refresh");
-  }, [load]);
-
-  useEffect(() => {
-    void load("initial");
-  }, [load]);
-
-  // A new IST day: start a fresh form for that day.
-  const shownDate = useDayChange((today) => {
-    loadedDateRef.current = today;
-    loadSeq.current += 1;
-    clearDraftTimer();
-    restoredRef.current = false;
-    skipNextAutosave.current = true;
-    commitRows([]);
-    setNotesBoth("");
-    setTodayReport(null);
-    setTodayState("loading");
-    setResult(null);
-    setMergeNote(null);
-    setAttempted(false);
-    setDraftStatus({ kind: "idle" });
-    setPasteText("");
-    setPickerFor(null);
-    setInitialLoading(true);
-    void load("initial");
-  });
-
-  // ---------- autosave (3 s debounce) ----------
-  useEffect(() => {
-    if (!restoredRef.current) return;
-    if (skipNextAutosave.current) {
-      skipNextAutosave.current = false;
-      return;
-    }
-    if (submittingRef.current) return;
+  /** (Re)start the 3 s draft autosave of the current rows + notes for the form's day. */
+  const armDraftTimer = useCallback(() => {
+    if (!restoredRef.current || submittingRef.current) return;
     const date = loadedDateRef.current;
     clearDraftTimer();
     draftTimer.current = setTimeout(() => {
       draftTimer.current = null;
-      if (date !== loadedDateRef.current || submittingRef.current) return;
+      if (date !== loadedDateRef.current || submittingRef.current || !restoredRef.current) return;
       const byId = new Map(accountsRef.current.map((a) => [a.id, a] as const));
       const links = rowsRef.current
         .filter((r) => !isScheduledRow(r) && r.url.trim())
@@ -541,8 +491,196 @@ export default function ReportScreen() {
           setDraftStatus({ kind: "failed" });
         });
     }, AUTOSAVE_MS);
-    return clearDraftTimer;
-  }, [rows, notes, clearDraftTimer]);
+  }, [clearDraftTimer]);
+
+  // ---------- load ----------
+  const load = useCallback(
+    async (mode: "initial" | "refresh") => {
+      const date = loadedDateRef.current;
+      const now = todayIST();
+      if (now !== date) {
+        // The form's day is over: never load (or later POST) a past day against today's data.
+        newDayRef.current(now);
+        return;
+      }
+      const seq = ++loadSeq.current;
+      if (mode === "refresh") setRefreshing(true);
+      const [accs, today, draft, prior] = await Promise.allSettled([
+        apiFetch<Account[]>("/hr/accounts"),
+        fetchReportFor(date),
+        apiFetch<DraftData | null>(`/hr/reports/draft?date=${date}`),
+        apiFetch<unknown>("/hr/reports/my-link-urls?days=90"),
+      ]);
+      // A newer load (pull, retry, day change) owns the screen now.
+      if (seq !== loadSeq.current || date !== loadedDateRef.current) return;
+      const after = todayIST();
+      if (after !== date) {
+        newDayRef.current(after);
+        return;
+      }
+
+      let accountList = accountsRef.current;
+      if (accs.status === "fulfilled") {
+        accountList = Array.isArray(accs.value) ? accs.value : [];
+        accountsRef.current = accountList;
+        setAccounts(accountList);
+        setAccountsState("ok");
+      } else {
+        setAccountsState("failed");
+      }
+      if (prior.status === "fulfilled") {
+        // Only EARLIER days are prior days — the form's own day is never one of them.
+        const p = parsePriorUrls(prior.value);
+        p.forEach((d, k) => {
+          if (d >= date) p.delete(k);
+        });
+        priorRef.current = p;
+      }
+
+      const fresh = today.status === "fulfilled" ? (today.value ?? null) : null;
+      if (today.status === "fulfilled") {
+        setTodayReport(fresh);
+        setTodayState("ok");
+      } else {
+        setTodayState("failed");
+      }
+
+      let next = rowsRef.current;
+      let added = 0;
+      let armAfter = false;
+      if (!restoredRef.current && draft.status === "fulfilled") {
+        restoredRef.current = true;
+        setDraftLoadState("ok");
+        const d = draft.value ?? null;
+        const draftRows = draftRowsOf(d);
+        // Prefer the newer of draft vs submitted snapshot (a draft survives adds after a submit).
+        const draftNewer = !fresh?.submittedAt || timeMs(d?.savedAt) > timeMs(fresh.submittedAt);
+        if (next.length === 0 && !notesRef.current.trim()) {
+          skipNextAutosave.current = true;
+          const useDraft = draftRows.length > 0 && draftNewer;
+          if (useDraft) {
+            next = draftRows;
+            setNotesBoth(d?.notes ?? "");
+          } else {
+            next = [];
+            if (fresh?.notes) setNotesBoth(fresh.notes);
+          }
+          if (fresh) {
+            const m = mergeServerRows(next, serverLinks(fresh), newKey);
+            next = m.rows;
+            if (useDraft) added = m.added;
+          }
+        } else {
+          // An earlier load could not read the draft and the form already has content: fold the
+          // draft INTO it (never replace what is on screen), then save the union.
+          if (draftNewer) {
+            const keys = new Set<string>();
+            next.forEach((r) => {
+              const k = dedupeKey(r);
+              if (k) keys.add(k);
+            });
+            const extra = draftRows.filter((r) => {
+              const k = dedupeKey(r);
+              if (!k || keys.has(k)) return false;
+              keys.add(k);
+              return true;
+            });
+            if (extra.length > 0) next = [...next, ...extra];
+            const dn = (d?.notes ?? "").trim();
+            const cur = notesRef.current.trim();
+            if (dn && dn !== cur) {
+              const untouched = !cur || (!!fresh && cur === (fresh.notes ?? "").trim());
+              if (untouched) setNotesBoth(d?.notes ?? "");
+              else if (!cur.includes(dn)) setNotesBoth(`${notesRef.current.trimEnd()}\n${dn}`);
+            }
+          }
+          if (fresh) {
+            const m = mergeServerRows(next, serverLinks(fresh), newKey);
+            next = m.rows;
+            added = m.added;
+          }
+          armAfter = true;
+        }
+      } else {
+        if (!restoredRef.current) setDraftLoadState("failed");
+        if (fresh) {
+          // Every fulfilled report load folds the submitted links in (never removes a live row).
+          const m = mergeServerRows(next, serverLinks(fresh), newKey);
+          next = m.rows;
+          added = m.added;
+          if (!notesRef.current.trim() && fresh.notes) setNotesBoth(fresh.notes);
+        }
+      }
+
+      next = decorateAll(next, accountList, priorRef.current, defaultIdOf(defaultRef.current));
+      if (next !== rowsRef.current) {
+        rowsRef.current = next;
+        setRows(next);
+      }
+      if (armAfter) armDraftTimer();
+      if (added > 0) {
+        setMergeNote(`${plural(added, "link")} submitted earlier today ${added === 1 ? "is" : "are"} included`);
+      }
+      if (mode === "initial") setInitialLoading(false);
+      setRefreshing(false);
+    },
+    [setNotesBoth, armDraftTimer],
+  );
+
+  const reload = useCallback(() => {
+    void load("refresh");
+  }, [load]);
+
+  // A new IST day: start a fresh form for that day.
+  const startNewDay = useCallback(
+    (today: string) => {
+      if (today === loadedDateRef.current) return;
+      loadedDateRef.current = today;
+      setFormDate(today);
+      loadSeq.current += 1;
+      clearDraftTimer();
+      restoredRef.current = false;
+      skipNextAutosave.current = true;
+      commitRows([]);
+      setNotesBoth("");
+      setTodayReport(null);
+      setTodayState("loading");
+      setDraftLoadState("loading");
+      setResult(null);
+      setMergeNote(null);
+      setAttempted(false);
+      setDraftStatus({ kind: "idle" });
+      setPasteText("");
+      setPickerFor(null);
+      setRefreshing(false);
+      setInitialLoading(true);
+      void load("initial");
+    },
+    [clearDraftTimer, commitRows, setNotesBoth, load],
+  );
+
+  useEffect(() => {
+    newDayRef.current = startNewDay;
+  }, [startNewDay]);
+
+  useEffect(() => {
+    void load("initial");
+  }, [load]);
+
+  useDayChange(startNewDay);
+
+  // ---------- autosave (3 s debounce) ----------
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    if (skipNextAutosave.current) {
+      skipNextAutosave.current = false;
+      return;
+    }
+    armDraftTimer();
+  }, [rows, notes, armDraftTimer]);
+
+  // Stop a pending autosave when the screen unmounts.
+  useEffect(() => clearDraftTimer, [clearDraftTimer]);
 
   // Focus a just-added row once its input is mounted.
   useEffect(() => {
@@ -650,9 +788,11 @@ export default function ReportScreen() {
   }, [updateRows]);
 
   // ---------- row callbacks (stable, keyed by row.key) ----------
+  // A submitted row (`server`) keeps its url: editing it would re-key it away from its server
+  // link (which the next Update re-adds anyway) and carry that link's stats onto another url.
   const onChangeUrl = useCallback(
     (key: string, url: string) => {
-      updateRows((prev) => replaceRow(prev, key, (r) => ({ ...r, url, error: undefined })));
+      updateRows((prev) => replaceRow(prev, key, (r) => (r.server ? r : { ...r, url, error: undefined })));
     },
     [updateRows],
   );
@@ -661,6 +801,7 @@ export default function ReportScreen() {
     (key: string) => {
       updateRows((prev) =>
         replaceRow(prev, key, (r) => {
+          if (r.server) return r;
           const trimmed = r.url.trim();
           const url = trimmed ? (toUrl(trimmed) ?? trimmed) : "";
           const base = url === r.url ? r : { ...r, url };
@@ -673,8 +814,11 @@ export default function ReportScreen() {
 
   const onPick = useCallback((key: string) => setPickerFor(key), []);
 
+  // Submitted rows cannot be removed: the server keeps them and the next Update re-sends them.
   const onRemove = useCallback(
     (key: string) => {
+      const target = rowsRef.current.find((r) => r.key === key);
+      if (!target || target.server) return;
       inputRefs.current.delete(key);
       rowY.current.delete(key);
       updateRows((prev) => prev.filter((r) => r.key !== key));
@@ -683,7 +827,7 @@ export default function ReportScreen() {
   );
 
   const onNext = useCallback((key: string) => {
-    const editable = rowsRef.current.filter((r) => !isScheduledRow(r));
+    const editable = rowsRef.current.filter((r) => !r.server);
     const i = editable.findIndex((r) => r.key === key);
     const nxt = i >= 0 ? editable[i + 1] : undefined;
     if (nxt) inputRefs.current.get(nxt.key)?.focus();
@@ -723,6 +867,15 @@ export default function ReportScreen() {
     const date = loadedDateRef.current;
     setResult(null);
 
+    // Never POST for a day other than the current IST day.
+    const now = todayIST();
+    if (now !== date) {
+      newDayRef.current(now);
+      toast.show({ message: "A new day has started — the form is now for today", tone: "warning" });
+      void haptic("warning");
+      return;
+    }
+
     const first = buildSend(rowsRef.current);
     const live = first.send.filter((r) => !isScheduledRow(r));
     if (live.length === 0) {
@@ -742,10 +895,13 @@ export default function ReportScreen() {
     setSaving(true);
     clearDraftTimer();
     let sent: LinkRow[] = [];
+    let posted = false;
+    let dirty = false;
     try {
       let fresh: TodayReport | null;
       try {
-        fresh = await apiFetch<TodayReport | null>("/hr/reports/today");
+        // The report for exactly the date being POSTed (not the server's "today").
+        fresh = await fetchReportFor(date);
       } catch {
         setTodayState("failed");
         setResult({ tone: "danger", text: "Couldn't check what's already submitted — nothing was changed" });
@@ -753,11 +909,21 @@ export default function ReportScreen() {
         return;
       }
       if (date !== loadedDateRef.current) return;
+      const nowAfter = todayIST();
+      if (nowAfter !== date) {
+        newDayRef.current(nowAfter);
+        toast.show({ message: "A new day has started — the form is now for today", tone: "warning" });
+        return;
+      }
       setTodayReport(fresh ?? null);
       setTodayState("ok");
       const merged = mergeServerRows(rowsRef.current, serverLinks(fresh), newKey);
-      if (merged.added > 0) {
+      if (merged.added > 0 || merged.rows.length !== rowsRef.current.length) {
         commitRows(decorateAll(merged.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
+      } else {
+        commitRows(decorateAll(merged.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
+      }
+      if (merged.added > 0) {
         setMergeNote(
           `${plural(merged.added, "link")} submitted earlier today ${merged.added === 1 ? "is" : "are"} included`,
         );
@@ -772,16 +938,32 @@ export default function ReportScreen() {
         return;
       }
       sent = send;
+      // Row objects as they were sent: anything added or edited during the POST is a new object.
+      const snapshot = new Set<LinkRow>(rowsRef.current);
+      const notesSent = notesRef.current;
       const byId = new Map(accountsRef.current.map((a) => [a.id, a] as const));
       const report = await apiFetch<TodayReport>("/hr/reports", {
         method: "POST",
-        body: JSON.stringify({ date, notes: notesRef.current.trim(), links: send.map((r) => toSubmitLink(r, byId)) }),
+        body: JSON.stringify({ date, notes: notesSent.trim(), links: send.map((r) => toSubmitLink(r, byId)) }),
       });
-      // Clear the draft for the SAME date we just posted.
-      apiFetch(`/hr/reports/draft?date=${date}`, { method: "DELETE" }).catch(() => undefined);
+      posted = true;
+      // A new day started while posting: the form now belongs to that day — leave it alone.
+      if (date !== loadedDateRef.current) return;
+
+      // Rows added or edited while the request was in flight were not sent: keep them.
+      const later = rowsRef.current.filter((r) => !snapshot.has(r) && !isScheduledRow(r));
+      const laterLive = later.filter((r) => !!r.url.trim()).length;
+      dirty = later.length > 0 || notesRef.current !== notesSent;
+
+      // Clear the draft for the SAME date we just posted — only when this screen read that draft
+      // (otherwise it may hold links we never saw). Unsent edits are re-saved below.
+      if (restoredRef.current) {
+        apiFetch(`/hr/reports/draft?date=${date}`, { method: "DELETE" }).catch(() => undefined);
+      }
       clearDraftTimer();
       skipNextAutosave.current = true;
-      commitRows(serverRowsOf(report));
+      const after = mergeServerRows(later, serverLinks(report), newKey);
+      commitRows(decorateAll(after.rows, accountsRef.current, priorRef.current, defaultIdOf(defaultRef.current)));
       setTodayReport(report);
       setTodayState("ok");
       setAttempted(false);
@@ -792,9 +974,10 @@ export default function ReportScreen() {
       const saved = liveServerCount(report);
       const serverSkipped = typeof report?.dedupe?.total === "number" ? report.dedupe.total : 0;
       const dup = serverSkipped + skipped;
+      const pendingText = laterLive > 0 ? ` · ${plural(laterLive, "link")} added since — tap Update to send` : "";
       setResult({
         tone: "success",
-        text: `${plural(saved, "link")} saved${dup > 0 ? ` · ${plural(dup, "duplicate")} skipped — no links were lost` : ""}`,
+        text: `${plural(saved, "link")} saved${dup > 0 ? ` · ${plural(dup, "duplicate")} skipped — no links were lost` : ""}${pendingText}`,
       });
       invalidate("report");
       void haptic("success");
@@ -823,8 +1006,11 @@ export default function ReportScreen() {
     } finally {
       submittingRef.current = false;
       setSaving(false);
+      // The pending autosave was cancelled above: on every exit that did not leave the server in
+      // sync with the form, save the current rows + notes as the draft.
+      if ((!posted || dirty) && date === loadedDateRef.current) armDraftTimer();
     }
-  }, [clearDraftTimer, commitRows, scrollToRow, updateRows]);
+  }, [armDraftTimer, clearDraftTimer, commitRows, scrollToRow, updateRows]);
 
   // ---------- derived ----------
   const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a] as const)), [accounts]);
@@ -837,7 +1023,7 @@ export default function ReportScreen() {
     let lastEditable: string | null = null;
     for (const r of rows) {
       if (isScheduledRow(r)) continue;
-      lastEditable = r.key;
+      if (!r.server) lastEditable = r.key;
       const k = dedupeKey(r);
       if (!k) continue;
       if (seen.has(k)) {
@@ -879,7 +1065,7 @@ export default function ReportScreen() {
   const title = (
     <LargeTitle
       title="Daily Report"
-      subtitle={fmtDay(shownDate, { weekday: true })}
+      subtitle={fmtDay(formDate, { weekday: true })}
       right={<IconButton icon="time-outline" label="Report history" onPress={() => router.push("/history")} />}
     />
   );
@@ -1009,6 +1195,13 @@ export default function ReportScreen() {
     <Screen header="none" scrollRef={scrollRef} onRefresh={() => load("refresh")} refreshing={refreshing} footer={footer}>
       {title}
       {dayCard}
+      {draftLoadState === "failed" ? (
+        <LoadFailed
+          compact
+          error="Your saved draft didn't load — changes aren't auto-saved until it does. Pull down to retry."
+          onRetry={reload}
+        />
+      ) : null}
       {draftLine ? (
         <Text style={styles.draftLine} maxFontSizeMultiplier={1.6}>
           {draftLine}
@@ -1225,6 +1418,7 @@ const styles = StyleSheet.create({
   },
   index: { ...type.footnote, ...type.numeric, color: colors.tertiary, width: 22 },
   urlField: { flex: 1, marginBottom: 0 },
+  serverUrl: { ...type.subhead, color: colors.ink, flex: 1, paddingVertical: spacing.sm, paddingRight: spacing.md },
   muted: { opacity: 0.5 },
   messages: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: 2 },
   note: { ...type.footnote, color: colors.sub },

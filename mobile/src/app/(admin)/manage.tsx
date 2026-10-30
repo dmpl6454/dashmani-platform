@@ -25,7 +25,8 @@ const SECTIONS: ManageSection[] = [
   {
     title: "Work",
     rows: [
-      { title: "Tasks", subtitle: "Assign & track tasks", icon: "checkbox-outline", tint: "orange", path: "/admin-tasks", needs: "hr" },
+      // GET /tasks needs tasks.view, which the HR Manager role does not grant.
+      { title: "Tasks", subtitle: "Assign & track tasks", icon: "checkbox-outline", tint: "orange", path: "/admin-tasks", needs: "admin" },
       { title: "Social Accounts", subtitle: "Channels & assignments", icon: "at-outline", tint: "blue", path: "/admin-accounts", needs: "admin" },
       { title: "Account Growth", subtitle: "Connected Meta channels: views, reach & revenue", icon: "trending-up-outline", tint: "green", path: "/admin-growth", needs: "admin" },
       { title: "Leaderboard", subtitle: "Report performance ranking", icon: "trophy-outline", tint: "yellow", path: "/admin-leaderboard", needs: "admin" },

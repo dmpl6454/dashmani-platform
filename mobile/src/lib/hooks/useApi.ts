@@ -6,10 +6,13 @@
 //
 // - Out-of-order results are dropped (a sequence ref; only the latest request lands).
 // - deps change → status "loading" and data null, unless `keepData` (data kept, `fetching` true).
+//   Kept data is only a placeholder while the new request is in flight: if the first request for
+//   the new deps FAILS, the old data (which belongs to the previous deps) is dropped and status
+//   becomes "failed" — stale data is never left on screen labelled with the new deps.
 // - `refresh` (pull-to-refresh) keeps data and sets `refreshing`; `reload` is silent and keeps data.
 // - `loading === (status === "loading" && data === null)`.
-// - `status: "failed"` only when there is no data to show; a failed refetch over data keeps "ok"
-//   and exposes `error`. Only a LOADED answer may claim emptiness (`isEmpty`).
+// - `status: "failed"` only when there is no data to show; a failed refetch over data loaded for
+//   the SAME deps keeps "ok" and exposes `error`. Only a LOADED answer may claim emptiness (`isEmpty`).
 // - Focus / foreground refetches are opt-in, silent, throttled by `staleMs`, skipped while fetching.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
@@ -26,7 +29,10 @@ export type UseApiOptions = {
   refetchOnForeground?: boolean;
   /** Minimum age (ms) of the last good load before a focus/foreground refetch. Default 30000. */
   staleMs?: number;
-  /** Keep showing the previous data while a deps change refetches. Default false. */
+  /**
+   * Keep showing the previous data while a deps change refetches. Default false.
+   * If that refetch fails, the previous data is dropped (status "failed").
+   */
   keepData?: boolean;
   /** When false nothing is fetched (status stays "loading", `loading` is false). Default true. */
   enabled?: boolean;
@@ -54,6 +60,14 @@ function messageOf(e: unknown): string {
   if (e instanceof Error && e.message) return e.message;
   if (typeof e === "string" && e) return e;
   return "Something went wrong";
+}
+
+function sameDeps(a: readonly unknown[] | null, b: readonly unknown[]): boolean {
+  if (a === null || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!Object.is(a[i], b[i])) return false;
+  }
+  return true;
 }
 
 export function useApi<T>(
@@ -84,6 +98,11 @@ export function useApi<T>(
   const inFlightRef = useRef(false);
   const lastLoadedAtRef = useRef(0);
   const mountedRef = useRef(false);
+  // Generation of the caller's deps (bumped whenever their values change) and the generation
+  // the current `data` was loaded for. They differ only while kept (stale) data is on screen.
+  const lastDepsRef = useRef<readonly unknown[] | null>(null);
+  const depsGenRef = useRef(0);
+  const dataGenRef = useRef(0);
 
   // Keep the latest fetcher/options without re-identifying refresh/reload.
   // Declared first so it runs before the load effect below.
@@ -100,6 +119,8 @@ export function useApi<T>(
   }, []);
 
   const setData = useCallback<Dispatch<SetStateAction<T | null>>>((action) => {
+    // A plain value set by the caller describes the current deps.
+    if (typeof action !== "function") dataGenRef.current = depsGenRef.current;
     setDataState((prev) => {
       const next = typeof action === "function" ? (action as (p: T | null) => T | null)(prev) : action;
       dataRef.current = next;
@@ -115,6 +136,7 @@ export function useApi<T>(
       inFlightRef.current = true;
       if (mode === "reset") {
         dataRef.current = null;
+        dataGenRef.current = depsGenRef.current;
         setDataState(null);
         setStatus("loading");
         setError(null);
@@ -127,6 +149,7 @@ export function useApi<T>(
         const result = await fetcherRef.current();
         if (!mountedRef.current || seq !== seqRef.current) return;
         dataRef.current = result;
+        dataGenRef.current = depsGenRef.current;
         setDataState(result);
         setStatus("ok");
         setError(null);
@@ -138,6 +161,14 @@ export function useApi<T>(
         setError(messageOf(e));
         setErrorCode(e instanceof ApiError ? (e.code ?? null) : null);
         setErrorStatus(e instanceof ApiError ? (e.status ?? null) : null);
+        if (dataRef.current !== null && dataGenRef.current !== depsGenRef.current) {
+          // The data on screen was kept from the previous deps (keepData) and the load for the
+          // new deps failed: never leave it on screen as if it answered the new deps.
+          dataRef.current = null;
+          dataGenRef.current = depsGenRef.current;
+          setDataState(null);
+          lastLoadedAtRef.current = 0;
+        }
         setStatus(dataRef.current === null ? "failed" : "ok");
       } finally {
         if (seq === seqRef.current) {
@@ -154,6 +185,10 @@ export function useApi<T>(
 
   // Initial load + reload whenever the caller's deps (or `enabled`) change.
   useEffect(() => {
+    if (!sameDeps(lastDepsRef.current, deps)) {
+      lastDepsRef.current = [...deps];
+      depsGenRef.current += 1;
+    }
     if (!enabled) return;
     void run(keepDataRef.current && dataRef.current !== null ? "keep" : "reset");
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -5,6 +5,9 @@
 // only — web closes via scrim / close button). Keyboard-aware (iOS padding), safe-area
 // aware, max 88 % of the window, 28 pt top corners, surface2 background, provides
 // SurfaceContext "sheet" so inputs inside pick the sheet input colour.
+// While the keyboard is up the panel is capped to the space above it (below the status
+// bar), so the header and the focused field never slide off the top of the screen; the
+// body scrolls instead.
 //
 // PickerSheet: searchable list of choices (local filter, or debounced server search via
 // onSearch); picking an item calls onSelect(item) and then onClose().
@@ -14,6 +17,7 @@ import {
   Animated,
   Dimensions,
   Easing,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -25,6 +29,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import type { KeyboardEvent } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { colors, motion, radius, spacing, type } from "@/lib/theme";
 import type { TintKey } from "@/lib/theme";
@@ -46,6 +51,35 @@ const NATIVE_DRIVER = Platform.OS !== "web";
 const ZERO_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
 const DISMISS_DY = 120;
 const DISMISS_VY = 0.8;
+/** Gap kept between the status bar and a sheet squeezed by the keyboard. */
+const KEYBOARD_TOP_GAP = 8;
+
+/**
+ * Height of the keyboard overlapping the bottom of the window (iOS only — that is where the
+ * KeyboardAvoidingView below adds matching bottom padding). 0 when hidden or inactive.
+ */
+function useKeyboardOverlap(active: boolean, windowHeight: number): number {
+  const [overlap, setOverlap] = useState(0);
+  useEffect(() => {
+    if (!active || Platform.OS !== "ios") {
+      setOverlap(0);
+      return;
+    }
+    const onShow = (e: KeyboardEvent) => {
+      const { screenY, height } = e.endCoordinates;
+      const fromScreenY = windowHeight - screenY;
+      setOverlap(Math.max(0, Number.isFinite(fromScreenY) && screenY > 0 ? fromScreenY : height));
+    };
+    const onHide = () => setOverlap(0);
+    const subs = [
+      Keyboard.addListener("keyboardWillShow", onShow),
+      Keyboard.addListener("keyboardWillChangeFrame", onShow),
+      Keyboard.addListener("keyboardWillHide", onHide),
+    ];
+    return () => subs.forEach((s) => s.remove());
+  }, [active, windowHeight]);
+  return overlap;
+}
 
 // ---------- Sheet ----------
 export type SheetProps = {
@@ -83,6 +117,8 @@ export function Sheet({
   // Stay mounted while the close animation runs.
   const [mounted, setMounted] = useState(visible);
   if (visible && !mounted) setMounted(true);
+
+  const keyboardOverlap = useKeyboardOverlap(mounted, height);
 
   const [translateY] = useState(() => new Animated.Value(Dimensions.get("window").height));
   const [scrim] = useState(() => new Animated.Value(0));
@@ -151,7 +187,14 @@ export function Sheet({
 
   if (!mounted) return null;
 
-  const maxHeight = Math.round(height * 0.88);
+  // 88 % of the window, but never taller than the room left above the keyboard (the KAV pads
+  // the bottom by the keyboard height) minus the status bar — otherwise the panel overflows
+  // upward and hides its header and the field being typed in.
+  const fullHeight = Math.round(height * 0.88);
+  const maxHeight =
+    keyboardOverlap > 0
+      ? Math.max(0, Math.min(fullHeight, Math.round(height - keyboardOverlap - insets.top - KEYBOARD_TOP_GAP)))
+      : fullHeight;
   const bodyStyle = detent === "large" ? styles.bodyFill : styles.bodyAuto;
   const showHeaderRow = !!title || !!subtitle || dismissable;
 
@@ -463,6 +506,8 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 640,
     alignSelf: "center",
+    // Shrink to the room the KAV leaves above the keyboard instead of overflowing upward.
+    flexShrink: 1,
     backgroundColor: colors.surface2,
     borderTopLeftRadius: radius.sheet,
     borderTopRightRadius: radius.sheet,

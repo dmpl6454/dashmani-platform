@@ -61,7 +61,9 @@ function RootStack() {
         ...largeTitle,
       }}
     >
-      {/* Unprotected: the only screen reachable without a session. */}
+      {/* Unprotected: the only screen reachable without a session. Every other route MUST be
+          listed inside Stack.Protected — expo-router registers unlisted routes as ordinary,
+          unguarded screens. */}
       <Stack.Screen name="login" options={{ headerShown: false }} />
       <Stack.Protected guard={loading || !!user}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -92,6 +94,10 @@ function RootStack() {
         <Stack.Screen name="presentations" options={{ title: "Presentations" }} />
         <Stack.Screen name="joining-date" options={{ title: "Joining Date" }} />
         <Stack.Screen name="company" options={{ title: "Company" }} />
+        {/* Pipeline (reachable from PIPELINE notifications and deep links) */}
+        <Stack.Screen name="pipeline/index" options={{ title: "Pipeline" }} />
+        <Stack.Screen name="pipeline/new" />
+        <Stack.Screen name="pipeline/[id]" />
         {/* Admin stack screens */}
         <Stack.Screen name="admin-employees" options={{ title: "Employees" }} />
         <Stack.Screen name="admin-employee/[id]" options={{ title: "Employee Reports" }} />

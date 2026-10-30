@@ -307,43 +307,53 @@ export default function AdminTasks() {
             <Text style={styles.footnote}>Showing the first {LIST_LIMIT} tasks. Use the web portal to see older ones.</Text>
           ) : null
         }
-        renderItem={(t) => {
+        renderItem={(t, i, rows) => {
           const busy = busyIds.has(t.id);
           const pr = isPriority(t.priority) ? t.priority : null;
+          const last = i === rows.length - 1;
+          // The status button is a sibling of the row's Pressable, not a child: on iOS an accessible
+          // parent hides its subtree from VoiceOver, so a nested button could never be focused.
           return (
-            <ListItem
-              title={t.title}
-              subtitle={taskSubtitle(t)}
-              icon={statusIcon(t.status)}
-              tint={statusTint(t.status)}
-              lines={2}
-              chevron={false}
-              onPress={() => openEdit(t)}
-              accessibilityHint="Opens the task to edit it or read comments"
-              trailing={
-                <View style={styles.trailing}>
-                  {pr ? (
-                    <Badge value={formatStatus(pr)} tone={PRIORITY_TONE[pr]} accessibilityLabel={`${formatStatus(pr)} priority`} />
-                  ) : null}
-                  {busy ? (
-                    <ActivityIndicator color={colors.sub} accessibilityLabel="Updating status" />
-                  ) : (
-                    <Pressable
-                      onPress={() => {
-                        setStatusError(null);
-                        setStatusFor(t);
-                      }}
-                      hitSlop={8}
-                      style={styles.statusHit}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Status: ${formatStatus(t.status)}. Change status`}
-                    >
-                      <StatusPill status={t.status} size="sm" />
-                    </Pressable>
-                  )}
-                </View>
-              }
-            />
+            <View style={styles.taskRow}>
+              <View style={styles.taskMain}>
+                <ListItem
+                  title={t.title}
+                  subtitle={taskSubtitle(t)}
+                  icon={statusIcon(t.status)}
+                  tint={statusTint(t.status)}
+                  lines={2}
+                  chevron={false}
+                  last={last}
+                  onPress={() => openEdit(t)}
+                  accessibilityHint="Opens the task to edit it or read comments"
+                  trailing={
+                    pr ? (
+                      <View style={styles.trailing}>
+                        <Badge value={formatStatus(pr)} tone={PRIORITY_TONE[pr]} accessibilityLabel={`${formatStatus(pr)} priority`} />
+                      </View>
+                    ) : undefined
+                  }
+                />
+              </View>
+              <View style={[styles.statusCell, last ? null : styles.hairline]}>
+                {busy ? (
+                  <ActivityIndicator color={colors.sub} accessibilityLabel="Updating status" />
+                ) : (
+                  <Pressable
+                    onPress={() => {
+                      setStatusError(null);
+                      setStatusFor(t);
+                    }}
+                    hitSlop={8}
+                    style={styles.statusHit}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t.title}. Status: ${formatStatus(t.status)}. Change status`}
+                  >
+                    <StatusPill status={t.status} size="sm" />
+                  </Pressable>
+                )}
+              </View>
+            </View>
           );
         }}
       />
@@ -686,7 +696,11 @@ function TaskComments({ taskId }: { taskId: string }) {
 const styles = StyleSheet.create({
   newButton: { marginBottom: spacing.md },
   chips: { marginBottom: spacing.md },
+  taskRow: { flexDirection: "row", alignItems: "stretch" },
+  taskMain: { flex: 1, minWidth: 0 },
   trailing: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginLeft: spacing.sm },
+  statusCell: { justifyContent: "center", alignItems: "flex-end", paddingRight: spacing.lg },
+  hairline: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   statusHit: { minHeight: sizes.touch, justifyContent: "center" },
   footnote: { ...type.footnote, color: colors.tertiary, marginTop: spacing.sm, textAlign: "center" },
   block: { marginBottom: spacing.lg },

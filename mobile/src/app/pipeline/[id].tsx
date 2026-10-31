@@ -64,7 +64,8 @@ export default function PipelineProject() {
   const [dir, setDir] = useState<Directory | null>(null);
   const [header, setHeader] = useState<Header | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [me, setMe] = useState<Me | null>(null);
+  // Only the setter is read today; the state keeps the latest "me" from detail and sync.
+  const [, setMe] = useState<Me | null>(null);
   const [msgs, setMsgs] = useState<Map<string, Message>>(new Map());
   const [hasOlder, setHasOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);

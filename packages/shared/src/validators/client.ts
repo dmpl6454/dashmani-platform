@@ -113,3 +113,8 @@ export const clientJoinSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters").max(200),
   name: safeString.pipe(z.string().min(2, "Name must be at least 2 characters").max(200)).optional(),
 });
+
+/** A team login's own email choices (the owner always receives both). */
+export const clientTeamEmailChoicesSchema = z
+  .object({ emailCampaigns: z.boolean().optional(), emailInvoices: z.boolean().optional() })
+  .refine((v) => v.emailCampaigns !== undefined || v.emailInvoices !== undefined, { message: "Nothing to change" });

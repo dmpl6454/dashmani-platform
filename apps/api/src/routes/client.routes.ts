@@ -402,6 +402,15 @@ router.post("/client/team", authenticateClient, requireClientOwner, validate(cli
   } catch (err) { next(err); }
 });
 
+// PUT /v1/client/team/me/email — a team login turns its own campaign / invoice emails on or off.
+router.put("/client/team/me/email", authenticateClient, validate(clientValidators.clientTeamEmailChoicesSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id: clientId, memberId } = (req as any).client;
+    if (!memberId) throw new AppError(400, "OWNER_ALWAYS_EMAILED", "The account owner always receives campaign and invoice emails.");
+    return success(res, await clientTeamService.setMyEmailChoices(clientId, memberId, req.body));
+  } catch (err) { next(err); }
+});
+
 router.post("/client/team/:memberId/resend", authenticateClient, requireClientOwner, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const clientId = (req as any).client.id;

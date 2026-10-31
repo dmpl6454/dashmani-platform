@@ -18,6 +18,8 @@ vi.mock("../src/services/email.service", async (orig) => {
 import app from "../src/app";
 import { sendEmail } from "../src/services/email.service";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
+import { teamEmailRecipients } from "../src/services/client-team.service";
+import { sendItemLiveEmail } from "../src/services/campaign/delivery.service";
 
 const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 const tokenFrom = (url: string) => new URL(url).searchParams.get("token")!;
@@ -170,5 +172,37 @@ describe("client team logins", () => {
     expect((await request(app).get(`/v1/sales/clients/${clientId}/logins`).set(auth(ownerTok))).status).toBe(403);
     const elsewhere = await prisma.client.create({ data: { companyName: "Else", contactName: "E", email: "else@x.test", passwordHash: "x" } });
     expect((await request(app).delete(`/v1/sales/clients/${elsewhere.id}/logins/${add.body.data.member.id}`).set(auth(staff))).status).toBe(404);
+  });
+
+  it("team logins get campaign and invoice emails unless they switch them off", async () => {
+    const { session } = await inviteAndJoin("ravi@acme.test", "Ravi");
+    await request(app).post("/v1/client/team").set(auth(ownerTok)).send({ email: "pending@acme.test", name: "Pending" }); // invited, not joined
+    expect(await teamEmailRecipients(clientId, "campaigns")).toEqual(["ravi@acme.test"]);
+    expect(await teamEmailRecipients(clientId, "invoices")).toEqual(["ravi@acme.test"]);
+
+    // A campaign email goes to the owner with the team on cc.
+    const booking = await prisma.campaignBooking.create({
+      data: {
+        clientId, name: "Diwali", brand: "Acme", status: "publishing",
+        items: { create: [{ rateCardId: "rc", targetType: "meta_asset", targetId: "a1", platform: "instagram", format: "reel", accountName: "Paps", pricePaise: 1, status: "published", permalink: "https://www.instagram.com/reel/X/", postedAt: new Date() }] },
+      },
+      include: { items: true },
+    });
+    vi.mocked(sendEmail).mockClear();
+    expect(await sendItemLiveEmail(booking.items[0].id)).toBe(true);
+    expect(vi.mocked(sendEmail).mock.calls[0][0]).toMatchObject({ to: "owner@acme.test", cc: "ravi@acme.test" });
+
+    // The login switches campaign emails off; invoices stay on.
+    const off = await request(app).put("/v1/client/team/me/email").set(auth(session.accessToken)).send({ emailCampaigns: false });
+    expect(off.status, JSON.stringify(off.body)).toBe(200);
+    expect(off.body.data).toMatchObject({ emailCampaigns: false, emailInvoices: true });
+    expect(await teamEmailRecipients(clientId, "campaigns")).toEqual([]);
+    expect(await teamEmailRecipients(clientId, "invoices")).toEqual(["ravi@acme.test"]);
+
+    // The owner has no switch, and a disabled login gets nothing.
+    expect((await request(app).put("/v1/client/team/me/email").set(auth(ownerTok)).send({ emailInvoices: false })).status).toBe(400);
+    const team = await request(app).get("/v1/client/team").set(auth(ownerTok));
+    await request(app).post(`/v1/client/team/${team.body.data.members.find((m: { email: string }) => m.email === "ravi@acme.test").id}/disable`).set(auth(ownerTok));
+    expect(await teamEmailRecipients(clientId, "invoices")).toEqual([]);
   });
 });

@@ -9,7 +9,8 @@ import { companyOfDoc, SALES_COMPANIES, useCompany } from "@/lib/company";
 import { errorSentence } from "@/lib/messages";
 import type { Invoice, InvoiceItem, TaxMode } from "@/lib/sales-types";
 import { Field, LoadError, Loading, Money, MoneyInput, PageHead, Toast } from "@/components/sales-ui";
-import { computeTotals, registrationFor, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
+import { computeTotals, registrationChoice, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
+import { BilledFromSelect } from "@/components/billed-from";
 
 // A free-form invoice (the usual path is "Create invoice" on an order, which lands here as a
 // draft to review). Drafts only: an issued invoice is never edited.
@@ -26,15 +27,16 @@ function Editor() {
   const { company: current } = useCompany();
   const companyKey = id ? companyOfDoc(inv) : current;
   const { data: seller } = useSeller(id && !inv ? undefined : companyKey);
-  const [form, setForm] = useState({ clientId: params.get("clientId") ?? "", kind: "tax_invoice" as "tax_invoice" | "proforma", issueDate: "", dueDate: "", taxMode: "auto" as "auto" | TaxMode, gstRateBp: 1800, discountPaise: 0, notes: "", terms: "", internalNotes: "", items: [blank()] as InvoiceItem[] });
+  const [form, setForm] = useState({ clientId: params.get("clientId") ?? "", kind: "tax_invoice" as "tax_invoice" | "proforma", issueDate: "", dueDate: "", taxMode: "auto" as "auto" | TaxMode, sellerGstin: "", gstRateBp: 1800, discountPaise: 0, notes: "", terms: "", internalNotes: "", items: [blank()] as InvoiceItem[] });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   useEffect(() => {
-    if (inv) setForm({ clientId: inv.clientId, kind: inv.kind, issueDate: inv.issueDate ?? "", dueDate: inv.dueDate ?? "", taxMode: inv.taxMode, gstRateBp: inv.gstRateBp, discountPaise: inv.discountPaise, notes: inv.notes ?? "", terms: inv.terms ?? "", internalNotes: inv.internalNotes ?? "", items: inv.items.length ? inv.items.map((i) => ({ ...i })) : [blank()] });
+    if (inv) setForm({ clientId: inv.clientId, kind: inv.kind, issueDate: inv.issueDate ?? "", dueDate: inv.dueDate ?? "", taxMode: inv.taxMode, sellerGstin: inv.sellerGstin ?? "", gstRateBp: inv.gstRateBp, discountPaise: inv.discountPaise, notes: inv.notes ?? "", terms: inv.terms ?? "", internalNotes: inv.internalNotes ?? "", items: inv.items.length ? inv.items.map((i) => ({ ...i })) : [blank()] });
   }, [inv]);
   useEffect(() => { if (seller && !form.terms && !inv) setForm((f) => ({ ...f, terms: seller.profile.terms ?? "", gstRateBp: seller.profile.defaultGstRateBp })); }, [seller, inv, form.terms]);
   const client = clients?.find((c) => c.id === form.clientId);
-  const autoMode = taxModeFor(seller ? registrationFor(seller.profile, client?.billingProfile?.stateCode).stateCode : null, client?.billingProfile?.stateCode, client?.billingProfile?.country ?? "IN");
+  const placeOfSupply = client?.billingProfile?.stateCode ?? null;
+  const autoMode = taxModeFor(seller ? registrationChoice(seller.profile, placeOfSupply, form.sellerGstin || null).stateCode : null, client?.billingProfile?.stateCode, client?.billingProfile?.country ?? "IN");
   const taxMode: TaxMode = form.taxMode === "auto" ? autoMode : form.taxMode;
   const totals = useMemo(() => computeTotals({ lines: form.items, discountPaise: form.discountPaise, taxMode, gstRateBp: form.gstRateBp, roundToRupee: seller?.profile.roundToRupee ?? true }), [form.items, form.discountPaise, taxMode, form.gstRateBp, seller]);
   const setItem = (i: number, patch: Partial<InvoiceItem>) => setForm((f) => ({ ...f, items: f.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) }));
@@ -50,7 +52,7 @@ function Editor() {
     try {
       const body = {
         companyKey, clientId: form.clientId, kind: form.kind, orderId: inv?.orderId ?? null, campaignBookingId: inv?.campaignBookingId ?? null,
-        issueDate: form.issueDate || null, dueDate: form.dueDate || null, gstRateBp: form.gstRateBp, discountPaise: form.discountPaise,
+        issueDate: form.issueDate || null, dueDate: form.dueDate || null, gstRateBp: form.gstRateBp, discountPaise: form.discountPaise, sellerGstin: form.sellerGstin || null,
         notes: form.notes || null, terms: form.terms || null, internalNotes: form.internalNotes || null, ...(form.taxMode !== "auto" ? { taxMode: form.taxMode } : {}),
         items: form.items.map((i) => ({ description: i.description.trim(), sac: i.sac || null, quantity: i.quantity, unitPricePaise: i.unitPricePaise, discountPaise: i.discountPaise, orderItemId: i.orderItemId ?? null })),
       };
@@ -81,6 +83,7 @@ function Editor() {
           <Field label="GST" className="sm:col-span-2" hint={form.taxMode === "auto" ? `Auto from the client's state: ${client?.billingProfile?.stateCode ? `${client.billingProfile.stateCode} ${GST_STATE_CODES[client.billingProfile.stateCode] ?? ""}` : "none on file → IGST"}` : undefined}>
             <select className="input" value={form.taxMode} onChange={(e) => setForm({ ...form, taxMode: e.target.value as typeof form.taxMode })}><option value="auto">Auto ({autoMode === "intra" ? "CGST + SGST" : autoMode === "inter" ? "IGST" : "no GST"})</option><option value="intra">CGST + SGST</option><option value="inter">IGST</option><option value="none">No GST (export / SEZ)</option></select>
           </Field>
+          <BilledFromSelect className="sm:col-span-2" profile={seller?.profile} placeOfSupplyCode={placeOfSupply} value={form.sellerGstin} onChange={(g) => setForm({ ...form, sellerGstin: g, taxMode: "auto" })} />
         </section>
         <section className="card p-4">
           <div className="flex items-center justify-between mb-3"><h2 className="font-bold">Lines</h2><button type="button" className="btn btn-ghost btn-sm" onClick={() => setForm((f) => ({ ...f, items: [...f.items, blank()] }))}><Plus size={14} /> Add line</button></div>

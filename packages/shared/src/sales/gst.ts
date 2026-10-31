@@ -218,3 +218,23 @@ export function registrationByGstin(seller: SellerLike, gstin: string | null | u
   const b = gstin ? (seller.branches ?? []).find((x) => x.gstin === gstin) : undefined;
   return b ? branchReg(b) : principal(seller);
 }
+
+/** Every registration of the seller: the principal one first, then each additional state registration. */
+export function sellerRegistrations(seller: SellerLike): SellerRegistration[] {
+  return [principal(seller), ...(seller.branches ?? []).map(branchReg)];
+}
+
+/** The registration with this GSTIN, or null when the seller holds no such registration. */
+export function findRegistration(seller: SellerLike, gstin: string | null | undefined): SellerRegistration | null {
+  if (!gstin) return null;
+  const g = gstin.trim().toUpperCase();
+  return sellerRegistrations(seller).find((r) => r.gstin?.toUpperCase() === g) ?? null;
+}
+
+/**
+ * The registration a document bills from: the one chosen by hand when it set one (and the seller
+ * still holds it), otherwise the automatic choice of `registrationFor`.
+ */
+export function registrationChoice(seller: SellerLike, placeOfSupplyCode: string | null | undefined, chosenGstin: string | null | undefined): SellerRegistration {
+  return findRegistration(seller, chosenGstin) ?? registrationFor(seller, placeOfSupplyCode);
+}

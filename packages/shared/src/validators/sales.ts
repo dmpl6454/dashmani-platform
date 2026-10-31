@@ -235,9 +235,54 @@ export const invoiceUpsertSchema = z.object({
   notes: optionalText(4000),
   terms: optionalText(4000),
   internalNotes: optionalText(4000),
+  /** Bill from this GST registration (one of the company's GSTINs). Null / absent = automatic. */
+  sellerGstin: gstinSchema.optional().nullable(),
   items: z.array(invoiceLineSchema).min(1).max(200),
 });
 export type InvoiceUpsertInput = z.infer<typeof invoiceUpsertSchema>;
+
+// ── Recurring / retainer invoices ──
+export const RECURRING_FREQUENCIES = ["monthly", "quarterly", "yearly"] as const;
+export type RecurringFrequency = (typeof RECURRING_FREQUENCIES)[number];
+export const RECURRING_FREQUENCY_LABELS: Record<RecurringFrequency, string> = { monthly: "Every month", quarterly: "Every 3 months", yearly: "Every year" };
+export const RECURRING_MODES = ["draft", "issue"] as const;
+export const RECURRING_MODE_LABELS: Record<(typeof RECURRING_MODES)[number], string> = {
+  draft: "Create a draft for us to check",
+  issue: "Issue it and email it to the client",
+};
+export const RECURRING_STATUSES = ["active", "paused", "ended"] as const;
+
+export const recurringLineSchema = z.object({
+  description: safeString.pipe(z.string().min(1).max(300)),
+  sac: z.string().trim().regex(/^\d{4,8}$/).optional().nullable(),
+  quantity: z.number().int().min(1).max(10_000).default(1),
+  unitPricePaise: paise,
+  discountPaise: paise.default(0),
+});
+export type RecurringLineInput = z.infer<typeof recurringLineSchema>;
+
+export const recurringUpsertSchema = z
+  .object({
+    companyKey: companyKeySchema,
+    clientId: z.string().uuid(),
+    title: safeString.pipe(z.string().min(2).max(200)),
+    kind: z.enum(INVOICE_KINDS).default("tax_invoice"),
+    frequency: z.enum(RECURRING_FREQUENCIES),
+    dayOfMonth: z.number().int().min(1, "Pick a day from 1 to 28").max(28, "Pick a day from 1 to 28 (every month has it)"),
+    startDate: day,
+    endDate: day.optional().nullable(),
+    mode: z.enum(RECURRING_MODES).default("draft"),
+    placeOfSupplyCode: stateCodeSchema.optional().nullable(),
+    taxMode: z.enum(TAX_MODE_VALUES).optional().nullable(),
+    gstRateBp: z.number().int().min(0).max(4000).optional().nullable(),
+    sellerGstin: gstinSchema.optional().nullable(),
+    discountPaise: paise.default(0),
+    dueDays: z.number().int().min(0).max(365).optional().nullable(),
+    notes: optionalText(4000),
+    lines: z.array(recurringLineSchema).min(1).max(50),
+  })
+  .refine((v) => !v.endDate || v.endDate >= v.startDate, { message: "The end date is before the start date", path: ["endDate"] });
+export type RecurringUpsertInput = z.infer<typeof recurringUpsertSchema>;
 
 export const invoiceIssueSchema = z.object({
   issueDate: day.optional(),

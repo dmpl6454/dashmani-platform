@@ -481,6 +481,7 @@ model Client {
   salesPayments    SalesPayment[]
   salesCreditNotes SalesCreditNote[]
   salesRefunds     SalesRefund[]
+  salesRecurring   SalesRecurringInvoice[]
 
   @@map("clients")
 }
@@ -2999,6 +3000,11 @@ model SalesInvoice {
   /// A tax invoice made from a proforma: the proforma it replaces. Issuing moves the proforma's
   /// payments onto this invoice and cancels the proforma.
   convertedFromId   String?   @map("converted_from_id")
+  /// The GST registration chosen by hand to bill from (one of the company's GSTINs). Null =
+  /// automatic: the registration in the place of supply's state, else the principal one.
+  sellerGstin       String?   @map("seller_gstin") @db.VarChar(15)
+  /// The recurring template that created this invoice, if any.
+  recurringId       String?   @map("recurring_id")
   createdById       String    @map("created_by_id")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
@@ -3007,6 +3013,7 @@ model SalesInvoice {
   order         SalesOrder?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
   convertedFrom SalesInvoice?            @relation("ProformaConversion", fields: [convertedFromId], references: [id], onDelete: SetNull)
   conversions   SalesInvoice[]           @relation("ProformaConversion")
+  recurring     SalesRecurringInvoice?   @relation(fields: [recurringId], references: [id], onDelete: SetNull)
   items         SalesInvoiceItem[]
   allocations   SalesPaymentAllocation[]
   creditNotes   SalesCreditNote[]
@@ -3016,6 +3023,7 @@ model SalesInvoice {
   @@index([status, dueDate])
   @@index([issueDate])
   @@index([convertedFromId])
+  @@index([recurringId])
   @@index([companyKey])
   @@map("sales_invoices")
 }
@@ -3220,4 +3228,55 @@ model YoutubeConnection {
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   @@map("youtube_connections")
+}
+
+/// A recurring / retainer invoice: a template that creates an invoice for the client every
+/// period (monthly, quarterly or yearly on `dayOfMonth`). The daily job (and "Run now") bills the
+/// period at `nextRunDate`, then moves it on — one invoice per period, never two.
+model SalesRecurringInvoice {
+  id                String    @id @default(uuid())
+  /// The billing company (dspl | dmpl).
+  companyKey        String    @default("dspl") @map("company_key") @db.VarChar(8)
+  clientId          String    @map("client_id")
+  title             String    @db.VarChar(200)
+  /// tax_invoice | proforma
+  kind              String    @default("tax_invoice") @db.VarChar(16)
+  /// monthly | quarterly | yearly
+  frequency         String    @db.VarChar(16)
+  /// 1–28, so every month has the day.
+  dayOfMonth        Int       @map("day_of_month")
+  startDate         DateTime  @map("start_date") @db.Date
+  endDate           DateTime? @map("end_date") @db.Date
+  /// The next period to bill (IST day). Moved on when a run claims it.
+  nextRunDate       DateTime  @map("next_run_date") @db.Date
+  /// draft = leave a draft for staff; issue = issue it and email it to the client.
+  mode              String    @default("draft") @db.VarChar(8)
+  /// Optional overrides; null = worked out from the client and seller, like a new invoice.
+  placeOfSupplyCode String?   @map("place_of_supply_code") @db.VarChar(2)
+  taxMode           String?   @map("tax_mode") @db.VarChar(8)
+  gstRateBp         Int?      @map("gst_rate_bp")
+  sellerGstin       String?   @map("seller_gstin") @db.VarChar(15)
+  discountPaise     Int       @default(0) @map("discount_paise")
+  /// Days from the issue date to the due date; null = the company's default.
+  dueDays           Int?      @map("due_days")
+  notes             String?   @db.Text
+  /// [{ description, sac?, quantity, unitPricePaise, discountPaise }] — prices only; totals are
+  /// always computed from them when the invoice is made.
+  lines             Json
+  /// active | paused | ended
+  status            String    @default("active") @db.VarChar(8)
+  lastInvoiceId     String?   @map("last_invoice_id")
+  lastRunAt         DateTime? @map("last_run_at")
+  lastError         String?   @map("last_error") @db.VarChar(500)
+  createdById       String    @map("created_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  client   Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  invoices SalesInvoice[]
+
+  @@index([status, nextRunDate])
+  @@index([clientId])
+  @@index([companyKey])
+  @@map("sales_recurring_invoices")
 }

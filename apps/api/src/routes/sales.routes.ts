@@ -12,6 +12,7 @@ import {
   paymentVoidSchema,
   refundCreateSchema,
   quoteUpsertSchema,
+  recurringUpsertSchema,
   salesClientCreateSchema,
   sellerProfileSchema,
   DEFAULT_COMPANY,
@@ -35,6 +36,7 @@ import {
 } from "../services/sales/clients.service";
 import * as docs from "../services/sales/documents.service";
 import * as invoices from "../services/sales/invoices.service";
+import * as recurring from "../services/sales/recurring.service";
 import * as payments from "../services/sales/payments.service";
 import { getSalesDashboard } from "../services/sales/dashboard.service";
 import { getBooking, listBookings } from "../services/sales/bookings.service";
@@ -127,6 +129,16 @@ router.post("/sales/orders/:id/invoice", ...manage, asyncHandler(async (req, res
 
 // ── Invoices ────────────────────────────────────────────────────────────────────
 
+// Recurring / retainer invoices: a template billed every period by the daily job (or "Run now").
+router.get("/sales/recurring", ...view, asyncHandler(async (req, res) => success(res, await recurring.listRecurring({ company: companyQuery(req), clientId: str(req.query.clientId), status: str(req.query.status) }))));
+router.get("/sales/recurring/:id", ...view, asyncHandler(async (req, res) => success(res, await recurring.getRecurring(req.params.id))));
+router.post("/sales/recurring", ...manage, validate(recurringUpsertSchema), asyncHandler(async (req, res) => success(res, await recurring.createRecurring(req.body, staffId(req)), undefined, 201)));
+router.put("/sales/recurring/:id", ...manage, validate(recurringUpsertSchema), asyncHandler(async (req, res) => success(res, await recurring.updateRecurring(req.params.id, req.body, staffId(req)))));
+for (const action of ["pause", "resume", "end"] as const) {
+  router.post(`/sales/recurring/:id/${action}`, ...manage, asyncHandler(async (req, res) => success(res, await recurring.setRecurringStatus(req.params.id, action, staffId(req)))));
+}
+router.post("/sales/recurring/:id/run", ...manage, asyncHandler(async (req, res) => success(res, await recurring.runRecurringNow(req.params.id, staffId(req)))));
+
 router.get("/sales/invoices", ...view, asyncHandler(async (req, res) => success(res, await invoices.listInvoices({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q), companyKey: companyQuery(req) }))));
 router.post("/sales/invoices", ...manage, validate(invoiceUpsertSchema), asyncHandler(async (req, res) => success(res, await invoices.createInvoice(req.body, staffId(req)), undefined, 201)));
 router.post("/sales/invoices/from-booking/:bookingId", ...manage, asyncHandler(async (req, res) => success(res, await invoices.createInvoiceFromBooking(req.params.bookingId, staffId(req), companyOf(req)), undefined, 201)));
@@ -179,7 +191,7 @@ router.post("/sales/credit-notes/:id/cancel", ...manage, asyncHandler(async (req
 
 // ── Audit trail ─────────────────────────────────────────────────────────────────
 
-const ENTITY_TYPES: SalesEntity[] = ["quote", "order", "invoice", "payment", "credit_note", "settings", "client"];
+const ENTITY_TYPES: SalesEntity[] = ["quote", "order", "invoice", "payment", "credit_note", "settings", "client", "recurring"];
 router.get("/sales/events", ...view, asyncHandler(async (req, res) => {
   const entityType = str(req.query.entityType) as SalesEntity | undefined;
   const entityId = str(req.query.entityId);

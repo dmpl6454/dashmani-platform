@@ -78,7 +78,7 @@ export function assertMoneyFits(values: Record<string, number>): void {
   }
 }
 
-export type SalesEntity = "quote" | "order" | "invoice" | "payment" | "credit_note" | "settings" | "client";
+export type SalesEntity = "quote" | "order" | "invoice" | "payment" | "credit_note" | "settings" | "client" | "recurring";
 
 export async function logSalesEvent(
   tx: Tx | typeof prisma,

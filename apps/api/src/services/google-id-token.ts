@@ -33,14 +33,27 @@ export function googleClientId(): string | null {
   return id.length > 0 ? id : null;
 }
 
+/**
+ * Every OAuth client whose ID tokens we accept: the web client (GOOGLE_CLIENT_ID, used by the
+ * portals' GIS button) plus our native apps' clients (GOOGLE_IOS_CLIENT_IDS, comma-separated —
+ * the iOS app signs in with its own iOS client, whose tokens carry THAT client id as `aud`).
+ * Only ids we configured are ever accepted.
+ */
+export function acceptedGoogleAudiences(): Set<string> {
+  const ids = [process.env.GOOGLE_CLIENT_ID ?? "", ...(process.env.GOOGLE_IOS_CLIENT_IDS ?? "").split(",")]
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return new Set(ids);
+}
+
 export function googleSignInEnabled(): boolean {
   return googleClientId() !== null;
 }
 
 /** Verify a GIS credential with Google and return the identity it proves, or throw a 401. */
 export async function verifyGoogleIdToken(credential: string): Promise<GoogleIdentity> {
-  const clientId = googleClientId();
-  if (!clientId) throw new AppError(503, "GOOGLE_SIGNIN_DISABLED", "Sign in with Google is not set up on this server");
+  const audiences = acceptedGoogleAudiences();
+  if (audiences.size === 0) throw new AppError(503, "GOOGLE_SIGNIN_DISABLED", "Sign in with Google is not set up on this server");
   if (typeof credential !== "string" || credential.length < 20 || credential.length > 4096 || !/^[A-Za-z0-9_.-]+$/.test(credential)) {
     throw new AppError(401, "GOOGLE_TOKEN_INVALID", "Google sign-in could not be verified. Please try again.");
   }
@@ -62,7 +75,7 @@ export async function verifyGoogleIdToken(credential: string): Promise<GoogleIde
   }
 
   const str = (k: string) => (typeof claims[k] === "string" ? (claims[k] as string) : "");
-  if (str("aud") !== clientId) throw new AppError(401, "GOOGLE_TOKEN_INVALID", "This Google sign-in was not issued for this portal.");
+  if (!audiences.has(str("aud"))) throw new AppError(401, "GOOGLE_TOKEN_INVALID", "This Google sign-in was not issued for this portal.");
   if (!GOOGLE_ISSUERS.has(str("iss"))) throw new AppError(401, "GOOGLE_TOKEN_INVALID", "Google sign-in could not be verified. Please try again.");
   const exp = Number(str("exp"));
   if (!Number.isFinite(exp) || exp * 1000 <= Date.now()) throw new AppError(401, "GOOGLE_TOKEN_INVALID", "This Google sign-in has expired. Please try again.");

@@ -26,6 +26,7 @@ import { colors, radius, sizes, spacing, type } from "@/lib/theme";
 import { haptic } from "@/lib/device";
 import { Button, ErrorBanner, Field, type IoniconName } from "@/components/ui";
 import { Sheet } from "@/components/sheet";
+import { GoogleSignInButton } from "@/components/google-signin";
 
 // The login is ALWAYS white (owner decision) — a clean, Apple-style sheet with
 // the exact brand logo and the warm orange→pink gradient on the primary action.
@@ -75,7 +76,7 @@ function isRateLimited(e: unknown): boolean {
 type LoginError = { message: string; code: string | null };
 
 export default function LoginScreen() {
-  const { login, user, loading: authLoading, mode: authMode, resumePath, setResumePath } = useAuth();
+  const { login, loginGoogle, user, loading: authLoading, mode: authMode, resumePath, setResumePath } = useAuth();
   const router = useRouter();
   const params = useLocalSearchParams<{ mode?: string }>();
   const paramMode: PortalMode | null = params.mode === "admin" ? "admin" : params.mode === "hr" ? "hr" : null;
@@ -126,6 +127,28 @@ export default function LoginScreen() {
     setChosenMode(m);
     if (lockUntil === null) setError(null);
     void haptic("selection");
+  };
+
+  // Google: the token comes from the app's own Google client; the API verifies it and signs in
+  // the account with that verified email (Admin: existing accounts only).
+  const handleGoogle = async (idToken: string) => {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    const target = safeResume(resumePath, mode) ?? homeFor(mode);
+    leaving.current = true;
+    try {
+      await loginGoogle(mode, idToken);
+      void haptic("success");
+      setResumePath(null);
+      router.replace(target);
+    } catch (e: unknown) {
+      leaving.current = false;
+      void haptic("error");
+      setError({ message: describeError(e, "Google sign-in failed"), code: isApiError(e) && e.code ? e.code : null });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogin = async () => {
@@ -335,6 +358,12 @@ export default function LoginScreen() {
               <Text style={styles.btnText}>{signInLabel}</Text>
             </LinearGradient>
           </Pressable>
+
+          <GoogleSignInButton
+            disabled={loading}
+            onToken={(t) => void handleGoogle(t)}
+            onError={(message) => setError({ message, code: null })}
+          />
 
           <Pressable
             onPress={openForgot}

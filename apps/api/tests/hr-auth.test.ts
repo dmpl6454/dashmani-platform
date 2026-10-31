@@ -447,6 +447,19 @@ describe("HR Auth API", () => {
       expect(res.body.data).toEqual({ enabled: false, clientId: null });
     });
 
+    it("accepts a token issued to our iOS app's client, and still refuses any other audience", async () => {
+      await createTestUser({ email: "priya@digitalsukoon.test", name: "Priya N", roleNames: ["Employee"] });
+      const IOS = "456-ios.apps.googleusercontent.com";
+      googleAnswers(200, { ...baseClaims(), aud: IOS });
+      expect((await request(app).post(GOOGLE).send({ credential: CREDENTIAL })).status).toBe(401); // not configured yet
+      vi.stubEnv("GOOGLE_IOS_CLIENT_IDS", ` ${IOS} , other-ios.apps.googleusercontent.com`);
+      expect((await request(app).post(GOOGLE).send({ credential: CREDENTIAL })).status).toBe(200);
+      googleAnswers(200, { ...baseClaims(), aud: "stranger.apps.googleusercontent.com" });
+      expect((await request(app).post(GOOGLE).send({ credential: CREDENTIAL })).status).toBe(401);
+      // The web config still names only the web client.
+      expect((await request(app).get("/v1/hr/auth/google/config")).body.data.clientId).toBe(CLIENT_ID);
+    });
+
     it("is a clean 503 when not configured, and never calls Google", async () => {
       vi.stubEnv("GOOGLE_CLIENT_ID", "");
       const res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });

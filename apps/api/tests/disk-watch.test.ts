@@ -46,6 +46,18 @@ describe("disk watch", () => {
     expect(notifyAdminByEmail).toHaveBeenCalledTimes(2);
   });
 
+  it("adds DISK_ALERT_EMAILS recipients beside the admin inbox", async () => {
+    vi.stubEnv("DISK_ALERT_EMAILS", " ops@digitalsukoon.com, ,owner@dashmani.com ");
+    try {
+      diskTools.now = () => 5_000_000;
+      diskTools.read = async () => ({ freeBytes: 2 * GB, totalBytes: 49 * GB });
+      expect((await checkDisk()).alerted).toBe(true);
+      expect(vi.mocked(notifyAdminByEmail).mock.calls[0][3]).toEqual(["ops@digitalsukoon.com", "owner@dashmani.com"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("never throws when the disk can't be read", async () => {
     diskTools.read = async () => {
       throw new Error("statfs failed");

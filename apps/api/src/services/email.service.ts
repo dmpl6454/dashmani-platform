@@ -135,9 +135,15 @@ export async function notifyHrByEmail(subject: string, details: { label: string;
   return sendEmail({ to: HR_EMAIL, subject: `[HR Portal] ${subject}`, html });
 }
 
-export async function notifyAdminByEmail(subject: string, details: { label: string; value: string }[], actionPath?: string) {
+export async function notifyAdminByEmail(
+  subject: string,
+  details: { label: string; value: string }[],
+  actionPath?: string,
+  extraRecipients: string[] = [],
+) {
   const html = activityEmailHtml(subject, details, actionPath ? `${PORTAL_URL}${actionPath}` : undefined);
-  return sendEmail({ to: ADMIN_EMAIL, subject: `[Admin] ${subject}`, html });
+  const to = [ADMIN_EMAIL, ...extraRecipients.filter((e) => e.toLowerCase() !== ADMIN_EMAIL.toLowerCase())].join(", ");
+  return sendEmail({ to, subject: `[Admin] ${subject}`, html });
 }
 
 export async function sendApplicationNotification(application: {

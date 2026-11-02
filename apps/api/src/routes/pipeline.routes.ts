@@ -22,6 +22,7 @@ import { Router, type Request, type Response, type NextFunction, type RequestHan
 import type { ZodSchema } from "zod";
 import {
   pipelineValidators as V,
+  pipelineWork as WK,
   PIPELINE_LIMITS,
   PIPELINE_REACTION_EMOJI,
   PIPELINE_REACTION_KEYS,
@@ -62,6 +63,17 @@ import {
   type PipelineActor as MessageActor,
 } from "../services/pipeline/messages.service";
 import { markRead, syncPipeline } from "../services/pipeline/sync.service";
+import {
+  addVersion,
+  createDeliverable,
+  decideReview,
+  deleteDeliverable,
+  editDeliverable,
+  getMyWork,
+  getWork,
+  requestReview,
+  type WorkActor,
+} from "../services/pipeline/work.service";
 import { pipelineStats } from "../services/pipeline/stats";
 
 const router = Router();
@@ -373,6 +385,91 @@ router.put(
 );
 
 // ══ end PR 8 block ════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════════════════
+// Work tracking (2026-11-02): versions, version-bound reviews, one publishing record per
+// page, and My Work. services/pipeline/work.service.ts. The directory is resolved here,
+// BEFORE a service takes a slot. None of these paths collide with /projects/:id.
+// ══════════════════════════════════════════════════════════════════════════════════════
+
+async function workActorOf(req: Request): Promise<WorkActor> {
+  return { ...actorOf(req), directory: await getPipelineDirectory() };
+}
+
+// GET /pipeline/my-work (literal path)
+router.get(
+  "/pipeline/my-work",
+  ...G,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { userId, settings } = req.pipeline!;
+    return ok(res, await getMyWork(userId, await getPipelineDirectory(), settings));
+  }),
+);
+
+// GET /pipeline/projects/:id/work
+router.get(
+  "/pipeline/projects/:id/work",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await getWork(await getPipelineDirectory(), req.params.id))),
+);
+
+// POST /pipeline/projects/:id/versions
+router.post(
+  "/pipeline/projects/:id/versions",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(WK.addVersionSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await addVersion(await workActorOf(req), req.params.id, req.body), 201)),
+);
+
+// POST /pipeline/projects/:id/reviews
+router.post(
+  "/pipeline/projects/:id/reviews",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(WK.requestReviewSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await requestReview(await workActorOf(req), req.params.id, req.body), 201)),
+);
+
+// POST /pipeline/reviews/:rid/decision
+router.post(
+  "/pipeline/reviews/:rid/decision",
+  ...G,
+  pv(WK.reviewParamsSchema, "params"),
+  pv(WK.decideReviewSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await decideReview(await workActorOf(req), req.params.rid, req.body))),
+);
+
+// POST /pipeline/projects/:id/deliverables
+router.post(
+  "/pipeline/projects/:id/deliverables",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(WK.createDeliverableSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await createDeliverable(await workActorOf(req), req.params.id, req.body), 201),
+  ),
+);
+
+// PATCH /pipeline/deliverables/:did
+router.patch(
+  "/pipeline/deliverables/:did",
+  ...G,
+  pv(WK.deliverableParamsSchema, "params"),
+  pv(WK.editDeliverableSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await editDeliverable(await workActorOf(req), req.params.did, req.body))),
+);
+
+// DELETE /pipeline/deliverables/:did (never a published one)
+router.delete(
+  "/pipeline/deliverables/:did",
+  ...G,
+  pv(WK.deliverableParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await deleteDeliverable(await workActorOf(req), req.params.did))),
+);
+
+// ══ end work tracking block ═══════════════════════════════════════════════════════════
 
 // ── Unknown /pipeline paths (keep LAST, just above the error middleware) ─────────────
 // Behind G0 so an anonymous or wrong-portal caller learns nothing about which routes

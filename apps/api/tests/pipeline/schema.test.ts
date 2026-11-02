@@ -97,6 +97,11 @@ const FOREIGN_KEYS = [
   "pipeline_projects.linked_client_id -> clients : n",
   "pipeline_projects.owner_id -> users : r",
   "pipeline_projects.phase_id -> pipeline_phases : r",
+  // Work tracking (scripts/pipeline-work-ddl.sql): rows belong to a project; people ids
+  // (created_by_id, reviewer_id, assignee_id…) deliberately have NO FK into users.
+  "pipeline_deliverables.project_id -> pipeline_projects : c",
+  "pipeline_reviews.project_id -> pipeline_projects : c",
+  "pipeline_versions.project_id -> pipeline_projects : c",
 ];
 
 describe("pipeline schema (spec §2)", () => {

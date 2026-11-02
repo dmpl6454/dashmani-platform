@@ -31,6 +31,7 @@ import type {
   PipelineSyncRequest,
   PipelineSyncResponse,
 } from "@dashmani/shared";
+import type { pipelineWork as W } from "@dashmani/shared";
 import { apiFetch, ApiError } from "@/lib/api";
 
 type Env<T> = { success: true; data: T };
@@ -98,6 +99,19 @@ export const plApi = {
   deleteMessage: (mid: string) => call<PipelineDeleteMessageResponse>(`/messages/${mid}`, { method: "DELETE" }),
   react: (mid: string, emoji: PipelineReactionKey, on: boolean) =>
     call<PipelineReactionResponse>(`/messages/${mid}/reactions/${emoji}`, json("PUT", { on })),
+  // Work tracking: versions, reviews, pages, My Work.
+  work: (id: string) => call<W.PipelineWorkDto>(`/projects/${id}/work`),
+  myWork: () => call<W.PipelineMyWorkDto>("/my-work"),
+  addVersion: (id: string, body: W.AddVersionInput) => call<W.PipelineVersionDto>(`/projects/${id}/versions`, json("POST", body)),
+  requestReview: (id: string, body: W.RequestReviewInput) =>
+    call<W.PipelineReviewDto>(`/projects/${id}/reviews`, json("POST", body)),
+  decideReview: (rid: string, body: W.DecideReviewInput) =>
+    call<W.PipelineReviewDto>(`/reviews/${rid}/decision`, json("POST", body)),
+  addDeliverable: (id: string, body: W.CreateDeliverableInput) =>
+    call<W.PipelineDeliverableDto>(`/projects/${id}/deliverables`, json("POST", body)),
+  editDeliverable: (did: string, body: W.EditDeliverableInput) =>
+    call<W.PipelineDeliverableDto>(`/deliverables/${did}`, json("PATCH", body)),
+  deleteDeliverable: (did: string) => call<{ id: string }>(`/deliverables/${did}`, { method: "DELETE" }),
   /** Keepalive: used on leave / hide, when the page may be going away. */
   markRead: (id: string, seq: number, leaving: boolean) =>
     call<PipelineReadResponse>(`/projects/${id}/read`, json("POST", { seq, leaving }, { keepalive: true })),
@@ -146,11 +160,26 @@ const WORDS: Record<string, string> = {
   PHASE_ARCHIVED: "That phase was archived — pick another.",
   MESSAGE_DELETED: "That message was deleted.",
   MEMBER_NOT_PICKABLE: "One of the people you picked can't be added right now.",
-  USER_NOT_PICKABLE: "That person can't be made owner right now.",
+  USER_NOT_PICKABLE: "That person can't be picked right now.",
   MEMBER_LIMIT: "This project has reached its member limit.",
   OWNER_CANNOT_BE_REMOVED: "The owner can't be removed — transfer ownership first.",
   RESTORE_WINDOW_PASSED: "It's more than 30 days since this was deleted, so it can't be restored.",
   CONFIRM_MISMATCH: "The title you typed doesn't match.",
+  WORK_NOT_READY: "Versions and pages are waiting for a one-time server update — try again later.",
+  NO_VERSIONS: "Add a version (video, caption or thumbnail) before asking for a review.",
+  SELF_REVIEW: "Ask someone else to review your work.",
+  NOT_REVIEWER: "Only the person asked to review can decide.",
+  REVIEW_CLOSED: "This review was already decided or replaced.",
+  REVIEW_OUTDATED: "A newer version was added since this review was asked for — ask for a new review.",
+  REVIEW_NOT_FOUND: "That review no longer exists.",
+  APPROVAL_REQUIRED: "The newest versions aren't approved yet — get them approved first.",
+  LIVE_URL_REQUIRED: "Add the live link to mark it published.",
+  SCHEDULE_REQUIRED: "Set the date and time it will go live.",
+  DELIVERABLE_CONFLICT: "Someone else changed this page — showing their version.",
+  DELIVERABLE_NOT_FOUND: "That page record no longer exists.",
+  DELIVERABLE_PUBLISHED: "A published page is kept as a record — mark it cancelled instead.",
+  TOO_MANY_VERSIONS: "This project has the most versions it can hold.",
+  TOO_MANY_DELIVERABLES: "This project has the most pages it can hold.",
 };
 
 /** Human words for an error. Never the raw server message; never "Something went wrong". */

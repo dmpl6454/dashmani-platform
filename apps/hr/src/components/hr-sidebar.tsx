@@ -8,7 +8,7 @@ import {
   Wallet, FolderOpen, Calendar, PlaneTakeoff, Home, Gift, ListTodo, Receipt,
   Presentation, ClipboardList, Timer, Award, AlertCircle, Building2, ScrollText,
   FileCheck, Bug, Mail, ChevronLeft, ChevronRight, ChevronDown, Grid3x3,
-  LogOut, Menu, X as CloseIcon, SquareKanban,
+  LogOut, Menu, X as CloseIcon, SquareKanban, Inbox,
 } from "lucide-react";
 import { usePipelineBootstrap } from "@/lib/pipeline-swr";
 import { PortalSwitcherRail } from "./portal-switcher";
@@ -17,6 +17,8 @@ type NavItem = { href: string; label: string; icon: React.ElementType; group?: s
 
 /** Shown only when bootstrap says the feature is on for everyone (mode "on"). */
 const NAV_PIPELINE: NavItem = { href: "/pipeline", label: "Pipeline", icon: SquareKanban };
+/** Reviews, pages and due projects waiting on me (pipeline work tracking). Same gate as Pipeline. */
+const NAV_MY_WORK: NavItem = { href: "/pipeline/my-work", label: "My Work", icon: Inbox };
 
 const NAV_MAIN: NavItem[] = [
   { href: "/dashboard",    label: "Dashboard",      icon: LayoutDashboard },
@@ -134,7 +136,7 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
   let lastGroup: string | undefined;
   // Pipeline sits right after "Daily Update", inside the Daily group.
   const navItems = showPipeline
-    ? NAV_MAIN.flatMap((n) => (n.href === "/plan" ? [n, NAV_PIPELINE] : [n]))
+    ? NAV_MAIN.flatMap((n) => (n.href === "/plan" ? [n, NAV_PIPELINE, NAV_MY_WORK] : [n]))
     : NAV_MAIN;
 
   return (
@@ -163,7 +165,9 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
       {/* Nav */}
       <nav className="flex-1 px-2 py-3 overflow-y-auto min-h-0">
         {navItems.map((n) => {
-          const isActive = pathname.startsWith(n.href);
+          // "/pipeline" must not light up while its own "My Work" row is the open page.
+          const isActive =
+            pathname.startsWith(n.href) && !(n.href === NAV_PIPELINE.href && pathname.startsWith(NAV_MY_WORK.href));
           const I = n.icon;
           const showGroup = expanded && n.group && n.group !== lastGroup;
           if (n.group) lastGroup = n.group;

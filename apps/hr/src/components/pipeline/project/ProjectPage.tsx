@@ -42,6 +42,7 @@ import { Thread } from "../thread/Thread";
 import { ReplySheet } from "../thread/ReplySheet";
 import { DetailsPanel } from "./DetailsPanel";
 import { MembersPanel } from "./MembersPanel";
+import { WorkPanel } from "./WorkPanel";
 import { PhasePill, PhaseSelect, ProjectMenu } from "./ProjectHeader";
 
 const RETRY_MS = [10_000, 20_000, 40_000];
@@ -85,7 +86,9 @@ export function ProjectPage({ id }: { id: string }) {
   const project = useStoreSelector(store, (s) => s.projects[id]);
   const loaded = !!project?.header;
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
-  const [tab, setTab] = useState<"conversation" | "details">("conversation");
+  const [tab, setTab] = useState<"conversation" | "work" | "details">("conversation");
+  // Desktop side column: project details, or the work (versions, approval, pages).
+  const [sideTab, setSideTab] = useState<"details" | "work">("details");
   const [highlight, setHighlight] = useState<string | null>(null);
   const ledger = useMemo(() => new AckLedger(), [id]); // eslint-disable-line react-hooks/exhaustive-deps
   const initialM = useRef(m);
@@ -323,7 +326,7 @@ export function ProjectPage({ id }: { id: string }) {
         </div>
         {header && (
           <div className="shrink-0 flex gap-1 px-2 pt-1 border-b border-rule" role="tablist" aria-label="Project">
-            {(["conversation", "details"] as const).map((k) => (
+            {(["conversation", "work", "details"] as const).map((k) => (
               <button
                 key={k}
                 type="button"
@@ -332,14 +335,23 @@ export function ProjectPage({ id }: { id: string }) {
                 onClick={() => setTab(k)}
                 className={`h-11 px-3 text-[13.5px] font-semibold border-b-2 ${tab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
               >
-                {k === "conversation" ? "Conversation" : "Details"}
+                {k === "conversation" ? "Conversation" : k === "work" ? "Work" : "Details"}
               </button>
             ))}
           </div>
         )}
         {banner}
         {main}
-        {header && (tab === "conversation" ? thread : <div className="pl-scroll flex-1">{side}</div>)}
+        {header &&
+          (tab === "conversation" ? (
+            thread
+          ) : tab === "work" ? (
+            <div className="pl-scroll flex-1">
+              <WorkPanel projectId={id} readOnly={readOnly} />
+            </div>
+          ) : (
+            <div className="pl-scroll flex-1">{side}</div>
+          ))}
         {replies}
       </Surface>
     );
@@ -371,8 +383,22 @@ export function ProjectPage({ id }: { id: string }) {
               {replies}
             </aside>
           ) : (
-            <aside className="w-[340px] shrink-0 min-h-0 border-l border-rule bg-surface pl-scroll" aria-label="Details and members">
-              {side}
+            <aside className="w-[360px] shrink-0 min-h-0 border-l border-rule bg-surface flex flex-col" aria-label="Details and work">
+              <div className="shrink-0 flex gap-1 px-2 pt-1 border-b border-rule" role="tablist" aria-label="Side panel">
+                {(["details", "work"] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="tab"
+                    aria-selected={sideTab === k}
+                    onClick={() => setSideTab(k)}
+                    className={`h-11 px-3 text-[13.5px] font-semibold border-b-2 ${sideTab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
+                  >
+                    {k === "details" ? "Details" : "Work"}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1 min-h-0 pl-scroll">{sideTab === "details" ? side : <WorkPanel projectId={id} readOnly={readOnly} />}</div>
             </aside>
           )}
         </div>

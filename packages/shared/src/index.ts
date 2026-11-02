@@ -29,6 +29,7 @@ export * from "./pipeline/store";
 export * from "./pipeline/body-tokens";
 export * from "./pipeline/compose";
 export * as pipelineValidators from "./validators/pipeline";
+export * as pipelineWork from "./pipeline/work";
 
 // Utils
 export * from "./utils/status";

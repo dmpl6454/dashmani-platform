@@ -2221,6 +2221,9 @@ model PipelineProject {
   participants PipelineParticipant[]
   messages     PipelineMessage[]
   emailOutbox  PipelineEmailOutbox[]
+  versions     PipelineVersion[]
+  reviews      PipelineReview[]
+  deliverables PipelineDeliverable[]
 
   @@unique([createdById, clientId])
   @@index([linkedClientId])
@@ -2319,6 +2322,86 @@ model PipelineEmailOutbox {
   @@index([status, sendAfter])
   @@index([projectId])
   @@map("pipeline_email_outbox")
+}
+
+// ============ PIPELINE WORK: versions, version-bound reviews, one publishing record per page ============
+//
+// Added 2026-11-02 (scripts/pipeline-work-ddl.sql, applied on prod BY HAND before the merge, rehearsed
+// in CI). Services: apps/api/src/services/pipeline/work.service.ts, pipeline pool only.
+//
+// ⚠️ Files are LINKS (NAS / Drive / any URL), never uploads: the production disk is 49 GB and filled
+// up on 2026-10-25. ⚠️ No foreign key into `users` (a FK takes a lock on that hot table at DDL time);
+// people ids are checked against the pipeline directory in code, like phase_changed_by_id.
+// ⚠️ Statuses and kinds are VARCHAR validated in code (packages/shared/src/pipeline/work.ts).
+
+/// One version of one piece of a project: video v1, v2…, caption v1…, thumbnail v1…
+/// `number` counts per (project, kind) and is assigned under the project row lock.
+model PipelineVersion {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  kind        String   @db.VarChar(16) // video | caption | thumbnail | other
+  number      Int
+  label       String   @default("") @db.VarChar(120)
+  url         String?  @db.Text // a link to the file (≤ 2,048 chars, http/https only)
+  body        String   @default("") @db.Text // caption text (≤ 5,000 chars)
+  note        String   @default("") @db.VarChar(500)
+  createdById String   @map("created_by_id") // no FK (see above)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, kind, number])
+  @@map("pipeline_versions")
+}
+
+/// A review request pinned to the versions that existed when it was made. A newer version of
+/// any pinned kind (or a first version of a kind that was not pinned) makes it OUTDATED, which is
+/// computed on read — an approval never silently carries over to a file it did not see.
+model PipelineReview {
+  id            String    @id @default(uuid())
+  projectId     String    @map("project_id")
+  requestedById String    @map("requested_by_id") // no FK
+  reviewerId    String    @map("reviewer_id") // no FK
+  versionIds    String[]  @default([]) @map("version_ids")
+  status        String    @default("pending") @db.VarChar(20) // pending | approved | changes_requested | superseded
+  note          String    @default("") @db.VarChar(2000) // the reviewer's note on the decision
+  decidedAt     DateTime? @map("decided_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([reviewerId, status])
+  @@map("pipeline_reviews")
+}
+
+/// One destination for a project's content: one row per page/account, each with its own caption,
+/// schedule, status and live link. A post going live on one page never completes another.
+model PipelineDeliverable {
+  id               String    @id @default(uuid())
+  projectId        String    @map("project_id")
+  platform         String    @db.VarChar(16) // instagram | facebook | youtube | snapchat | x | other
+  destination      String    @db.VarChar(120) // the page / account name or handle
+  caption          String    @default("") @db.Text
+  scheduledAt      DateTime? @map("scheduled_at")
+  status           String    @default("draft") @db.VarChar(20) // draft | ready | scheduled | published | failed | needs_verification | cancelled
+  assigneeId       String?   @map("assignee_id") // no FK
+  liveUrl          String?   @map("live_url") @db.Text
+  publishedAt      DateTime? @map("published_at")
+  publishedById    String?   @map("published_by_id") // no FK
+  approvedReviewId String?   @map("approved_review_id") // the approval in force when it was scheduled / published; no FK
+  note             String    @default("") @db.VarChar(500)
+  rev              Int       @default(1) // edit concurrency: a PATCH names the rev it read
+  createdById      String    @map("created_by_id") // no FK
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([assigneeId, status])
+  @@map("pipeline_deliverables")
 }
 
 // ============ CAMPAIGN BOOKING (self-serve "Start a campaign", client portal) ============

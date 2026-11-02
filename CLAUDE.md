@@ -672,6 +672,21 @@ At GA a reload shows the nav at once. An open HR tab shows it by itself at its f
 
 ---
 
+## Pipeline work tracking: versions, version-bound approvals, one record per page, My Work (2026-11-02)
+
+**What it is.** Each Pipeline project gets a **Work** tab (HR and sales portals; phone tab, desktop side-column tab next to Details) and every HR user gets **My Work** (`/pipeline/my-work`, sidebar row under Pipeline, and a button on the board header).
+- **Versions:** video v1, v2…, caption v1…, thumbnail v1…, numbered per (project, kind) under the project row lock. ⚠️ A version is a **link** (NAS, Drive…, http/https only), never an upload: the 49 GB prod disk filled up on 2026-10-25.
+- **Reviews:** "Ask for review" names one reviewer (never yourself) and **pins the newest version of every kind**. A newer version of any kind, or a first version of a kind it did not cover, makes the review **outdated** (computed on read, `isReviewOutdated`): it can no longer be decided (409 `REVIEW_OUTDATED`) and an earlier approval stops counting. A new request supersedes a pending one. Only the named reviewer decides; "changes requested" needs a note.
+- **Pages (deliverables):** one row per destination page/account with its own caption, schedule, status (`draft · ready · scheduled · published · failed · needs_verification · cancelled`), assignee and live link. Publishing one page never completes another. `scheduled` needs a time; `published` needs the live link and stamps `published_at/by`. ⚠️ When the project has any version, `scheduled`/`published` are refused (409 `APPROVAL_REQUIRED`) unless the CURRENT approval covers the newest versions, and the page records `approved_review_id`. A project with no versions can publish freely. A published page can't be deleted (cancel it). Edits carry `base: rev` → 409 `DELIVERABLE_CONFLICT` with the current row.
+- **Thread lines:** a review request, a decision and a page going live each post a message in the project thread through `postMessage` (after commit, best effort). The `@{id}` mention reuses the existing bell + email notifications, so there is **no new notification kind**.
+- **My Work:** reviews waiting on me (not outdated), my requests that came back with changes (until I ask again), pages assigned to me not published/cancelled (soonest first), projects I own in a live phase with a due date. Each list ≤ 50.
+
+**Code.** Rules and wire types: `packages/shared/src/pipeline/work.ts` (exported as `pipelineWork`). Service: `apps/api/src/services/pipeline/work.service.ts` (pipeline pool only, project lock first). Routes in `pipeline.routes.ts`: `GET /pipeline/my-work`, `GET /pipeline/projects/:id/work`, `POST …/versions`, `POST …/reviews`, `POST /pipeline/reviews/:rid/decision`, `POST …/deliverables`, `PATCH|DELETE /pipeline/deliverables/:did`. UI: `components/pipeline/project/WorkPanel.tsx` (HR and sales copies), `components/pipeline/my-work/MyWork.tsx` (HR). Tests: `tests/pipeline/work.test.ts` (approval and publishing guards red-green checked).
+
+**Schema.** Three additive tables `pipeline_versions`, `pipeline_reviews`, `pipeline_deliverables`, each FK → `pipeline_projects` ON DELETE CASCADE. ⚠️ **No FK into `users`** (would lock a hot table at DDL time); people ids are checked against the pipeline directory. Statuses are VARCHAR. ⚠️ Apply `scripts/pipeline-work-ddl.sql` on prod **before** merging with `bash scripts/apply-pipeline-work-ddl.sh` (role check, backup, one transaction, verify, drift check); CI rehearses it twice. The new tables are deliberately **not** in the boot self-check: if they are missing, only these routes answer 503 `WORK_NOT_READY` and the rest of the Pipeline keeps working. ⚠️ Until the PR is deployed, a `db push` from main's schema drops the empty tables without a prompt.
+
+**Not built yet:** file storage (links only), timestamped video comments, a dedicated bell kind, the shoot desk, usage/licence records, workload view, sales-portal My Work page (its static export needs `?id=` links).
+
 ## Campaign booking: self-serve "Start a campaign" (client portal, Phase 1, 2026-10-08)
 
 **What it is.** An invited client books promotion on our network and pays online:

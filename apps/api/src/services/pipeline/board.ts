@@ -25,6 +25,7 @@
  */
 import { PIPELINE_LIMITS, type PipelineBoardSnapshot, type PipelinePhase, type PipelinePhaseCount } from "@dashmani/shared";
 import { cardFromRow } from "./wire";
+import { Prisma } from "./db";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 import { pipelineRead, pipelineWriteStatement } from "./tx";
 import { pipelineStats } from "./stats";
@@ -133,6 +134,14 @@ export function invalidatePhases(): void {
 
 // ── Board snapshot (§5.3) ────────────────────────────────────────────────────────────
 
+/**
+ * The linked client of a card row aliased `p`: its id and company name (one PK lookup).
+ * Every card query (here and in projects.service) selects it, so a card never loses its
+ * client chip after a move, an archive or a restore.
+ */
+export const CARD_CLIENT_COLS = Prisma.sql`p.linked_client_id,
+  (SELECT c.company_name FROM clients c WHERE c.id = p.linked_client_id) AS linked_client_name`;
+
 let snapshotCache: PipelineBoardSnapshot | null = null;
 let snapshotInflight: Promise<PipelineBoardSnapshot> | null = null;
 
@@ -153,6 +162,7 @@ async function buildBoardSnapshot(): Promise<PipelineBoardSnapshot> {
                           ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                                  WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
                                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview,
+                          ${CARD_CLIENT_COLS},
                           count(*) OVER ()::int AS phase_total
                      FROM pipeline_projects p
                     WHERE p.phase_id = ph.id AND p.archived_at IS NULL AND p.deleted_at IS NULL

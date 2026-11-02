@@ -33,6 +33,8 @@ const COLUMNS: Record<string, string[]> = {
     "move_started_at", "move_last_at", "move_from_phase_id", "due_soon_notified_for",
     "overdue_notified_for", "archived_at", "archived_by_id", "archived_by_admin", "deleted_at",
     "deleted_by_id", "deleted_by_admin", "created_at", "updated_at",
+    // The client company the project is for (scripts/pipeline-client-ddl.sql, 2026-11-02).
+    "linked_client_id",
   ],
   pipeline_participants: [
     "project_id", "user_id", "role", "notify", "last_read_seq", "seen_at", "engaged_at",
@@ -61,6 +63,7 @@ const INDEXES: Record<string, string[]> = {
     "pipeline_projects_due_date_idx",
     "pipeline_projects_archived_at_id_idx",
     "pipeline_projects_deleted_at_idx",
+    "pipeline_projects_linked_client_id_idx",
   ],
   pipeline_participants: ["pipeline_participants_pkey", "pipeline_participants_user_id_idx"],
   pipeline_messages: [
@@ -81,7 +84,7 @@ const INDEXES: Record<string, string[]> = {
   ],
 };
 
-// §2 "onDelete rules and why". confdeltype: r = RESTRICT, c = CASCADE.
+// §2 "onDelete rules and why". confdeltype: r = RESTRICT, c = CASCADE, n = SET NULL.
 const FOREIGN_KEYS = [
   "pipeline_email_outbox.project_id -> pipeline_projects : c",
   "pipeline_email_outbox.user_id -> users : c",
@@ -91,6 +94,7 @@ const FOREIGN_KEYS = [
   "pipeline_participants.project_id -> pipeline_projects : c",
   "pipeline_participants.user_id -> users : c",
   "pipeline_projects.created_by_id -> users : r",
+  "pipeline_projects.linked_client_id -> clients : n",
   "pipeline_projects.owner_id -> users : r",
   "pipeline_projects.phase_id -> pipeline_phases : r",
 ];

@@ -102,6 +102,12 @@ export interface PipelinePhase {
   isTerminal: boolean;
 }
 
+/** The client company a project is for (sales clients). */
+export interface PipelineClientRef {
+  id: string;
+  companyName: string;
+}
+
 /** One card on the board, or one row of the archived / deleted lists. */
 export interface PipelineCard {
   id: string;
@@ -115,6 +121,8 @@ export interface PipelineCard {
   memberCount: number;
   /** Up to 3 member user ids, oldest first, for the avatar stack. */
   preview: string[];
+  /** The client the project is for, or null. Optional: older API builds omit it. */
+  linkedClient?: PipelineClientRef | null;
   /** Only on archived / deleted list rows. */
   archivedAt?: PipelineTimestamp | null;
   archivedByAdmin?: boolean;
@@ -172,6 +180,8 @@ export interface PipelineHeader {
   deletedByAdmin: boolean;
   createdAt: PipelineTimestamp;
   updatedAt: PipelineTimestamp;
+  /** The client the project is for, or null. Optional: older API builds omit it. */
+  linkedClient?: PipelineClientRef | null;
 }
 
 /**
@@ -403,6 +413,8 @@ export interface PipelineCreateProjectRequest {
   startDate?: PipelineDay | null;
   dueDate?: PipelineDay | null;
   memberIds?: string[];
+  /** The client company the project is for (not `clientId`, the idempotency key). */
+  linkedClientId?: string | null;
 }
 
 export interface PipelineCreateProjectResponse {
@@ -430,6 +442,8 @@ export interface PipelineEditableFields {
   description?: string;
   startDate?: PipelineDay | null;
   dueDate?: PipelineDay | null;
+  /** The client the project is for; null clears it. */
+  linkedClientId?: string | null;
 }
 
 export interface PipelineEditProjectRequest {

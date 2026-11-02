@@ -9,10 +9,21 @@ import { apiFetch, fetcher } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
 import { companyName, useCompany } from "@/lib/company";
-import type { Invoice } from "@/lib/sales-types";
+import type { BookingDetail, Invoice } from "@/lib/sales-types";
 import type { PortalDirectory } from "@/lib/types";
 import { BookingContent } from "@/components/booking-content";
 import { LoadError, Loading, Money, PageHead, StatusPill, Toast, platformLabel, titleCase } from "@/components/sales-ui";
+
+/** "Create project" on the Pipeline, filled in from the booking (title, client, brief + link back). */
+function projectHref(b: BookingDetail): string {
+  const lines = [
+    `Campaign booking for ${b.brand}.`,
+    b.launchFrom ? `Posting window: ${fmtDate(b.launchFrom)} – ${fmtDate(b.launchTo)}.` : "",
+    `Booking: ${typeof window === "undefined" ? "" : window.location.origin}/bookings/view?id=${b.id}`,
+  ].filter(Boolean);
+  const qs = new URLSearchParams({ new: "1", clientId: b.client.id, title: b.name, description: lines.join("\n") });
+  return `/pipeline?${qs.toString()}`;
+}
 
 function BookingView() {
   const id = useSearchParams().get("id");
@@ -45,6 +56,7 @@ function BookingView() {
     <>
       <PageHead kicker={<><Link href="/bookings" className="hover:text-white">Bookings</Link> · {b.brand}</> as unknown as string} title={<>{b.name} <StatusPill status={b.status} label={b.statusLabel} /></>}>
         {canInvoice && <button type="button" className="btn" disabled={busy} onClick={createInvoice}>{busy ? "Creating…" : `Create invoice (${info.short})`}</button>}
+        <Link href={projectHref(b)} className="btn btn-light">Create project</Link>
         {staff?.access && <a href={`${staff.url.replace(/\/+$/, "")}/campaigns/${b.id}`} target="_blank" rel="noopener noreferrer" className="btn btn-light">Open in staff portal <ExternalLink size={14} aria-hidden /></a>}
       </PageHead>
       {canInvoice && <p className="text-sm text-ink-3 -mt-2 mb-4">The invoice is a draft for {info.name} (switch company at the top to bill the other). It bills every account except posts that failed or were refunded.</p>}

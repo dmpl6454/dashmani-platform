@@ -135,6 +135,12 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
           {owner?.name ?? "Former member"}
           {owner && !owner.active && <span className="text-ink-4"> · inactive</span>}
         </dd>
+        {header.linkedClient && (
+          <>
+            <dt className="text-ink-4">Client</dt>
+            <dd className="min-w-0 truncate text-ink">{header.linkedClient.companyName || "—"}</dd>
+          </>
+        )}
         {header.dueDate && (
           <>
             <dt className="text-ink-4">Due</dt>

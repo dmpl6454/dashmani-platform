@@ -8,6 +8,7 @@ import { logSalesEvent, dateToDay } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
 import { todayIST, type CompanyKey } from "@dashmani/shared";
 import * as team from "../client-team.service";
+import { listClientProjects } from "../pipeline/projects.service";
 
 // Clients as the sales team sees them: the existing clients row plus its billing profile and
 // money position. Creating a client here never hands out a login — the row gets an unusable
@@ -236,3 +237,10 @@ export async function removeClientLogin(clientId: string, memberId: string, acto
   return r;
 }
 
+
+/** Pipeline projects linked to this client (read-only; created and edited on the board). */
+export async function getClientProjects(clientId: string) {
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
+  if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
+  return listClientProjects(clientId);
+}

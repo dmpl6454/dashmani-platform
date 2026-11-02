@@ -1,7 +1,7 @@
 /**
  * api_usage rollup — keeps the Cost Sheet exact while capping the table.
  *
- * recordApiUsage() writes one row per outbound API call (~50k/day). By 2026-10-25 the table
+ * recordApiUsage() writes one row per outbound API call (~100k/day by Nov 2026). By 2026-10-25 the table
  * held 6.0M rows / 1.7 GB of the 49 GB prod disk — the day that disk filled — and nothing
  * reads an individual row older than the Cost Sheet's longest window. Days older than
  * API_USAGE_ROLLUP_KEEP_DAYS are therefore folded into ONE row per Cost Sheet group —
@@ -17,9 +17,9 @@
  *     unknown-model and '-reconstructed' groups — the rolled row stores the summed cost.
  *   - "tracking since" (findFirst orderBy createdAt asc) is unchanged: the rolled row keeps
  *     min(created_at), so the oldest timestamp in the table never moves.
- *   - the DeepSeek spend ceiling reads only today; the ROLLUP_KEEP_DAYS guard keeps every
- *     window the UI offers (7/14/30/90) and the API's 365-day clamp is honoured only within
- *     the kept span — beyond it, totals are still exact, just coarser than one row per call.
+ *   - the DeepSeek spend ceiling reads only today; every window the UI offers (7/14/30/90)
+ *     and the API's 365-day clamp stays exact over rolled days — only coarser than one row
+ *     per call, which no reader looks at beyond the 3-day steady-state edge.
  *
  * One UTC day per transaction — a DELETE … RETURNING feeding the aggregate INSERT, so a day
  * is either fully rolled or untouched — oldest first, at most ROLLUP_MAX_DAYS_PER_RUN per run.
@@ -31,7 +31,10 @@ import { prisma } from "@dashmani/db";
 import { dateToIST, istMinutesOfDay } from "@dashmani/shared";
 import { msUntilNextIST } from "./pipeline/jobs";
 
-export const API_USAGE_ROLLUP_KEEP_DAYS = 90;
+// 14, not 90 (2026-11-02): at ~100k rows/day a 90-day raw window settles near 9M rows. Rolled
+// days are exact for every Cost Sheet window; the only per-row reader (count(*) for the
+// steady-state rate) looks at the last 3 days. Must stay > 3 — a test pins it.
+export const API_USAGE_ROLLUP_KEEP_DAYS = 14;
 export const API_USAGE_ROLLUP_MARKER_KEY = "apiUsage.rollupLastRunIST";
 export const ROLLUP_MAX_DAYS_PER_RUN = 30;
 const TARGET_MIN = 260; // 04:20 IST — after the 04:00 pipeline trim, inside the same quiet window

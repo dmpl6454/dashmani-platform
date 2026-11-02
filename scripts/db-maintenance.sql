@@ -15,3 +15,12 @@ ALTER TABLE api_usage SET (
   autovacuum_vacuum_threshold = 10000,
   autovacuum_analyze_scale_factor = 0.02
 );
+
+-- link_metrics (2026-11-02): the nightly retention (link-metrics-retention.service.ts) deletes a
+-- day's worth of expired snapshots at a time. Vacuum after ~2% so the space is reused promptly
+-- instead of waiting for 20% of the table to be dead.
+ALTER TABLE link_metrics SET (
+  autovacuum_vacuum_scale_factor = 0.02,
+  autovacuum_vacuum_threshold = 10000,
+  autovacuum_analyze_scale_factor = 0.05
+);

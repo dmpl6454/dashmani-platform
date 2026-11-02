@@ -18,6 +18,7 @@ import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
 import { schedulePipelineMaintenance } from "./services/pipeline/jobs";
 import { scheduleApiUsageRollup } from "./services/api-usage-rollup.service";
+import { scheduleLinkMetricsRetention } from "./services/link-metrics-retention.service";
 import { scheduleRecurringInvoices } from "./services/sales/recurring.service";
 import { startDiskWatch } from "./services/disk-watch.service";
 
@@ -65,6 +66,11 @@ app.listen(PORT, () => {
   // folded into one row per Cost Sheet group — exact for every reader — at 04:20 IST, never
   // at boot, once per IST day (marker). See api-usage-rollup.service.ts.
   scheduleApiUsageRollup();
+
+  // link_metrics retention (2026-11-02): snapshots older than 60 days are deleted at 04:40 IST,
+  // except each link's newest row and newest ok row — never at boot, once per IST day (marker).
+  // Kill switch LINK_METRICS_RETENTION_ENABLED=0. See link-metrics-retention.service.ts.
+  scheduleLinkMetricsRetention();
 
   // Recurring / retainer invoices: bills every due period at 06:30 IST, never at boot, once per
   // IST day (marker). Kill switch SALES_RECURRING_ENABLED=0. See sales/recurring.service.ts.

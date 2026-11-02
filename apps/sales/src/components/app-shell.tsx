@@ -21,6 +21,7 @@ const NAV = [
   { href: "/recurring", label: "Recurring" },
   { href: "/payments", label: "Payments" },
   { href: "/pipeline", label: "Pipeline" },
+  { href: "/creators", label: "Creators" },
   { href: "/settings", label: "Settings" },
 ];
 

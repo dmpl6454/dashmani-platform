@@ -128,3 +128,34 @@ export function pipelineNotificationUrl(
   if (!u.pathname.startsWith("/pipeline/")) return null;
   return u.href;
 }
+
+/** Sales-portal origins a bell may link to (exact match, scheme and port included). */
+export const SALES_ORIGINS: readonly string[] = Object.freeze([
+  "https://sales.digitalsukoon.com",
+  "http://localhost:3006",
+]);
+
+/**
+ * Both bells: the sales-portal URL a "creator waiting for review" row should open in a new
+ * tab, or null. Only rows written by creator-sales-alert.ts (`metadata.kind ===
+ * "creator_review"`), an allowlisted origin, no credentials, a path under `/creators/`.
+ * Never throws.
+ */
+export function salesNotificationUrl(n: unknown, origins: readonly string[] = SALES_ORIGINS): string | null {
+  if (!n || typeof n !== "object") return null;
+  const meta = (n as { metadata?: unknown }).metadata;
+  if (!meta || typeof meta !== "object") return null;
+  const { kind, url } = meta as { kind?: unknown; url?: unknown };
+  if (kind !== "creator_review") return null;
+  if (typeof url !== "string" || url.length === 0 || url.length > MAX_LINK_LENGTH) return null;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!origins.includes(u.origin)) return null;
+  if (u.username || u.password) return null;
+  if (!u.pathname.startsWith("/creators/")) return null;
+  return u.href;
+}

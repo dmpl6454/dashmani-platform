@@ -48,9 +48,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             folded ? "flex-nowrap gap-x-3 py-2 lg:flex-wrap lg:gap-x-6 lg:gap-y-3 lg:py-3" : "flex-wrap gap-x-6 gap-y-3 py-3"
           }`}
         >
-          <Link href="/dashboard" className="flex items-center gap-2.5 font-extrabold tracking-tight text-[17px] whitespace-nowrap min-w-0">
-            <img src={COMPANY_LOGO[info.key]} alt="" className="w-8 h-8 shrink-0" />
-            <span className="truncate">{info.short} <span className="text-indigo-light">Sales</span></span>
+          <Link href="/dashboard" className="flex items-center gap-2 sm:gap-2.5 font-extrabold tracking-tight text-[15px] sm:text-[17px] whitespace-nowrap min-w-0">
+            <img src={COMPANY_LOGO[info.key]} alt="" className="w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
+            {/* Phones: company over a small "Sales" label, so a long company name never cuts off. */}
+            <span className="min-w-0 flex flex-col leading-[1.1] sm:block sm:leading-normal sm:truncate">
+              <span className="truncate">{info.short}</span>{" "}
+              <span className="text-indigo-light text-[10.5px] uppercase tracking-[0.14em] sm:text-[17px] sm:normal-case sm:tracking-normal">Sales</span>
+            </span>
           </Link>
           <div className={folded ? "hidden lg:block" : undefined}>
             <CompanySwitcher />

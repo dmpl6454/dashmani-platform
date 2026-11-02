@@ -17,8 +17,8 @@ vi.mock("../src/services/email.service", async (orig) => {
 });
 
 import app from "../src/app";
-import { notifyAdminByEmail } from "../src/services/email.service";
-import { createTestUser, generateToken, generateClientToken, generateHrToken, generateCreatorToken } from "./helpers";
+import { notifyAdminByEmail, sendEmail } from "../src/services/email.service";
+import { createTestRole, createTestUser, generateToken, generateClientToken, generateHrToken, generateCreatorToken } from "./helpers";
 
 const notifyMock = vi.mocked(notifyAdminByEmail);
 let n = 0;
@@ -213,6 +213,31 @@ describe("Creator self API", () => {
       res = await request(app).post("/v1/creator/me/submit").set("Authorization", auth);
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("INVALID_STATE");
+    });
+
+    it("tells the sales team: a bell row and one email for everyone with sales access, nobody else", async () => {
+      await createTestRole("Sales", [{ resource: "sales", action: "view", scope: "global" }]);
+      await createTestRole("Employee", [{ resource: "tasks", action: "view", scope: "own" }]);
+      const seller = await createTestUser({ name: "Seller", roleNames: ["Sales"] });
+      const inactive = await createTestUser({ name: "Gone Seller", roleNames: ["Sales"] });
+      await prisma.user.update({ where: { id: inactive.id }, data: { status: "INACTIVE" } });
+      const plain = await createTestUser({ name: "Plain", roleNames: ["Employee"] });
+      const { c, auth } = await seedCreator();
+      const conn = await seedConnection(c.id);
+      await seedAsset(c.id, conn.id);
+      vi.mocked(sendEmail).mockClear();
+
+      const res = await request(app).post("/v1/creator/me/submit").set("Authorization", auth);
+      expect(res.status).toBe(200);
+      await vi.waitFor(async () => expect(await prisma.notification.count({ where: { userId: seller.id } })).toBe(1));
+      const row = await prisma.notification.findFirstOrThrow({ where: { userId: seller.id } });
+      expect(row).toMatchObject({ type: "GENERAL", title: "Creator submitted for review" });
+      expect(row.metadata).toMatchObject({ kind: "creator_review", creatorId: c.id, url: expect.stringMatching(new RegExp(`/creators/view\\?id=${c.id}$`)) });
+      expect(await prisma.notification.count({ where: { userId: { in: [inactive.id, plain.id] } } })).toBe(0);
+
+      const mail = vi.mocked(sendEmail).mock.calls.find(([o]) => o.subject.startsWith("[Sales]"));
+      expect(mail?.[0].to).toBe(seller.email);
+      expect(mail?.[0].html).toContain(`/creators/view?id=${c.id}`);
     });
 
     it("a rejected creator can resubmit; an approved one cannot; a double click moves it once", async () => {

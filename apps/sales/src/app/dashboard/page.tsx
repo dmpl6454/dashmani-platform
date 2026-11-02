@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useDashboard } from "@/lib/hooks";
+import { useCreators } from "@/lib/creators";
 import { fmtInr, fmtDate } from "@/lib/format";
 import { Empty, LoadError, Loading, Money, PageHead, Stat, StatusPill, platformLabel } from "@/components/sales-ui";
 
@@ -16,6 +17,7 @@ export default function DashboardPage() {
         <Link href="/quotes/edit" className="btn">New quote</Link>
         <Link href="/invoices/edit" className="btn btn-light">New invoice</Link>
       </PageHead>
+      <CreatorsWaiting />
       {quiet && (
         <div className="mb-6">
           <Empty title="Nothing sold through the portal yet." body="Start with a quote from the inventory, or record an invoice for work already agreed." action={<Link href="/inventory" className="btn">Open the inventory</Link>} />
@@ -112,5 +114,18 @@ export default function DashboardPage() {
         </section>
       </div>
     </>
+  );
+}
+
+/** A line only when creators are waiting for review; silent on error (the Creators page shows it). */
+function CreatorsWaiting() {
+  const { data } = useCreators("in_review", "");
+  const n = data?.counts.in_review ?? 0;
+  if (!n) return null;
+  return (
+    <Link href="/creators" className="card p-3 mb-4 flex items-center justify-between gap-3 text-sm hover:border-indigo">
+      <span><span className="font-bold">{n} creator{n === 1 ? "" : "s"}</span> waiting for review</span>
+      <span className="text-indigo-light text-xs uppercase tracking-[0.08em]">Review →</span>
+    </Link>
   );
 }

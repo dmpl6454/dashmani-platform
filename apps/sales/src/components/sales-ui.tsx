@@ -38,6 +38,9 @@ const STATUS_TONE: Record<string, string> = {
   partially_published: "border-attention text-attention",
   rejected: "border-danger text-danger",
   refunded: "border-danger text-danger",
+  // creators
+  in_review: "border-attention text-attention",
+  suspended: "border-danger text-danger",
   failed: "border-danger text-danger",
   published: "border-success text-success",
   posted_manual: "border-success text-success",

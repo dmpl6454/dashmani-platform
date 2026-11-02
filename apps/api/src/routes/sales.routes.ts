@@ -50,6 +50,12 @@ import { bookingMediaUrls } from "../services/campaign/media-urls.service";
 import { retryEInvoice } from "../services/sales/einvoice.service";
 import { renderCreditNotePdf, renderInvoicePdf } from "../services/sales/pdf.service";
 import { emailInvoice } from "../services/sales/invoice-email.service";
+import * as creatorReview from "../services/creator/creator-admin.service";
+import {
+  creatorReviewSchema,
+  creatorReviewNoteRequiredSchema,
+  creatorAssetToggleSchema,
+} from "@dashmani/shared/src/validators/creator";
 
 // sales.digitalsukoon.com — staff only. `sales.view` reads; `sales.manage` writes (the Sales
 // role and both admin roles hold both, see packages/db/prisma/seed.ts). Every money action is
@@ -109,6 +115,17 @@ router.post("/sales/clients/:id/logins/:memberId/enable", ...manage, asyncHandle
 router.delete("/sales/clients/:id/logins/:memberId", ...manage, asyncHandler(async (req, res) => success(res, await removeClientLogin(req.params.id, req.params.memberId, staffId(req)))));
 router.get("/sales/clients/:id/projects", ...view, asyncHandler(async (req, res) => success(res, await getClientProjects(req.params.id))));
 router.get("/sales/clients/:id/statement", ...view, asyncHandler(async (req, res) => success(res, await getClientStatement(req.params.id, companyQuery(req)))));
+
+// ── Creators (creator portal review queue) — the SAME service as /admin/creators, so the rules
+// (guarded status transitions, the live network-duplicate re-check before a page is turned on,
+// the emails to the creator) live in one place. Reading needs sales:view, deciding sales:manage.
+router.get("/sales/creators", ...view, asyncHandler(async (req, res) => success(res, await creatorReview.listCreators({ status: str(req.query.status), q: str(req.query.q) }))));
+router.get("/sales/creators/:id", ...view, asyncHandler(async (req, res) => success(res, await creatorReview.getCreatorDetail(req.params.id))));
+router.post("/sales/creators/:id/approve", ...manage, validate(creatorReviewSchema), asyncHandler(async (req, res) => success(res, await creatorReview.reviewCreator(req.params.id, "approve", staffId(req), req.body.note))));
+router.post("/sales/creators/:id/reject", ...manage, validate(creatorReviewNoteRequiredSchema), asyncHandler(async (req, res) => success(res, await creatorReview.reviewCreator(req.params.id, "reject", staffId(req), req.body.note))));
+router.post("/sales/creators/:id/suspend", ...manage, validate(creatorReviewNoteRequiredSchema), asyncHandler(async (req, res) => success(res, await creatorReview.reviewCreator(req.params.id, "suspend", staffId(req), req.body.note))));
+router.post("/sales/creators/:id/reinstate", ...manage, validate(creatorReviewSchema), asyncHandler(async (req, res) => success(res, await creatorReview.reviewCreator(req.params.id, "reinstate", staffId(req), req.body.note))));
+router.put("/sales/creators/:id/assets/:assetId", ...manage, validate(creatorAssetToggleSchema), asyncHandler(async (req, res) => success(res, await creatorReview.setAssetEnabled(req.params.id, req.params.assetId, req.body.enabled, staffId(req)))));
 
 // ── Campaign bookings (client self-serve, reviewed in the staff portal) — read-only here ──
 

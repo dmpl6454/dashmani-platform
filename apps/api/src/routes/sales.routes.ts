@@ -37,7 +37,7 @@ import {
   createSalesClient,
   updateSalesClient,
   updateSalesClientProfile,
-  changeSalesClientEmail, getClientStatement, getSalesClient, inviteClientLogin, listClientLogins, listSalesClients,
+  changeSalesClientEmail, getClientProjects, getClientStatement, getSalesClient, inviteClientLogin, listClientLogins, listSalesClients,
   removeClientLogin, resendClientLogin, setClientLoginEnabled, upsertClientBilling,
 } from "../services/sales/clients.service";
 import * as docs from "../services/sales/documents.service";
@@ -107,6 +107,7 @@ router.post("/sales/clients/:id/logins/:memberId/resend", ...manage, asyncHandle
 router.post("/sales/clients/:id/logins/:memberId/disable", ...manage, asyncHandler(async (req, res) => success(res, await setClientLoginEnabled(req.params.id, req.params.memberId, false, staffId(req)))));
 router.post("/sales/clients/:id/logins/:memberId/enable", ...manage, asyncHandler(async (req, res) => success(res, await setClientLoginEnabled(req.params.id, req.params.memberId, true, staffId(req)))));
 router.delete("/sales/clients/:id/logins/:memberId", ...manage, asyncHandler(async (req, res) => success(res, await removeClientLogin(req.params.id, req.params.memberId, staffId(req)))));
+router.get("/sales/clients/:id/projects", ...view, asyncHandler(async (req, res) => success(res, await getClientProjects(req.params.id))));
 router.get("/sales/clients/:id/statement", ...view, asyncHandler(async (req, res) => success(res, await getClientStatement(req.params.id, companyQuery(req)))));
 
 // ── Campaign bookings (client self-serve, reviewed in the staff portal) — read-only here ──

@@ -10,6 +10,7 @@ import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 import { ClientDetails } from "@/components/client-details";
 import { ClientLogins } from "@/components/client-logins";
 import { ClientRecurring } from "@/components/recurring-table";
+import { ClientProjects } from "@/components/client-projects";
 
 
 function ClientView() {
@@ -59,6 +60,7 @@ function ClientView() {
         </section>
         <ClientLogins clientId={client.id} onToast={setToast} />
         <ClientRecurring clientId={client.id} />
+        <ClientProjects clientId={client.id} />
         </div>
         <section className="card p-4 lg:col-span-2">
           <h2 className="font-bold mb-3">Invoices</h2>

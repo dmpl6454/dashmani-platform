@@ -175,6 +175,8 @@ export const createProjectSchema = z
     startDate: optionalDate,
     dueDate: optionalDate,
     memberIds: pipelineIdArray(PIPELINE_LIMITS.membersPerRequestMax).optional(),
+    /** The client company the project is for (not `clientId`, the idempotency key). */
+    linkedClientId: pipelineId.nullable().optional(),
   })
   .superRefine(checkDateOrder);
 
@@ -189,9 +191,10 @@ const editableFields = z.object({
   description: pipelineDescription.optional(),
   startDate: optionalDate,
   dueDate: optionalDate,
+  linkedClientId: pipelineId.nullable().optional(),
 });
 
-export const EDITABLE_PROJECT_FIELDS = ["title", "description", "startDate", "dueDate"] as const;
+export const EDITABLE_PROJECT_FIELDS = ["title", "description", "startDate", "dueDate", "linkedClientId"] as const;
 
 export const editProjectSchema = z
   .object({ changes: editableFields, base: editableFields })

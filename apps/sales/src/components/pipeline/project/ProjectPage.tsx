@@ -40,6 +40,7 @@ import { Z } from "../constants";
 import { Thread } from "../thread/Thread";
 import { ReplySheet } from "../thread/ReplySheet";
 import { DetailsPanel } from "./DetailsPanel";
+import { ClientLinkPanel } from "./ClientLinkPanel";
 import { MembersPanel } from "./MembersPanel";
 import { PhasePill, PhaseSelect, ProjectMenu } from "./ProjectHeader";
 
@@ -285,6 +286,7 @@ export function ProjectPage({ id }: { id: string }) {
   const side = header ? (
     <>
       <DetailsPanel header={header} readOnly={readOnly} />
+      <ClientLinkPanel header={header} readOnly={readOnly} />
       <MembersPanel header={header} participants={project!.participants} me={project!.me} can={project!.can} readOnly={readOnly} />
     </>
   ) : null;

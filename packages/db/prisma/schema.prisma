@@ -482,6 +482,7 @@ model Client {
   salesCreditNotes SalesCreditNote[]
   salesRefunds     SalesRefund[]
   salesRecurring   SalesRecurringInvoice[]
+  pipelineProjects PipelineProject[]
 
   @@map("clients")
 }
@@ -2207,9 +2208,13 @@ model PipelineProject {
   deletedAt          DateTime? @map("deleted_at") // soft delete; purged after 30 days
   deletedById        String?   @map("deleted_by_id")
   deletedByAdmin     Boolean   @default(false) @map("deleted_by_admin")
+  /// The client company this project is for (optional). NOT `clientId`, which is the create
+  /// idempotency key. SetNull: deleting a client never deletes a project.
+  linkedClientId     String?   @map("linked_client_id")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
+  linkedClient Client?               @relation(fields: [linkedClientId], references: [id], onDelete: SetNull)
   owner        User                  @relation("PipelineOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   createdBy    User                  @relation("PipelineCreator", fields: [createdById], references: [id], onDelete: Restrict)
   phase        PipelinePhase         @relation(fields: [phaseId], references: [id], onDelete: Restrict)
@@ -2218,6 +2223,7 @@ model PipelineProject {
   emailOutbox  PipelineEmailOutbox[]
 
   @@unique([createdById, clientId])
+  @@index([linkedClientId])
   @@index([phaseId])
   @@index([ownerId])
   @@index([dueDate])

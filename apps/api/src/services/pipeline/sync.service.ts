@@ -220,7 +220,10 @@ function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: stri
               'phaseChangedById', h.phase_changed_by_id, 'archivedAt', h.archived_at,
               'archivedById', h.archived_by_id, 'archivedByAdmin', h.archived_by_admin,
               'deletedAt', h.deleted_at, 'deletedById', h.deleted_by_id, 'deletedByAdmin', h.deleted_by_admin,
-              'createdAt', h.created_at, 'updatedAt', h.updated_at)
+              'createdAt', h.created_at, 'updatedAt', h.updated_at,
+              'linkedClient', CASE WHEN h.linked_client_id IS NULL THEN NULL
+                                   ELSE json_build_object('id', h.linked_client_id, 'companyName',
+                                          (SELECT c.company_name FROM clients c WHERE c.id = h.linked_client_id)) END)
        FROM pipeline_projects h
       WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND h.header_rev <> ${p.hv}::int) AS header,
     (SELECT COALESCE(json_agg(json_build_object('userId', x.user_id, 'role', x.role,

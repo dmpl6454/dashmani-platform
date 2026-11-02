@@ -10,6 +10,7 @@
  */
 import type {
   PipelineCard,
+  PipelineClientRef,
   PipelineHeader,
   PipelineMessage,
   PipelineParticipant,
@@ -46,6 +47,17 @@ const str = (v: unknown): string => (typeof v === "string" ? v : String(v ?? "")
 const strOrNull = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 const int = (v: unknown): number => (typeof v === "number" ? v : Number(v ?? 0));
 
+/**
+ * `linked_client_id` + `linked_client_name` (from `CARD_CLIENT_COLS` / the header queries) →
+ * the client ref. A row read without the name (e.g. `SELECT p.*`) still names the id; the
+ * company name then reads "" until the next full read.
+ */
+function linkedClientOf(r: Raw): PipelineClientRef | null {
+  const id = r.linked_client_id;
+  if (id === null || id === undefined || id === "") return null;
+  return { id: str(id), companyName: str(r.linked_client_name) };
+}
+
 /** The columns a card needs, in both snake-case shapes (`$queryRaw` or JSON). */
 export const CARD_PREVIEW_LIMIT = 3;
 
@@ -60,6 +72,7 @@ export function cardFromRow(r: Raw, opts: { listFields?: boolean } = {}): Pipeli
     dueDate: day(r.due_date),
     memberCount: int(r.member_count),
     preview: Array.isArray(r.preview) ? (r.preview as unknown[]).map(str).slice(0, CARD_PREVIEW_LIMIT) : [],
+    linkedClient: linkedClientOf(r),
   };
   if (opts.listFields) {
     card.archivedAt = ts(r.archived_at);
@@ -96,6 +109,7 @@ export function headerFromRow(r: Raw): PipelineHeader {
     deletedByAdmin: r.deleted_by_admin === true,
     createdAt: ts(r.created_at) ?? "",
     updatedAt: ts(r.updated_at) ?? "",
+    linkedClient: linkedClientOf(r),
   };
 }
 

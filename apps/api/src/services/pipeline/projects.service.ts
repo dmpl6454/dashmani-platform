@@ -32,7 +32,7 @@ import {
 import { Prisma, type PipelineDbClient, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
-import { bumpBoard } from "./board";
+import { bumpBoard, CARD_CLIENT_COLS } from "./board";
 import { notifier } from "./notifier";
 import { cardFromRow, day, headerFromRow, messageFromRow, participantFromRow } from "./wire";
 import type { PipelineDirectory } from "./access";
@@ -70,7 +70,7 @@ async function readCard(db: Db, projectId: string): Promise<PipelineCard | null>
     SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
            ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                   WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview
+                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}
       FROM pipeline_projects p
      WHERE p.id = ${projectId}`;
   return rows[0] ? cardFromRow(rows[0]) : null;
@@ -85,6 +85,7 @@ export { readCard };
 export async function lockProject(tx: PipelineTx, projectId: string, actorId: string): Promise<Row | null> {
   const rows = await tx.$queryRaw<Row[]>`
     SELECT p.*,
+           (SELECT c.company_name FROM clients c WHERE c.id = p.linked_client_id) AS linked_client_name,
            (SELECT (u.status = 'ACTIVE' AND u.deleted_at IS NULL) FROM users u WHERE u.id = ${actorId}) AS actor_active,
            timezone('utc', now()) AS db_now
       FROM pipeline_projects p
@@ -116,6 +117,8 @@ export interface CreateProjectInput {
   startDate?: string | null;
   dueDate?: string | null;
   memberIds?: string[];
+  /** The client company the project is for (validated to exist). */
+  linkedClientId?: string | null;
 }
 
 export async function createProject(
@@ -168,6 +171,8 @@ export async function createProject(
       if (Number(s1.active_members) !== memberIds.length) {
         throw new PipelineError(409, "MEMBER_NOT_PICKABLE", "Someone you picked can't be added right now");
       }
+      const linkedClientId = input.linkedClientId ?? null;
+      const linkedClientName = linkedClientId ? await assertClientExists(tx, linkedClientId) : null;
       const targetPhase = String(s1.phase_id);
       let rank = keyBetween(null, (s1.first_rank as string | null) ?? null);
       if (rankNeedsRebalance(rank)) {
@@ -187,10 +192,10 @@ export async function createProject(
         WITH proj AS (
           INSERT INTO pipeline_projects
                  (id, client_id, title, description, owner_id, created_by_id, phase_id, rank,
-                  start_date, due_date, member_count, created_at, updated_at)
+                  start_date, due_date, member_count, linked_client_id, created_at, updated_at)
           VALUES (${id}, ${input.clientId}, ${input.title}, ${input.description ?? ""}, ${me}, ${me}, ${targetPhase}, ${rank},
                   ${input.startDate ?? null}::date, ${input.dueDate ?? null}::date, ${everyone.length},
-                  timezone('utc', now()), timezone('utc', now()))
+                  ${linkedClientId}::text, timezone('utc', now()), timezone('utc', now()))
           RETURNING id, created_at),
         parts AS (
           INSERT INTO pipeline_participants
@@ -227,6 +232,7 @@ export async function createProject(
         dueDate: input.dueDate ?? null,
         memberCount: everyone.length,
         preview: everyone.slice(0, 3),
+        linkedClient: linkedClientId ? { id: linkedClientId, companyName: linkedClientName ?? "" } : null,
       };
       return { card };
     });
@@ -238,6 +244,50 @@ export async function createProject(
   if ("replayedId" in result) return replay();
   await bumpBoard();
   return { status: 201, data: { card: result.card, replayed: false } };
+}
+
+// ── Projects linked to one client (sales portal: GET /sales/clients/:id/projects) ───
+
+export interface ClientProjectRow {
+  id: string;
+  title: string;
+  phaseId: string;
+  phaseName: string;
+  phaseColor: string;
+  dueDate: string | null;
+  archivedAt: string | null;
+  updatedAt: string;
+}
+
+const isoOf = (v: unknown): string | null =>
+  v === null || v === undefined ? null : new Date(v instanceof Date ? v : `${String(v)}Z`).toISOString();
+
+/**
+ * The live and archived (never deleted) projects linked to `clientId`, live first, newest
+ * activity first, at most 100. Pipeline pool + bulkhead like every other pipeline read; the
+ * caller (sales service) gates access — the pipeline mode does not hide a client's projects.
+ */
+export async function listClientProjects(clientId: string): Promise<ClientProjectRow[]> {
+  const rows = await pipelineRead((db) =>
+    db.$queryRaw<Row[]>`
+      SELECT p.id, p.title, p.phase_id, ph.name AS phase_name, ph.color AS phase_color,
+             p.due_date, p.archived_at, p.updated_at
+        FROM pipeline_projects p
+        JOIN pipeline_phases ph ON ph.id = p.phase_id
+       WHERE p.linked_client_id = ${clientId} AND p.deleted_at IS NULL
+       ORDER BY (p.archived_at IS NOT NULL), p.updated_at DESC, p.id
+       LIMIT 100`,
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    title: String(r.title),
+    phaseId: String(r.phase_id),
+    phaseName: String(r.phase_name ?? ""),
+    phaseColor: String(r.phase_color ?? ""),
+    dueDate: day(r.due_date),
+    archivedAt: isoOf(r.archived_at),
+    updatedAt: isoOf(r.updated_at) ?? "",
+  }));
 }
 
 // ── Route #4: archived / deleted lists (keyset) ──────────────────────────────────────
@@ -258,7 +308,7 @@ export async function listProjects(actor: PipelineActor, input: ListProjectsInpu
           SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                  ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                         WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                        ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview,
+                        ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS},
                  p.archived_at, p.archived_by_admin, p.deleted_at, p.deleted_by_admin
             FROM pipeline_projects p
            WHERE p.archived_at IS NOT NULL AND p.deleted_at IS NULL
@@ -270,7 +320,7 @@ export async function listProjects(actor: PipelineActor, input: ListProjectsInpu
           SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                  ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                         WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                        ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview,
+                        ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS},
                  p.archived_at, p.archived_by_admin, p.deleted_at, p.deleted_by_admin
             FROM pipeline_projects p
            WHERE p.deleted_at IS NOT NULL
@@ -326,7 +376,8 @@ export async function getProjectDetail(
   const rows = await pipelineRead((db) =>
     db.$queryRaw<DetailRow[]>`
       WITH p AS (
-        SELECT * FROM pipeline_projects WHERE id = ${projectId}),
+        SELECT pr.*, (SELECT c.company_name FROM clients c WHERE c.id = pr.linked_client_id) AS linked_client_name
+          FROM pipeline_projects pr WHERE pr.id = ${projectId}),
       me AS (
         SELECT role, notify, last_read_seq FROM pipeline_participants
          WHERE project_id = ${projectId} AND user_id = ${me}),
@@ -431,18 +482,32 @@ export async function getProjectDetail(
 
 // ── Route #7: field edits (spec §6 "Field edits") ────────────────────────────────────
 
-type EditKey = "title" | "description" | "startDate" | "dueDate";
-const EDIT_KEYS: readonly EditKey[] = ["title", "description", "startDate", "dueDate"];
+type EditKey = "title" | "description" | "startDate" | "dueDate" | "linkedClientId";
+const EDIT_KEYS: readonly EditKey[] = ["title", "description", "startDate", "dueDate", "linkedClientId"];
 
 function editableOf(h: PipelineHeader): Record<EditKey, string | null> {
-  return { title: h.title, description: h.description, startDate: h.startDate, dueDate: h.dueDate };
+  return {
+    title: h.title,
+    description: h.description,
+    startDate: h.startDate,
+    dueDate: h.dueDate,
+    linkedClientId: h.linkedClient?.id ?? null,
+  };
+}
+
+/** 400 CLIENT_NOT_FOUND unless `clientId` names a clients row (pipeline pool, read inside tx). */
+async function assertClientExists(db: Db, clientId: string): Promise<string> {
+  const rows = await db.$queryRaw<Array<{ company_name: string }>>`
+    SELECT company_name FROM clients WHERE id = ${clientId}`;
+  if (!rows[0]) throw new PipelineError(400, "CLIENT_NOT_FOUND", "That client doesn't exist");
+  return rows[0].company_name;
 }
 
 /**
  * Per field: a conflict iff `current ≠ base AND current ≠ desired` (someone else changed
  * it to something else). Fields already at the desired value are skipped, so a retry is a
  * no-op. The date order is checked on the merged result, against the STORED other date.
- * The board is bumped only when the title or a date changed.
+ * The board is bumped only when the title, a date or the linked client changed.
  */
 export async function editProject(
   actor: PipelineActor,
@@ -479,12 +544,14 @@ export async function editProject(
     if (changed.length === 0) return { header: current, boardChanged: false };
 
     const has = (k: EditKey) => changed.includes(k);
+    if (has("linkedClientId") && changes.linkedClientId) await assertClientExists(tx, changes.linkedClientId);
     const [updated] = await tx.$queryRaw<Row[]>`
       UPDATE pipeline_projects SET
              title       = CASE WHEN ${has("title")}::boolean THEN ${changes.title ?? null}::text ELSE title END,
              description = CASE WHEN ${has("description")}::boolean THEN ${changes.description ?? null}::text ELSE description END,
              start_date  = CASE WHEN ${has("startDate")}::boolean THEN ${changes.startDate ?? null}::date ELSE start_date END,
              due_date    = CASE WHEN ${has("dueDate")}::boolean THEN ${changes.dueDate ?? null}::date ELSE due_date END,
+             linked_client_id = CASE WHEN ${has("linkedClientId")}::boolean THEN ${changes.linkedClientId ?? null}::text ELSE linked_client_id END,
              -- D1: onDueChanged (below, same transaction) withdraws the old date's due-soon /
              -- overdue rows, so the markers go too: an A → B → A change must re-arm the A alert
              -- it just deleted (IS DISTINCT FROM re-arms B by itself). Such a flip re-alerts A in
@@ -494,7 +561,8 @@ export async function editProject(
              header_rev  = header_rev + 1,
              updated_at  = timezone('utc', now())
        WHERE id = ${projectId}
-   RETURNING *, (SELECT ph.name FROM pipeline_phases ph WHERE ph.id = pipeline_projects.phase_id) AS phase_name`;
+   RETURNING *, (SELECT ph.name FROM pipeline_phases ph WHERE ph.id = pipeline_projects.phase_id) AS phase_name,
+             (SELECT c.company_name FROM clients c WHERE c.id = pipeline_projects.linked_client_id) AS linked_client_name`;
     const header = headerFromRow(updated);
     if (has("dueDate")) {
       // (d) a due date set, changed or removed: the bell row (re-armed in place) and the email.
@@ -512,7 +580,7 @@ export async function editProject(
     }
     return {
       header,
-      boardChanged: has("title") || has("startDate") || has("dueDate"),
+      boardChanged: has("title") || has("startDate") || has("dueDate") || has("linkedClientId"),
     };
   }, { retryOnce: true });
   if (out.boardChanged) await bumpBoard();
@@ -677,7 +745,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
    RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
              ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                     WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                    ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`;
+                    ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`;
 
     if (phaseChanged) {
       await notifier.onMoved(tx, {
@@ -787,7 +855,7 @@ export async function archiveProject(actor: PipelineActor, projectId: string): P
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                       WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`,
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`,
     );
     return { card, changed: true };
   });
@@ -817,7 +885,7 @@ export async function unarchiveProject(actor: PipelineActor, projectId: string):
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                       WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`,
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`,
     );
     return { card, adjusted: to.adjusted, changed: true };
   });
@@ -852,7 +920,7 @@ export async function restoreProject(actor: PipelineActor, projectId: string): P
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                       WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`,
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`,
     );
     return { card, adjusted: to.adjusted, changed: true };
   });
@@ -918,7 +986,7 @@ export async function transferOwner(actor: PipelineActor, projectId: string, tar
                               WHERE project_id = ${projectId} AND role = 'MEMBER'),
              header_rev = header_rev + 1, updated_at = timezone('utc', now())
        WHERE id = ${projectId}
-   RETURNING *`;
+   RETURNING *, (SELECT c.company_name FROM clients c WHERE c.id = pipeline_projects.linked_client_id) AS linked_client_name`;
     return { header: headerFromRow(updated), changed: true };
   });
   if (out.changed) await bumpBoard();

@@ -49,7 +49,7 @@ import { PhaseTabs } from "./PhaseTabs";
 import { DropTray, TRAY_PREFIX } from "./DropTray";
 import { CardList, COLUMN_PREFIX, PhaseColumn, TruncationNote } from "./PhaseColumn";
 import { MoveSheet } from "./MoveSheet";
-import { NewProjectSheet } from "./NewProjectSheet";
+import { NewProjectSheet, type NewProjectPrefill } from "./NewProjectSheet";
 
 type Filter = "all" | "mine" | "following";
 const FILTERS: Array<{ id: Filter; label: string }> = [
@@ -90,7 +90,7 @@ const collision: CollisionDetection = (args) => {
   return closestCorners({ ...args, droppableContainers: cards });
 };
 
-export function Board() {
+export function Board({ newPrefill, onPrefillDone }: { newPrefill?: NewProjectPrefill | null; onPrefillDone?: () => void } = {}) {
   const { store, engine, meId, dirById, move, boot } = usePipeline();
   const router = useRouter();
   const toast = useToast();
@@ -122,6 +122,14 @@ export function Board() {
 
   const [q, setQ] = useState("");
   const [newOpen, setNewOpen] = useState(false);
+  // "New project for this client" / "Create project" from a booking arrive as URL params.
+  useEffect(() => {
+    if (newPrefill) setNewOpen(true);
+  }, [newPrefill]);
+  const closeNew = useCallback(() => {
+    setNewOpen(false);
+    if (newPrefill) onPrefillDone?.();
+  }, [newPrefill, onPrefillDone]);
   const [menuCard, setMenuCard] = useState<PipelineCard | null>(null);
   const [dragId, setDragId] = useState<UniqueIdentifier | null>(null);
   const liveRef = useRef<HTMLParagraphElement>(null);
@@ -136,7 +144,8 @@ export function Board() {
       if (filter === "mine" && !(c.ownerId === meId || role === "MEMBER")) return false;
       if (filter === "following" && role !== "FOLLOWER") return false;
       const needle = q.trim().toLowerCase();
-      return !needle || c.title.toLowerCase().includes(needle);
+      // The search also matches the client a project is for ("filter by client").
+      return !needle || c.title.toLowerCase().includes(needle) || (c.linkedClient?.companyName ?? "").toLowerCase().includes(needle);
     },
     [filter, mine, meId, q],
   );
@@ -403,7 +412,7 @@ export function Board() {
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search projects"
+            placeholder="Search projects or clients"
             className="w-full h-11 pl-9 pr-3 rounded-xl border border-border bg-surface text-[16px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-indigo"
           />
         </label>
@@ -509,7 +518,7 @@ export function Board() {
         </ModalPortal>
       </DndContext>
       <MoveSheet card={menuCard} phases={phases} onClose={() => setMenuCard(null)} onMove={onMoveTo} />
-      <NewProjectSheet open={newOpen} onClose={() => setNewOpen(false)} phases={phases} defaultPhaseId={phone ? currentPhase : null} />
+      <NewProjectSheet open={newOpen} onClose={closeNew} phases={phases} defaultPhaseId={phone ? currentPhase : null} prefill={newPrefill} />
     </div>
   );
 }

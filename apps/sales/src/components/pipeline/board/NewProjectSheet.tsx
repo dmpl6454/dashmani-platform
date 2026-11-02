@@ -15,6 +15,7 @@ import { Sheet } from "../ui/Sheet";
 import { useToast } from "../ui/Toast";
 import { usePipeline } from "../provider";
 import { PeoplePicker } from "../project/PeoplePicker";
+import { ClientPicker } from "../project/ClientPicker";
 import { describeError, isApiError, plApi } from "../api";
 
 const inputCls =
@@ -27,16 +28,25 @@ const DATE_INVALID = "Pick a valid date between 1900 and 2999.";
 /** A filled date the shared validator rejects (empty = no date). */
 const badDate = (v: string) => v !== "" && !pipelineValidators.pipelineDate.safeParse(v).success;
 
+/** Values to start the form from (client page / booking page "New project"). */
+export interface NewProjectPrefill {
+  title?: string;
+  description?: string;
+  linkedClientId?: string;
+}
+
 export function NewProjectSheet({
   open,
   onClose,
   phases,
   defaultPhaseId,
+  prefill,
 }: {
   open: boolean;
   onClose: () => void;
   phases: PipelinePhase[];
   defaultPhaseId: string | null;
+  prefill?: NewProjectPrefill | null;
 }) {
   const { store, engine, meId } = usePipeline();
   const toast = useToast();
@@ -49,6 +59,7 @@ export function NewProjectSheet({
   const [startDate, setStart] = useState("");
   const [dueDate, setDue] = useState("");
   const [members, setMembers] = useState<string[]>([]);
+  const [linkedClientId, setLinkedClientId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
@@ -57,6 +68,14 @@ export function NewProjectSheet({
     if (open && defaultPhaseId) setPhaseId(defaultPhaseId);
   }, [open, defaultPhaseId]);
 
+  // A prefill is applied once per opening; it never overwrites what the user has typed since.
+  useEffect(() => {
+    if (!open || !prefill) return;
+    if (prefill.title) setTitle(prefill.title.slice(0, PIPELINE_LIMITS.titleMax));
+    if (prefill.description) setDescription(prefill.description.slice(0, PIPELINE_LIMITS.descriptionMax));
+    if (prefill.linkedClientId) setLinkedClientId(prefill.linkedClientId);
+  }, [open, prefill]);
+
   const reset = () => {
     setClientId(makeClientId());
     setTitle("");
@@ -64,6 +83,7 @@ export function NewProjectSheet({
     setStart("");
     setDue("");
     setMembers([]);
+    setLinkedClientId(null);
     setError(null);
     setFieldErr({});
   };
@@ -91,6 +111,7 @@ export function NewProjectSheet({
         ...(startDate ? { startDate } : {}),
         ...(dueDate ? { dueDate } : {}),
         ...(members.length ? { memberIds: members.filter((m) => m !== meId) } : {}),
+        ...(linkedClientId ? { linkedClientId } : {}),
       });
       store.dispatch({ type: "cardUpsert", card: r.card });
       engine.afterWrite();
@@ -177,6 +198,8 @@ export function NewProjectSheet({
           />
           {fieldErr.description && <p className="mt-1 text-[12px] text-danger">{fieldErr.description}</p>}
         </div>
+        <ClientPicker value={linkedClientId} onChange={setLinkedClientId} />
+        {fieldErr.linkedClientId && <p className="-mt-2 text-[12px] text-danger">{fieldErr.linkedClientId}</p>}
         <div>
           <label htmlFor={ids.phase} className="block text-[12.5px] font-semibold text-ink-2 mb-1.5">
             Phase

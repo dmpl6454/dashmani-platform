@@ -156,7 +156,19 @@ export const salesClientCreateSchema = z.object({
   contactName: safeString.pipe(z.string().min(2).max(120)),
   email: normalizedEmail,
   phone: optionalText(30),
+  /** Optional: the billing profile (GSTIN, address) saved in the same transaction. */
+  billing: clientBillingProfileSchema.optional().nullable(),
 });
+
+/** Editing a client's details from sales. The email is NOT here: it is the owner's portal
+ *  sign-in, so it changes only through salesClientEmailSchema (sales admins). */
+export const salesClientUpdateSchema = z.object({
+  companyName: safeString.pipe(z.string().min(2).max(200)).optional(),
+  contactName: safeString.pipe(z.string().min(2).max(120)).optional(),
+  phone: optionalText(30),
+}).refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+
+export const salesClientEmailSchema = z.object({ email: normalizedEmail });
 
 export const lineItemSchema = z.object({
   kind: z.enum(LINE_KINDS).default("placement"),

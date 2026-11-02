@@ -182,6 +182,40 @@ describe("sales API", () => {
     expect(listed.body.data.map((c: { id: string }) => c.id)).toEqual([id]);
   });
 
+  it("creates a client with its billing profile in one step, edits details, and keeps the sign-in email admin-only", async () => {
+    const bad = await request(app).post("/v1/sales/clients").set(auth(salesToken)).send({
+      companyName: "Half Brand", contactName: "Asha", email: "asha@half.test", billing: { legalName: "Half Brand LLP", gstin: "07AABCN1234G1Z2", stateCode: "27" },
+    });
+    expect(bad.status).toBe(400); // GSTIN state 07 vs place of supply 27 — and nothing was created
+    expect((await request(app).get("/v1/sales/clients?q=half brand").set(auth(salesToken))).body.data).toEqual([]);
+
+    const res = await request(app).post("/v1/sales/clients").set(auth(salesToken)).send({
+      companyName: "Full Brand", contactName: "Asha", email: "asha@full.test", phone: "9876543210",
+      billing: { legalName: "Full Brand Pvt Ltd", gstin: "07AABCN1234G1Z2", addressLine1: "1 Main Rd", city: "Delhi", pincode: "110001" },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({ companyName: "Full Brand", phone: "9876543210", billingProfile: { legalName: "Full Brand Pvt Ltd", gstin: "07AABCN1234G1Z2", stateCode: "07", city: "Delhi" } });
+    const id = res.body.data.id;
+
+    const edited = await request(app).put(`/v1/sales/clients/${id}`).set(auth(salesToken)).send({ companyName: "Full Brand Co", contactName: "Asha Rao", phone: null });
+    expect(edited.status).toBe(200);
+    expect(edited.body.data).toMatchObject({ companyName: "Full Brand Co", contactName: "Asha Rao", phone: null, email: "asha@full.test" });
+    // email is ignored by the details edit (strict fields only)…
+    const sneaky = await request(app).put(`/v1/sales/clients/${id}`).set(auth(salesToken)).send({ email: "evil@x.test" });
+    expect(sneaky.status).toBe(400);
+    expect((await request(app).put(`/v1/sales/clients/${id}`).set(auth(employeeToken)).send({ companyName: "Nope" })).status).toBe(403);
+
+    // …and the email route needs the sales admin grant.
+    expect((await request(app).put(`/v1/sales/clients/${id}/email`).set(auth(salesToken)).send({ email: "new@full.test" })).status).toBe(403);
+    expect((await request(app).put(`/v1/sales/clients/${id}/email`).set(auth(adminToken)).send({ email: "RIYA@filmybrands.test" })).status).toBe(409);
+    await prisma.clientRefreshToken.create({ data: { clientId: id, token: `rt-${id}`, expiresAt: new Date(Date.now() + 86_400_000) } });
+    const moved = await request(app).put(`/v1/sales/clients/${id}/email`).set(auth(adminToken)).send({ email: "New@Full.test" });
+    expect(moved.status).toBe(200);
+    expect(moved.body.data.email).toBe("new@full.test");
+    expect(await prisma.clientRefreshToken.count({ where: { clientId: id } })).toBe(0);
+    expect(await prisma.salesEvent.count({ where: { entityId: id, action: { in: ["client_created", "billing_profile_saved", "client_updated", "client_email_changed"] } } })).toBe(4);
+  });
+
   it("runs a quote through send → accept → convert into a confirmed order with the same totals", async () => {
     const created = await request(app).post("/v1/sales/quotes").set(auth(salesToken)).send(quoteBody(clientMh, { validUntil: "2030-01-01" }));
     expect(created.status).toBe(201);

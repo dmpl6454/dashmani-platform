@@ -8,12 +8,14 @@ import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
 import type { BillingProfile } from "@/lib/sales-types";
-import { Empty, Field, LoadError, Loading, Money, PageHead, Stat, StatusPill, Toast, titleCase } from "@/components/sales-ui";
-import { GST_STATE_CODES, stateCodeFromGstin } from "@dashmani/shared/src/sales/gst";
+import { Empty, LoadError, Loading, Money, PageHead, Stat, StatusPill, Toast, titleCase } from "@/components/sales-ui";
+import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
+import { BillingFields, EMPTY_BILLING, billingBody } from "@/components/billing-fields";
+import { ClientDetails } from "@/components/client-details";
 import { ClientLogins } from "@/components/client-logins";
 import { ClientRecurring } from "@/components/recurring-table";
 
-const EMPTY: BillingProfile = { legalName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "", pincode: "", country: "IN", billingEmail: "", billingPhone: "", notes: "" };
+const EMPTY = EMPTY_BILLING;
 
 function ClientView() {
   const id = useSearchParams().get("id");
@@ -36,10 +38,7 @@ function ClientView() {
     e.preventDefault();
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { ...form };
-      for (const k of Object.keys(body)) if (body[k] === "") body[k] = null;
-      body.country = form.country || "IN";
-      await apiFetch(`/sales/clients/${id}/billing`, { method: "PUT", body: JSON.stringify(body) });
+      await apiFetch(`/sales/clients/${id}/billing`, { method: "PUT", body: JSON.stringify(billingBody(form)) });
       await mutate();
       setEditing(false);
       setToast({ message: "Billing profile saved.", tone: "ok" });
@@ -69,6 +68,7 @@ function ClientView() {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-1 grid grid-cols-1 gap-4 content-start">
+        <ClientDetails client={client} onSaved={() => mutate()} onToast={setToast} />
         <section className="card p-4">
           <div className="flex items-center justify-between mb-3"><h2 className="font-bold">Billing profile</h2><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing((v) => !v)}>{editing ? "Cancel" : p ? "Edit" : "Add"}</button></div>
           {!editing ? (
@@ -84,28 +84,10 @@ function ClientView() {
             ) : <p className="text-sm text-ink-3">No billing profile yet. Invoices will print the company name and contact email; add the GSTIN and address for a proper tax invoice.</p>
           ) : (
             <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm">
-              <Field label="Legal name"><input className="input" required value={form.legalName} onChange={(e) => set("legalName", e.target.value)} /></Field>
-              <Field label="GSTIN" hint="Leave blank for an unregistered client."><input className="input" value={form.gstin ?? ""} onChange={(e) => { const v = e.target.value.toUpperCase(); set("gstin", v); const sc = stateCodeFromGstin(v); if (sc) { set("stateCode", sc); set("state", GST_STATE_CODES[sc] ?? ""); } }} /></Field>
-              <Field label="PAN"><input className="input" value={form.pan ?? ""} onChange={(e) => set("pan", e.target.value.toUpperCase())} /></Field>
-              <Field label="Address line 1"><input className="input" value={form.addressLine1 ?? ""} onChange={(e) => set("addressLine1", e.target.value)} /></Field>
-              <Field label="Address line 2"><input className="input" value={form.addressLine2 ?? ""} onChange={(e) => set("addressLine2", e.target.value)} /></Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="City"><input className="input" value={form.city ?? ""} onChange={(e) => set("city", e.target.value)} /></Field>
-                <Field label="PIN"><input className="input" value={form.pincode ?? ""} onChange={(e) => set("pincode", e.target.value)} /></Field>
-              </div>
-              <Field label="State (place of supply)">
-                <select className="input" value={form.stateCode ?? ""} onChange={(e) => { set("stateCode", e.target.value); set("state", GST_STATE_CODES[e.target.value] ?? ""); }}>
-                  <option value="">Choose…</option>
-                  {Object.entries(GST_STATE_CODES).map(([code, name]) => <option key={code} value={code}>{code} · {name}</option>)}
-                </select>
-              </Field>
-              <Field label="Country (ISO code)" hint="Anything other than IN is treated as an export: no GST."><input className="input" value={form.country} maxLength={2} onChange={(e) => set("country", e.target.value.toUpperCase())} /></Field>
-              <Field label="Billing email"><input className="input" type="email" value={form.billingEmail ?? ""} onChange={(e) => set("billingEmail", e.target.value)} /></Field>
-              <Field label="Billing phone"><input className="input" value={form.billingPhone ?? ""} onChange={(e) => set("billingPhone", e.target.value)} /></Field>
+              <BillingFields form={form} set={set} />
               <button type="submit" className="btn" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
             </form>
           )}
-          <p className="text-xs text-ink-4 mt-4">{client.contactName} · {client.email}{client.phone ? ` · ${client.phone}` : ""}</p>
         </section>
         <ClientLogins clientId={client.id} onToast={setToast} />
         <ClientRecurring clientId={client.id} />

@@ -24,13 +24,18 @@ import {
   type MessagePostedArgs,
   type MessageEditedArgs,
   type MessageDeletedArgs,
+  type WorkNoticeArgs,
 } from "./notifier";
 import { pipelineStats } from "./stats";
 import { Prisma, type PipelineTx } from "./db";
 import { recipientFragment } from "./recipients";
 import { enqueueDueChangedEmails, enqueueMentionEmails, enqueueMovedEmails } from "./email-outbox";
 
-export const PLN_KINDS = ["messages", "mention", "reply", "added", "moved", "due_soon", "overdue", "due_changed"] as const;
+export const PLN_KINDS = [
+  "messages", "mention", "reply", "added", "moved", "due_soon", "overdue", "due_changed",
+  // Work notices (2026-11-02) — see WorkNoticeKind in notifier.ts.
+  "review", "reviewed", "assigned", "published", "shoot",
+] as const;
 export type PlnKind = (typeof PLN_KINDS)[number];
 
 /** md5('pln:<kind>:' || parts joined by ':')::uuid::text — the TypeScript half. */
@@ -292,7 +297,9 @@ export const ACTIVE_READER_WINDOW_MS = 45_000;
 
 async function onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<void> {
   const { mentions, replyTo } = directRecipients(a.actorId, a.deliveredMentionIds, a.replyToAuthorId);
-  await notifyDirectForMessage(tx, a, mentions, replyTo);
+  // A work line's reviewer/requester already has its dedicated row: no second "mentioned you".
+  const quiet = new Set(a.quietMentionIds ?? []);
+  await notifyDirectForMessage(tx, a, mentions.filter((id) => !quiet.has(id)), replyTo);
   // Email for the same mention recipients (a reply alone does not email).
   if (a.email && mentions.length) {
     await enqueueMentionEmails(tx, { projectId: a.projectId, actorId: a.actorId, allow: a.allow, messageId: a.messageId, recipients: mentions });
@@ -531,6 +538,37 @@ async function onDueChanged(tx: PipelineTx, a: DueChangedArgs): Promise<void> {
   }
 }
 
+/** The path a work notice opens: the project's Work tab, or the shoot desk. */
+export function workPath(projectId: string | null): string {
+  return projectId ? `/pipeline/${projectId}?tab=work` : "/pipeline/shoots?view=mine";
+}
+
+/** Work notices re-arm when the same thing happens again (a page reassigned back, republished). */
+const WORK_REARM = Prisma.sql`ON CONFLICT (id) DO UPDATE SET
+  read = false, created_at = EXCLUDED.created_at, title = EXCLUDED.title,
+  message = EXCLUDED.message, metadata = EXCLUDED.metadata`;
+
+async function onWork(tx: PipelineTx, a: WorkNoticeArgs): Promise<void> {
+  if (a.withdraw?.length) {
+    const gone = uniq(a.withdraw).map((uid) => plnId(a.kind, a.key, uid));
+    await tx.$executeRaw`DELETE FROM notifications WHERE id = ANY(${gone}::text[]) AND type = ${PIPELINE_TYPE}`;
+  }
+  const ids = uniq(a.recipients.filter((id) => id && id !== a.actorId));
+  if (ids.length === 0) return;
+  const meta = JSON.stringify({ v: 1, kind: a.kind, pid: a.projectId, key: a.key, app: "hr", path: a.path, url: hrUrl(a.path) });
+  const conflict = a.kind === "review" || a.kind === "reviewed" ? DO_NOTHING : WORK_REARM;
+  const n = await tx.$executeRaw`
+    INSERT INTO notifications (id, user_id, type, title, message, read, metadata, created_at)
+    SELECT ${plnIdSql(a.kind, a.key, Prisma.sql`r.uid`)}, r.uid, ${PIPELINE_TYPE}, ${clip(a.title, TITLE_MAX)},
+           ${clip(a.message, MESSAGE_MAX)}, false, ${meta}::jsonb, ${NOW}
+      FROM unnest(${ids}::text[]) AS r(uid)
+      JOIN users u ON u.id = r.uid
+     WHERE ${recipientFragment(Prisma.sql`r.uid`, a.actorId, a.allow)}
+     ORDER BY r.uid
+    ${conflict}`;
+  pipelineStats.notificationRows(n);
+}
+
 export const realNotifier: PipelineNotifier = {
   onProjectCreated: (tx, a: ProjectCreatedArgs) => notifyAdded(tx, a),
   onMembersAdded: (tx, a: MembersAddedArgs) => notifyAdded(tx, a),
@@ -540,6 +578,7 @@ export const realNotifier: PipelineNotifier = {
   onMessagePosted,
   onMessageEdited,
   onMessageDeleted,
+  onWork,
 };
 
 /** Called once from services/pipeline/index.ts. */

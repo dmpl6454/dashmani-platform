@@ -125,6 +125,14 @@ export type PipelineUploadKind = (typeof PIPELINE_UPLOAD_KINDS)[number];
 /** An uploaded object's key: pipeline/<projectId>/<random>. Anything else is refused. */
 export const PIPELINE_FILE_KEY_RE = /^pipeline\/[0-9a-f-]{36}\/[A-Za-z0-9_-]{32}$/;
 
+/**
+ * Cleanup of unused uploads (API jobs.ts sweepOrphanUploads): a file no version points at is
+ * deleted once it is PIPELINE_UPLOAD_ORPHAN_AGE_MS old, and a version may only claim a file
+ * younger than PIPELINE_UPLOAD_CLAIM_MAX_MS — the gap means the two can never race.
+ */
+export const PIPELINE_UPLOAD_ORPHAN_AGE_MS = 24 * 3_600_000;
+export const PIPELINE_UPLOAD_CLAIM_MAX_MS = 20 * 3_600_000;
+
 export function uploadRuleFor(kind: string): { types: readonly string[]; maxBytes: number } | null {
   return kind === "video" || kind === "thumbnail" || kind === "other" ? PIPELINE_UPLOAD_RULES[kind] : null;
 }

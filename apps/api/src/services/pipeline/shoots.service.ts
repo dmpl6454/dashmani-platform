@@ -11,8 +11,9 @@
  *             Bounded aggregates only — group-bys and counts, never row lists.
  *
  * ⚠️ Pipeline pool only, like every file in this folder. The shoot desk is open to every
- * active HR user (the Pipeline's open-access rule); the camera person is notified through the
- * existing @mention path when a linked project exists, never through a new notification kind.
+ * active HR user (the Pipeline's open-access rule). The camera person gets a "shoot" work
+ * notice (notifier.onWork) when assigned — re-armed on a re-assignment, withdrawn from the
+ * person it was taken from — opening the shoot desk's "Mine" view.
  */
 import { pipelineWork as W, todayIST, addDaysIST } from "@dashmani/shared";
 import { pipelineRead, pipelineWrite } from "./tx";
@@ -21,6 +22,40 @@ import { lockProject, assertWritable } from "./projects.service";
 import type { PipelineDirectory } from "./access";
 import { Prisma } from "./db";
 import { assertPickable, guarded, shootDto, type ShootRow, type WorkActor } from "./work.service";
+import { notifier } from "./notifier";
+import { pilotAllow } from "./messages.service";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Mon 3 Nov, 4:30 pm IST" — absolute, so a bell row read days later is still true. */
+export function istCallLabel(d: Date): string {
+  const t = new Date(d.getTime() + 330 * 60_000);
+  const h = t.getUTCHours();
+  const mm = String(t.getUTCMinutes()).padStart(2, "0");
+  return `${DAYS[t.getUTCDay()]} ${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]}, ${h % 12 || 12}:${mm} ${h < 12 ? "am" : "pm"} IST`;
+}
+
+/** "X assigned you a shoot" for the camera person; the previous one's row is withdrawn. */
+async function notifyShoot(
+  tx: Prisma.TransactionClient,
+  actor: WorkActor,
+  s: { id: string; title: string; callTime: Date; location: string; cameraId: string | null; projectId: string | null },
+  previousCameraId: string | null,
+): Promise<void> {
+  await notifier.onWork(tx, {
+    kind: "shoot",
+    key: s.id,
+    projectId: s.projectId,
+    recipients: s.cameraId ? [s.cameraId] : [],
+    actorId: actor.userId,
+    allow: pilotAllow(actor.settings),
+    title: `${actor.name} assigned you a shoot: ${s.title}`,
+    message: [`Call ${istCallLabel(s.callTime)}`, s.location].filter(Boolean).join(" · "),
+    path: "/pipeline/shoots?view=mine",
+    withdraw: previousCameraId && previousCameraId !== s.cameraId ? [previousCameraId] : undefined,
+  });
+}
 
 const SHOOT_INCLUDE = { project: { select: { id: true, title: true, deletedAt: true } } } as const;
 
@@ -62,7 +97,7 @@ export async function createShoot(actor: WorkActor, input: W.CreateShootInput): 
   return guarded(async () => {
     const row = await pipelineWrite(async (tx) => {
       if (input.projectId) await assertProjectUsable(tx, input.projectId, actor.userId);
-      return tx.pipelineShoot.create({
+      const created = await tx.pipelineShoot.create({
         data: {
           title: input.title,
           callTime: new Date(input.callTime),
@@ -78,6 +113,8 @@ export async function createShoot(actor: WorkActor, input: W.CreateShootInput): 
         },
         include: SHOOT_INCLUDE,
       });
+      if (created.cameraId) await notifyShoot(tx, actor, created, null);
+      return created;
     });
     return shootDto(actor.directory, row as ShootRow);
   });
@@ -89,8 +126,8 @@ export async function editShoot(actor: WorkActor, shootId: string, input: W.Edit
   return guarded(async () => {
     const row = await pipelineWrite(async (tx) => {
       // Row lock on the shoot itself: two edits of one shoot never interleave.
-      const locked = await tx.$queryRaw<Array<{ rev: number }>>`
-        SELECT rev FROM pipeline_shoots WHERE id = ${shootId} FOR UPDATE`;
+      const locked = await tx.$queryRaw<Array<{ rev: number; camera_id: string | null }>>`
+        SELECT rev, camera_id FROM pipeline_shoots WHERE id = ${shootId} FOR UPDATE`;
       if (!locked[0]) throw new PipelineError(404, "SHOOT_NOT_FOUND", "This shoot doesn't exist");
       if (locked[0].rev !== input.base) {
         const cur = await tx.pipelineShoot.findUnique({ where: { id: shootId }, include: SHOOT_INCLUDE });
@@ -119,7 +156,11 @@ export async function editShoot(actor: WorkActor, shootId: string, input: W.Edit
       if (c.projectId !== undefined) data.projectId = c.projectId;
       if (c.status !== undefined) data.status = c.status;
       if (c.uploadUrl !== undefined) data.uploadUrl = c.uploadUrl;
-      return tx.pipelineShoot.update({ where: { id: shootId }, data, include: SHOOT_INCLUDE });
+      const updated = await tx.pipelineShoot.update({ where: { id: shootId }, data, include: SHOOT_INCLUDE });
+      if (c.cameraId !== undefined && c.cameraId !== locked[0].camera_id) {
+        await notifyShoot(tx, actor, updated, locked[0].camera_id);
+      }
+      return updated;
     });
     return shootDto(actor.directory, row as ShootRow);
   });

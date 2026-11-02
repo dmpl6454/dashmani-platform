@@ -1,7 +1,9 @@
 /**
  * Pipeline background maintenance (spec §7.12): the notification trim, the email-outbox
- * trim (sent / skipped / failed rows older than 30 days) and the purge of projects
- * soft-deleted more than 30 days ago.
+ * trim (sent / skipped / failed rows older than 30 days), the purge of projects
+ * soft-deleted more than 30 days ago, and (2026-11-02) the sweep of uploaded files in R2
+ * that no version points at — an upload abandoned before its version was saved, or the
+ * files of a project the purge removed (sweepOrphanUploads).
  *
  * SCHEDULED BY WALL CLOCK, NEVER AT BOOT: index.ts calls schedulePipelineMaintenance(),
  * which sets a timer for the next 04:00 IST. A run proceeds only when the IST time is in
@@ -12,7 +14,8 @@
  * Every batch is its own short transaction on the pipeline pool, through pipelineWrite
  * (one bulkhead slot, so request traffic is never starved for more than one batch).
  */
-import { dateToIST, istMinutesOfDay } from "@dashmani/shared";
+import { dateToIST, istMinutesOfDay, pipelineWork as W } from "@dashmani/shared";
+import { r2Config, listR2Objects, deleteR2Object, type R2Config } from "../storage/r2";
 import { Prisma, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite, pipelineWriteStatement } from "./tx";
 import { ensurePipelineSchemaChecked, isPipelineEmailSchemaOk } from "./self-check";
@@ -195,11 +198,87 @@ export async function purgeDeletedProjects(opts: { onChunk?: (c: PurgeChunk) => 
   return { purged };
 }
 
+// ── Unused uploads in R2 ─────────────────────────────────────────────────────────────
+
+export const UPLOAD_SWEEP_CURSOR_KEY = "pipeline.uploadSweepAfter";
+const UPLOAD_SWEEP_PAGES = 5; // ≤ 5,000 keys listed per run
+const UPLOAD_DELETE_MAX = 500; // ≤ 500 deletes per run
+
+/**
+ * Delete files under `pipeline/` that NO version points at and that are a day old or more
+ * (PIPELINE_UPLOAD_ORPHAN_AGE_MS). That covers an upload abandoned before its version was
+ * saved, and the files of a project the purge above removed (its versions went with it).
+ * A soft-deleted or archived project keeps its files — it can still be restored.
+ *
+ *   - Safe by construction: a key is deleted only if it matches PIPELINE_FILE_KEY_RE, is
+ *     old enough, and is absent from pipeline_versions.file_key at the moment of the check;
+ *     a version can only claim a file younger than PIPELINE_UPLOAD_CLAIM_MAX_MS (20 h), so
+ *     a file being swept (24 h+) can never be claimed at the same time.
+ *   - Bounded: ≤ 5 list pages and ≤ 500 deletes per run. The position is kept in
+ *     system_settings (`pipeline.uploadSweepAfter`) and wraps to the start at the end of the
+ *     bucket, so a large bucket is covered over several nights.
+ *   - Off when R2 is not configured, or with PIPELINE_UPLOAD_CLEANUP=0.
+ */
+export async function sweepOrphanUploads(
+  opts: { now?: Date; cfg?: R2Config | null } = {},
+): Promise<{ scanned: number; deleted: number }> {
+  const cfg = opts.cfg === undefined ? r2Config() : opts.cfg;
+  if (!cfg || process.env.PIPELINE_UPLOAD_CLEANUP === "0") return { scanned: 0, deleted: 0 };
+  const now = (opts.now ?? new Date()).getTime();
+  const stored = await pipelineRead((db) => db.systemSetting.findUnique({ where: { key: UPLOAD_SWEEP_CURSOR_KEY } }));
+  let after: string | null = stored?.value || null;
+  let scanned = 0;
+  let deleted = 0;
+  for (let page = 0; page < UPLOAD_SWEEP_PAGES && deleted < UPLOAD_DELETE_MAX; page++) {
+    const list = await listR2Objects(cfg, "pipeline/", after);
+    scanned += list.objects.length;
+    const old = list.objects.filter(
+      (o) => W.PIPELINE_FILE_KEY_RE.test(o.key) && now - o.lastModified.getTime() >= W.PIPELINE_UPLOAD_ORPHAN_AGE_MS,
+    );
+    let stoppedAt: string | null = null;
+    if (old.length) {
+      const keys = old.map((o) => o.key);
+      const used = await pipelineRead((db) =>
+        db.pipelineVersion.findMany({ where: { fileKey: { in: keys } }, select: { fileKey: true } }),
+      );
+      const inUse = new Set(used.map((u) => u.fileKey));
+      for (const o of old) {
+        if (inUse.has(o.key)) continue;
+        if (deleted >= UPLOAD_DELETE_MAX) {
+          stoppedAt = o.key;
+          break;
+        }
+        await deleteR2Object(cfg, o.key);
+        deleted++;
+      }
+    }
+    if (stoppedAt) {
+      // Resume just before the first key not handled this run.
+      const i = list.objects.findIndex((o) => o.key === stoppedAt);
+      after = i > 0 ? list.objects[i - 1].key : after;
+      break;
+    }
+    if (!list.truncated) {
+      after = null; // reached the end of the bucket: start from the top next time
+      break;
+    }
+    after = list.objects[list.objects.length - 1]?.key ?? null;
+  }
+  await pipelineWriteStatement((db) =>
+    db.systemSetting.upsert({
+      where: { key: UPLOAD_SWEEP_CURSOR_KEY },
+      create: { key: UPLOAD_SWEEP_CURSOR_KEY, value: after ?? "" },
+      update: { value: after ?? "" },
+    }),
+  );
+  return { scanned, deleted };
+}
+
 // ── The wall-clock run ───────────────────────────────────────────────────────────────
 
 export type MaintenanceResult =
   | { status: "skipped"; reason: "hours" | "done" | "schema" | "running" }
-  | { status: "ran"; trimmed: number; outboxTrimmed: number; purged: number };
+  | { status: "ran"; trimmed: number; outboxTrimmed: number; purged: number; uploadsDeleted: number };
 
 let running = false;
 
@@ -228,6 +307,14 @@ export function runPipelineMaintenanceIfDue(opts: { now?: Date; pauseMs?: number
         }
       }
       const { purged } = await purgeDeletedProjects();
+      // After the purge, so the files of projects it just removed are swept the same night
+      // (once they are a day old). Never lets a storage problem fail the rest of the run.
+      let uploadsDeleted = 0;
+      try {
+        uploadsDeleted = (await sweepOrphanUploads({ now })).deleted;
+      } catch (err) {
+        console.warn("[pipeline-jobs] unused-upload sweep failed (the rest of the run is done):", String(err));
+      }
       await pipelineWriteStatement((db) =>
         db.systemSetting.upsert({
           where: { key: TRIM_MARKER_KEY },
@@ -235,7 +322,7 @@ export function runPipelineMaintenanceIfDue(opts: { now?: Date; pauseMs?: number
           update: { value: today },
         }),
       );
-      return { status: "ran", trimmed, outboxTrimmed, purged };
+      return { status: "ran", trimmed, outboxTrimmed, purged, uploadsDeleted };
     } finally {
       running = false;
     }
@@ -256,7 +343,7 @@ export function schedulePipelineMaintenance(
     timer = setTimeout(() => {
       run()
         .then((r) => {
-          if (r.status === "ran") console.log(`[pipeline-jobs] trimmed=${r.trimmed} outbox_trimmed=${r.outboxTrimmed} purged=${r.purged}`);
+          if (r.status === "ran") console.log(`[pipeline-jobs] trimmed=${r.trimmed} outbox_trimmed=${r.outboxTrimmed} purged=${r.purged} uploads_deleted=${r.uploadsDeleted}`);
         })
         .catch((err) => console.warn("[pipeline-jobs] maintenance failed:", String(err)))
         .finally(arm);

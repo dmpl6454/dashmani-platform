@@ -582,13 +582,22 @@ export type PipelineNotificationKind =
   | "due_soon"
   | "overdue"
   /** A due date set, changed or removed (route #7); re-armed in place. */
-  | "due_changed";
+  | "due_changed"
+  /** Work notices (2026-11-02): asked to review / review decided / page assigned / page published / shoot assigned. */
+  | "review"
+  | "reviewed"
+  | "assigned"
+  | "published"
+  | "shoot";
 
 /** `notifications.metadata` for rows of type PIPELINE. */
 export interface PipelineNotificationMetadata {
   v: 1;
   kind: PipelineNotificationKind;
-  pid: string;
+  /** The project; null on a "shoot" row for a shoot with no linked project. */
+  pid: string | null;
+  /** Work notices: the review, page or shoot the row is about. */
+  key?: string;
   mid?: string;
   rid?: string;
   seq?: number;

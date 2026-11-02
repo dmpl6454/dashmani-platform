@@ -101,6 +101,12 @@ export interface MessagePostedArgs extends NotifyBase {
   deliveredMentionIds: string[];
   /** The root's author for a reply (gets a reply row unless mentioned or the actor), else null. */
   replyToAuthorId: string | null;
+  /**
+   * Mentioned users whose BELL row for this message is written elsewhere — a work line (review
+   * request or decision) whose dedicated "review"/"reviewed" row the work service already wrote.
+   * They get no "mentioned you" row; the mention EMAIL is still queued (it needs the mention).
+   */
+  quietMentionIds?: string[];
 }
 
 /** §7.11 edit: new snippets on existing rows, plus rows for NEWLY added mentions only. */
@@ -134,6 +140,35 @@ export interface MessageDeletedArgs {
   participantIds: string[];
 }
 
+/**
+ * Pipeline WORK notices (2026-11-02): their own bell rows, not @mentions —
+ *   review    — "X asked you to review …"            (the named reviewer)
+ *   reviewed  — "X approved / asked for changes …"   (who asked for the review)
+ *   assigned  — "X assigned you a page …"            (a page's assignee)
+ *   published — "X published … on Instagram …"       (the page's creator and assignee)
+ *   shoot     — "X assigned you a shoot …"           (the shoot's camera person)
+ * One row per (kind, key, recipient). assigned / published / shoot re-arm on repeat (a page
+ * reassigned back, published again); review / reviewed are written once per review.
+ */
+export type WorkNoticeKind = "review" | "reviewed" | "assigned" | "published" | "shoot";
+
+export interface WorkNoticeArgs {
+  kind: WorkNoticeKind;
+  /** The review, page (deliverable) or shoot id — part of the row id. */
+  key: string;
+  /** The project, or null for a shoot that is not linked to one. */
+  projectId: string | null;
+  recipients: string[];
+  actorId: string;
+  allow: string[] | null;
+  title: string;
+  message: string;
+  /** HR-portal path the row opens (always under /pipeline/). */
+  path: string;
+  /** Delete these users' rows for this kind and key first (e.g. the page's previous assignee). */
+  withdraw?: string[];
+}
+
 export interface PipelineNotifier {
   onProjectCreated(tx: PipelineTx, a: ProjectCreatedArgs): Promise<void>;
   onMembersAdded(tx: PipelineTx, a: MembersAddedArgs): Promise<void>;
@@ -143,6 +178,7 @@ export interface PipelineNotifier {
   onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<void>;
   onMessageEdited(tx: PipelineTx, a: MessageEditedArgs): Promise<void>;
   onMessageDeleted(tx: PipelineTx, a: MessageDeletedArgs): Promise<void>;
+  onWork(tx: PipelineTx, a: WorkNoticeArgs): Promise<void>;
 }
 
 /** Writes nothing. The default until PR 9's notify.ts calls setNotifier(). */
@@ -155,6 +191,7 @@ export const noopNotifier: PipelineNotifier = {
   onMessagePosted: async () => {},
   onMessageEdited: async () => {},
   onMessageDeleted: async () => {},
+  onWork: async () => {},
 };
 
 /** The active notifier. Read it at call time (`notifier.onMoved(...)`), never cache it. */

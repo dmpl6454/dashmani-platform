@@ -278,6 +278,140 @@ describe("pipeline work tracking (API)", () => {
   });
 });
 
+describe("pipeline work tracking part 2 (API)", () => {
+  beforeEach(async () => {
+    resetPipelineStateForTests();
+    await clearPipelineSettings();
+    await seedPipelinePhases();
+    await setPipelineSetting("pipeline.mode", "on");
+  });
+
+  it("parses and formats video timestamps", () => {
+    expect(W.parseTimestamp("1:23")).toBe(83);
+    expect(W.parseTimestamp("1:02:03")).toBe(3723);
+    expect(W.parseTimestamp("45")).toBe(45);
+    expect(W.parseTimestamp("1:75")).toBeNull();
+    expect(W.parseTimestamp("abc")).toBeNull();
+    expect(W.formatTimestamp(83)).toBe("1:23");
+    expect(W.formatTimestamp(3723)).toBe("1:02:03");
+  });
+
+  it("adds timestamped comments to a version, in time order, and resolves them", async () => {
+    const editor = await hrUser("Kiran Editor");
+    const lead = await hrUser("Om Lead");
+    const id = await newProject(editor.token);
+    const vid = (await addVersion(editor.token, id, { kind: "video", url: "https://nas.example/v1.mp4" })).body.data.id;
+    const c1 = await request(app).post(`/v1/pipeline/versions/${vid}/comments`).set(auth(lead.token)).send({ body: "Cut here", atSeconds: 83 });
+    expect(c1.status).toBe(201);
+    await request(app).post(`/v1/pipeline/versions/${vid}/comments`).set(auth(lead.token)).send({ body: "Louder intro", atSeconds: 5 });
+    await request(app).post(`/v1/pipeline/versions/${vid}/comments`).set(auth(lead.token)).send({ body: "Overall good" });
+    const bad = await request(app).post(`/v1/pipeline/versions/${vid}/comments`).set(auth(lead.token)).send({ body: "x", atSeconds: -1 });
+    expect(bad.status).toBe(400);
+
+    let w = await work(editor.token, id);
+    expect(w.versions[0].comments.map((c) => c.body)).toEqual(["Louder intro", "Cut here", "Overall good"]);
+
+    const done = await request(app).put(`/v1/pipeline/comments/${c1.body.data.id}/resolved`).set(auth(editor.token)).send({ resolved: true });
+    expect(done.status).toBe(200);
+    expect(done.body.data.resolvedBy.id).toBe(editor.id);
+    w = await work(editor.token, id);
+    expect(w.versions[0].comments.find((c) => c.body === "Cut here")?.resolvedAt).toEqual(expect.any(String));
+  });
+
+  it("blocks going live under an embargo or after a licence expired; editing usage keeps the approval", async () => {
+    const editor = await hrUser("Lata Editor");
+    const lead = await hrUser("Raj Lead");
+    const id = await newProject(editor.token);
+    const embargo = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const vid = (await addVersion(editor.token, id, { kind: "video", url: "https://nas.example/v1.mp4", embargoUntil: embargo, rights: "licensed" })).body.data.id;
+    const rid = (await request(app).post(`${P}/${id}/reviews`).set(auth(editor.token)).send({ reviewerId: lead.id })).body.data.id;
+    await request(app).post(`/v1/pipeline/reviews/${rid}/decision`).set(auth(lead.token)).send({ decision: "approved" });
+    const d = (await request(app).post(`${P}/${id}/deliverables`).set(auth(editor.token)).send({ platform: "instagram", destination: "@x" })).body.data;
+
+    const now = await request(app).patch(`/v1/pipeline/deliverables/${d.id}`).set(auth(editor.token))
+      .send({ base: 1, changes: { status: "published", liveUrl: "https://instagram.com/reel/a" } });
+    expect(now.status).toBe(409);
+    expect(now.body.error.code).toBe("USAGE_RESTRICTED");
+
+    // Scheduling after the embargo lifts is fine.
+    const later = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    const sch = await request(app).patch(`/v1/pipeline/deliverables/${d.id}`).set(auth(editor.token))
+      .send({ base: 1, changes: { status: "scheduled", scheduledAt: later } });
+    expect(sch.status).toBe(200);
+
+    // Licence expired yesterday: moving the time again is refused. The usage edit itself leaves the approval standing.
+    const usage = await request(app).patch(`/v1/pipeline/versions/${vid}`).set(auth(editor.token))
+      .send({ embargoUntil: null, licenceExpires: "2020-01-01" });
+    expect(usage.status).toBe(200);
+    expect((await work(editor.token, id)).approval.state).toBe("approved");
+    const moved = await request(app).patch(`/v1/pipeline/deliverables/${d.id}`).set(auth(editor.token))
+      .send({ base: 2, changes: { scheduledAt: new Date(Date.now() + 4 * 86_400_000).toISOString() } });
+    expect(moved.status).toBe(409);
+    expect(moved.body.error.code).toBe("USAGE_RESTRICTED");
+  });
+
+  it("runs the shoot desk: create, conflict on a stale edit, footage link required, My Work lists it", async () => {
+    const desk = await hrUser("Desk Lead");
+    const cam = await hrUser("Cam Person");
+    const project = await newProject(desk.token, "Airport looks");
+    const call = new Date(Date.now() + 6 * 3600_000).toISOString();
+    const r = await request(app).post("/v1/pipeline/shoots").set(auth(desk.token))
+      .send({ title: "Airport arrival", callTime: call, location: "T2 Mumbai", cameraId: cam.id, projectId: project });
+    expect(r.status).toBe(201);
+    expect(r.body.data).toMatchObject({ status: "assigned", camera: { id: cam.id }, project: { id: project } });
+    const sid = r.body.data.id as string;
+
+    const mine = (await request(app).get("/v1/pipeline/my-work").set(auth(cam.token))).body.data as W.PipelineMyWorkDto;
+    expect(mine.shoots.map((s) => s.id)).toEqual([sid]);
+
+    const noLink = await request(app).patch(`/v1/pipeline/shoots/${sid}`).set(auth(cam.token)).send({ base: 1, changes: { status: "uploaded" } });
+    expect(noLink.body.error.code).toBe("UPLOAD_URL_REQUIRED");
+    const up = await request(app).patch(`/v1/pipeline/shoots/${sid}`).set(auth(cam.token))
+      .send({ base: 1, changes: { status: "uploaded", uploadUrl: "https://nas.example/airport/" } });
+    expect(up.status).toBe(200);
+    expect(up.body.data.rev).toBe(2);
+    const stale = await request(app).patch(`/v1/pipeline/shoots/${sid}`).set(auth(desk.token)).send({ base: 1, changes: { title: "x" } });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe("SHOOT_CONFLICT");
+
+    const list = (await request(app).get("/v1/pipeline/shoots?view=upcoming").set(auth(desk.token))).body.data;
+    expect(list.shoots.map((s: { id: string }) => s.id)).toEqual([sid]);
+    const ghost = await request(app).post("/v1/pipeline/shoots").set(auth(desk.token))
+      .send({ title: "x", callTime: call, cameraId: uuid() });
+    expect(ghost.body.error.code).toBe("USER_NOT_PICKABLE");
+  });
+
+  it("workload counts each person's open pages, reviews, shoots and projects", async () => {
+    const a = await hrUser("Asha Busy");
+    const b = await hrUser("Bina Light");
+    const id = await newProject(a.token);
+    await prisma.pipelineProject.update({ where: { id }, data: { dueDate: new Date("2020-01-01") } });
+    await addVersion(a.token, id, { kind: "video", url: "https://nas.example/v1.mp4" });
+    await request(app).post(`${P}/${id}/reviews`).set(auth(a.token)).send({ reviewerId: b.id });
+    await request(app).post(`${P}/${id}/deliverables`).set(auth(a.token))
+      .send({ platform: "instagram", destination: "@x", assigneeId: b.id, scheduledAt: new Date(Date.now() - 3600_000).toISOString() });
+    const res = await request(app).get("/v1/pipeline/workload").set(auth(a.token));
+    expect(res.status).toBe(200);
+    const rows = res.body.data.rows as W.PipelineWorkloadRow[];
+    expect(rows.find((x) => x.person.id === b.id)).toMatchObject({ pagesOpen: 1, pagesLate: 1, reviewsToDo: 1 });
+    expect(rows.find((x) => x.person.id === a.id)).toMatchObject({ projectsOwned: 1, projectsOverdue: 1 });
+  });
+});
+
+describe("scripts/pipeline-work2-ddl.sql (static)", () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, "../../../../scripts/pipeline-work2-ddl.sql"), "utf8");
+  const body = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  it("is one guarded, additive, re-runnable transaction with no FK into users", () => {
+    expect(body).toMatch(/^BEGIN;/m);
+    expect(body).toMatch(/^COMMIT;/m);
+    expect(body).not.toMatch(/DROP|REFERENCES "users"/);
+    expect(body).toMatch(/ADD COLUMN IF NOT EXISTS "embargo_until"/);
+    for (const t of ["pipeline_version_comments", "pipeline_shoots"]) {
+      expect(body).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS "${t}"`));
+    }
+  });
+});
+
 describe("scripts/pipeline-work-ddl.sql (static)", () => {
   const sql = fs.readFileSync(path.resolve(__dirname, "../../../../scripts/pipeline-work-ddl.sql"), "utf8");
   const body = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");

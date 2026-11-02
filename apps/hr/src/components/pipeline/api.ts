@@ -112,6 +112,16 @@ export const plApi = {
   editDeliverable: (did: string, body: W.EditDeliverableInput) =>
     call<W.PipelineDeliverableDto>(`/deliverables/${did}`, json("PATCH", body)),
   deleteDeliverable: (did: string) => call<{ id: string }>(`/deliverables/${did}`, { method: "DELETE" }),
+  editVersionUsage: (vid: string, body: W.EditVersionUsageInput) =>
+    call<W.PipelineVersionDto>(`/versions/${vid}`, json("PATCH", body)),
+  addComment: (vid: string, body: W.AddCommentInput) =>
+    call<W.PipelineCommentDto>(`/versions/${vid}/comments`, json("POST", body)),
+  resolveComment: (cid: string, resolved: boolean) =>
+    call<W.PipelineCommentDto>(`/comments/${cid}/resolved`, json("PUT", { resolved })),
+  shoots: (view: "upcoming" | "mine" | "past") => call<{ shoots: W.PipelineShootDto[]; now: string }>(`/shoots?view=${view}`),
+  createShoot: (body: W.CreateShootInput) => call<W.PipelineShootDto>("/shoots", json("POST", body)),
+  editShoot: (sid: string, body: W.EditShootInput) => call<W.PipelineShootDto>(`/shoots/${sid}`, json("PATCH", body)),
+  workload: () => call<W.PipelineWorkloadDto>("/workload"),
   /** Keepalive: used on leave / hide, when the page may be going away. */
   markRead: (id: string, seq: number, leaving: boolean) =>
     call<PipelineReadResponse>(`/projects/${id}/read`, json("POST", { seq, leaving }, { keepalive: true })),
@@ -180,6 +190,13 @@ const WORDS: Record<string, string> = {
   DELIVERABLE_PUBLISHED: "A published page is kept as a record — mark it cancelled instead.",
   TOO_MANY_VERSIONS: "This project has the most versions it can hold.",
   TOO_MANY_DELIVERABLES: "This project has the most pages it can hold.",
+  USAGE_RESTRICTED: "A file's embargo or licence doesn't allow it to go live then — check its Usage & rights.",
+  TOO_MANY_COMMENTS: "This version has the most comments it can hold.",
+  COMMENT_NOT_FOUND: "That comment no longer exists.",
+  VERSION_NOT_FOUND: "That version no longer exists.",
+  SHOOT_NOT_FOUND: "That shoot no longer exists.",
+  SHOOT_CONFLICT: "Someone else changed this shoot — showing their version.",
+  UPLOAD_URL_REQUIRED: "Add the link to the footage first.",
 };
 
 /** Human words for an error. Never the raw server message; never "Something went wrong". */

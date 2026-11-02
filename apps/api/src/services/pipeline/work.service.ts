@@ -19,7 +19,7 @@
  * these routes answer 503 WORK_NOT_READY; the rest of the Pipeline is unaffected.
  */
 import { randomUUID } from "crypto";
-import { pipelineWork as W } from "@dashmani/shared";
+import { pipelineWork as W, dateToIST } from "@dashmani/shared";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineError } from "./errors";
 import { lockProject, assertWritable, pickableByMode, type PipelineActor } from "./projects.service";
@@ -46,7 +46,7 @@ function isMissingSchema(err: unknown): boolean {
     const code = (e as { code?: unknown }).code;
     if (code === "P2021" || code === "P2022") return true;
     const msg = String((e as { message?: unknown }).message ?? "").slice(0, 2000);
-    if (/42P01|42703|relation "pipeline_(versions|reviews|deliverables)" does not exist/.test(msg)) return true;
+    if (/42P01|42703|relation "pipeline_(versions|reviews|deliverables|version_comments|shoots)" does not exist/.test(msg)) return true;
   }
   return false;
 }
@@ -80,7 +80,23 @@ interface VersionRow {
   url: string | null;
   body: string;
   note: string;
+  source: string;
+  rights: string;
+  licenceExpires: Date | null;
+  embargoUntil: Date | null;
+  usageNotes: string;
   createdById: string;
+  createdAt: Date;
+}
+
+interface CommentRow {
+  id: string;
+  versionId: string;
+  authorId: string;
+  atSeconds: number | null;
+  body: string;
+  resolvedAt: Date | null;
+  resolvedById: string | null;
   createdAt: Date;
 }
 
@@ -115,7 +131,20 @@ interface DeliverableRow {
   updatedAt: Date;
 }
 
-function versionDto(dir: PipelineDirectory, v: VersionRow): W.PipelineVersionDto {
+function commentDto(dir: PipelineDirectory, c: CommentRow): W.PipelineCommentDto {
+  return {
+    id: c.id,
+    versionId: c.versionId,
+    author: person(dir, c.authorId),
+    atSeconds: c.atSeconds,
+    body: c.body,
+    resolvedAt: iso(c.resolvedAt),
+    resolvedBy: personOrNull(dir, c.resolvedById),
+    createdAt: c.createdAt.toISOString(),
+  };
+}
+
+function versionDto(dir: PipelineDirectory, v: VersionRow, comments: readonly CommentRow[] = []): W.PipelineVersionDto {
   return {
     id: v.id,
     kind: v.kind as W.PipelineVersionKind,
@@ -124,10 +153,20 @@ function versionDto(dir: PipelineDirectory, v: VersionRow): W.PipelineVersionDto
     url: v.url,
     body: v.body,
     note: v.note,
+    source: v.source,
+    rights: (v.rights || "") as W.PipelineRights | "",
+    licenceExpires: v.licenceExpires ? v.licenceExpires.toISOString().slice(0, 10) : null,
+    embargoUntil: iso(v.embargoUntil),
+    usageNotes: v.usageNotes,
     createdBy: person(dir, v.createdById),
     createdAt: v.createdAt.toISOString(),
+    comments: comments.map((c) => commentDto(dir, c)),
   };
 }
+
+const COMMENT_SELECT = {
+  id: true, versionId: true, authorId: true, atSeconds: true, body: true, resolvedAt: true, resolvedById: true, createdAt: true,
+} as const;
 
 function reviewDto(dir: PipelineDirectory, r: ReviewRow, latest: readonly string[]): W.PipelineReviewDto {
   return {
@@ -166,6 +205,7 @@ function deliverableDto(dir: PipelineDirectory, d: DeliverableRow): W.PipelineDe
 
 const VERSION_SELECT = {
   id: true, kind: true, number: true, label: true, url: true, body: true, note: true, createdById: true, createdAt: true,
+  source: true, rights: true, licenceExpires: true, embargoUntil: true, usageNotes: true,
 } as const;
 
 const REVIEW_SELECT = {
@@ -213,7 +253,7 @@ async function assertProjectReadable(db: Db, projectId: string): Promise<void> {
 
 export async function getWork(dir: PipelineDirectory, projectId: string): Promise<W.PipelineWorkDto> {
   return guarded(async () => {
-    const { versions, reviews, deliverables } = await pipelineRead(async (db) => {
+    const { versions, reviews, deliverables, comments } = await pipelineRead(async (db) => {
       await assertProjectReadable(db, projectId);
       const versions = await readVersions(db, projectId);
       const reviews = await readReviews(db, projectId);
@@ -222,11 +262,27 @@ export async function getWork(dir: PipelineDirectory, projectId: string): Promis
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         take: W.PIPELINE_WORK_LIMITS.deliverablesPerProject,
       });
-      return { versions, reviews, deliverables };
+      const comments = await db.pipelineVersionComment.findMany({
+        where: { projectId },
+        select: COMMENT_SELECT,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take: 2000,
+      });
+      return { versions, reviews, deliverables, comments };
     });
     const latest = W.latestVersionIds(versions);
+    const byVersion = new Map<string, CommentRow[]>();
+    for (const c of comments) {
+      const list = byVersion.get(c.versionId) ?? [];
+      list.push(c);
+      byVersion.set(c.versionId, list);
+    }
+    // Comments at a point in the video first in time order, then whole-file ones, oldest first.
+    for (const list of byVersion.values()) {
+      list.sort((a, b) => (a.atSeconds ?? Infinity) - (b.atSeconds ?? Infinity) || a.createdAt.getTime() - b.createdAt.getTime());
+    }
     return {
-      versions: versions.map((v) => versionDto(dir, v)),
+      versions: versions.map((v) => versionDto(dir, v, byVersion.get(v.id))),
       reviews: reviews.map((r) => reviewDto(dir, r, latest)),
       deliverables: deliverables.map((d) => deliverableDto(dir, d)),
       approval: W.approvalSummary(versions, reviews),
@@ -291,12 +347,91 @@ export async function addVersion(actor: WorkActor, projectId: string, input: W.A
           url: input.url ?? null,
           body: input.body ?? "",
           note: input.note ?? "",
+          source: input.source ?? "",
+          rights: input.rights ?? "",
+          licenceExpires: input.licenceExpires ? new Date(`${input.licenceExpires}T00:00:00Z`) : null,
+          embargoUntil: input.embargoUntil ? new Date(input.embargoUntil) : null,
+          usageNotes: input.usageNotes ?? "",
           createdById: actor.userId,
         },
         select: VERSION_SELECT,
       });
     });
     return versionDto(actor.directory, row);
+  });
+}
+
+/** Locks the project of a version, then re-reads the version under that lock. */
+async function lockVersion(tx: PipelineTx, actor: WorkActor, versionId: string) {
+  const pre = await tx.pipelineVersion.findUnique({ where: { id: versionId }, select: { projectId: true } });
+  if (!pre) throw new PipelineError(404, "VERSION_NOT_FOUND", "This version doesn't exist");
+  assertWritable(await lockProject(tx, pre.projectId, actor.userId));
+  const v = await tx.pipelineVersion.findUnique({ where: { id: versionId }, select: VERSION_SELECT });
+  if (!v) throw new PipelineError(404, "VERSION_NOT_FOUND", "This version doesn't exist");
+  return { ...v, projectId: pre.projectId };
+}
+
+/** Source, rights, licence and embargo can be filled in later. They don't change the file, so an approval stands. */
+export async function editVersionUsage(
+  actor: WorkActor,
+  versionId: string,
+  input: W.EditVersionUsageInput,
+): Promise<W.PipelineVersionDto> {
+  return guarded(async () => {
+    const row = await pipelineWrite(async (tx) => {
+      await lockVersion(tx, actor, versionId);
+      const data: Record<string, unknown> = {};
+      if (input.source !== undefined) data.source = input.source;
+      if (input.rights !== undefined) data.rights = input.rights;
+      if (input.licenceExpires !== undefined) {
+        data.licenceExpires = input.licenceExpires ? new Date(`${input.licenceExpires}T00:00:00Z`) : null;
+      }
+      if (input.embargoUntil !== undefined) data.embargoUntil = input.embargoUntil ? new Date(input.embargoUntil) : null;
+      if (input.usageNotes !== undefined) data.usageNotes = input.usageNotes;
+      return tx.pipelineVersion.update({ where: { id: versionId }, data, select: VERSION_SELECT });
+    });
+    return versionDto(actor.directory, row);
+  });
+}
+
+// ── Version comments ───────────────────────────────────────────────────────────────
+
+export async function addComment(actor: WorkActor, versionId: string, input: W.AddCommentInput): Promise<W.PipelineCommentDto> {
+  return guarded(async () => {
+    const row = await pipelineWrite(async (tx) => {
+      const v = await lockVersion(tx, actor, versionId);
+      const count = await tx.pipelineVersionComment.count({ where: { versionId } });
+      if (count >= W.PIPELINE_WORK_LIMITS.commentsPerVersion) {
+        throw new PipelineError(409, "TOO_MANY_COMMENTS", "This version has the most comments it can hold");
+      }
+      return tx.pipelineVersionComment.create({
+        data: {
+          projectId: v.projectId,
+          versionId,
+          authorId: actor.userId,
+          atSeconds: input.atSeconds ?? null,
+          body: input.body,
+        },
+        select: COMMENT_SELECT,
+      });
+    });
+    return commentDto(actor.directory, row);
+  });
+}
+
+export async function resolveComment(actor: WorkActor, commentId: string, resolved: boolean): Promise<W.PipelineCommentDto> {
+  return guarded(async () => {
+    const row = await pipelineWrite(async (tx) => {
+      const pre = await tx.pipelineVersionComment.findUnique({ where: { id: commentId }, select: { projectId: true } });
+      if (!pre) throw new PipelineError(404, "COMMENT_NOT_FOUND", "This comment doesn't exist");
+      assertWritable(await lockProject(tx, pre.projectId, actor.userId));
+      return tx.pipelineVersionComment.update({
+        where: { id: commentId },
+        data: resolved ? { resolvedAt: new Date(), resolvedById: actor.userId } : { resolvedAt: null, resolvedById: null },
+        select: COMMENT_SELECT,
+      });
+    });
+    return commentDto(actor.directory, row);
   });
 }
 
@@ -461,6 +596,21 @@ export async function editDeliverable(
       if (c.note !== undefined) data.note = c.note;
       if (c.liveUrl !== undefined) data.liveUrl = liveUrl;
 
+      // Embargo and licence: checked whenever a page is (or stays) set to go live at a time —
+      // a status change into scheduled/published, or a new time on a scheduled page.
+      const goingLive = W.PIPELINE_STATUSES_NEEDING_APPROVAL.includes(status);
+      if (goingLive && (statusChanged || (status === "scheduled" && c.scheduledAt !== undefined))) {
+        const goLive = status === "published" ? Date.now() : scheduledAt!.getTime();
+        const all = await tx.pipelineVersion.findMany({
+          where: { projectId: cur.projectId },
+          select: { id: true, kind: true, number: true, embargoUntil: true, licenceExpires: true },
+          take: W.PIPELINE_WORK_LIMITS.versionsPerProject,
+        });
+        const latest = new Set(W.latestVersionIds(all));
+        const reason = W.usageBlock(all.filter((v) => latest.has(v.id)), goLive, dateToIST(new Date(goLive)));
+        if (reason) throw new PipelineError(409, "USAGE_RESTRICTED", reason);
+      }
+
       if (statusChanged) {
         data.status = status;
         if (W.PIPELINE_STATUSES_NEEDING_APPROVAL.includes(status)) {
@@ -556,7 +706,18 @@ export async function getMyWork(
         take: max,
       });
       const now = await db.$queryRaw<Array<{ now: Date }>>`SELECT now() AS now`;
-      return { pending, changes, versions, newest, deliverables, due, now: now[0].now };
+      // Open shoots from 12 h ago on: a shoot that started this morning is still today's work.
+      const shoots = await db.pipelineShoot.findMany({
+        where: {
+          cameraId: userId,
+          status: { in: [...W.PIPELINE_SHOOT_OPEN] },
+          callTime: { gte: new Date(now[0].now.getTime() - 12 * 3600_000) },
+        },
+        include: { project: { select: { id: true, title: true, deletedAt: true } } },
+        orderBy: [{ callTime: "asc" }, { id: "asc" }],
+        take: max,
+      });
+      return { pending, changes, versions, newest, deliverables, due, shoots, now: now[0].now };
     });
 
     const latestBy = new Map<string, string[]>();
@@ -576,6 +737,7 @@ export async function getMyWork(
         deliverable: deliverableDto(dir, d),
         project: { id: d.project.id, title: d.project.title },
       })),
+      shoots: r.shoots.map((sh) => shootDto(dir, sh)),
       dueProjects: r.due.map((p) => ({
         id: p.id,
         title: p.title,
@@ -586,3 +748,50 @@ export async function getMyWork(
     };
   });
 }
+
+// ── Shoots (shared mapping; the service is shoots.service.ts) ─────────────────────
+
+export interface ShootRow {
+  id: string;
+  projectId: string | null;
+  title: string;
+  event: string;
+  location: string;
+  callTime: Date;
+  cameraId: string | null;
+  contact: string;
+  requirements: string;
+  deadline: Date | null;
+  embargoUntil: Date | null;
+  status: string;
+  uploadUrl: string | null;
+  rev: number;
+  createdById: string;
+  createdAt: Date;
+  updatedAt: Date;
+  project: { id: string; title: string; deletedAt: Date | null } | null;
+}
+
+export function shootDto(dir: PipelineDirectory, sh: ShootRow): W.PipelineShootDto {
+  return {
+    id: sh.id,
+    project: sh.project && !sh.project.deletedAt ? { id: sh.project.id, title: sh.project.title } : null,
+    title: sh.title,
+    event: sh.event,
+    location: sh.location,
+    callTime: sh.callTime.toISOString(),
+    camera: personOrNull(dir, sh.cameraId),
+    contact: sh.contact,
+    requirements: sh.requirements,
+    deadline: iso(sh.deadline),
+    embargoUntil: iso(sh.embargoUntil),
+    status: sh.status as W.PipelineShootStatus,
+    uploadUrl: sh.uploadUrl,
+    rev: sh.rev,
+    createdBy: person(dir, sh.createdById),
+    createdAt: sh.createdAt.toISOString(),
+    updatedAt: sh.updatedAt.toISOString(),
+  };
+}
+
+export { assertPickable, guarded };

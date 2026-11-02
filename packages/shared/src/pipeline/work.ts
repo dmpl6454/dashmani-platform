@@ -83,7 +83,38 @@ export const PIPELINE_WORK_LIMITS = {
   reviewsShown: 50,
   /** Each "My Work" list. */
   myWorkListMax: 50,
+  sourceMax: 200,
+  usageNotesMax: 1000,
+  commentMax: 2000,
+  commentsPerVersion: 200,
+  /** 24 h in seconds: a point in a video beyond this is a typo. */
+  atSecondsMax: 86_400,
+  shootTitleMax: 120,
+  shootFieldMax: 200,
+  shootRequirementsMax: 2000,
+  shootsListMax: 200,
 } as const;
+
+export const PIPELINE_RIGHTS = ["owned", "licensed", "permission", "unknown"] as const;
+export type PipelineRights = (typeof PIPELINE_RIGHTS)[number];
+export const PIPELINE_RIGHTS_LABEL: Record<PipelineRights, string> = {
+  owned: "Our own",
+  licensed: "Licensed",
+  permission: "With permission",
+  unknown: "Rights unknown",
+};
+
+export const PIPELINE_SHOOT_STATUSES = ["assigned", "on_site", "uploaded", "done", "cancelled"] as const;
+export type PipelineShootStatus = (typeof PIPELINE_SHOOT_STATUSES)[number];
+export const PIPELINE_SHOOT_STATUS_LABEL: Record<PipelineShootStatus, string> = {
+  assigned: "Assigned",
+  on_site: "On site",
+  uploaded: "Footage uploaded",
+  done: "Done",
+  cancelled: "Cancelled",
+};
+/** Shoot statuses that still need the camera person. */
+export const PIPELINE_SHOOT_OPEN: readonly PipelineShootStatus[] = ["assigned", "on_site"];
 
 // ── Validators ─────────────────────────────────────────────────────────────────────
 
@@ -115,6 +146,30 @@ export const pipelineWorkUrl = z
   .transform((s) => s.trim())
   .pipe(z.string().regex(HTTP_URL, "Use a full link starting with https://"));
 
+/** A calendar day, YYYY-MM-DD. */
+const dayKey = z
+  .string()
+  .max(10)
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+  .refine((v) => {
+    const d = new Date(`${v}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+  }, "Not a real calendar day");
+
+/** Usage and licence facts about a file. Every field optional; null clears. */
+const usageFields = {
+  source: line(PIPELINE_WORK_LIMITS.sourceMax).optional(),
+  rights: z.enum(["", ...PIPELINE_RIGHTS]).optional(),
+  licenceExpires: dayKey.nullable().optional(),
+  embargoUntil: z.string().max(40).datetime({ offset: true }).nullable().optional(),
+  usageNotes: text(PIPELINE_WORK_LIMITS.usageNotesMax).optional(),
+};
+
+export const editVersionUsageSchema = z
+  .object(usageFields)
+  .refine((v) => Object.keys(v).length > 0, "Nothing to change");
+export type EditVersionUsageInput = z.infer<typeof editVersionUsageSchema>;
+
 export const addVersionSchema = z
   .object({
     kind: z.enum(PIPELINE_VERSION_KINDS),
@@ -122,6 +177,7 @@ export const addVersionSchema = z
     url: pipelineWorkUrl.nullable().optional(),
     body: text(PIPELINE_WORK_LIMITS.bodyMax).optional(),
     note: line(PIPELINE_WORK_LIMITS.noteMax).optional(),
+    ...usageFields,
   })
   .superRefine((v, ctx) => {
     if (v.kind === "caption") {
@@ -192,6 +248,90 @@ export type EditDeliverableInput = z.infer<typeof editDeliverableSchema>;
 
 export const reviewParamsSchema = z.object({ rid: workId });
 export const deliverableParamsSchema = z.object({ did: workId });
+export const versionParamsSchema = z.object({ vid: workId });
+export const commentParamsSchema = z.object({ cid: workId });
+export const shootParamsSchema = z.object({ sid: workId });
+
+export const addCommentSchema = z.object({
+  body: text(PIPELINE_WORK_LIMITS.commentMax).pipe(z.string().min(1, "Write a comment")),
+  /** Seconds into the video; omit for a comment on the whole file. */
+  atSeconds: z.number().int().min(0).max(PIPELINE_WORK_LIMITS.atSecondsMax).nullable().optional(),
+});
+export type AddCommentInput = z.infer<typeof addCommentSchema>;
+
+export const resolveCommentSchema = z.object({ resolved: z.boolean() });
+
+/** "1:23" or "1:02:03" or "83" → seconds; null when unreadable. */
+export function parseTimestamp(raw: string): number | null {
+  const t = raw.trim();
+  if (!/^\d{1,5}(:\d{1,2}){0,2}$/.test(t)) return null;
+  const parts = t.split(":").map(Number);
+  if (parts.slice(1).some((p) => p > 59)) return null;
+  const secs = parts.reduce((acc, p) => acc * 60 + p, 0);
+  return secs <= PIPELINE_WORK_LIMITS.atSecondsMax ? secs : null;
+}
+
+/** 83 → "1:23", 3723 → "1:02:03". */
+export function formatTimestamp(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+const isoOrNull = z.string().max(40).datetime({ offset: true }).nullable();
+const shootFields = {
+  title: line(PIPELINE_WORK_LIMITS.shootTitleMax).pipe(z.string().min(1, "Give the shoot a title")),
+  event: line(PIPELINE_WORK_LIMITS.shootFieldMax),
+  location: line(PIPELINE_WORK_LIMITS.shootFieldMax),
+  callTime: z.string().max(40).datetime({ offset: true }),
+  cameraId: workId.nullable(),
+  contact: line(PIPELINE_WORK_LIMITS.shootFieldMax),
+  requirements: text(PIPELINE_WORK_LIMITS.shootRequirementsMax),
+  deadline: isoOrNull,
+  embargoUntil: isoOrNull,
+  projectId: workId.nullable(),
+};
+
+export const createShootSchema = z.object({
+  title: shootFields.title,
+  callTime: shootFields.callTime,
+  event: shootFields.event.optional(),
+  location: shootFields.location.optional(),
+  cameraId: shootFields.cameraId.optional(),
+  contact: shootFields.contact.optional(),
+  requirements: shootFields.requirements.optional(),
+  deadline: shootFields.deadline.optional(),
+  embargoUntil: shootFields.embargoUntil.optional(),
+  projectId: shootFields.projectId.optional(),
+});
+export type CreateShootInput = z.infer<typeof createShootSchema>;
+
+export const editShootSchema = z.object({
+  base: z.number().int().min(1).max(2_147_483_647),
+  changes: z
+    .object({
+      title: shootFields.title.optional(),
+      callTime: shootFields.callTime.optional(),
+      event: shootFields.event.optional(),
+      location: shootFields.location.optional(),
+      cameraId: shootFields.cameraId.optional(),
+      contact: shootFields.contact.optional(),
+      requirements: shootFields.requirements.optional(),
+      deadline: shootFields.deadline.optional(),
+      embargoUntil: shootFields.embargoUntil.optional(),
+      projectId: shootFields.projectId.optional(),
+      status: z.enum(PIPELINE_SHOOT_STATUSES).optional(),
+      uploadUrl: pipelineWorkUrl.nullable().optional(),
+    })
+    .refine((c) => Object.keys(c).length > 0, "Nothing to change"),
+});
+export type EditShootInput = z.infer<typeof editShootSchema>;
+
+export const shootListQuerySchema = z.object({
+  view: z.enum(["upcoming", "mine", "past"]).default("upcoming"),
+});
 
 // ── Wire types ─────────────────────────────────────────────────────────────────────
 
@@ -208,8 +348,69 @@ export interface PipelineVersionDto {
   url: string | null;
   body: string;
   note: string;
+  source: string;
+  rights: PipelineRights | "";
+  licenceExpires: string | null;
+  embargoUntil: string | null;
+  usageNotes: string;
   createdBy: PipelineWorkPerson;
   createdAt: string;
+  comments: PipelineCommentDto[];
+}
+
+export interface PipelineCommentDto {
+  id: string;
+  versionId: string;
+  author: PipelineWorkPerson;
+  atSeconds: number | null;
+  body: string;
+  resolvedAt: string | null;
+  resolvedBy: PipelineWorkPerson | null;
+  createdAt: string;
+}
+
+export interface PipelineShootDto {
+  id: string;
+  project: { id: string; title: string } | null;
+  title: string;
+  event: string;
+  location: string;
+  callTime: string;
+  camera: PipelineWorkPerson | null;
+  contact: string;
+  requirements: string;
+  deadline: string | null;
+  embargoUntil: string | null;
+  status: PipelineShootStatus;
+  uploadUrl: string | null;
+  rev: number;
+  createdBy: PipelineWorkPerson;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PipelineWorkloadRow {
+  person: PipelineWorkPerson;
+  /** Pages assigned and not published / cancelled. */
+  pagesOpen: number;
+  /** …of which scheduled time has passed. */
+  pagesLate: number;
+  reviewsToDo: number;
+  /** Shoots assigned and still open, from today on. */
+  shootsOpen: number;
+  /** Projects owned in a live phase. */
+  projectsOwned: number;
+  projectsOverdue: number;
+  /** Approved leave covering today (IST). */
+  onLeaveToday: boolean;
+  /** Approved leave starting within the next 7 days (IST), first day. */
+  leaveFrom: string | null;
+}
+
+export interface PipelineWorkloadDto {
+  rows: PipelineWorkloadRow[];
+  today: string;
+  now: string;
 }
 
 export interface PipelineReviewDto {
@@ -275,6 +476,8 @@ export interface PipelineMyWorkDto {
   deliverables: Array<{ deliverable: PipelineDeliverableDto; project: PipelineMyWorkProject }>;
   /** Projects I own that are in a live phase, with a due date, soonest first. */
   dueProjects: Array<PipelineMyWorkProject & { phaseName: string; dueDate: string }>;
+  /** Shoots I'm the camera for, still open, soonest first. */
+  shoots: PipelineShootDto[];
   /** Server time, so "overdue" is judged against the same clock. */
   now: string;
 }
@@ -341,3 +544,34 @@ export const PIPELINE_APPROVAL_LABEL: Record<PipelineApprovalState, string> = {
   approved: "Approved",
   outdated: "New version since the last review",
 };
+
+// ── Usage restrictions (pure) ──────────────────────────────────────────────────────
+
+export interface UsageRef {
+  kind: string;
+  number: number;
+  embargoUntil: string | Date | null;
+  licenceExpires: string | Date | null;
+}
+
+const isoDay = (d: string | Date) => (typeof d === "string" ? d.slice(0, 10) : d.toISOString().slice(0, 10));
+
+/**
+ * Why a page can't go live at `goLive` (ms) with these versions, or null. Licence expiry is a
+ * calendar day: the licence covers its expiry day itself, so it blocks from the next day on.
+ * `todayKey` is the IST day of `goLive` (callers pass it so the rule never depends on the
+ * server's time zone).
+ */
+export function usageBlock(versions: readonly UsageRef[], goLive: number, goLiveDayKey: string): string | null {
+  for (const v of versions) {
+    const label = `${PIPELINE_VERSION_KIND_LABEL[v.kind as PipelineVersionKind] ?? v.kind} v${v.number}`;
+    if (v.embargoUntil) {
+      const until = typeof v.embargoUntil === "string" ? Date.parse(v.embargoUntil) : v.embargoUntil.getTime();
+      if (goLive < until) return `${label} is under embargo until ${new Date(until).toISOString()}`;
+    }
+    if (v.licenceExpires && isoDay(v.licenceExpires) < goLiveDayKey) {
+      return `${label}'s licence expired on ${isoDay(v.licenceExpires)}`;
+    }
+  }
+  return null;
+}

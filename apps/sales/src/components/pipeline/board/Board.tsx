@@ -29,7 +29,7 @@ import {
   type UniqueIdentifier,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { Archive, Plus, Search, Trash2 } from "lucide-react";
+import { Archive, Inbox, Plus, Search, Trash2 } from "lucide-react";
 import { keyBetween, selectCardsByPhase, type PipelineCard, type PipelinePhase } from "@dashmani/shared";
 import { plKey, plReadJson, plWrite } from "@/lib/pipeline-storage";
 import { ModalPortal } from "@/components/modal-portal";
@@ -329,6 +329,10 @@ export function Board({ newPrefill, onPrefillDone }: { newPrefill?: NewProjectPr
       status={<StatusPill engine={engine} />}
       actions={
         <>
+          <Link href="/pipeline/my-work" className="h-11 w-11 sm:w-auto sm:px-3 inline-flex items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="My work">
+            <Inbox size={16} />
+            <span className="hidden lg:inline">My work</span>
+          </Link>
           <Link href="/pipeline?view=archived" className="h-11 w-11 sm:w-auto sm:px-3 inline-flex items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="Archived projects">
             <Archive size={16} />
             <span className="hidden lg:inline">Archived</span>

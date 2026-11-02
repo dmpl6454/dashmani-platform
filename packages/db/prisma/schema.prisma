@@ -2214,16 +2214,18 @@ model PipelineProject {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  linkedClient Client?               @relation(fields: [linkedClientId], references: [id], onDelete: SetNull)
-  owner        User                  @relation("PipelineOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  createdBy    User                  @relation("PipelineCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  phase        PipelinePhase         @relation(fields: [phaseId], references: [id], onDelete: Restrict)
+  linkedClient Client?                  @relation(fields: [linkedClientId], references: [id], onDelete: SetNull)
+  owner        User                     @relation("PipelineOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy    User                     @relation("PipelineCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  phase        PipelinePhase            @relation(fields: [phaseId], references: [id], onDelete: Restrict)
   participants PipelineParticipant[]
   messages     PipelineMessage[]
   emailOutbox  PipelineEmailOutbox[]
   versions     PipelineVersion[]
   reviews      PipelineReview[]
   deliverables PipelineDeliverable[]
+  comments     PipelineVersionComment[]
+  shoots       PipelineShoot[]
 
   @@unique([createdById, clientId])
   @@index([linkedClientId])
@@ -2337,18 +2339,26 @@ model PipelineEmailOutbox {
 /// One version of one piece of a project: video v1, v2…, caption v1…, thumbnail v1…
 /// `number` counts per (project, kind) and is assigned under the project row lock.
 model PipelineVersion {
-  id          String   @id @default(uuid())
-  projectId   String   @map("project_id")
-  kind        String   @db.VarChar(16) // video | caption | thumbnail | other
-  number      Int
-  label       String   @default("") @db.VarChar(120)
-  url         String?  @db.Text // a link to the file (≤ 2,048 chars, http/https only)
-  body        String   @default("") @db.Text // caption text (≤ 5,000 chars)
-  note        String   @default("") @db.VarChar(500)
-  createdById String   @map("created_by_id") // no FK (see above)
-  createdAt   DateTime @default(now()) @map("created_at")
+  id             String    @id @default(uuid())
+  projectId      String    @map("project_id")
+  kind           String    @db.VarChar(16) // video | caption | thumbnail | other
+  number         Int
+  label          String    @default("") @db.VarChar(120)
+  url            String?   @db.Text // a link to the file (≤ 2,048 chars, http/https only)
+  body           String    @default("") @db.Text // caption text (≤ 5,000 chars)
+  note           String    @default("") @db.VarChar(500)
+  /// Where the file came from and what we may do with it (2026-11-02, scripts/pipeline-work2-ddl.sql).
+  /// An embargo in the future or an expired licence blocks scheduling / publishing a page.
+  source         String    @default("") @db.VarChar(200) // creator / agency / own shoot
+  rights         String    @default("") @db.VarChar(20) // "" | owned | licensed | permission | unknown
+  licenceExpires DateTime? @map("licence_expires") @db.Date
+  embargoUntil   DateTime? @map("embargo_until")
+  usageNotes     String    @default("") @map("usage_notes") @db.VarChar(1000)
+  createdById    String    @map("created_by_id") // no FK (see above)
+  createdAt      DateTime  @default(now()) @map("created_at")
 
-  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project  PipelineProject          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  comments PipelineVersionComment[]
 
   @@unique([projectId, kind, number])
   @@map("pipeline_versions")
@@ -2402,6 +2412,55 @@ model PipelineDeliverable {
   @@index([projectId])
   @@index([assigneeId, status])
   @@map("pipeline_deliverables")
+}
+
+/// A review comment on one version, optionally at a point in the video (seconds from the start).
+model PipelineVersionComment {
+  id           String    @id @default(uuid())
+  projectId    String    @map("project_id")
+  versionId    String    @map("version_id")
+  authorId     String    @map("author_id") // no FK
+  atSeconds    Int?      @map("at_seconds")
+  body         String    @db.Text // ≤ 2,000 chars
+  resolvedAt   DateTime? @map("resolved_at")
+  resolvedById String?   @map("resolved_by_id") // no FK
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version PipelineVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId, createdAt])
+  @@index([projectId])
+  @@map("pipeline_version_comments")
+}
+
+/// A shoot assignment (paparazzi desk): who covers what, where, when, and whether the footage is in.
+/// Optionally tied to a Pipeline project (SetNull: deleting a project keeps the shoot record).
+model PipelineShoot {
+  id           String    @id @default(uuid())
+  projectId    String?   @map("project_id")
+  title        String    @db.VarChar(120)
+  event        String    @default("") @db.VarChar(200)
+  location     String    @default("") @db.VarChar(200)
+  callTime     DateTime  @map("call_time")
+  cameraId     String?   @map("camera_id") // no FK
+  contact      String    @default("") @db.VarChar(200)
+  requirements String    @default("") @db.Text // ≤ 2,000 chars
+  deadline     DateTime?
+  embargoUntil DateTime? @map("embargo_until")
+  status       String    @default("assigned") @db.VarChar(20) // assigned | on_site | uploaded | done | cancelled
+  uploadUrl    String?   @map("upload_url") @db.Text
+  rev          Int       @default(1)
+  createdById  String    @map("created_by_id") // no FK
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  project PipelineProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([callTime])
+  @@index([cameraId, status])
+  @@index([projectId])
+  @@map("pipeline_shoots")
 }
 
 // ============ CAMPAIGN BOOKING (self-serve "Start a campaign", client portal) ============

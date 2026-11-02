@@ -290,9 +290,17 @@ function VersionsSection({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [withUsage, setWithUsage] = useState(false);
+  const [usage, setUsage] = useState<UsageForm>(() => usageFromVersion());
 
   const save = async () => {
-    const input = { kind, url: url.trim() || null, body: kind === "caption" ? body : undefined, label: label.trim() || undefined };
+    const input = {
+      kind,
+      url: url.trim() || null,
+      body: kind === "caption" ? body : undefined,
+      label: label.trim() || undefined,
+      ...(withUsage ? usageToWire(usage) : {}),
+    };
     const parsed = W.addVersionSchema.safeParse(input);
     if (!parsed.success) return setErr(parsed.error.issues[0]?.message ?? "Check the details.");
     setBusy(true);
@@ -303,6 +311,8 @@ function VersionsSection({
       setUrl("");
       setBody("");
       setLabel("");
+      setUsage(usageFromVersion());
+      setWithUsage(false);
       onChanged();
     } catch (e) {
       setErr(describeError(e));
@@ -365,6 +375,13 @@ function VersionsSection({
             onChange={(e) => setLabel(e.target.value)}
             aria-label="Label"
           />
+          {withUsage ? (
+            <UsageFields value={usage} onChange={setUsage} />
+          ) : (
+            <button type="button" className="h-9 text-[12.5px] font-semibold text-indigo" onClick={() => setWithUsage(true)}>
+              Add usage &amp; rights (optional)
+            </button>
+          )}
           <div className="flex gap-2">
             <button type="button" className={btnPrimary} disabled={busy} onClick={() => void save()}>
               Save version
@@ -379,7 +396,7 @@ function VersionsSection({
       {work.versions.length === 0 && !open && <p className="text-[13.5px] text-ink-3">No versions yet.</p>}
       <ul className="space-y-2">
         {[...latest, ...(showAll ? older : [])].map((v) => (
-          <VersionRow key={v.id} v={v} isLatest={latestIds.has(v.id)} />
+          <VersionRow key={v.id} v={v} isLatest={latestIds.has(v.id)} readOnly={readOnly} onChanged={onChanged} />
         ))}
       </ul>
       {older.length > 0 && (
@@ -391,7 +408,150 @@ function VersionsSection({
   );
 }
 
-function VersionRow({ v, isLatest }: { v: W.PipelineVersionDto; isLatest: boolean }) {
+/** Usage facts as short badges; an active embargo or a lapsed licence is shown as a warning. */
+function UsageBadges({ v }: { v: W.PipelineVersionDto }) {
+  const today = toLocalInput(new Date().toISOString()).slice(0, 10);
+  const embargoed = v.embargoUntil && Date.parse(v.embargoUntil) > Date.now();
+  const expired = v.licenceExpires && v.licenceExpires < today;
+  if (!v.rights && !v.source && !v.licenceExpires && !v.embargoUntil) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11.5px]">
+      {v.rights && <span className="px-2 py-0.5 rounded-full bg-muted text-ink-2">{W.PIPELINE_RIGHTS_LABEL[v.rights]}</span>}
+      {v.source && <span className="px-2 py-0.5 rounded-full bg-muted text-ink-2 max-w-full truncate">Source: {v.source}</span>}
+      {v.embargoUntil && (
+        <span className={`px-2 py-0.5 rounded-full ${embargoed ? "bg-attention-bg text-attention font-semibold" : "bg-muted text-ink-3"}`}>
+          {embargoed ? "Embargo until " : "Embargo ended "}
+          {when(v.embargoUntil)}
+        </span>
+      )}
+      {v.licenceExpires && (
+        <span className={`px-2 py-0.5 rounded-full ${expired ? "bg-danger-bg text-danger font-semibold" : "bg-muted text-ink-3"}`}>
+          {expired ? "Licence expired " : "Licence until "}
+          {v.licenceExpires}
+        </span>
+      )}
+    </div>
+  );
+}
+
+type UsageForm = { rights: string; source: string; licenceExpires: string; embargoUntil: string; usageNotes: string };
+const usageFromVersion = (v?: W.PipelineVersionDto): UsageForm => ({
+  rights: v?.rights ?? "",
+  source: v?.source ?? "",
+  licenceExpires: v?.licenceExpires ?? "",
+  embargoUntil: toLocalInput(v?.embargoUntil ?? null),
+  usageNotes: v?.usageNotes ?? "",
+});
+const usageToWire = (f: UsageForm) => ({
+  rights: f.rights as W.PipelineRights | "",
+  source: f.source.trim(),
+  licenceExpires: f.licenceExpires || null,
+  embargoUntil: fromLocalInput(f.embargoUntil),
+  usageNotes: f.usageNotes.trim(),
+});
+
+function UsageFields({ value, onChange }: { value: UsageForm; onChange: (f: UsageForm) => void }) {
+  const set = (k: keyof UsageForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+    onChange({ ...value, [k]: e.target.value });
+  return (
+    <div className="space-y-2">
+      <select className={inputCls} value={value.rights} onChange={set("rights")} aria-label="Rights">
+        <option value="">Rights: not set</option>
+        {W.PIPELINE_RIGHTS.map((r) => (
+          <option key={r} value={r}>
+            {W.PIPELINE_RIGHTS_LABEL[r]}
+          </option>
+        ))}
+      </select>
+      <input className={inputCls} placeholder="Source — creator, agency or our shoot" value={value.source} maxLength={W.PIPELINE_WORK_LIMITS.sourceMax} onChange={set("source")} aria-label="Source" />
+      <label className="block text-[12.5px] font-semibold text-ink-2">
+        Licence expires (last day it may be used)
+        <input type="date" className={`${inputCls} mt-1`} value={value.licenceExpires} onChange={set("licenceExpires")} />
+      </label>
+      <label className="block text-[12.5px] font-semibold text-ink-2">
+        Embargo — not before
+        <input type="datetime-local" className={`${inputCls} mt-1`} value={value.embargoUntil} onChange={set("embargoUntil")} />
+      </label>
+      <textarea
+        value={value.usageNotes}
+        onChange={set("usageNotes")}
+        maxLength={W.PIPELINE_WORK_LIMITS.usageNotesMax}
+        rows={2}
+        placeholder="Usage notes — where it may be used, exclusivity, credit line…"
+        aria-label="Usage notes"
+        className="w-full px-3 py-2 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
+      />
+    </div>
+  );
+}
+
+function VersionRow({
+  v,
+  isLatest,
+  readOnly,
+  onChanged,
+}: {
+  v: W.PipelineVersionDto;
+  isLatest: boolean;
+  readOnly: boolean;
+  onChanged: () => void;
+}) {
+  const [editUsage, setEditUsage] = useState(false);
+  const [usage, setUsage] = useState<UsageForm>(() => usageFromVersion(v));
+  const [showComments, setShowComments] = useState(v.comments.some((c) => !c.resolvedAt));
+  const [comment, setComment] = useState("");
+  const [at, setAt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const open = v.comments.filter((c) => !c.resolvedAt).length;
+
+  const saveUsage = async () => {
+    const parsed = W.editVersionUsageSchema.safeParse(usageToWire(usage));
+    if (!parsed.success) return setErr(parsed.error.issues[0]?.message ?? "Check the details.");
+    setBusy(true);
+    setErr(null);
+    try {
+      await plApi.editVersionUsage(v.id, parsed.data);
+      setEditUsage(false);
+      onChanged();
+    } catch (e) {
+      setErr(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const postComment = async () => {
+    const atSeconds = at.trim() ? W.parseTimestamp(at) : null;
+    if (at.trim() && atSeconds === null) return setErr("Write the time as 1:23 (minutes:seconds).");
+    if (!comment.trim()) return setErr("Write a comment.");
+    setBusy(true);
+    setErr(null);
+    try {
+      await plApi.addComment(v.id, { body: comment.trim(), atSeconds });
+      setComment("");
+      setAt("");
+      onChanged();
+    } catch (e) {
+      setErr(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleResolved = async (c: W.PipelineCommentDto) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await plApi.resolveComment(c.id, !c.resolvedAt);
+      onChanged();
+    } catch (e) {
+      setErr(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <li className={`rounded-xl border px-3 py-2 min-w-0 ${isLatest ? "border-border" : "border-rule opacity-75"}`}>
       <div className="flex items-center gap-2 min-w-0">
@@ -412,9 +572,101 @@ function VersionRow({ v, isLatest }: { v: W.PipelineVersionDto; isLatest: boolea
         )}
       </div>
       {v.body && <p className="mt-1 text-[13px] text-ink-2 whitespace-pre-wrap break-words line-clamp-4">{v.body}</p>}
+      <UsageBadges v={v} />
+      {v.usageNotes && <p className="mt-1 text-[12.5px] text-ink-3 whitespace-pre-wrap break-words">{v.usageNotes}</p>}
       <p className="mt-1 text-[12px] text-ink-4">
         {v.createdBy.name} · {when(v.createdAt)}
       </p>
+
+      <div className="mt-1 flex flex-wrap gap-x-3">
+        <button type="button" className="h-9 text-[12.5px] font-semibold text-indigo" onClick={() => setShowComments((x) => !x)}>
+          {showComments ? "Hide comments" : v.comments.length ? `Comments · ${open} open` : "Comment"}
+        </button>
+        {!readOnly && !editUsage && (
+          <button type="button" className="h-9 text-[12.5px] font-semibold text-ink-3" onClick={() => setEditUsage(true)}>
+            Usage &amp; rights
+          </button>
+        )}
+      </div>
+
+      {editUsage && (
+        <div className="mt-2 space-y-2 rounded-xl border border-border p-2.5">
+          <UsageFields value={usage} onChange={setUsage} />
+          <div className="flex gap-2">
+            <button type="button" className={btnPrimary} disabled={busy} onClick={() => void saveUsage()}>
+              Save
+            </button>
+            <button
+              type="button"
+              className={btnGhost}
+              disabled={busy}
+              onClick={() => {
+                setUsage(usageFromVersion(v));
+                setEditUsage(false);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showComments && (
+        <div className="mt-1.5">
+          <ul className="space-y-1.5">
+            {v.comments.map((c) => (
+              <li key={c.id} className={`rounded-lg bg-muted/60 px-2.5 py-1.5 ${c.resolvedAt ? "opacity-60" : ""}`}>
+                <p className="text-[13px] text-ink break-words whitespace-pre-wrap">
+                  {c.atSeconds !== null && (
+                    <span className="mr-1.5 font-mono text-[12px] font-semibold text-indigo">{W.formatTimestamp(c.atSeconds)}</span>
+                  )}
+                  <span className={c.resolvedAt ? "line-through" : ""}>{c.body}</span>
+                </p>
+                <p className="mt-0.5 flex items-center gap-2 text-[11.5px] text-ink-4">
+                  <span className="min-w-0 truncate">
+                    {c.author.name} · {when(c.createdAt)}
+                    {c.resolvedBy ? ` · resolved by ${c.resolvedBy.name}` : ""}
+                  </span>
+                  {!readOnly && (
+                    <button type="button" className="ml-auto shrink-0 h-8 font-semibold text-indigo" disabled={busy} onClick={() => void toggleResolved(c)}>
+                      {c.resolvedAt ? "Reopen" : "Resolve"}
+                    </button>
+                  )}
+                </p>
+              </li>
+            ))}
+          </ul>
+          {!readOnly && (
+            <div className="mt-2 flex gap-2">
+              {(v.kind === "video" || v.kind === "other") && (
+                <input
+                  className="w-[84px] shrink-0 h-11 px-2.5 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
+                  placeholder="1:23"
+                  value={at}
+                  onChange={(e) => setAt(e.target.value)}
+                  aria-label="Time in the video (optional)"
+                  inputMode="numeric"
+                />
+              )}
+              <input
+                className="min-w-0 flex-1 h-11 px-3 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
+                placeholder="Add a comment"
+                value={comment}
+                maxLength={W.PIPELINE_WORK_LIMITS.commentMax}
+                onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void postComment();
+                }}
+                aria-label="Comment"
+              />
+              <button type="button" className={`${btnPrimary} shrink-0`} disabled={busy} onClick={() => void postComment()}>
+                Post
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <Err text={err} />
     </li>
   );
 }

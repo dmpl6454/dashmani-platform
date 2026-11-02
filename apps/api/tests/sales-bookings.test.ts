@@ -79,6 +79,35 @@ describe("Sales: campaign bookings", () => {
     expect(r2.body.error?.code ?? r2.body.code).toBe("BOOKING_EMPTY");
   });
 
+  it("shows the booking's creative and caption, with signed preview links for sales", async () => {
+    const b = await booking("Content", "approved", [item(1, "approved", 50_000), item(2, "approved", 40_000, { captionOverride: "Own words", hashtagsOverride: ["mine"] })], {
+      caption: "Watch the trailer", hashtags: ["filmy", "trailer"], userTags: ["filmyco"], collaborators: ["star"], superText: "OUT NOW", superTextStyle: "bold",
+    });
+    const media = await prisma.campaignMedia.create({
+      data: { clientId, bookingId: b.id, kind: "video", originalName: "trailer.mp4", bytes: BigInt(1000), durationMs: 15_000, width: 1080, height: 1920,
+        storageKey: `k-${b.id}`, ext: "mp4", uploadStatus: "complete", chunkSize: 1000, totalChunks: 1, renderStatus: "done" },
+    });
+    await prisma.campaignMedia.create({
+      data: { clientId, bookingId: b.id, kind: "image", originalName: "gone.jpg", bytes: BigInt(10), storageKey: `g-${b.id}`, ext: "jpg", uploadStatus: "complete", chunkSize: 10, totalChunks: 1, purgedAt: new Date() },
+    });
+
+    const res = await request(app).get(`/v1/sales/bookings/${b.id}`).set(auth(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ caption: "Watch the trailer", hashtags: ["filmy", "trailer"], userTags: ["filmyco"], collaborators: ["star"], superText: "OUT NOW", superTextStyle: "bold" });
+    expect(res.body.data.media).toEqual([expect.objectContaining({ id: media.id, kind: "video", role: "creative", durationMs: 15_000, width: 1080, height: 1920 })]);
+    const own = res.body.data.items.find((i: { accountName: string }) => i.accountName === "Account 2");
+    expect(own).toMatchObject({ captionOverride: "Own words", hashtagsOverride: ["mine"], superTextOverride: null });
+
+    const urls = await request(app).get(`/v1/sales/bookings/${b.id}/media-urls`).set(auth(token));
+    expect(urls.status).toBe(200);
+    expect(urls.body.data.media).toHaveLength(1); // the purged file is not offered
+    expect(urls.body.data.media[0].preview).toMatch(new RegExp(`^/v1/campaign-media/${media.id}/preview\\?exp=\\d+&sig=`));
+
+    expect((await request(app).get("/v1/sales/bookings/00000000-0000-0000-0000-000000000000/media-urls").set(auth(token))).status).toBe(404);
+    const other = await createTestUser({ roleNames: [] });
+    expect((await request(app).get(`/v1/sales/bookings/${b.id}/media-urls`).set(auth(generateToken(other.id, other.email, [])))).status).toBe(403);
+  });
+
   it("is a 404 for an unknown booking and needs sales access", async () => {
     expect((await request(app).get("/v1/sales/bookings/00000000-0000-0000-0000-000000000000").set(auth(token))).status).toBe(404);
     const other = await createTestUser({ roleNames: [] });

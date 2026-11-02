@@ -40,6 +40,7 @@ import * as recurring from "../services/sales/recurring.service";
 import * as payments from "../services/sales/payments.service";
 import { getSalesDashboard } from "../services/sales/dashboard.service";
 import { getBooking, listBookings } from "../services/sales/bookings.service";
+import { bookingMediaUrls } from "../services/campaign/media-urls.service";
 import { retryEInvoice } from "../services/sales/einvoice.service";
 import { renderCreditNotePdf, renderInvoicePdf } from "../services/sales/pdf.service";
 import { emailInvoice } from "../services/sales/invoice-email.service";
@@ -101,6 +102,8 @@ router.get("/sales/clients/:id/statement", ...view, asyncHandler(async (req, res
 // ── Campaign bookings (client self-serve, reviewed in the staff portal) — read-only here ──
 
 router.get("/sales/bookings", ...view, asyncHandler(async (req, res) => success(res, await listBookings({ stage: str(req.query.stage), q: str(req.query.q), clientId: str(req.query.clientId) }))));
+// Signed preview links for the booking's creative (the same ones the staff portal gets).
+router.get("/sales/bookings/:id/media-urls", ...view, asyncHandler(async (req, res) => success(res, await bookingMediaUrls(req.params.id))));
 router.get("/sales/bookings/:id", ...view, asyncHandler(async (req, res) => success(res, await getBooking(req.params.id))));
 
 // ── Quotes ──────────────────────────────────────────────────────────────────────

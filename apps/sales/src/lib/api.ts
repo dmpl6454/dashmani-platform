@@ -8,6 +8,8 @@ import type { StaffSession, StaffUser } from "./types";
 import { purgePipelineStorage } from "./pipeline-storage";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
+/** Absolute URL for a server-issued path that already starts with /v1 (signed media links). */
+export const apiAbsolute = (path: string) => `${API_URL.replace(/\/v1\/?$/, "")}${path}`;
 
 export const TOKEN_KEYS = {
   access: "accessToken",

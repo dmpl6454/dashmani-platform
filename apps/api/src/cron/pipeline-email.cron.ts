@@ -76,7 +76,8 @@ import {
   smtpConfigured,
   type EmailKind,
 } from "../services/pipeline/email-outbox";
-import { renderPipelineDigest, type DigestItem, type DigestMention } from "../services/pipeline/email-template";
+import { renderPipelineDigest, type DigestItem, type DigestMention, type DigestPage, type DigestShoot } from "../services/pipeline/email-template";
+import { pipelineWork as W } from "@dashmani/shared";
 import {
   MailPermanentError,
   MailTransportError,
@@ -164,7 +165,8 @@ export type EmailTickResult =
 interface OutboxRow {
   id: string;
   user_id: string;
-  project_id: string;
+  /** Null only for a "shoot" row about a shoot with no project. */
+  project_id: string | null;
   kind: EmailKind;
   payload: Record<string, unknown>;
   attempts: number;
@@ -508,11 +510,32 @@ interface UserState {
   name: string;
   active: boolean;
 }
+interface PageState {
+  id: string;
+  project_id: string;
+  platform: string;
+  destination: string;
+  status: string;
+  assignee_id: string | null;
+  created_by_id: string;
+  scheduled_at: Date | null;
+}
+interface ShootState {
+  id: string;
+  project_id: string | null;
+  title: string;
+  call_time: Date;
+  location: string;
+  status: string;
+  camera_id: string | null;
+}
 
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 async function readState(rows: OutboxRow[]) {
-  const pids = [...new Set(rows.map((r) => r.project_id))];
+  const pids = [...new Set(rows.flatMap((r) => (r.project_id ? [r.project_id] : [])))];
+  const pageIds = [...new Set(rows.flatMap((r) => (r.kind === "assigned" || r.kind === "published" ? strList(r.payload.refIds) : [])))];
+  const shootIds = [...new Set(rows.flatMap((r) => (r.kind === "shoot" ? strList(r.payload.refIds) : [])))];
   const uids = [...new Set(rows.map((r) => r.user_id))];
   const phaseIds = [...new Set(rows.flatMap((r) => (typeof r.payload.fromPhaseId === "string" ? [r.payload.fromPhaseId] : [])))];
   const mids = [...new Set(rows.flatMap((r) => (r.kind === "mention" ? strList(r.payload.messageIds) : [])))];
@@ -537,16 +560,34 @@ async function readState(rows: OutboxRow[]) {
   const users = await bg((db) => db.$queryRaw<UserState[]>`
     SELECT u.id, u.email, u.name, (u.status = 'ACTIVE' AND u.deleted_at IS NULL) AS active
       FROM users u WHERE u.id = ANY(${uids}::text[])`);
+  const pages = pageIds.length
+    ? await bg((db) => db.$queryRaw<PageState[]>`
+        SELECT d.id, d.project_id, d.platform, d.destination, d.status, d.assignee_id, d.created_by_id, d.scheduled_at
+          FROM pipeline_deliverables d WHERE d.id = ANY(${pageIds}::text[])`)
+    : [];
+  const shoots = shootIds.length
+    ? await bg((db) => db.$queryRaw<ShootState[]>`
+        SELECT s.id, s.project_id, s.title, s.call_time, s.location, s.status, s.camera_id
+          FROM pipeline_shoots s WHERE s.id = ANY(${shootIds}::text[])`)
+    : [];
   return {
     projects: new Map(projects.map((p) => [p.id, p])),
     messages: new Map(messages.map((m) => [m.id, m])),
     users: new Map(users.map((u) => [u.id, u])),
+    pages: new Map(pages.map((d) => [d.id, d])),
+    shoots: new Map(shoots.map((s) => [s.id, s])),
   };
+}
+
+function pageLabel(d: PageState): string {
+  return `${W.PIPELINE_PLATFORM_LABEL[d.platform as W.PipelineDeliverablePlatform] ?? d.platform} · ${d.destination}`;
 }
 
 type Resolved = { item: DigestItem } | { skip: string };
 
-const KIND_ORDER: Record<EmailKind, number> = { mention: 0, moved: 1, due_changed: 2, due_soon: 3 };
+const KIND_ORDER: Record<EmailKind, number> = {
+  mention: 0, assigned: 1, shoot: 2, published: 3, moved: 4, due_changed: 5, due_soon: 6,
+};
 
 function resolveRow(
   row: OutboxRow,
@@ -555,7 +596,22 @@ function resolveRow(
   today: string,
   nowMs: number,
 ): Resolved {
-  const p = state.projects.get(row.project_id);
+  if (nowMs - new Date(row.created_at).getTime() > STALE_ROW_MS) return { skip: "stale (older than a day)" };
+  const actorNamesOf = () => strList(row.payload.actorIds).map(nameOf);
+  if (row.kind === "shoot") {
+    // A shoot stands on its own (its project may be archived, deleted or none at all). It is
+    // still news only while it is assigned to this person and not finished or cancelled.
+    const list: DigestShoot[] = [];
+    for (const sid of strList(row.payload.refIds)) {
+      const s = state.shoots.get(sid);
+      if (!s || s.camera_id !== row.user_id || (s.status !== "assigned" && s.status !== "on_site")) continue;
+      list.push({ title: s.title, callTime: new Date(s.call_time), location: s.location });
+    }
+    if (list.length === 0) return { skip: "shoot reassigned, finished or cancelled" };
+    const proj = row.project_id ? state.projects.get(row.project_id) : undefined;
+    return { item: { kind: "shoot", projectId: row.project_id, projectTitle: proj?.title ?? "", actorNames: actorNamesOf(), shoots: list } };
+  }
+  const p = row.project_id ? state.projects.get(row.project_id) : undefined;
   if (!p || p.deleted) return { skip: "project deleted" };
   if (p.archived) return { skip: "project archived" };
   if (nowMs - new Date(row.created_at).getTime() > STALE_ROW_MS) return { skip: "stale (older than a day)" };
@@ -606,6 +662,27 @@ function resolveRow(
       }
       if (mentions.length === 0) return { skip: "mention deleted or removed" };
       return { item: { kind: "mention", projectId: p.id, projectTitle: p.title, mentions } };
+    }
+    case "assigned":
+    case "published": {
+      const pages: DigestPage[] = [];
+      for (const did of strList(row.payload.refIds)) {
+        const d = state.pages.get(did);
+        if (!d || d.project_id !== p.id) continue;
+        if (row.kind === "assigned") {
+          // Still yours and still to do.
+          if (d.assignee_id !== row.user_id || d.status === "published" || d.status === "cancelled") continue;
+          pages.push({ label: pageLabel(d), scheduledAt: d.scheduled_at ? new Date(d.scheduled_at) : null });
+        } else {
+          // Still live, and you still created it or are assigned to it.
+          if (d.status !== "published" || (d.created_by_id !== row.user_id && d.assignee_id !== row.user_id)) continue;
+          pages.push({ label: pageLabel(d) });
+        }
+      }
+      if (pages.length === 0) {
+        return { skip: row.kind === "assigned" ? "page reassigned, done or deleted" : "page no longer published" };
+      }
+      return { item: { kind: row.kind, projectId: p.id, projectTitle: p.title, actorNames: actorNamesOf(), pages } };
     }
     default:
       return { skip: "unknown kind" };

@@ -24,17 +24,11 @@ import { Prisma } from "./db";
 import { assertPickable, guarded, shootDto, type ShootRow, type WorkActor } from "./work.service";
 import { notifier } from "./notifier";
 import { pilotAllow } from "./messages.service";
+import { pipelineEmailOn } from "./email-outbox";
+import { istCallLabel } from "./notify";
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export { istCallLabel };
 
-/** "Mon 3 Nov, 4:30 pm IST" — absolute, so a bell row read days later is still true. */
-export function istCallLabel(d: Date): string {
-  const t = new Date(d.getTime() + 330 * 60_000);
-  const h = t.getUTCHours();
-  const mm = String(t.getUTCMinutes()).padStart(2, "0");
-  return `${DAYS[t.getUTCDay()]} ${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]}, ${h % 12 || 12}:${mm} ${h < 12 ? "am" : "pm"} IST`;
-}
 
 /** "X assigned you a shoot" for the camera person; the previous one's row is withdrawn. */
 async function notifyShoot(
@@ -54,6 +48,7 @@ async function notifyShoot(
     message: [`Call ${istCallLabel(s.callTime)}`, s.location].filter(Boolean).join(" · "),
     path: "/pipeline/shoots?view=mine",
     withdraw: previousCameraId && previousCameraId !== s.cameraId ? [previousCameraId] : undefined,
+    email: pipelineEmailOn(actor.settings),
   });
 }
 

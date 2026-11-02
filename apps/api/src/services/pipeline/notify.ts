@@ -29,7 +29,7 @@ import {
 import { pipelineStats } from "./stats";
 import { Prisma, type PipelineTx } from "./db";
 import { recipientFragment } from "./recipients";
-import { enqueueDueChangedEmails, enqueueMentionEmails, enqueueMovedEmails } from "./email-outbox";
+import { enqueueDueChangedEmails, enqueueMentionEmails, enqueueMovedEmails, enqueueWorkEmails, WORK_EMAIL_KINDS, type WorkEmailKind } from "./email-outbox";
 
 export const PLN_KINDS = [
   "messages", "mention", "reply", "added", "moved", "due_soon", "overdue", "due_changed",
@@ -538,6 +538,14 @@ async function onDueChanged(tx: PipelineTx, a: DueChangedArgs): Promise<void> {
   }
 }
 
+/** "Mon 3 Nov, 4:30 pm IST" — absolute, so a bell row or email read days later is still true. */
+export function istCallLabel(d: Date): string {
+  const t = new Date(d.getTime() + 330 * 60_000);
+  const h = t.getUTCHours();
+  const mm = String(t.getUTCMinutes()).padStart(2, "0");
+  return `${DAYS_SHORT[t.getUTCDay()]} ${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]}, ${h % 12 || 12}:${mm} ${h < 12 ? "am" : "pm"} IST`;
+}
+
 /** The path a work notice opens: the project's Work tab, or the shoot desk. */
 export function workPath(projectId: string | null): string {
   return projectId ? `/pipeline/${projectId}?tab=work` : "/pipeline/shoots?view=mine";
@@ -567,6 +575,16 @@ async function onWork(tx: PipelineTx, a: WorkNoticeArgs): Promise<void> {
      ORDER BY r.uid
     ${conflict}`;
   pipelineStats.notificationRows(n);
+  if (a.email && (WORK_EMAIL_KINDS as readonly string[]).includes(a.kind)) {
+    await enqueueWorkEmails(tx, {
+      kind: a.kind as WorkEmailKind,
+      projectId: a.projectId,
+      actorId: a.actorId,
+      allow: a.allow,
+      recipients: ids,
+      refId: a.key,
+    });
+  }
 }
 
 export const realNotifier: PipelineNotifier = {

@@ -65,11 +65,13 @@ export async function checkDisk(): Promise<{ verdict: DiskVerdict | null; alerte
         SELECT relname AS name, pg_total_relation_size(relid) AS bytes
         FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 5`
       .catch(() => [] as Array<{ name: string; bytes: bigint }>);
+    // DISK_ALERT_EMAILS (comma-separated) adds recipients beside the admin inbox.
+    const extra = (process.env.DISK_ALERT_EMAILS || "").split(",").map((e) => e.trim()).filter(Boolean);
     await notifyAdminByEmail("Server disk is getting full", [
       { label: "Free space", value: `${verdict.freeGb.toFixed(1)} GB (${verdict.freePct.toFixed(0)}%)` },
       { label: "Largest tables", value: tables.map((t) => `${t.name} ${(Number(t.bytes) / 1024 ** 3).toFixed(1)} GB`).join(", ") || "—" },
       { label: "Why it matters", value: "At 0 bytes Postgres stops and every portal fails (2026-10-25). Free space or enlarge the disk." },
-    ]).catch(() => undefined);
+    ], undefined, extra).catch(() => undefined);
     return { verdict, alerted: true };
   } catch (err) {
     console.error("[disk-watch] check failed:", err);

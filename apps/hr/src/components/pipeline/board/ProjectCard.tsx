@@ -88,6 +88,14 @@ export function CardFace({
               Due {dayMonthShort(card.dueDate, today)}
             </span>
           )}
+          {card.linkedClient && (
+            <span
+              title={`Client: ${card.linkedClient.companyName}`}
+              className="inline-flex items-center h-6 px-2 rounded-full bg-indigo-soft text-indigo-deep text-[11.5px] font-semibold max-w-full min-w-0"
+            >
+              <span className="truncate">{card.linkedClient.companyName || "Client"}</span>
+            </span>
+          )}
           {owner && !owner.active && (
             <span className="inline-flex items-center h-6 px-2 rounded-full bg-muted text-ink-3 text-[11.5px] font-semibold">
               Owner inactive

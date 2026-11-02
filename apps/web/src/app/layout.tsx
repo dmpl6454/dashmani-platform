@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from "next";
-import { Manrope } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
-// Self-hosted via next/font — no render-blocking external stylesheet.
-const manrope = Manrope({ subsets: ["latin"], variable: "--font-manrope", display: "swap", weight: "variable" });
+// Self-hosted from ./fonts (next/font/local), not next/font/google, so the build never
+// fetches from fonts.googleapis.com (a flaky fetch failed the 2026-11-02 deploy). Latin +
+// latin-ext variable cut, same axes as Google serves — see apps/jobs/src/app/fonts/README.md.
+const manrope = localFont({ src: "./fonts/manrope.woff2", variable: "--font-manrope", display: "swap", weight: "200 800" });
 
 const SITE_URL = "https://digitalsukoon.com";
 const DESCRIPTION =

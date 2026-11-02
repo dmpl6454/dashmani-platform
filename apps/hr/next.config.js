@@ -11,6 +11,10 @@ const securityHeaders = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // scripts/deploy.sh builds into NEXT_DIST_DIR=.next-build while pm2 keeps serving .next,
+  // then swaps the folders only after every build succeeded (a failed build must never
+  // take a running portal down). Unset everywhere else, so dev/CI use .next as before.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   transpilePackages: ["@dashmani/ui", "@dashmani/shared"],
   eslint: { ignoreDuringBuilds: true },
   poweredByHeader: false,

@@ -9,7 +9,8 @@
     "build": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env.local"],
-      "outputs": [".next/**", "dist/**", "out/**"]
+      "outputs": [".next-build/**", "dist/**", "out/**"],
+      "env": ["NEXT_DIST_DIR"]
     },
     "lint": {},
     "test": {

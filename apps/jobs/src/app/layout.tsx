@@ -1,11 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
-import {
-  DM_Sans,
-  Bricolage_Grotesque,
-  Instrument_Serif,
-  JetBrains_Mono,
-} from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { safeJsonLd } from "@/lib/jobs";
 import JobAlerts from "@/components/JobAlerts";
@@ -13,12 +8,16 @@ import NavLinks from "@/components/NavLinks";
 import PageBackdrop from "@/components/PageBackdrop";
 import BrandMark from "@/components/BrandMark";
 
-// Self-hosted via next/font — no render-blocking external stylesheet.
-const dmSans = DM_Sans({
-  subsets: ["latin"],
+// Self-hosted from ./fonts (next/font/local), NOT next/font/google: the Google variant
+// downloads from fonts.googleapis.com at BUILD time, and a flaky fetch there failed the
+// production deploy on 2026-11-02 (and CI regularly). Each .woff2 is the latin + latin-ext
+// cut Google serves, with the same axes — see fonts/README.md for how they were made.
+// The weight ranges match what the Google calls requested.
+const dmSans = localFont({
+  src: "./fonts/dm-sans.woff2",
   variable: "--font-dm-sans",
   display: "swap",
-  weight: ["400", "500", "600", "700"],
+  weight: "400 700",
 });
 
 // Loaded as the full variable font (not discrete static weights) — Bricolage
@@ -28,26 +27,29 @@ const dmSans = DM_Sans({
 // default, which reads as a much plainer bold grotesque at headline sizes.
 // The variable font lets the browser auto-select opsz per font-size (the CSS
 // default `font-optical-sizing: auto`), which is what the source design relies on.
-const bricolage = Bricolage_Grotesque({
-  subsets: ["latin"],
+const bricolage = localFont({
+  src: "./fonts/bricolage-grotesque.woff2",
   variable: "--font-bricolage",
   display: "swap",
-  weight: "variable",
+  weight: "200 800",
 });
 
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
+const instrumentSerif = localFont({
+  src: [
+    { path: "./fonts/instrument-serif-regular.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/instrument-serif-italic.woff2", weight: "400", style: "italic" },
+  ],
   variable: "--font-instrument",
-  weight: "400",
-  style: ["normal", "italic"],
   display: "swap",
+  // next/font/google sized the fallback against Times New Roman for serif families.
+  adjustFontFallback: "Times New Roman",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
+const jetbrainsMono = localFont({
+  src: "./fonts/jetbrains-mono.woff2",
   variable: "--font-jetbrains",
   display: "swap",
-  weight: ["400", "500", "700"],
+  weight: "400 700",
 });
 
 const SITE_URL = "https://jobs.digitalsukoon.com";

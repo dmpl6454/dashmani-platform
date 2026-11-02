@@ -40,7 +40,7 @@ const config: Config = {
         "card-lg": "0 8px 32px rgba(0,0,0,0.08)",
       },
       fontFamily: {
-        // CSS variables injected by next/font/google in layout.tsx
+        // CSS variables injected by next/font/local in layout.tsx
         sans: ["var(--font-dm-sans)", "system-ui", "sans-serif"],
         bricolage: ["var(--font-bricolage)", "sans-serif"],
         serif: ["var(--font-instrument)", '"Times New Roman"', "serif"],

@@ -2307,9 +2307,9 @@ model PipelineMessage {
 model PipelineEmailOutbox {
   id        String    @id @default(uuid())
   userId    String    @map("user_id")
-  projectId String    @map("project_id")
-  kind      String    @db.VarChar(16) // moved | mention | due_soon | due_changed
-  payload   Json      @default("{}") // moved {fromPhaseId, actorIds}; mention {messageIds ≤ 20}; due_changed {fromDue, actorIds}; due_soon {due}
+  projectId String?   @map("project_id") // null only for a "shoot" email about a shoot with no project (scripts/pipeline-email-work-ddl.sql)
+  kind      String    @db.VarChar(16) // moved | mention | due_soon | due_changed | assigned | published | shoot
+  payload   Json      @default("{}") // moved {fromPhaseId, actorIds}; mention {messageIds ≤ 20}; due_changed {fromDue, actorIds}; due_soon {due}; assigned/published/shoot {refIds ≤ 20, actorIds}
   status    String    @default("pending") @db.VarChar(12) // pending | sending | sent | skipped | failed
   attempts  Int       @default(0)
   sendAfter DateTime  @map("send_after")
@@ -2318,8 +2318,8 @@ model PipelineEmailOutbox {
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 
-  user    User            @relation("PipelineEmailRecipient", fields: [userId], references: [id], onDelete: Cascade)
-  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User             @relation("PipelineEmailRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  project PipelineProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([status, sendAfter])
   @@index([projectId])

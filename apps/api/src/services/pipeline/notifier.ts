@@ -167,6 +167,12 @@ export interface WorkNoticeArgs {
   path: string;
   /** Delete these users' rows for this kind and key first (e.g. the page's previous assignee). */
   withdraw?: string[];
+  /**
+   * Also queue the EMAIL (email-outbox.ts pipelineEmailOn(settings), resolved before the
+   * transaction). Only assigned / published / shoot email; review / reviewed already email
+   * through their thread line's mention.
+   */
+  email?: boolean;
 }
 
 export interface PipelineNotifier {

@@ -19,7 +19,7 @@
  * rendered — only the "Open in Pipeline" links, built from server ids + HR_APP_URL, are
  * clickable. The in-portal bell rows are unaffected.
  */
-import { DAYS_LONG, clip, dayMonth, hrUrl, projectPath, quotedTitle, shortDay } from "./notify";
+import { DAYS_LONG, clip, dayMonth, hrUrl, istCallLabel, projectPath, quotedTitle, shortDay, workPath } from "./notify";
 import { addDaysIST } from "@dashmani/shared";
 
 export interface DigestMention {
@@ -31,8 +31,27 @@ export interface DigestMention {
   snippet: string;
 }
 
+/** A page (deliverable) in an "assigned" or "published" item. Person-written: defanged. */
+export interface DigestPage {
+  /** "Instagram · @handle". */
+  label: string;
+  /** assigned: when it is scheduled to go live, or null. */
+  scheduledAt?: Date | null;
+}
+
+/** A shoot in a "shoot" item. */
+export interface DigestShoot {
+  title: string;
+  callTime: Date;
+  location: string;
+}
+
 export type DigestItem =
   | { kind: "mention"; projectId: string; projectTitle: string; mentions: DigestMention[] }
+  | { kind: "assigned"; projectId: string; projectTitle: string; actorNames: string[]; pages: DigestPage[] }
+  | { kind: "published"; projectId: string; projectTitle: string; actorNames: string[]; pages: DigestPage[] }
+  /** projectTitle is "" when the shoot is not linked to a project (projectId null). */
+  | { kind: "shoot"; projectId: string | null; projectTitle: string; actorNames: string[]; shoots: DigestShoot[] }
   | { kind: "moved"; projectId: string; projectTitle: string; actorNames: string[]; fromPhase: string; toPhase: string }
   | { kind: "due_soon"; projectId: string; projectTitle: string; due: string; phase: string }
   | { kind: "due_changed"; projectId: string; projectTitle: string; actorNames: string[]; fromDue: string | null; toDue: string | null };
@@ -106,6 +125,18 @@ interface Rendered {
 }
 
 function render(item: DigestItem, today: string): Rendered {
+  if (item.kind === "shoot") {
+    const who = joinNames(item.actorNames);
+    const n = item.shoots.length;
+    return {
+      headline: n === 1 ? `${who} assigned you a shoot: ${item.shoots[0].title}` : `${who} assigned you ${n} shoots`,
+      details: item.shoots.map((sh) =>
+        [n === 1 ? null : sh.title, `Call ${istCallLabel(sh.callTime)}`, sh.location || null].filter(Boolean).join(" · "),
+      ),
+      url: hrUrl(workPath(null)),
+      extraLinks: [],
+    };
+  }
   const qt = quotedTitle(item.projectTitle);
   const projectUrl = hrUrl(projectPath(item.projectId));
   switch (item.kind) {
@@ -154,8 +185,30 @@ function render(item: DigestItem, today: string): Rendered {
       if (!who) details.push(`Changed by ${joinNames(item.actorNames)}`);
       return { headline, details, url: projectUrl, extraLinks: [] };
     }
+    case "assigned": {
+      const who = joinNames(item.actorNames);
+      const n = item.pages.length;
+      return {
+        headline: n === 1 ? `${who} assigned you a page in ${qt}` : `${who} assigned you ${n} pages in ${qt}`,
+        details: item.pages.map((pg) => (pg.scheduledAt ? `${pg.label} — goes live ${istCallLabel(pg.scheduledAt)}` : pg.label)),
+        url: hrUrl(workPath(item.projectId)),
+        extraLinks: [],
+      };
+    }
+    case "published": {
+      const who = joinNames(item.actorNames);
+      const n = item.pages.length;
+      return {
+        headline: n === 1 ? `${who} published ${qt}` : `${who} published ${qt} on ${n} pages`,
+        details: item.pages.map((pg) => `Live on ${pg.label}`),
+        url: hrUrl(workPath(item.projectId)),
+        extraLinks: [],
+      };
+    }
   }
 }
+
+const WORK_KINDS: ReadonlySet<DigestItem["kind"]> = new Set(["assigned", "published", "shoot"]);
 
 /**
  * Why this email came, one line per reason present. Following explains itself; a mention
@@ -163,7 +216,7 @@ function render(item: DigestItem, today: string): Rendered {
  * "unfollow to stop" advice never promises something it cannot do.
  */
 export function digestFooter(items: DigestItem[]): string[] {
-  const followed = new Set(items.filter((i) => i.kind !== "mention").map((i) => i.projectId));
+  const followed = new Set(items.filter((i) => i.kind !== "mention" && !WORK_KINDS.has(i.kind)).map((i) => i.projectId));
   const lines: string[] = [];
   if (followed.size === 1) {
     lines.push("You're receiving this because you follow this project in the Pipeline. Unfollow it there to stop these updates.");
@@ -172,6 +225,9 @@ export function digestFooter(items: DigestItem[]): string[] {
   }
   if (items.some((i) => i.kind === "mention")) {
     lines.push("You were @mentioned in a Pipeline message. Mention emails arrive even if you don't follow the project.");
+  }
+  if (items.some((i) => WORK_KINDS.has(i.kind))) {
+    lines.push("This is Pipeline work assigned to you, or a page you created or were assigned. These emails arrive even if you don't follow the project.");
   }
   return lines;
 }

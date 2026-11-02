@@ -29,6 +29,7 @@ import { lockProject, assertWritable, pickableByMode, type PipelineActor } from 
 import { pilotAllow, postMessage } from "./messages.service";
 import { notifier } from "./notifier";
 import { quotedTitle, workPath } from "./notify";
+import { pipelineEmailOn } from "./email-outbox";
 import type { PipelineDirectory } from "./access";
 import type { PipelineSettings } from "./settings";
 import type { PipelineDbClient, PipelineTx } from "./db";
@@ -730,6 +731,7 @@ async function notifyAssigned(
     message: pageLabel(d),
     path: workPath(d.projectId),
     withdraw: previousAssigneeId && previousAssigneeId !== d.assigneeId ? [previousAssigneeId] : undefined,
+    email: pipelineEmailOn(actor.settings),
   });
 }
 
@@ -828,6 +830,7 @@ export async function editDeliverable(
           title: `${actor.name} published ${quotedTitle(cur.projectTitle)}`,
           message: pageLabel(row),
           path: workPath(row.projectId),
+          email: pipelineEmailOn(actor.settings),
         });
       }
       return { row, wentLive };

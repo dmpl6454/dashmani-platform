@@ -4,7 +4,11 @@
  * The owner asked for an email when: the phase of a project you are part of changes
  * ("moved"); you are @mentioned ("mention"); a project's deadline is approaching
  * ("due_soon", the due cron's existing rule); a project's deadline changes, including
- * being removed ("due_changed").
+ * being removed ("due_changed"). And (2026-11-02) for the work notices that are not
+ * already emailed through a mention: a page assigned to you ("assigned"), a page you
+ * created or were assigned going live ("published"), a shoot assigned to you ("shoot").
+ * Those carry the page / shoot ids in `refIds`; a "shoot" row has a NULL project when the
+ * shoot is not linked to one (scripts/pipeline-email-work-ddl.sql).
  *
  * PERFORMANCE RULES (the whole reason this is an outbox):
  *   - NOTHING here sends mail. Each event writes ONE `INSERT … SELECT` into
@@ -45,8 +49,11 @@ import { isPipelineEmailSchemaOk } from "./self-check";
 import { pipelineStats } from "./stats";
 import type { PipelineSettings } from "./settings";
 
-export const EMAIL_KINDS = ["moved", "mention", "due_soon", "due_changed"] as const;
+export const EMAIL_KINDS = ["moved", "mention", "due_soon", "due_changed", "assigned", "published", "shoot"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
+/** The work-notice kinds that email (review / reviewed already email through their mention). */
+export const WORK_EMAIL_KINDS = ["assigned", "published", "shoot"] as const;
+export type WorkEmailKind = (typeof WORK_EMAIL_KINDS)[number];
 
 /** How long a new pending row waits before it may be sent (a later update keeps it). */
 export const EMAIL_SETTLE_MS: Readonly<Record<EmailKind, number>> = {
@@ -54,7 +61,15 @@ export const EMAIL_SETTLE_MS: Readonly<Record<EmailKind, number>> = {
   mention: 2 * 60_000,
   due_changed: 3 * 60_000,
   due_soon: 0,
+  // Long enough for a quick reassignment or an undo to land first; the worker re-checks
+  // that the page / shoot is still yours (and still live) at send time.
+  assigned: 2 * 60_000,
+  published: 2 * 60_000,
+  shoot: 2 * 60_000,
 };
+
+/** Page / shoot ids kept on one pending work row (the latest ones). */
+export const EMAIL_REF_IDS_MAX = 20;
 
 /** Mention message ids kept on one pending row (the latest ones). */
 export const EMAIL_MENTION_IDS_MAX = 20;
@@ -100,6 +115,7 @@ const FROM_KEYS = ["fromPhaseId", "fromDue"] as const;
 const ID_LIST_KEYS = [
   ["actorIds", EMAIL_ACTOR_IDS_MAX],
   ["messageIds", EMAIL_MENTION_IDS_MAX],
+  ["refIds", EMAIL_REF_IDS_MAX],
 ] as const;
 
 /** The union of two jsonb string arrays, first occurrence wins, the latest `cap` kept, oldest first. */
@@ -126,6 +142,7 @@ function unionIds(older: Prisma.Sql, newer: Prisma.Sql, key: string, cap: number
  *   due_changed  {fromDue, actorIds}      → the first fromDue, all actors (≤ 5)
  *   mention      {messageIds}             → every message (the latest 20)
  *   due_soon     {due}                    → the newer due date
+ *   assigned / published / shoot {refIds, actorIds} → every page / shoot (the latest 20), all actors
  */
 export function mergePayloadSql(older: Prisma.Sql, newer: Prisma.Sql): Prisma.Sql {
   const parts: Prisma.Sql[] = [Prisma.sql`${newer}`];
@@ -215,6 +232,32 @@ export function enqueueMovedEmails(tx: PipelineTx, e: ParticipantEvent & { fromP
 /** A due-date change; `fromDue` is the date before THIS change (`YYYY-MM-DD` or null). */
 export function enqueueDueChangedEmails(tx: PipelineTx, e: ParticipantEvent & { fromDue: string | null }): Promise<number> {
   return enqueueForParticipants(tx, "due_changed", e, { fromDue: e.fromDue, actorIds: [e.actorId] });
+}
+
+/**
+ * A work notice's email (assigned / published / shoot): one row per recipient, coalescing
+ * per (recipient, project, kind) like every other kind — so three pages assigned in a minute
+ * are one email. A shoot with no project has a NULL project_id: such rows never conflict
+ * (NULLs are distinct in the unique index), each is its own email.
+ */
+export async function enqueueWorkEmails(
+  tx: PipelineTx,
+  e: { kind: WorkEmailKind; projectId: string | null; actorId: string; allow: string[] | null; recipients: string[]; refId: string },
+): Promise<number> {
+  const ids = [...new Set(e.recipients)].sort();
+  if (ids.length === 0) return 0;
+  const payload = JSON.stringify({ refIds: [e.refId], actorIds: [e.actorId] });
+  const n = await tx.$executeRaw`
+    INSERT INTO pipeline_email_outbox AS o ${INSERT_COLUMNS}
+    SELECT gen_random_uuid()::text, r.uid, ${e.projectId}::text, ${e.kind}, ${payload}::jsonb,
+           'pending', 0, ${settleSql(e.kind)}, ${NOW}, ${NOW}
+      FROM unnest(${ids}::text[]) AS r(uid)
+      JOIN users u ON u.id = r.uid
+     WHERE ${recipientFragment(Prisma.sql`r.uid`, e.actorId, e.allow)}
+     ORDER BY r.uid
+    ${ON_PENDING_CONFLICT}`;
+  pipelineStats.emailQueued(n);
+  return n;
 }
 
 /** Delivered mentions of one message (the caller already dropped the author). */

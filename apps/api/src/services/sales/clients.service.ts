@@ -70,18 +70,64 @@ export async function getSalesClient(id: string) {
   return { ...client, counts: { quotes, orders, invoices }, outstandingPaise: outstanding.get(id) ?? 0 };
 }
 
+const EMAIL_IN_USE = "This email already signs in to the client portal (as a client or a team login)";
+
 export async function createSalesClient(
-  input: { companyName: string; contactName: string; email: string; phone?: string | null },
+  input: { companyName: string; contactName: string; email: string; phone?: string | null; billing?: ClientBillingProfileInput | null },
   actorId: string,
 ) {
-  if (await team.emailInUse(input.email)) throw new AppError(409, "EMAIL_EXISTS", "This email already signs in to the client portal (as a client or a team login)");
+  if (await team.emailInUse(input.email)) throw new AppError(409, "EMAIL_EXISTS", EMAIL_IN_USE);
   const passwordHash = await hash(crypto.randomBytes(32).toString("hex"), 12);
-  const client = await prisma.client.create({
-    data: { companyName: input.companyName, contactName: input.contactName, email: input.email, phone: input.phone ?? null, passwordHash, status: "ACTIVE" },
-    select: clientSelect,
+  const client = await prisma.$transaction(async (tx) => {
+    const created = await tx.client.create({
+      data: { companyName: input.companyName, contactName: input.contactName, email: input.email, phone: input.phone ?? null, passwordHash, status: "ACTIVE" },
+      select: { id: true },
+    });
+    await logSalesEvent(tx, { entityType: "client", entityId: created.id, actorId, action: "client_created" });
+    if (input.billing) {
+      const b = input.billing;
+      await tx.clientBillingProfile.create({ data: { clientId: created.id, ...b, gstin: b.gstin ?? null, pan: b.pan ?? null } });
+      await logSalesEvent(tx, { entityType: "client", entityId: created.id, actorId, action: "billing_profile_saved" });
+    }
+    return tx.client.findUniqueOrThrow({ where: { id: created.id }, select: clientSelect });
   });
-  await logSalesEvent(prisma, { entityType: "client", entityId: client.id, actorId, action: "client_created" });
   return { ...client, counts: { quotes: 0, orders: 0, invoices: 0 }, outstandingPaise: 0 };
+}
+
+/** Company name, contact person and phone. Never the email — see changeSalesClientEmail. */
+export async function updateSalesClient(
+  id: string,
+  input: { companyName?: string; contactName?: string; phone?: string | null },
+  actorId: string,
+) {
+  const existing = await prisma.client.findUnique({ where: { id }, select: { id: true } });
+  if (!existing) throw new AppError(404, "NOT_FOUND", "Client not found");
+  const data: { companyName?: string; contactName?: string; phone?: string | null } = {};
+  if (input.companyName !== undefined) data.companyName = input.companyName;
+  if (input.contactName !== undefined) data.contactName = input.contactName;
+  if (input.phone !== undefined) data.phone = input.phone ?? null;
+  await prisma.client.update({ where: { id }, data });
+  await logSalesEvent(prisma, { entityType: "client", entityId: id, actorId, action: "client_updated", note: Object.keys(data).join(", ") });
+  return getSalesClient(id);
+}
+
+/**
+ * The client row's email is the OWNER'S portal sign-in, so changing it moves the login: whoever
+ * controls the new address can reset the password. Sales admins only (route), the new address
+ * must be free across owners and team logins, and the owner's refresh tokens are revoked so a
+ * session opened under the old address does not outlive the change.
+ */
+export async function changeSalesClientEmail(id: string, email: string, actorId: string) {
+  const existing = await prisma.client.findUnique({ where: { id }, select: { id: true, email: true } });
+  if (!existing) throw new AppError(404, "NOT_FOUND", "Client not found");
+  if (existing.email.toLowerCase() === email.toLowerCase()) return getSalesClient(id);
+  if (await team.emailInUse(email)) throw new AppError(409, "EMAIL_EXISTS", EMAIL_IN_USE);
+  await prisma.$transaction(async (tx) => {
+    await tx.client.update({ where: { id }, data: { email } });
+    await tx.clientRefreshToken.deleteMany({ where: { clientId: id, clientUserId: null } });
+    await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "client_email_changed", note: `${existing.email} → ${email}` });
+  });
+  return getSalesClient(id);
 }
 
 export async function upsertClientBilling(clientId: string, input: ClientBillingProfileInput, actorId: string) {

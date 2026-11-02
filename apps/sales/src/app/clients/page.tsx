@@ -2,51 +2,18 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useClients } from "@/lib/hooks";
-import { apiFetch } from "@/lib/api";
-import { errorSentence } from "@/lib/messages";
-import { Empty, Field, LoadError, Loading, Money, PageHead, Toast } from "@/components/sales-ui";
+import { Empty, LoadError, Loading, Money, PageHead } from "@/components/sales-ui";
 
 export default function ClientsPage() {
   const [q, setQ] = useState("");
   const { data, error, isLoading, mutate } = useClients(q.trim() || undefined);
-  const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ companyName: "", contactName: "", email: "", phone: "" });
-  const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
-
-  async function create(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      await apiFetch("/sales/clients", { method: "POST", body: JSON.stringify({ ...form, phone: form.phone || null }) });
-      setForm({ companyName: "", contactName: "", email: "", phone: "" });
-      setAdding(false);
-      await mutate();
-      setToast({ message: "Client added.", tone: "ok" });
-    } catch (err) {
-      setToast({ message: errorSentence(err), tone: "err" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <>
       <PageHead kicker={data ? `${data.length} clients` : "Clients"} title="Clients">
-        <button type="button" className="btn" onClick={() => setAdding((a) => !a)}>{adding ? "Close" : "Add client"}</button>
+        <Link href="/clients/new" className="btn">Add client</Link>
       </PageHead>
-      {adding && (
-        <form onSubmit={create} className="card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4 items-end">
-          <Field label="Company"><input className="input" required value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} /></Field>
-          <Field label="Contact person"><input className="input" required value={form.contactName} onChange={(e) => setForm({ ...form, contactName: e.target.value })} /></Field>
-          <Field label="Email"><input className="input" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label="Phone"><input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-          <button type="submit" className="btn" disabled={busy}>{busy ? "Adding…" : "Add"}</button>
-          <p className="text-xs text-ink-4 sm:col-span-2 lg:col-span-5">Adds the client for quotes and invoices. It does not give them a portal login — they can claim the account later through an invite.</p>
-        </form>
-      )}
       <div className="card p-3 mb-4"><input className="input" placeholder="Search company, contact, email or legal name" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-      {error ? <LoadError error={error} retry={() => mutate()} /> : isLoading && !data ? <Loading /> : !data?.length ? <Empty title="No clients match." /> : (
+      {error ? <LoadError error={error} retry={() => mutate()} /> : isLoading && !data ? <Loading /> : !data?.length ? <Empty title={q.trim() ? "No clients match." : "No clients yet."} action={<Link href="/clients/new" className="btn">Add client</Link>} /> : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-3">Client</th><th className="p-3">Contact</th><th className="p-3">GST</th><th className="p-3 text-right">Outstanding</th></tr></thead>
@@ -63,7 +30,6 @@ export default function ClientsPage() {
           </table>
         </div>
       )}
-      {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>
   );
 }

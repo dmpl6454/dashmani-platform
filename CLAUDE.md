@@ -206,7 +206,7 @@ Pushing to `main` automatically deploys to production via GitHub Actions (`.gith
 - The static exports (web, creators, sales) are unchanged: nginx serves their `out/`, which the build replaces only at its final export step.
 
 **Rules.**
-- ⚠️ `turbo.json` declares `env: ["NEXT_DIST_DIR"]`. Turbo 2 passes only declared env vars to tasks, and the declaration also keeps a `.next-build` build and a `.next` build in separate cache entries. `.next-build/**` is in `outputs` so cache hits restore it.
+- ⚠️ `turbo.json` declares `env: ["NEXT_DIST_DIR"]`. Turbo 2 passes only declared env vars to tasks, and the declaration also keeps a `.next-build` build and a `.next` build in separate cache entries. `.next-build/**` is in `outputs` so cache hits restore it. ⚠️ `.next/**` is deliberately NOT an output: during a deploy `.next` is the folder pm2 is SERVING, so caching it would store the live build and a later cache hit would write those old files over a running portal. Static exports keep `out/**`; dev/CI builds into `.next` are simply not cached.
 - ⚠️ Each served app's `tsconfig.json` includes `.next-build/types/**/*.ts`. Without it, `next build` with a custom `distDir` REWRITES `tsconfig.json` on the box: a tracked file changes on every deploy and Turbo's hash moves with it.
 - A manual build on the box without `NEXT_DIST_DIR` (the repair recipes in the troubleshooting table) still builds straight into `.next`, as before. That portal serves errors until the build finishes and the app is restarted.
 - The first deploy that changes `deploy.sh` runs the OLD copy: bash keeps reading the original file after `git reset --hard` replaces it.

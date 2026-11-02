@@ -73,6 +73,8 @@ import {
   getWork,
   requestReview,
   editVersionUsage,
+  startUpload,
+  versionFileUrl,
   addComment,
   resolveComment,
   type WorkActor,
@@ -425,6 +427,27 @@ router.post(
   pv(V.projectParamsSchema, "params"),
   pv(WK.addVersionSchema),
   asyncHandler(async (req: Request, res: Response) => ok(res, await addVersion(await workActorOf(req), req.params.id, req.body), 201)),
+);
+
+// POST /pipeline/projects/:id/uploads — a signed PUT URL; the browser sends the file to R2 itself
+router.post(
+  "/pipeline/projects/:id/uploads",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(WK.startUploadSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await startUpload(await workActorOf(req), req.params.id, req.body), 201)),
+);
+
+// GET /pipeline/versions/:vid/file?download=1 — a short-lived link to the uploaded file
+router.get(
+  "/pipeline/versions/:vid/file",
+  ...G,
+  pv(WK.versionParamsSchema, "params"),
+  pv(WK.versionFileQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    return ok(res, await versionFileUrl(req.params.vid, req.query.download === "1"));
+  }),
 );
 
 // POST /pipeline/projects/:id/reviews

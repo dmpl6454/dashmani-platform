@@ -93,7 +93,48 @@ export const PIPELINE_WORK_LIMITS = {
   shootFieldMax: 200,
   shootRequirementsMax: 2000,
   shootsListMax: 200,
+  fileNameMax: 200,
 } as const;
+
+// ── File uploads (Cloudflare R2, 2026-11-02) ─────────────────────────────────────────
+// The browser PUTs the file straight to R2 with a short-lived signed URL; the API never holds
+// the bytes (the 49 GB box filled up on 2026-10-25). A version stores the object key; the API
+// checks the stored object's size and type before it accepts the version.
+
+const MB = 1024 * 1024;
+/** Per kind: the file types allowed and the largest size. A caption is text, never a file. */
+export const PIPELINE_UPLOAD_RULES: Record<Exclude<PipelineVersionKind, "caption">, { types: readonly string[]; maxBytes: number }> = {
+  // R2 takes a single PUT of up to 5 GiB; 4 GiB leaves room and covers a long 4K reel.
+  video: { types: ["video/mp4", "video/quicktime", "video/webm"], maxBytes: 4096 * MB },
+  thumbnail: { types: ["image/jpeg", "image/png", "image/webp"], maxBytes: 50 * MB },
+  other: {
+    types: [
+      "video/mp4", "video/quicktime", "video/webm",
+      "image/jpeg", "image/png", "image/webp", "image/gif",
+      "audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4",
+      "application/pdf", "application/zip",
+    ],
+    maxBytes: 1024 * MB,
+  },
+};
+
+/** The kinds a file can be uploaded for. */
+export const PIPELINE_UPLOAD_KINDS = ["video", "thumbnail", "other"] as const;
+export type PipelineUploadKind = (typeof PIPELINE_UPLOAD_KINDS)[number];
+
+/** An uploaded object's key: pipeline/<projectId>/<random>. Anything else is refused. */
+export const PIPELINE_FILE_KEY_RE = /^pipeline\/[0-9a-f-]{36}\/[A-Za-z0-9_-]{32}$/;
+
+export function uploadRuleFor(kind: string): { types: readonly string[]; maxBytes: number } | null {
+  return kind === "video" || kind === "thumbnail" || kind === "other" ? PIPELINE_UPLOAD_RULES[kind] : null;
+}
+
+/** "1.2 GB" / "340 MB" / "12 KB" — for messages and the version row. */
+export function formatBytes(n: number): string {
+  if (n >= 1024 * MB) return `${(n / (1024 * MB)).toFixed(1)} GB`;
+  if (n >= MB) return `${Math.round(n / MB)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
 
 export const PIPELINE_RIGHTS = ["owned", "licensed", "permission", "unknown"] as const;
 export type PipelineRights = (typeof PIPELINE_RIGHTS)[number];
@@ -170,20 +211,53 @@ export const editVersionUsageSchema = z
   .refine((v) => Object.keys(v).length > 0, "Nothing to change");
 export type EditVersionUsageInput = z.infer<typeof editVersionUsageSchema>;
 
+const fileKey = z.string().max(120).regex(PIPELINE_FILE_KEY_RE, "Not an uploaded file");
+
+export const startUploadSchema = z
+  .object({
+    kind: z.enum(PIPELINE_UPLOAD_KINDS),
+    fileName: line(PIPELINE_WORK_LIMITS.fileNameMax).pipe(z.string().min(1, "The file needs a name")),
+    contentType: z.string().max(100),
+    size: z.number().int().positive(),
+  })
+  .superRefine((v, ctx) => {
+    const rule = PIPELINE_UPLOAD_RULES[v.kind];
+    if (!rule.types.includes(v.contentType)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["contentType"], message: "This type of file can't be uploaded here" });
+    }
+    if (v.size > rule.maxBytes) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["size"], message: `The file is too big (the most is ${formatBytes(rule.maxBytes)})` });
+    }
+  });
+export type StartUploadInput = z.infer<typeof startUploadSchema>;
+
+export interface PipelineUploadTicket {
+  key: string;
+  url: string;
+  method: "PUT";
+  headers: Record<string, string>;
+  expiresAt: string;
+}
+
 export const addVersionSchema = z
   .object({
     kind: z.enum(PIPELINE_VERSION_KINDS),
     label: line(PIPELINE_WORK_LIMITS.labelMax).optional(),
     url: pipelineWorkUrl.nullable().optional(),
+    fileKey: fileKey.optional(),
+    fileName: line(PIPELINE_WORK_LIMITS.fileNameMax).optional(),
     body: text(PIPELINE_WORK_LIMITS.bodyMax).optional(),
     note: line(PIPELINE_WORK_LIMITS.noteMax).optional(),
     ...usageFields,
   })
   .superRefine((v, ctx) => {
     if (v.kind === "caption") {
+      if (v.fileKey) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fileKey"], message: "A caption is text, not a file" });
       if (!v.body && !v.url) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body"], message: "Write the caption or add a link to it" });
-    } else if (!v.url) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "Add a link to the file" });
+    } else if (v.url && v.fileKey) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "Use either a link or an uploaded file, not both" });
+    } else if (!v.url && !v.fileKey) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "Add a link to the file or upload it" });
     }
   });
 export type AddVersionInput = z.infer<typeof addVersionSchema>;
@@ -249,6 +323,7 @@ export type EditDeliverableInput = z.infer<typeof editDeliverableSchema>;
 export const reviewParamsSchema = z.object({ rid: workId });
 export const deliverableParamsSchema = z.object({ did: workId });
 export const versionParamsSchema = z.object({ vid: workId });
+export const versionFileQuerySchema = z.object({ download: z.enum(["0", "1"]).optional() });
 export const commentParamsSchema = z.object({ cid: workId });
 export const shootParamsSchema = z.object({ sid: workId });
 
@@ -346,6 +421,8 @@ export interface PipelineVersionDto {
   number: number;
   label: string;
   url: string | null;
+  /** An uploaded file (R2). Open it with GET /pipeline/versions/:id/file. */
+  file: { name: string; size: number; type: string } | null;
   body: string;
   note: string;
   source: string;
@@ -460,6 +537,8 @@ export interface PipelineWorkDto {
   reviews: PipelineReviewDto[];
   deliverables: PipelineDeliverableDto[];
   approval: PipelineApprovalSummary;
+  /** Whether file uploads are switched on (R2 configured). Absent = off. */
+  uploads?: boolean;
 }
 
 export interface PipelineMyWorkProject {

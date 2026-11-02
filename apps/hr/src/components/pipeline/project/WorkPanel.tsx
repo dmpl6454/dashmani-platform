@@ -12,15 +12,16 @@
  * Data: GET /pipeline/projects/:id/work, fetched on mount and on focus (no polling) and after
  * every action here. Errors are worded by describeError — never a raw server message.
  */
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import useSWR from "swr";
-import { ExternalLink } from "lucide-react";
+import { Download, ExternalLink, Paperclip, Play } from "lucide-react";
 import { pipelineWork as W } from "@dashmani/shared";
 import { usePipeline } from "../provider";
 import { PL_SWR } from "@/lib/pipeline-swr";
 import { describeError, isApiError, plApi } from "../api";
 import { PeoplePicker } from "./PeoplePicker";
 import { Skeleton } from "../ui/Skeleton";
+import { UploadError, acceptFor, checkFile, fileTypeOf, openVersionFile, putToR2 } from "../upload";
 
 const inputCls =
   "w-full h-11 px-3 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo";
@@ -79,6 +80,11 @@ function Section({ title, children, right }: { title: string; children: React.Re
       {children}
     </section>
   );
+}
+
+/** Upload failures carry their own words; everything else goes through the API's wording. */
+function errText(e: unknown): string {
+  return e instanceof UploadError ? e.message : describeError(e);
 }
 
 function Err({ text }: { text: string | null }) {
@@ -292,31 +298,81 @@ function VersionsSection({
   const [showAll, setShowAll] = useState(false);
   const [withUsage, setWithUsage] = useState(false);
   const [usage, setUsage] = useState<UsageForm>(() => usageFromVersion());
+  // Uploads (R2): offered when the API says they are switched on, for anything but a caption.
+  const canUpload = work.uploads === true && kind !== "caption";
+  const [source, setSource] = useState<"file" | "link">("file");
+  const useFile = canUpload && source === "file";
+  const [file, setFile] = useState<File | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Leaving the page mid-upload loses the upload: say so.
+  useEffect(() => {
+    if (progress === null) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [progress]);
+
+  const reset = () => {
+    setOpen(false);
+    setUrl("");
+    setBody("");
+    setLabel("");
+    setFile(null);
+    setUsage(usageFromVersion());
+    setWithUsage(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const save = async () => {
-    const input = {
+    if (useFile && !file) return setErr("Choose a file to upload.");
+    if (useFile && file) {
+      const bad = checkFile(kind, file);
+      if (bad) return setErr(bad);
+    }
+    const draft = (fileKey?: string) => ({
       kind,
-      url: url.trim() || null,
+      url: useFile ? null : url.trim() || null,
+      fileKey,
+      fileName: fileKey && file ? file.name.slice(0, W.PIPELINE_WORK_LIMITS.fileNameMax) : undefined,
       body: kind === "caption" ? body : undefined,
       label: label.trim() || undefined,
       ...(withUsage ? usageToWire(usage) : {}),
-    };
-    const parsed = W.addVersionSchema.safeParse(input);
-    if (!parsed.success) return setErr(parsed.error.issues[0]?.message ?? "Check the details.");
+    });
+    // Check every other field BEFORE spending an upload on it: the real key only exists after
+    // the upload, so the check stands in a well-formed key under this project.
+    const pre = W.addVersionSchema.safeParse(draft(useFile ? `pipeline/${projectId}/${"0".repeat(32)}` : undefined));
+    if (!pre.success) return setErr(pre.error.issues[0]?.message ?? "Check the details.");
     setBusy(true);
     setErr(null);
     try {
-      await plApi.addVersion(projectId, parsed.data);
-      setOpen(false);
-      setUrl("");
-      setBody("");
-      setLabel("");
-      setUsage(usageFromVersion());
-      setWithUsage(false);
+      let wire: W.AddVersionInput = pre.data;
+      if (useFile && file) {
+        const ticket = await plApi.startUpload(projectId, {
+          kind: kind as W.PipelineUploadKind,
+          fileName: file.name.slice(0, W.PIPELINE_WORK_LIMITS.fileNameMax),
+          contentType: fileTypeOf(file),
+          size: file.size,
+        });
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        setProgress(0);
+        await putToR2(ticket, file, setProgress, ctrl.signal);
+        wire = W.addVersionSchema.parse(draft(ticket.key));
+      }
+      await plApi.addVersion(projectId, wire);
+      reset();
       onChanged();
     } catch (e) {
-      setErr(describeError(e));
+      setErr(errText(e));
     } finally {
+      abortRef.current = null;
+      setProgress(null);
       setBusy(false);
     }
   };
@@ -357,16 +413,68 @@ function VersionsSection({
               className="w-full px-3 py-2 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
             />
           )}
-          <input
-            className={inputCls}
-            type="url"
-            inputMode="url"
-            placeholder={kind === "caption" ? "Link (optional)" : "Link to the file — NAS, Drive…"}
-            value={url}
-            maxLength={W.PIPELINE_WORK_LIMITS.urlMax}
-            onChange={(e) => setUrl(e.target.value)}
-            aria-label="Link to the file"
-          />
+          {canUpload && (
+            <div className="flex gap-1.5" role="group" aria-label="Where the file is">
+              {(["file", "link"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={source === s}
+                  disabled={busy}
+                  onClick={() => setSource(s)}
+                  className={`h-9 px-3 rounded-lg text-[12.5px] font-semibold border ${
+                    source === s ? "border-indigo bg-indigo-soft text-indigo" : "border-border text-ink-3"
+                  }`}
+                >
+                  {s === "file" ? "Upload a file" : "Paste a link"}
+                </button>
+              ))}
+            </div>
+          )}
+          {useFile ? (
+            <div className="space-y-1.5">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={acceptFor(kind)}
+                disabled={busy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  setFile(f);
+                  setErr(f ? checkFile(kind, f) : null);
+                }}
+                aria-label="File to upload"
+                className="block w-full max-w-full text-[13px] text-ink-2 file:mr-3 file:h-9 file:px-3 file:rounded-lg file:border-0 file:bg-muted file:text-[12.5px] file:font-semibold file:text-ink"
+              />
+              {file && (
+                <p className="text-[12.5px] text-ink-3 break-all">
+                  {file.name} · {W.formatBytes(file.size)}
+                </p>
+              )}
+              {progress !== null && (
+                <div className="flex items-center gap-2" role="status" aria-live="polite">
+                  <div className="h-2 flex-1 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full bg-indigo transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} />
+                  </div>
+                  <span className="text-[12px] text-ink-3 tabular-nums w-10 text-right">{Math.round(progress * 100)}%</span>
+                  <button type="button" className="h-8 px-2 text-[12.5px] font-semibold text-danger" onClick={() => abortRef.current?.abort()}>
+                    Cancel upload
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <input
+              className={inputCls}
+              type="url"
+              inputMode="url"
+              placeholder={kind === "caption" ? "Link (optional)" : "Link to the file — NAS, Drive…"}
+              value={url}
+              maxLength={W.PIPELINE_WORK_LIMITS.urlMax}
+              onChange={(e) => setUrl(e.target.value)}
+              aria-label="Link to the file"
+            />
+          )}
           <input
             className={inputCls}
             placeholder="Label (optional) — e.g. 9:16 cut"
@@ -384,7 +492,7 @@ function VersionsSection({
           )}
           <div className="flex gap-2">
             <button type="button" className={btnPrimary} disabled={busy} onClick={() => void save()}>
-              Save version
+              {progress !== null ? "Uploading…" : useFile ? "Upload & save" : "Save version"}
             </button>
             <button type="button" className={btnGhost} disabled={busy} onClick={() => setOpen(false)}>
               Cancel
@@ -505,6 +613,15 @@ function VersionRow({
   const [err, setErr] = useState<string | null>(null);
   const open = v.comments.filter((c) => !c.resolvedAt).length;
 
+  const fileAction = async (download: boolean) => {
+    setErr(null);
+    try {
+      await openVersionFile(() => plApi.versionFile(v.id, download), download);
+    } catch (e) {
+      setErr(errText(e));
+    }
+  };
+
   const saveUsage = async () => {
     const parsed = W.editVersionUsageSchema.safeParse(usageToWire(usage));
     if (!parsed.success) return setErr(parsed.error.issues[0]?.message ?? "Check the details.");
@@ -570,7 +687,36 @@ function VersionRow({
             <ExternalLink size={15} />
           </a>
         )}
+        {v.file && (
+          <span className="ml-auto shrink-0 flex">
+            <button
+              type="button"
+              className="h-8 w-8 grid place-items-center rounded-lg text-indigo hover:bg-muted"
+              aria-label={`Open ${W.PIPELINE_VERSION_KIND_LABEL[v.kind]} v${v.number}`}
+              title="Open"
+              onClick={() => void fileAction(false)}
+            >
+              <Play size={15} />
+            </button>
+            <button
+              type="button"
+              className="h-8 w-8 grid place-items-center rounded-lg text-indigo hover:bg-muted"
+              aria-label={`Download ${W.PIPELINE_VERSION_KIND_LABEL[v.kind]} v${v.number}`}
+              title="Download"
+              onClick={() => void fileAction(true)}
+            >
+              <Download size={15} />
+            </button>
+          </span>
+        )}
       </div>
+      {v.file && (
+        <p className="mt-0.5 flex items-center gap-1 text-[12.5px] text-ink-3 min-w-0">
+          <Paperclip size={12} className="shrink-0" />
+          <span className="truncate">{v.file.name}</span>
+          <span className="shrink-0">· {W.formatBytes(v.file.size)}</span>
+        </p>
+      )}
       {v.body && <p className="mt-1 text-[13px] text-ink-2 whitespace-pre-wrap break-words line-clamp-4">{v.body}</p>}
       <UsageBadges v={v} />
       {v.usageNotes && <p className="mt-1 text-[12.5px] text-ink-3 whitespace-pre-wrap break-words">{v.usageNotes}</p>}

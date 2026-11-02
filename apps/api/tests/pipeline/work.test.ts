@@ -406,6 +406,8 @@ describe("scripts/pipeline-work2-ddl.sql (static)", () => {
     expect(body).toMatch(/^COMMIT;/m);
     expect(body).not.toMatch(/DROP|REFERENCES "users"/);
     expect(body).toMatch(/ADD COLUMN IF NOT EXISTS "embargo_until"/);
+    expect(body).toMatch(/ADD COLUMN IF NOT EXISTS "file_key"/);
+    expect(body).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS "pipeline_versions_file_key_key"/);
     for (const t of ["pipeline_version_comments", "pipeline_shoots"]) {
       expect(body).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS "${t}"`));
     }

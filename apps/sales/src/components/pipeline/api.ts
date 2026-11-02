@@ -111,6 +111,9 @@ export const plApi = {
   editDeliverable: (did: string, body: W.EditDeliverableInput) =>
     call<W.PipelineDeliverableDto>(`/deliverables/${did}`, json("PATCH", body)),
   deleteDeliverable: (did: string) => call<{ id: string }>(`/deliverables/${did}`, { method: "DELETE" }),
+  startUpload: (id: string, body: W.StartUploadInput) => call<W.PipelineUploadTicket>(`/projects/${id}/uploads`, json("POST", body)),
+  versionFile: (vid: string, download: boolean) =>
+    call<{ url: string; expiresAt: string }>(`/versions/${vid}/file${download ? "?download=1" : ""}`),
   editVersionUsage: (vid: string, body: W.EditVersionUsageInput) =>
     call<W.PipelineVersionDto>(`/versions/${vid}`, json("PATCH", body)),
   addComment: (vid: string, body: W.AddCommentInput) =>
@@ -147,6 +150,13 @@ export function retryAfterMs(e: unknown, fallbackSec = 10): number {
 }
 
 const WORDS: Record<string, string> = {
+  UPLOADS_OFF: "File uploads aren't switched on — paste a link to the file instead.",
+  UPLOAD_NOT_FOUND: "The upload didn't finish — upload the file again.",
+  UPLOAD_WRONG_TYPE: "This type of file can't be used here.",
+  UPLOAD_TOO_LARGE: "The file is too big for this kind of version.",
+  FILE_ALREADY_USED: "This file is already on a version.",
+  NO_FILE: "This version is a link, not an uploaded file.",
+  STORAGE_UNAVAILABLE: "Couldn't reach file storage — try again in a moment.",
   PIPELINE_DISABLED: "Pipeline is paused right now.",
   PIPELINE_NOT_IN_PILOT: "Pipeline isn't available for your account yet.",
   ACCOUNT_INACTIVE: "Your account is inactive.",

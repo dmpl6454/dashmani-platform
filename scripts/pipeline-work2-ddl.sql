@@ -1,6 +1,7 @@
 -- ============================================================================
 -- scripts/pipeline-work2-ddl.sql — feature-only DDL: Pipeline work tracking, part 2 (2026-11-02).
---   pipeline_versions          + source, rights, licence_expires, embargo_until, usage_notes
+--   pipeline_versions          + source, rights, licence_expires, embargo_until, usage_notes,
+--                              file_key (unique), file_name, file_size, file_type (R2 uploads)
 --   pipeline_version_comments  review comments on a version, optionally at a point in the video
 --   pipeline_shoots            the shoot desk (paparazzi / event assignments)
 -- Service: apps/api/src/services/pipeline/work.service.ts, shoots.service.ts
@@ -26,6 +27,10 @@ ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "licence_expires" DATE;
 ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "rights" VARCHAR(20) NOT NULL DEFAULT '';
 ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "source" VARCHAR(200) NOT NULL DEFAULT '';
 ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "usage_notes" VARCHAR(1000) NOT NULL DEFAULT '';
+ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "file_key" VARCHAR(120);
+ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "file_name" VARCHAR(200) NOT NULL DEFAULT '';
+ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "file_size" BIGINT;
+ALTER TABLE "pipeline_versions" ADD COLUMN IF NOT EXISTS "file_type" VARCHAR(100) NOT NULL DEFAULT '';
 
 -- CreateTable
 CREATE TABLE IF NOT EXISTS "pipeline_version_comments" (
@@ -64,6 +69,9 @@ CREATE TABLE IF NOT EXISTS "pipeline_shoots" (
 
     CONSTRAINT "pipeline_shoots_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "pipeline_versions_file_key_key" ON "pipeline_versions"("file_key");
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "pipeline_version_comments_version_id_created_at_idx" ON "pipeline_version_comments"("version_id", "created_at");

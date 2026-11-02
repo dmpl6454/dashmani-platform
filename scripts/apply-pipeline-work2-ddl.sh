@@ -14,7 +14,7 @@
 #      a long lock on it;
 #   4. schema-only backup;
 #   5. applies the DDL — one transaction, lock_timeout 3s, CREATE TABLE / CREATE INDEX IF NOT EXISTS;
-#   6. verifies the five new pipeline_versions columns, the two new tables, their five indexes and
+#   6. verifies the nine new pipeline_versions columns, the two new tables, six indexes and
 #      three foreign keys;
 #   7. drift check (inspect only): no pipeline_versions / pipeline_version_comments / pipeline_shoots
 #      statement may remain between the database and the PR's schema.prisma.
@@ -97,8 +97,8 @@ APPLIED=1
 
 echo "==> 6. Verify"
 COLS=$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='pipeline_versions'
-  AND column_name IN ('source','rights','licence_expires','embargo_until','usage_notes')")
-echo "    pipeline_versions new columns: $COLS of 5"; [ "$COLS" = "5" ] || fail "a pipeline_versions column is missing"
+  AND column_name IN ('source','rights','licence_expires','embargo_until','usage_notes','file_key','file_name','file_size','file_type')")
+echo "    pipeline_versions new columns: $COLS of 9"; [ "$COLS" = "9" ] || fail "a pipeline_versions column is missing"
 for t in pipeline_version_comments pipeline_shoots; do
   OWN=$(q "SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='$t'")
   [ "$OWN" = "$ROLE" ] || fail "table $t missing or not owned by $ROLE (owner: '$OWN')"
@@ -110,8 +110,9 @@ done
 echo "    2 tables owned by $ROLE; 3 foreign keys (comments cascade, shoots set null)"
 IDX=$(q "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexname IN (
   'pipeline_version_comments_version_id_created_at_idx','pipeline_version_comments_project_id_idx',
-  'pipeline_shoots_call_time_idx','pipeline_shoots_camera_id_status_idx','pipeline_shoots_project_id_idx')")
-echo "    indexes: $IDX of 5"; [ "$IDX" = "5" ] || fail "an index is missing"
+  'pipeline_shoots_call_time_idx','pipeline_shoots_camera_id_status_idx','pipeline_shoots_project_id_idx',
+  'pipeline_versions_file_key_key')")
+echo "    indexes: $IDX of 6"; [ "$IDX" = "6" ] || fail "an index is missing"
 USERS_FK=$(q "SELECT count(*) FROM pg_constraint WHERE contype='f' AND confrelid='public.users'::regclass
   AND conrelid::regclass::text IN ('pipeline_version_comments','pipeline_shoots')")
 [ "$USERS_FK" = "0" ] || fail "an unexpected foreign key into users exists"

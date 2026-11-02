@@ -18,7 +18,7 @@
  * ⚠️ If the DDL is missing (a deploy reached a database without scripts/pipeline-work-ddl.sql),
  * these routes answer 503 WORK_NOT_READY; the rest of the Pipeline is unaffected.
  */
-import { randomUUID } from "crypto";
+import { randomUUID, randomBytes } from "crypto";
 import { pipelineWork as W, dateToIST } from "@dashmani/shared";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineError } from "./errors";
@@ -27,6 +27,7 @@ import { postMessage } from "./messages.service";
 import type { PipelineDirectory } from "./access";
 import type { PipelineSettings } from "./settings";
 import type { PipelineDbClient, PipelineTx } from "./db";
+import { r2Config, presignR2, headR2Object } from "../storage/r2";
 
 
 type Db = PipelineDbClient | PipelineTx;
@@ -78,6 +79,10 @@ interface VersionRow {
   number: number;
   label: string;
   url: string | null;
+  fileKey: string | null;
+  fileName: string;
+  fileSize: bigint | null;
+  fileType: string;
   body: string;
   note: string;
   source: string;
@@ -151,6 +156,7 @@ function versionDto(dir: PipelineDirectory, v: VersionRow, comments: readonly Co
     number: v.number,
     label: v.label,
     url: v.url,
+    file: v.fileKey ? { name: v.fileName || "file", size: v.fileSize == null ? 0 : Number(v.fileSize), type: v.fileType } : null,
     body: v.body,
     note: v.note,
     source: v.source,
@@ -205,6 +211,7 @@ function deliverableDto(dir: PipelineDirectory, d: DeliverableRow): W.PipelineDe
 
 const VERSION_SELECT = {
   id: true, kind: true, number: true, label: true, url: true, body: true, note: true, createdById: true, createdAt: true,
+  fileKey: true, fileName: true, fileSize: true, fileType: true,
   source: true, rights: true, licenceExpires: true, embargoUntil: true, usageNotes: true,
 } as const;
 
@@ -286,6 +293,7 @@ export async function getWork(dir: PipelineDirectory, projectId: string): Promis
       reviews: reviews.map((r) => reviewDto(dir, r, latest)),
       deliverables: deliverables.map((d) => deliverableDto(dir, d)),
       approval: W.approvalSummary(versions, reviews),
+      uploads: r2Config() !== null,
     };
   });
 }
@@ -326,9 +334,15 @@ function versionNames(versions: readonly Pick<VersionRow, "id" | "kind" | "numbe
 // ── Versions ───────────────────────────────────────────────────────────────────────
 
 export async function addVersion(actor: WorkActor, projectId: string, input: W.AddVersionInput): Promise<W.PipelineVersionDto> {
+  // An uploaded file is checked against R2 BEFORE the transaction: never hold the project lock
+  // across a network call.
+  const file = input.fileKey ? await verifyUploadedFile(projectId, input.kind, input.fileKey) : null;
   return guarded(async () => {
     const row = await pipelineWrite(async (tx) => {
       assertWritable(await lockProject(tx, projectId, actor.userId));
+      if (input.fileKey && (await tx.pipelineVersion.findUnique({ where: { fileKey: input.fileKey }, select: { id: true } }))) {
+        throw new PipelineError(409, "FILE_ALREADY_USED", "This file is already on a version");
+      }
       const count = await tx.pipelineVersion.count({ where: { projectId } });
       if (count >= W.PIPELINE_WORK_LIMITS.versionsPerProject) {
         throw new PipelineError(409, "TOO_MANY_VERSIONS", "This project has the most versions it can hold");
@@ -345,6 +359,10 @@ export async function addVersion(actor: WorkActor, projectId: string, input: W.A
           number: (last?.number ?? 0) + 1,
           label: input.label ?? "",
           url: input.url ?? null,
+          fileKey: input.fileKey ?? null,
+          fileName: file ? fileNameOf(input.fileName) : "",
+          fileSize: file ? BigInt(file.size) : null,
+          fileType: file ? file.contentType : "",
           body: input.body ?? "",
           note: input.note ?? "",
           source: input.source ?? "",
@@ -359,6 +377,90 @@ export async function addVersion(actor: WorkActor, projectId: string, input: W.A
     });
     return versionDto(actor.directory, row);
   });
+}
+
+// ── File uploads (Cloudflare R2) ───────────────────────────────────────────────────
+
+/** Signed URLs live this long. An upload of a 4 GB file on a slow line needs the time. */
+const UPLOAD_URL_TTL_SEC = 60 * 60;
+const DOWNLOAD_URL_TTL_SEC = 15 * 60;
+
+function requireR2() {
+  const cfg = r2Config();
+  if (!cfg) throw new PipelineError(503, "UPLOADS_OFF", "File uploads aren't switched on — paste a link to the file instead");
+  return cfg;
+}
+
+function fileNameOf(name: string | undefined): string {
+  const n = (name ?? "").replace(/[\u0000-\u001f\u007f/\\]/g, "").trim().slice(0, W.PIPELINE_WORK_LIMITS.fileNameMax);
+  return n || "file";
+}
+
+/**
+ * A signed PUT for one new object under the project's prefix. The browser sends the file
+ * straight to R2; the content type is part of the signature, so the stored type is the one
+ * the rules allowed. Size is checked again when the version is added (a PUT URL can't cap it).
+ */
+export async function startUpload(actor: WorkActor, projectId: string, input: W.StartUploadInput): Promise<W.PipelineUploadTicket> {
+  const cfg = requireR2();
+  await guarded(() => pipelineWrite(async (tx) => assertWritable(await lockProject(tx, projectId, actor.userId))));
+  const key = `pipeline/${projectId}/${randomBytes(24).toString("base64url")}`;
+  const now = new Date();
+  return {
+    key,
+    url: presignR2(cfg, "PUT", key, UPLOAD_URL_TTL_SEC, { headers: { "content-type": input.contentType }, now }),
+    method: "PUT",
+    headers: { "Content-Type": input.contentType },
+    expiresAt: new Date(now.getTime() + UPLOAD_URL_TTL_SEC * 1000).toISOString(),
+  };
+}
+
+async function verifyUploadedFile(projectId: string, kind: string, key: string): Promise<{ size: number; contentType: string }> {
+  const cfg = requireR2();
+  if (!key.startsWith(`pipeline/${projectId}/`)) throw new PipelineError(400, "UPLOAD_NOT_FOUND", "That upload doesn't belong to this project");
+  const rule = W.uploadRuleFor(kind);
+  if (!rule) throw new PipelineError(400, "VALIDATION_ERROR", "A caption is text, not a file");
+  let obj;
+  try {
+    obj = await headR2Object(cfg, key);
+  } catch {
+    throw new PipelineError(503, "STORAGE_UNAVAILABLE", "Couldn't reach file storage — try again in a moment");
+  }
+  if (!obj) throw new PipelineError(400, "UPLOAD_NOT_FOUND", "The upload didn't finish — upload the file again");
+  if (!rule.types.includes(obj.contentType)) {
+    throw new PipelineError(400, "UPLOAD_WRONG_TYPE", "This type of file can't be used here");
+  }
+  if (obj.size <= 0 || obj.size > rule.maxBytes) {
+    throw new PipelineError(400, "UPLOAD_TOO_LARGE", `The file is too big (the most is ${W.formatBytes(rule.maxBytes)})`);
+  }
+  return obj;
+}
+
+/** A short-lived link to a version's uploaded file: to play it inline, or to download it. */
+export async function versionFileUrl(versionId: string, download: boolean): Promise<{ url: string; expiresAt: string }> {
+  const cfg = requireR2();
+  const v = await guarded(() =>
+    pipelineRead(async (db) => {
+      const row = await db.pipelineVersion.findUnique({
+        where: { id: versionId },
+        select: { projectId: true, fileKey: true, fileName: true, fileType: true },
+      });
+      if (!row) throw new PipelineError(404, "VERSION_NOT_FOUND", "This version doesn't exist");
+      await assertProjectReadable(db, row.projectId);
+      return row;
+    }),
+  );
+  if (!v.fileKey) throw new PipelineError(404, "NO_FILE", "This version is a link, not an uploaded file");
+  const name = v.fileName || "file";
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const disposition = `${download ? "attachment" : "inline"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+  const now = new Date();
+  const query: Record<string, string> = { "response-content-disposition": disposition };
+  if (v.fileType) query["response-content-type"] = v.fileType;
+  return {
+    url: presignR2(cfg, "GET", v.fileKey, DOWNLOAD_URL_TTL_SEC, { query, now }),
+    expiresAt: new Date(now.getTime() + DOWNLOAD_URL_TTL_SEC * 1000).toISOString(),
+  };
 }
 
 /** Locks the project of a version, then re-reads the version under that lock. */

@@ -11,12 +11,14 @@
  * R2 is faked behind a stubbed fetch (only requests to the fake endpoint are intercepted).
  */
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
+import { prisma } from "@dashmani/db";
 import request from "supertest";
 import { pipelineWork as W } from "@dashmani/shared";
 import app from "../../src/app";
 import { resetPipelineStateForTests } from "../../src/services/pipeline";
 import { pipelineDb } from "../../src/services/pipeline/db";
-import { presignQuery, presignR2 } from "../../src/services/storage/r2";
+import { presignQuery, presignR2, signHeaders } from "../../src/services/storage/r2";
+import { sweepOrphanUploads, UPLOAD_SWEEP_CURSOR_KEY } from "../../src/services/pipeline/jobs";
 import { hrToken, setPipelineSetting, clearPipelineSettings, createPipelineUser, seedPipelinePhases } from "./pipeline-helpers";
 
 const P = "/v1/pipeline/projects";
@@ -49,6 +51,23 @@ describe("Signature V4 (pure)", () => {
     expect(q).toContain("X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404");
   });
 
+  it("matches AWS's worked example for a header-signed GET", () => {
+    const h = signHeaders({
+      method: "GET",
+      host: "examplebucket.s3.amazonaws.com",
+      path: "/test.txt",
+      region: "us-east-1",
+      service: "s3",
+      accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+      secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      date: new Date("2013-05-24T00:00:00Z"),
+      headers: { range: "bytes=0-9" },
+      payloadHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    });
+    expect(h.authorization).toContain("SignedHeaders=host;range;x-amz-content-sha256;x-amz-date");
+    expect(h.authorization).toContain("Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41");
+  });
+
   it("signs the content type of a PUT, so the client must send exactly that type", () => {
     const url = presignR2(
       { endpoint: "https://acct.r2.cloudflarestorage.com", bucket: "b", accessKeyId: "k", secretAccessKey: "s" },
@@ -63,7 +82,8 @@ describe("Signature V4 (pure)", () => {
 });
 
 describe("pipeline file uploads (API)", () => {
-  const stored = new Map<string, { size: number; type: string }>();
+  const stored = new Map<string, { size: number; type: string; modified?: Date }>();
+  const deletedKeys: string[] = [];
   const realFetch = globalThis.fetch;
 
   function useR2() {
@@ -75,17 +95,42 @@ describe("pipeline file uploads (API)", () => {
     vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
       const u = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       if (u.host !== "r2.test") return realFetch(input, init);
-      expect(init?.method).toBe("HEAD");
-      expect(u.searchParams.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && u.searchParams.get("list-type") === "2") {
+        // Bucket listing (header-signed), in key order after start-after.
+        expect(String((init?.headers as Record<string, string>).authorization)).toMatch(/^AWS4-HMAC-SHA256 Credential=key\//);
+        const prefix = u.searchParams.get("prefix") ?? "";
+        const after = u.searchParams.get("start-after") ?? "";
+        const max = Number(u.searchParams.get("max-keys") ?? 1000);
+        const all = [...stored.keys()].filter((k) => k.startsWith(prefix) && k > after).sort();
+        const page = all.slice(0, max);
+        const xml = `<ListBucketResult><IsTruncated>${all.length > max}</IsTruncated>${page
+          .map((k) => `<Contents><Key>${k}</Key><LastModified>${(stored.get(k)!.modified ?? new Date()).toISOString()}</LastModified><Size>${stored.get(k)!.size}</Size></Contents>`)
+          .join("")}</ListBucketResult>`;
+        return new Response(xml, { status: 200 });
+      }
       const key = decodeURIComponent(u.pathname.replace(/^\/media\//, ""));
+      if (method === "DELETE") {
+        expect(String((init?.headers as Record<string, string>).authorization)).toMatch(/^AWS4-HMAC-SHA256 /);
+        deletedKeys.push(key);
+        stored.delete(key);
+        return new Response(null, { status: 204 });
+      }
+      expect(method).toBe("HEAD");
+      expect(u.searchParams.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
       const obj = stored.get(key);
       if (!obj) return new Response(null, { status: 404 });
-      return new Response(null, { status: 200, headers: { "content-length": String(obj.size), "content-type": obj.type } });
+      return new Response(null, {
+        status: 200,
+        headers: { "content-length": String(obj.size), "content-type": obj.type, "last-modified": (obj.modified ?? new Date()).toUTCString() },
+      });
     });
   }
 
   beforeEach(async () => {
     stored.clear();
+    deletedKeys.length = 0;
+    await prisma.systemSetting.deleteMany({ where: { key: UPLOAD_SWEEP_CURSOR_KEY } });
     resetPipelineStateForTests();
     await clearPipelineSettings();
     await seedPipelinePhases();
@@ -197,5 +242,55 @@ describe("pipeline file uploads (API)", () => {
     const nf = await request(app).get(`/v1/pipeline/versions/${linkVersion.body.data.id}/file`).set(auth(a.token));
     expect(nf.status).toBe(404);
     expect(nf.body.error.code).toBe("NO_FILE");
+  });
+
+  it("refuses an upload too old to claim, so a version never races the cleanup", async () => {
+    useR2();
+    const a = await hrUser("Ravi Editor");
+    const id = await newProject(a.token);
+    const key = (await ticket(a.token, id, { kind: "video", fileName: "cut.mp4", contentType: "video/mp4", size: 1000 })).body.data.key;
+    stored.set(key, { size: 1000, type: "video/mp4", modified: new Date(Date.now() - 21 * 3_600_000) });
+    const r = await request(app).post(`${P}/${id}/versions`).set(auth(a.token)).send({ kind: "video", fileKey: key, fileName: "cut.mp4" });
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("UPLOAD_NOT_FOUND");
+  });
+
+  it("sweeps day-old files no version points at, and nothing else", async () => {
+    useR2();
+    const a = await hrUser("Ravi Editor");
+    const id = await newProject(a.token);
+    const mk = async () =>
+      (await ticket(a.token, id, { kind: "video", fileName: "cut.mp4", contentType: "video/mp4", size: 1000 })).body.data.key as string;
+    const used = await mk();
+    const abandoned = await mk();
+    const fresh = await mk();
+    stored.set(used, { size: 1000, type: "video/mp4" });
+    expect((await request(app).post(`${P}/${id}/versions`).set(auth(a.token)).send({ kind: "video", fileKey: used, fileName: "cut.mp4" })).status).toBe(201);
+
+    const old = new Date(Date.now() - 25 * 3_600_000);
+    stored.set(used, { size: 1000, type: "video/mp4", modified: old });
+    stored.set(abandoned, { size: 1000, type: "video/mp4", modified: old });
+    stored.set(fresh, { size: 1000, type: "video/mp4", modified: new Date() });
+    stored.set("pipeline/not-a-key.txt", { size: 5, type: "text/plain", modified: old });
+
+    const r = await sweepOrphanUploads();
+    expect(r).toEqual({ scanned: 4, deleted: 1 });
+    expect(deletedKeys).toEqual([abandoned]);
+    expect(stored.has(used)).toBe(true);
+    expect(stored.has(fresh)).toBe(true);
+    // Reached the end of the bucket: the next run starts from the top.
+    expect((await prisma.systemSetting.findUnique({ where: { key: UPLOAD_SWEEP_CURSOR_KEY } }))?.value).toBe("");
+
+    // A purged project's versions are gone, so its files become unused and are swept.
+    await prisma.pipelineVersion.deleteMany({ where: { projectId: id } });
+    expect(await sweepOrphanUploads()).toEqual({ scanned: 3, deleted: 1 });
+    expect(deletedKeys).toEqual([abandoned, used]);
+  });
+
+  it("does nothing without R2 or when switched off", async () => {
+    expect(await sweepOrphanUploads({ cfg: null })).toEqual({ scanned: 0, deleted: 0 });
+    useR2();
+    vi.stubEnv("PIPELINE_UPLOAD_CLEANUP", "0");
+    expect(await sweepOrphanUploads()).toEqual({ scanned: 0, deleted: 0 });
   });
 });

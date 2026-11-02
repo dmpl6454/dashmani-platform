@@ -88,9 +88,11 @@ export function ProjectPage({ id }: { id: string }) {
   const project = useStoreSelector(store, (s) => s.projects[id]);
   const loaded = !!project?.header;
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
-  const [tab, setTab] = useState<"conversation" | "work" | "details">("conversation");
+  // ?tab=work (work notices in the bell) opens the Work tab on a phone and in the side column.
+  const wantWork = sp.get("tab") === "work";
+  const [tab, setTab] = useState<"conversation" | "work" | "details">(wantWork ? "work" : "conversation");
   // Desktop side column: project details, or the work (versions, approval, pages).
-  const [sideTab, setSideTab] = useState<"details" | "work">("details");
+  const [sideTab, setSideTab] = useState<"details" | "work">(wantWork ? "work" : "details");
   const [highlight, setHighlight] = useState<string | null>(null);
   const ledger = useMemo(() => new AckLedger(), [id]); // eslint-disable-line react-hooks/exhaustive-deps
   const initialM = useRef(m);

@@ -8,9 +8,12 @@
  *   - An approval is pinned to versions: a newer version makes it outdated (computed on read),
  *     and a page can be marked scheduled or published only under the CURRENT approval when the
  *     project has any version. The approval in force is stamped on the page.
- *   - Review requests, decisions and published pages also post a line in the project thread
- *     (postMessage, after commit, best effort): the thread keeps the record and the existing
- *     mention notifications reach the reviewer or requester — no new notification kind.
+ *   - Review requests, decisions, page assignments, published pages (and shoot assignments in
+ *     shoots.service.ts) write their OWN bell rows — notifier.onWork, inside the same
+ *     transaction (WorkNoticeKind in notifier.ts). Review requests, decisions and published
+ *     pages also post a line in the project thread (postMessage, after commit, best effort) as
+ *     the record; that line still @mentions the reviewer or requester so the mention EMAIL goes
+ *     out, but its "mentioned you" bell row is suppressed (quietMentionIds) — one row, not two.
  *
  * ⚠️ Pipeline pool only (pipelineRead / pipelineWrite), like every file in this folder. No FK into
  * `users`: people are checked against the pipeline directory, which is resolved by the route
@@ -23,7 +26,9 @@ import { pipelineWork as W, dateToIST } from "@dashmani/shared";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineError } from "./errors";
 import { lockProject, assertWritable, pickableByMode, type PipelineActor } from "./projects.service";
-import { postMessage } from "./messages.service";
+import { pilotAllow, postMessage } from "./messages.service";
+import { notifier } from "./notifier";
+import { quotedTitle, workPath } from "./notify";
 import type { PipelineDirectory } from "./access";
 import type { PipelineSettings } from "./settings";
 import type { PipelineDbClient, PipelineTx } from "./db";
@@ -309,12 +314,13 @@ function assertPickable(actor: WorkActor, userId: string, what: string): void {
 
 // ── Thread lines (after commit, best effort) ───────────────────────────────────────
 
-async function postLine(actor: WorkActor, projectId: string, body: string): Promise<void> {
+async function postLine(actor: WorkActor, projectId: string, body: string, quietMentionIds: string[] = []): Promise<void> {
   try {
     await postMessage(
       { userId: actor.userId, name: actor.name, settings: actor.settings, directory: actor.directory },
       projectId,
       { clientId: randomUUID(), body },
+      { quietMentionIds },
     );
   } catch (err) {
     // The work item is saved either way; the thread line is a convenience.
@@ -427,6 +433,11 @@ async function verifyUploadedFile(projectId: string, kind: string, key: string):
     throw new PipelineError(503, "STORAGE_UNAVAILABLE", "Couldn't reach file storage — try again in a moment");
   }
   if (!obj) throw new PipelineError(400, "UPLOAD_NOT_FOUND", "The upload didn't finish — upload the file again");
+  // The cleanup job (jobs.ts sweepOrphanUploads) deletes unused uploads a day old; refusing
+  // stale ones well before that means a version can never point at a file being swept.
+  if (obj.lastModified && Date.now() - obj.lastModified.getTime() > W.PIPELINE_UPLOAD_CLAIM_MAX_MS) {
+    throw new PipelineError(400, "UPLOAD_NOT_FOUND", "This upload is too old to use — upload the file again");
+  }
   if (!rule.types.includes(obj.contentType)) {
     throw new PipelineError(400, "UPLOAD_WRONG_TYPE", "This type of file can't be used here");
   }
@@ -546,7 +557,8 @@ export async function requestReview(actor: WorkActor, projectId: string, input: 
   assertPickable(actor, input.reviewerId, "reviewer");
   return guarded(async () => {
     const { review, versions } = await pipelineWrite(async (tx) => {
-      assertWritable(await lockProject(tx, projectId, actor.userId));
+      const project = await lockProject(tx, projectId, actor.userId);
+      assertWritable(project);
       const versions = await tx.pipelineVersion.findMany({
         where: { projectId },
         select: { id: true, kind: true, number: true },
@@ -555,8 +567,19 @@ export async function requestReview(actor: WorkActor, projectId: string, input: 
       if (versions.length === 0) {
         throw new PipelineError(409, "NO_VERSIONS", "Add a version (video, caption or thumbnail) before asking for a review");
       }
-      // One open request per project: a new one replaces any that is still pending.
+      // One open request per project: a new one replaces any that is still pending — and its
+      // "please review" bell row goes with it (the old reviewer has nothing left to decide).
+      const replaced = await tx.pipelineReview.findMany({
+        where: { projectId, status: "pending" },
+        select: { id: true, reviewerId: true },
+      });
       await tx.pipelineReview.updateMany({ where: { projectId, status: "pending" }, data: { status: "superseded" } });
+      for (const old of replaced) {
+        await notifier.onWork(tx, {
+          kind: "review", key: old.id, projectId, recipients: [], actorId: actor.userId,
+          allow: pilotAllow(actor.settings), title: "", message: "", path: workPath(projectId), withdraw: [old.reviewerId],
+        });
+      }
       const review = await tx.pipelineReview.create({
         data: {
           projectId,
@@ -566,6 +589,17 @@ export async function requestReview(actor: WorkActor, projectId: string, input: 
         },
         select: REVIEW_SELECT,
       });
+      await notifier.onWork(tx, {
+        kind: "review",
+        key: review.id,
+        projectId,
+        recipients: [input.reviewerId],
+        actorId: actor.userId,
+        allow: pilotAllow(actor.settings),
+        title: `${actor.name} asked you to review ${quotedTitle(String(project.title))}`,
+        message: `${versionNames(versions, review.versionIds)}${input.message ? ` — ${input.message}` : ""}`,
+        path: workPath(projectId),
+      });
       return { review, versions };
     });
     const what = versionNames(versions, review.versionIds);
@@ -573,6 +607,7 @@ export async function requestReview(actor: WorkActor, projectId: string, input: 
       actor,
       projectId,
       `@{${input.reviewerId}} please review: ${what}.${input.message ? `\n${input.message}` : ""}`,
+      [input.reviewerId],
     );
     return reviewDto(actor.directory, review, review.versionIds);
   });
@@ -586,7 +621,8 @@ export async function decideReview(actor: WorkActor, reviewId: string, input: W.
     if (!found) throw new PipelineError(404, "REVIEW_NOT_FOUND", "This review doesn't exist");
     const projectId = found.projectId;
     const { review, versions } = await pipelineWrite(async (tx) => {
-      assertWritable(await lockProject(tx, projectId, actor.userId));
+      const project = await lockProject(tx, projectId, actor.userId);
+      assertWritable(project);
       const r = await tx.pipelineReview.findUnique({ where: { id: reviewId }, select: REVIEW_SELECT });
       if (!r) throw new PipelineError(404, "REVIEW_NOT_FOUND", "This review doesn't exist");
       if (r.reviewerId !== actor.userId) {
@@ -608,6 +644,21 @@ export async function decideReview(actor: WorkActor, reviewId: string, input: W.
         data: { status: input.decision, note: input.note ?? "", decidedAt: new Date() },
         select: REVIEW_SELECT,
       });
+      const names = versionNames(versions, review.versionIds);
+      await notifier.onWork(tx, {
+        kind: "reviewed",
+        key: review.id,
+        projectId,
+        recipients: [review.requestedById],
+        actorId: actor.userId,
+        allow: pilotAllow(actor.settings),
+        title:
+          input.decision === "approved"
+            ? `${actor.name} approved ${quotedTitle(String(project.title))}`
+            : `${actor.name} asked for changes on ${quotedTitle(String(project.title))}`,
+        message: `${names}${input.note ? ` — ${input.note}` : ""}`,
+        path: workPath(projectId),
+      });
       return { review, versions };
     });
     const what = versionNames(versions, review.versionIds);
@@ -615,7 +666,7 @@ export async function decideReview(actor: WorkActor, reviewId: string, input: W.
       input.decision === "approved"
         ? `@{${review.requestedById}} Approved: ${what}.${input.note ? `\n${input.note}` : ""}`
         : `@{${review.requestedById}} Changes requested on ${what}:\n${input.note ?? ""}`;
-    if (review.requestedById !== actor.userId) await postLine(actor, projectId, body);
+    if (review.requestedById !== actor.userId) await postLine(actor, projectId, body, [review.requestedById]);
     return reviewDto(actor.directory, review, W.latestVersionIds(versions));
   });
 }
@@ -630,12 +681,13 @@ export async function createDeliverable(
   if (input.assigneeId) assertPickable(actor, input.assigneeId, "person");
   return guarded(async () => {
     const row = await pipelineWrite(async (tx) => {
-      assertWritable(await lockProject(tx, projectId, actor.userId));
+      const project = await lockProject(tx, projectId, actor.userId);
+      assertWritable(project);
       const count = await tx.pipelineDeliverable.count({ where: { projectId } });
       if (count >= W.PIPELINE_WORK_LIMITS.deliverablesPerProject) {
         throw new PipelineError(409, "TOO_MANY_DELIVERABLES", "This project has the most pages it can hold");
       }
-      return tx.pipelineDeliverable.create({
+      const created = await tx.pipelineDeliverable.create({
         data: {
           projectId,
           platform: input.platform,
@@ -647,8 +699,37 @@ export async function createDeliverable(
           createdById: actor.userId,
         },
       });
+      if (created.assigneeId) await notifyAssigned(tx, actor, String(project.title), created, null);
+      return created;
     });
     return deliverableDto(actor.directory, row);
+  });
+}
+
+function pageLabel(d: Pick<DeliverableRow, "platform" | "destination">): string {
+  const label = W.PIPELINE_PLATFORM_LABEL[d.platform as W.PipelineDeliverablePlatform] ?? d.platform;
+  return `${label} · ${d.destination}`;
+}
+
+/** "X assigned you a page" for the new assignee; the previous assignee's row is withdrawn. */
+async function notifyAssigned(
+  tx: PipelineTx,
+  actor: WorkActor,
+  projectTitle: string,
+  d: DeliverableRow & { projectId: string },
+  previousAssigneeId: string | null,
+): Promise<void> {
+  await notifier.onWork(tx, {
+    kind: "assigned",
+    key: d.id,
+    projectId: d.projectId,
+    recipients: d.assigneeId ? [d.assigneeId] : [],
+    actorId: actor.userId,
+    allow: pilotAllow(actor.settings),
+    title: `${actor.name} assigned you a page in ${quotedTitle(projectTitle)}`,
+    message: pageLabel(d),
+    path: workPath(d.projectId),
+    withdraw: previousAssigneeId && previousAssigneeId !== d.assigneeId ? [previousAssigneeId] : undefined,
   });
 }
 
@@ -656,10 +737,11 @@ async function lockDeliverable(tx: PipelineTx, actor: WorkActor, deliverableId: 
   // Find the project first (no lock), then lock it, then re-read the row under that lock.
   const pre = await tx.pipelineDeliverable.findUnique({ where: { id: deliverableId }, select: { projectId: true } });
   if (!pre) throw new PipelineError(404, "DELIVERABLE_NOT_FOUND", "This page record doesn't exist");
-  assertWritable(await lockProject(tx, pre.projectId, actor.userId));
+  const project = await lockProject(tx, pre.projectId, actor.userId);
+  assertWritable(project);
   const row = await tx.pipelineDeliverable.findUnique({ where: { id: deliverableId } });
   if (!row) throw new PipelineError(404, "DELIVERABLE_NOT_FOUND", "This page record doesn't exist");
-  return row;
+  return Object.assign(row, { projectTitle: String(project.title) });
 }
 
 export async function editDeliverable(
@@ -731,7 +813,24 @@ export async function editDeliverable(
         }
       }
       const row = await tx.pipelineDeliverable.update({ where: { id: deliverableId }, data });
-      return { row, wentLive: statusChanged && status === "published" };
+      if (c.assigneeId !== undefined && c.assigneeId !== cur.assigneeId) {
+        await notifyAssigned(tx, actor, cur.projectTitle, row, cur.assigneeId);
+      }
+      const wentLive = statusChanged && status === "published";
+      if (wentLive) {
+        await notifier.onWork(tx, {
+          kind: "published",
+          key: row.id,
+          projectId: row.projectId,
+          recipients: [row.createdById, row.assigneeId].filter((x): x is string => !!x),
+          actorId: actor.userId,
+          allow: pilotAllow(actor.settings),
+          title: `${actor.name} published ${quotedTitle(cur.projectTitle)}`,
+          message: pageLabel(row),
+          path: workPath(row.projectId),
+        });
+      }
+      return { row, wentLive };
     });
     if (wentLive) {
       const label = W.PIPELINE_PLATFORM_LABEL[row.platform as W.PipelineDeliverablePlatform] ?? row.platform;
@@ -749,6 +848,13 @@ export async function deleteDeliverable(actor: WorkActor, deliverableId: string)
         throw new PipelineError(409, "DELIVERABLE_PUBLISHED", "A published page is kept as a record — mark it cancelled instead");
       }
       await tx.pipelineDeliverable.delete({ where: { id: deliverableId } });
+      if (cur.assigneeId) {
+        // The page is gone, so is "X assigned you a page".
+        await notifier.onWork(tx, {
+          kind: "assigned", key: cur.id, projectId: cur.projectId, recipients: [], actorId: actor.userId,
+          allow: pilotAllow(actor.settings), title: "", message: "", path: workPath(cur.projectId), withdraw: [cur.assigneeId],
+        });
+      }
     });
     return { id: deliverableId };
   });

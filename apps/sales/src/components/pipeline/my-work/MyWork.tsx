@@ -98,7 +98,7 @@ export function MyWork() {
           {shoots.map((sh) => (
             <Row
               key={sh.id}
-              href="/pipeline/my-work"
+              href="/pipeline/shoots?view=mine"
               title={sh.title}
               project={[sh.location, sh.event].filter(Boolean).join(" · ") || "Shoot"}
               meta={`${W.PIPELINE_SHOOT_STATUS_LABEL[sh.status]} · call ${when(sh.callTime)}`}
@@ -161,7 +161,18 @@ export function MyWork() {
     <div className="flex flex-col min-h-0 flex-1 min-w-0">
       <PipelineHeader title="My Work" left={back} />
       <div className="pl-scroll flex-1 min-h-0">
-        <div className="max-w-2xl mx-auto px-4 py-5">{body}</div>
+        <div className="max-w-2xl mx-auto px-4 py-5">
+          {/* The sales portal has no Pipeline sidebar rows, and the board hides these buttons on a phone. */}
+          <nav aria-label="Pipeline tools" className="md:hidden mb-4 flex gap-2">
+            <Link href="/pipeline/shoots" className="h-11 px-3.5 inline-flex items-center border border-border text-[13px] font-semibold text-ink-2">
+              Shoot desk
+            </Link>
+            <Link href="/pipeline/workload" className="h-11 px-3.5 inline-flex items-center border border-border text-[13px] font-semibold text-ink-2">
+              Workload
+            </Link>
+          </nav>
+          {body}
+        </div>
       </div>
     </div>
   );

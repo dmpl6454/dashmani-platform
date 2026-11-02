@@ -66,7 +66,7 @@ function nameOf(actor: PipelineActor, id: string): string {
   return actor.directory.byId.get(id)?.name ?? UNKNOWN_AUTHOR_NAME;
 }
 
-function pilotAllow(settings: PipelineSettings): string[] | null {
+export function pilotAllow(settings: PipelineSettings): string[] | null {
   return settings.mode === "pilot" ? [...settings.pilotUserIds] : null;
 }
 
@@ -265,7 +265,16 @@ function replayResult(
   };
 }
 
-export async function postMessage(actor: PipelineActor, projectId: string, input: PostMessageInput): Promise<PostMessageResult> {
+/**
+ * `opts.quietMentionIds` — server-side only (never from the wire): mentioned users whose bell
+ * row a work notice already covers (work.service.ts). See MessagePostedArgs.quietMentionIds.
+ */
+export async function postMessage(
+  actor: PipelineActor,
+  projectId: string,
+  input: PostMessageInput,
+  opts: { quietMentionIds?: string[] } = {},
+): Promise<PostMessageResult> {
   const me = actor.userId;
   // Before the slot: parse (throws MentionLimitError → 400), ids, names, snippet.
   const mentionIds = extractMentionIds(input.body);
@@ -423,6 +432,7 @@ export async function postMessage(actor: PipelineActor, projectId: string, input
         deliveredMentionIds: delivered,
         replyToAuthorId: parent && parent.rootAuthorId !== me ? parent.rootAuthorId : null,
         email,
+        quietMentionIds: opts.quietMentionIds,
       });
 
       const result: PostMessageResult = {

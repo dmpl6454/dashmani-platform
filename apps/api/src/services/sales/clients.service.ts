@@ -111,6 +111,26 @@ export async function updateSalesClient(
   return getSalesClient(id);
 }
 
+/** Details + billing profile in one transaction — the Edit client profile page's save. */
+export async function updateSalesClientProfile(
+  id: string,
+  input: { companyName: string; contactName: string; phone?: string | null; billing?: ClientBillingProfileInput | null },
+  actorId: string,
+) {
+  const existing = await prisma.client.findUnique({ where: { id }, select: { id: true } });
+  if (!existing) throw new AppError(404, "NOT_FOUND", "Client not found");
+  await prisma.$transaction(async (tx) => {
+    await tx.client.update({ where: { id }, data: { companyName: input.companyName, contactName: input.contactName, phone: input.phone ?? null } });
+    await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "client_updated", note: "profile" });
+    if (input.billing) {
+      const data = { ...input.billing, gstin: input.billing.gstin ?? null, pan: input.billing.pan ?? null };
+      await tx.clientBillingProfile.upsert({ where: { clientId: id }, create: { clientId: id, ...data }, update: data });
+      await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "billing_profile_saved" });
+    }
+  });
+  return getSalesClient(id);
+}
+
 /**
  * The client row's email is the OWNER'S portal sign-in, so changing it moves the login: whoever
  * controls the new address can reset the password. Sales admins only (route), the new address

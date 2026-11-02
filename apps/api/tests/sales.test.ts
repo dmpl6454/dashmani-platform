@@ -216,6 +216,33 @@ describe("sales API", () => {
     expect(await prisma.salesEvent.count({ where: { entityId: id, action: { in: ["client_created", "billing_profile_saved", "client_updated", "client_email_changed"] } } })).toBe(4);
   });
 
+  it("saves the whole client profile (details + billing) in one call, atomically", async () => {
+    const res = await request(app).post("/v1/sales/clients").set(auth(salesToken)).send({ companyName: "Profile Co", contactName: "Ravi", email: "ravi@profile.test" });
+    const id = res.body.data.id;
+    // A bad billing profile rejects the whole save — the details are not half-applied.
+    const bad = await request(app).put(`/v1/sales/clients/${id}/profile`).set(auth(salesToken)).send({
+      companyName: "Profile Co Renamed", contactName: "Ravi K", billing: { legalName: "Profile Co Pvt Ltd", gstin: "07AABCN1234G1Z2", stateCode: "27" },
+    });
+    expect(bad.status).toBe(400);
+    expect((await request(app).get(`/v1/sales/clients/${id}`).set(auth(salesToken))).body.data.companyName).toBe("Profile Co");
+
+    const ok = await request(app).put(`/v1/sales/clients/${id}/profile`).set(auth(salesToken)).send({
+      companyName: "Profile Co Renamed", contactName: "Ravi K", phone: "9000000000",
+      billing: { legalName: "Profile Co Pvt Ltd", gstin: "07AABCN1234G1Z2", city: "Delhi", notes: "Pays by NEFT, 30 days" },
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.data).toMatchObject({ companyName: "Profile Co Renamed", contactName: "Ravi K", phone: "9000000000", email: "ravi@profile.test", billingProfile: { legalName: "Profile Co Pvt Ltd", stateCode: "07", city: "Delhi", notes: "Pays by NEFT, 30 days" } });
+
+    // billing: null keeps the saved profile
+    const again = await request(app).put(`/v1/sales/clients/${id}/profile`).set(auth(salesToken)).send({ companyName: "Profile Co", contactName: "Ravi K", phone: null, billing: null });
+    expect(again.body.data).toMatchObject({ companyName: "Profile Co", phone: null, billingProfile: { legalName: "Profile Co Pvt Ltd" } });
+    // the email is not part of the profile save
+    const sneaky = await request(app).put(`/v1/sales/clients/${id}/profile`).set(auth(salesToken)).send({ companyName: "Profile Co", contactName: "Ravi K", email: "evil@x.test" });
+    expect(sneaky.status).toBe(200);
+    expect(sneaky.body.data.email).toBe("ravi@profile.test");
+    expect((await request(app).put(`/v1/sales/clients/${id}/profile`).set(auth(employeeToken)).send({ companyName: "X Co", contactName: "Ravi" })).status).toBe(403);
+  });
+
   it("runs a quote through send → accept → convert into a confirmed order with the same totals", async () => {
     const created = await request(app).post("/v1/sales/quotes").set(auth(salesToken)).send(quoteBody(clientMh, { validUntil: "2030-01-01" }));
     expect(created.status).toBe(201);

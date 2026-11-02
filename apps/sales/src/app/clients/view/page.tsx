@@ -1,53 +1,26 @@
 "use client";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useClient, useStatement } from "@/lib/hooks";
 import { useCompany } from "@/lib/company";
-import { apiFetch } from "@/lib/api";
-import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
-import type { BillingProfile } from "@/lib/sales-types";
 import { Empty, LoadError, Loading, Money, PageHead, Stat, StatusPill, Toast, titleCase } from "@/components/sales-ui";
 import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
-import { BillingFields, EMPTY_BILLING, billingBody } from "@/components/billing-fields";
 import { ClientDetails } from "@/components/client-details";
 import { ClientLogins } from "@/components/client-logins";
 import { ClientRecurring } from "@/components/recurring-table";
 
-const EMPTY = EMPTY_BILLING;
 
 function ClientView() {
   const id = useSearchParams().get("id");
   const { data: client, error, isLoading, mutate } = useClient(id);
   const { data: statement, mutate: mutateStatement } = useStatement(id);
   const { info } = useCompany();
-  const [form, setForm] = useState<BillingProfile>(EMPTY);
-  const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
-  useEffect(() => {
-    if (client) setForm({ ...EMPTY, ...(client.billingProfile ? Object.fromEntries(Object.entries(client.billingProfile).map(([k, v]) => [k, v ?? ""])) : { legalName: client.companyName, billingEmail: client.email }) } as BillingProfile);
-  }, [client]);
   if (!id) return <Empty title="No client selected." action={<Link href="/clients" className="btn">Back to clients</Link>} />;
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading || !client) return <Loading />;
-  const set = (k: keyof BillingProfile, v: string) => setForm((f) => ({ ...f, [k]: v }));
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      await apiFetch(`/sales/clients/${id}/billing`, { method: "PUT", body: JSON.stringify(billingBody(form)) });
-      await mutate();
-      setEditing(false);
-      setToast({ message: "Billing profile saved.", tone: "ok" });
-    } catch (err) {
-      setToast({ message: errorSentence(err), tone: "err" });
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const p = client.billingProfile;
   const t = statement?.totals;
@@ -57,6 +30,7 @@ function ClientView() {
         <Link href={`/quotes/edit?clientId=${id}`} className="btn">New quote</Link>
         <Link href={`/invoices/edit?clientId=${id}`} className="btn btn-light">New invoice</Link>
         <Link href={`/payments/record?clientId=${id}`} className="btn btn-light">Record payment</Link>
+        <Link href={`/clients/edit?id=${id}`} className="btn btn-light">Edit profile</Link>
       </PageHead>
       <p className="text-[11px] uppercase tracking-[0.1em] text-ink-3 mb-2">Account with {info.name} · switch company at the top to see the other</p>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -68,11 +42,10 @@ function ClientView() {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-1 grid grid-cols-1 gap-4 content-start">
-        <ClientDetails client={client} onSaved={() => mutate()} onToast={setToast} />
+        <ClientDetails client={client} />
         <section className="card p-4">
-          <div className="flex items-center justify-between mb-3"><h2 className="font-bold">Billing profile</h2><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing((v) => !v)}>{editing ? "Cancel" : p ? "Edit" : "Add"}</button></div>
-          {!editing ? (
-            p ? (
+          <div className="flex items-center justify-between mb-3"><h2 className="font-bold">Billing profile</h2><Link href={`/clients/edit?id=${id}`} className="btn btn-ghost btn-sm">{p ? "Edit" : "Add"}</Link></div>
+          {p ? (
               <dl className="text-sm grid gap-1">
                 <div><dt className="text-ink-4 text-xs">Legal name</dt><dd>{p.legalName}</dd></div>
                 <div><dt className="text-ink-4 text-xs">GSTIN</dt><dd className="font-mono">{p.gstin ?? "Unregistered"}</dd></div>
@@ -80,14 +53,9 @@ function ClientView() {
                 <div><dt className="text-ink-4 text-xs">Address</dt><dd>{[p.addressLine1, p.addressLine2, p.city, p.state, p.pincode].filter(Boolean).join(", ") || "—"}</dd></div>
                 <div><dt className="text-ink-4 text-xs">Place of supply</dt><dd>{p.stateCode ? `${p.stateCode} · ${GST_STATE_CODES[p.stateCode] ?? ""}` : "—"}{p.country !== "IN" ? ` · ${p.country}` : ""}</dd></div>
                 <div><dt className="text-ink-4 text-xs">Billing contact</dt><dd>{[p.billingEmail, p.billingPhone].filter(Boolean).join(" · ") || client.email}</dd></div>
+                {p.notes && <div><dt className="text-ink-4 text-xs">Internal notes</dt><dd className="whitespace-pre-line">{p.notes}</dd></div>}
               </dl>
-            ) : <p className="text-sm text-ink-3">No billing profile yet. Invoices will print the company name and contact email; add the GSTIN and address for a proper tax invoice.</p>
-          ) : (
-            <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm">
-              <BillingFields form={form} set={set} />
-              <button type="submit" className="btn" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
-            </form>
-          )}
+          ) : <p className="text-sm text-ink-3">No billing profile yet. Invoices will print the company name and contact email; add the GSTIN and address for a proper tax invoice.</p>}
         </section>
         <ClientLogins clientId={client.id} onToast={setToast} />
         <ClientRecurring clientId={client.id} />

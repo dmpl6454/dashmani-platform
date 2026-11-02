@@ -170,6 +170,15 @@ export const salesClientUpdateSchema = z.object({
 
 export const salesClientEmailSchema = z.object({ email: normalizedEmail });
 
+/** The Edit client profile page: details and billing profile saved together. `billing: null`
+ *  leaves an existing profile untouched (it is never deleted — invoices print from it). */
+export const salesClientProfileSchema = z.object({
+  companyName: safeString.pipe(z.string().min(2).max(200)),
+  contactName: safeString.pipe(z.string().min(2).max(120)),
+  phone: optionalText(30),
+  billing: clientBillingProfileSchema.optional().nullable(),
+});
+
 export const lineItemSchema = z.object({
   kind: z.enum(LINE_KINDS).default("placement"),
   targetType: z.enum(["meta_asset", "social_account"]).optional().nullable(),

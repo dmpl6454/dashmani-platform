@@ -16,6 +16,7 @@ import {
   salesClientCreateSchema,
   salesClientUpdateSchema,
   salesClientEmailSchema,
+  salesClientProfileSchema,
   sellerProfileSchema,
   DEFAULT_COMPANY,
   isCompanyKey,
@@ -35,6 +36,7 @@ import { listInventory } from "../services/sales/inventory.service";
 import {
   createSalesClient,
   updateSalesClient,
+  updateSalesClientProfile,
   changeSalesClientEmail, getClientStatement, getSalesClient, inviteClientLogin, listClientLogins, listSalesClients,
   removeClientLogin, resendClientLogin, setClientLoginEnabled, upsertClientBilling,
 } from "../services/sales/clients.service";
@@ -92,6 +94,7 @@ router.get("/sales/inventory", ...view, asyncHandler(async (_req, res) => succes
 router.get("/sales/clients", ...view, asyncHandler(async (req, res) => success(res, await listSalesClients(str(req.query.q)))));
 router.post("/sales/clients", ...manage, validate(salesClientCreateSchema), asyncHandler(async (req, res) => success(res, await createSalesClient(req.body, staffId(req)), undefined, 201)));
 router.get("/sales/clients/:id", ...view, asyncHandler(async (req, res) => success(res, await getSalesClient(req.params.id))));
+router.put("/sales/clients/:id/profile", ...manage, validate(salesClientProfileSchema), asyncHandler(async (req, res) => success(res, await updateSalesClientProfile(req.params.id, req.body, staffId(req)))));
 router.put("/sales/clients/:id", ...manage, validate(salesClientUpdateSchema), asyncHandler(async (req, res) => success(res, await updateSalesClient(req.params.id, req.body, staffId(req)))));
 // The client's email is the owner's portal sign-in: sales admins only (see changeSalesClientEmail).
 router.put("/sales/clients/:id/email", ...admin, validate(salesClientEmailSchema), asyncHandler(async (req, res) => success(res, await changeSalesClientEmail(req.params.id, req.body.email, staffId(req)))));

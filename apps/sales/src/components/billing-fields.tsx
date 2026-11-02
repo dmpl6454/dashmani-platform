@@ -15,7 +15,7 @@ export function billingBody(form: BillingProfile): Record<string, unknown> {
   return body;
 }
 
-export function BillingFields({ form, set, legalNameRequired = true }: { form: BillingProfile; set: (k: keyof BillingProfile, v: string) => void; legalNameRequired?: boolean }) {
+export function BillingFields({ form, set, legalNameRequired = true, withNotes = false }: { form: BillingProfile; set: (k: keyof BillingProfile, v: string) => void; legalNameRequired?: boolean; withNotes?: boolean }) {
   return (
     <>
       <Field label="Legal name"><input className="input" required={legalNameRequired} value={form.legalName} onChange={(e) => set("legalName", e.target.value)} /></Field>
@@ -36,6 +36,11 @@ export function BillingFields({ form, set, legalNameRequired = true }: { form: B
       <Field label="Country (ISO code)" hint="Anything other than IN is treated as an export: no GST."><input className="input" value={form.country} maxLength={2} onChange={(e) => set("country", e.target.value.toUpperCase())} /></Field>
       <Field label="Billing email"><input className="input" type="email" value={form.billingEmail ?? ""} onChange={(e) => set("billingEmail", e.target.value)} /></Field>
       <Field label="Billing phone"><input className="input" value={form.billingPhone ?? ""} onChange={(e) => set("billingPhone", e.target.value)} /></Field>
+      {withNotes && (
+        <Field label="Internal notes" hint="Only your team sees these: payment habits, PO rules, who approves invoices.">
+          <textarea className="input min-h-[96px]" maxLength={2000} value={form.notes ?? ""} onChange={(e) => set("notes", e.target.value)} />
+        </Field>
+      )}
     </>
   );
 }

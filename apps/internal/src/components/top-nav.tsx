@@ -12,7 +12,7 @@ import { createPortal } from "react-dom";
 // Deep import on purpose: the bell mounts on every page, and the @dashmani/shared
 // barrel would pull zod and every validator into the shared client chunk
 // (+16 kB First Load JS on 23 HR pages, measured). bell.ts has no dependencies.
-import { bellListView, pipelineNotificationUrl } from "@dashmani/shared/src/pipeline/bell";
+import { bellListView, pipelineNotificationUrl, salesNotificationUrl } from "@dashmani/shared/src/pipeline/bell";
 
 /* ── Compose-announcement modal (moved from dashboard — the only place it's used) ──
    Opened from the dark DsTopNav (and the legacy TopNav, which no route renders any
@@ -405,6 +405,20 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                         </a>
                       ) : null;
                     })()}
+                    {(() => {
+                      const url = salesNotificationUrl(selectedNotif);
+                      return url ? (
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 rounded-lg bg-indigo text-white text-xs font-semibold hover:bg-indigo-deep transition-colors"
+                        >
+                          Open in Sales Portal ↗
+                        </a>
+                      ) : null;
+                    })()}
                     {/* Deep-link to approval page for employee registration notifications */}
                     {selectedNotif.type !== "PIPELINE" &&
                      (selectedNotif.title?.toLowerCase().includes("registration") ||
@@ -503,6 +517,20 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                                   className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-indigo hover:underline"
                                 >
                                   Open in Employee Portal ↗
+                                </a>
+                              ) : null;
+                            })()}
+                            {(() => {
+                              const url = salesNotificationUrl(n);
+                              return url ? (
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-indigo hover:underline"
+                                >
+                                  Open in Sales Portal ↗
                                 </a>
                               ) : null;
                             })()}

@@ -6,7 +6,7 @@ import { Bell, BellOff, CheckCheck } from "lucide-react";
 // Deep import on purpose: the bell mounts on every page, and the @dashmani/shared
 // barrel would pull zod and every validator into the shared client chunk
 // (+16 kB First Load JS on 23 HR pages, measured). bell.ts has no dependencies.
-import { bellListView, pipelineNotificationPath } from "@dashmani/shared/src/pipeline/bell";
+import { bellListView, pipelineNotificationPath, salesNotificationUrl } from "@dashmani/shared/src/pipeline/bell";
 import { useNotificationCount, useNotificationList, NOTIFICATION_LIST_KEY } from "@/lib/hooks/use-notifications";
 import { apiFetch } from "@/lib/api";
 
@@ -162,6 +162,19 @@ export function NotificationBell() {
                   {new Date(selectedNotif.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
                 </p>
                 <p className="text-sm text-[#555] leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
+                {(() => {
+                  const url = salesNotificationUrl(selectedNotif);
+                  return url ? (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1A1A1A] text-white text-xs font-semibold hover:opacity-90"
+                    >
+                      Open in Sales Portal ↗
+                    </a>
+                  ) : null;
+                })()}
               </div>
             </div>
           ) : (

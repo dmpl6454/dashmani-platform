@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  salesNotificationUrl,
   bellListView,
   pipelineNotificationPath,
   pipelineNotificationUrl,
@@ -214,5 +215,23 @@ describe("pipelineNotificationUrl — internal bell new-tab link (P4)", () => {
       .toBe("https://x.test/pipeline/1");
     expect(pipelineNotificationUrl(pipe("https://hr.digitalsukoon.com/pipeline/1"), ["https://x.test"]))
       .toBeNull();
+  });
+});
+
+describe("salesNotificationUrl — creator-review rows link to the sales portal", () => {
+  const row = (meta: unknown) => ({ type: "GENERAL", metadata: meta });
+  it("returns the link for a creator_review row on an allowlisted origin", () => {
+    expect(salesNotificationUrl(row({ kind: "creator_review", url: "https://sales.digitalsukoon.com/creators/view?id=abc" }))).toBe(
+      "https://sales.digitalsukoon.com/creators/view?id=abc",
+    );
+  });
+  it("refuses everything else", () => {
+    expect(salesNotificationUrl(row({ kind: "other", url: "https://sales.digitalsukoon.com/creators/view?id=abc" }))).toBeNull();
+    expect(salesNotificationUrl(row({ kind: "creator_review", url: "https://evil.example/creators/view?id=abc" }))).toBeNull();
+    expect(salesNotificationUrl(row({ kind: "creator_review", url: "https://sales.digitalsukoon.com/invoices/view?id=1" }))).toBeNull();
+    expect(salesNotificationUrl(row({ kind: "creator_review", url: "https://u:p@sales.digitalsukoon.com/creators/view?id=1" }))).toBeNull();
+    expect(salesNotificationUrl(row({ kind: "creator_review", url: "javascript:alert(1)" }))).toBeNull();
+    expect(salesNotificationUrl(row(null))).toBeNull();
+    expect(salesNotificationUrl(null)).toBeNull();
   });
 });

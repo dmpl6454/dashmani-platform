@@ -4,6 +4,7 @@ import { AppError } from "../../middleware/error-handler";
 import { scrubSecrets } from "../../utils/token-crypto";
 import { liveConnectionWhere, toCreatorMe } from "./creator-view";
 import { adminAlert } from "./creator-email";
+import { notifySalesTeamCreatorSubmitted } from "./creator-sales-alert";
 import { issueCreatorSession } from "./creator-auth.service";
 
 // A signed-in creator's own account: profile, password, "submit for review", close account.
@@ -128,6 +129,8 @@ export async function submitCreatorForReview(creatorId: string) {
     ],
     `/creators/${after.id}`,
   ).catch((e) => console.error("[creator-self] admin alert failed:", scrubSecrets(String(e?.message ?? e))));
+  void notifySalesTeamCreatorSubmitted({ id: after.id, name: after.name, email: after.email, publishable, resubmitted: c.status === "rejected" })
+    .catch((e) => console.error("[creator-self] sales team alert failed:", scrubSecrets(String(e?.message ?? e))));
   return toCreatorMe(after);
 }
 

@@ -17,6 +17,12 @@ export default function DashboardPage() {
         <Link href="/quotes/edit" className="btn">New quote</Link>
         <Link href="/invoices/edit" className="btn btn-light">New invoice</Link>
       </PageHead>
+      {!!d.bookings?.review.count && (
+        <Link href="/bookings?stage=review" className="card p-3 mb-4 flex items-center justify-between gap-3 text-sm hover:border-indigo">
+          <span><span className="font-bold">{d.bookings.review.count} campaign booking{d.bookings.review.count === 1 ? "" : "s"}</span> waiting for review</span>
+          <span className="text-indigo-light text-xs uppercase tracking-[0.08em]">Review →</span>
+        </Link>
+      )}
       <CreatorsWaiting />
       {quiet && (
         <div className="mb-6">

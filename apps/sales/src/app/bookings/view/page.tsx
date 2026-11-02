@@ -12,6 +12,7 @@ import { companyName, useCompany } from "@/lib/company";
 import type { BookingDetail, Invoice } from "@/lib/sales-types";
 import type { PortalDirectory } from "@/lib/types";
 import { BookingContent } from "@/components/booking-content";
+import { BookingReview } from "@/components/booking-review";
 import { LoadError, Loading, Money, PageHead, StatusPill, Toast, platformLabel, titleCase } from "@/components/sales-ui";
 
 /** "Create project" on the Pipeline, filled in from the booking (title, client, brief + link back). */
@@ -89,6 +90,7 @@ function BookingView() {
         </section>
       </div>
       <BookingContent b={b} />
+      <BookingReview b={b} onToast={setToast} />
       <section className="card overflow-x-auto">
         <table className="w-full text-sm min-w-[640px]">
           <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-3">Account</th><th className="p-3">Post</th><th className="p-3">Status</th><th className="p-3 text-right">Price</th></tr></thead>

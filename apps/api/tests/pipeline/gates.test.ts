@@ -4,7 +4,7 @@
  * ⚠️ All three portals sign access tokens with ONE secret, and `authenticate` checks only
  * the signature — so it alone would admit internal-employee tokens, client-portal access
  * tokens and even client-portal REFRESH tokens (`{userId}` with no `type`). The pipeline
- * therefore gates on an ALLOWLIST of token types (["hr"] in v1).
+ * therefore gates on an ALLOWLIST of token types (["hr", "employee"] since 2026-11-02).
  *
  * The feature ships dark: an absent `pipeline.mode` row is "off". A settings read that
  * FAILS must answer 503 (retried silently) — never 403 PIPELINE_DISABLED, which the client
@@ -70,9 +70,24 @@ describe("pipeline gates", () => {
       expect((await get(DIR, hrToken(u.id))).status).toBe(200);
     });
 
-    it("an internal employee token, a client access token and a typeless client refresh token are 403 FORBIDDEN", async () => {
-      const u = await createPipelineUser({ name: "Eli Employee", tag: "g0-emp" });
-      const tokens = [tokenFor(u.id, "employee"), tokenFor(u.id, "client"), typelessToken(u.id)];
+    it("an internal-portal employee token (the sales portal's session) is admitted for the same user", async () => {
+      const u = await createPipelineUser({ name: "Sana Sales", tag: "g0-emp" });
+      const boot = await get(BOOT, tokenFor(u.id, "employee"));
+      expect(boot.status).toBe(200);
+      expect(boot.body.data.enabled).toBe(true);
+      expect((await get(DIR, tokenFor(u.id, "employee"))).status).toBe(200);
+    });
+
+    it("an INACTIVE user's employee token is still refused by the access check", async () => {
+      const u = await createPipelineUser({ name: "Ira Inactive", tag: "g0-emp-inactive", status: "INACTIVE" });
+      const dir = await get(DIR, tokenFor(u.id, "employee"));
+      expect(dir.status).toBe(403);
+      expect(dir.body.error.code).toBe("ACCOUNT_INACTIVE");
+    });
+
+    it("a client access token, a typeless client refresh token and an unknown type are 403 FORBIDDEN", async () => {
+      const u = await createPipelineUser({ name: "Eli Client", tag: "g0-client" });
+      const tokens = [tokenFor(u.id, "client"), typelessToken(u.id), tokenFor(u.id, "creator" as never)];
       for (const t of tokens) {
         for (const path of [BOOT, DIR]) {
           const r = await get(path, t);

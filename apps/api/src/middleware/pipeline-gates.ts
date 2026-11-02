@@ -10,7 +10,10 @@
  * tokens, client-portal access tokens AND client-portal REFRESH tokens — which are
  * `{userId}` with no `type` at all. PIPELINE_TOKEN_TYPES must therefore stay an ALLOWLIST
  * (`type` is undefined on client refresh tokens, so a denylist would admit them).
- * Phase 2 adds "employee"; both token types carry the same User.id.
+ * "employee" (internal-portal sessions, which the SALES portal also uses) joined on 2026-11-02:
+ * both token types carry the same User.id, and both logins admit exactly the same people (any
+ * ACTIVE user), so the open-access rule is unchanged — requirePipelineAccess still re-checks
+ * the user's status from the DB.
  *
  * requirePipelineAccess reads memos only (zero statements on a hit): the schema verdict,
  * the settings (15 s), and the user's {active, isAdmin} (60 s). Outcomes:
@@ -32,7 +35,7 @@ import { PipelineError } from "../services/pipeline/errors";
 import type { PipelineTx } from "../services/pipeline/db";
 
 /** ⚠️ Must remain an ALLOWLIST: `type` is undefined on client-portal refresh tokens. */
-export const PIPELINE_TOKEN_TYPES: readonly string[] = ["hr"];
+export const PIPELINE_TOKEN_TYPES: readonly string[] = ["hr", "employee"];
 
 export interface PipelineRequestContext {
   userId: string;
@@ -57,7 +60,7 @@ function deny(res: Response, status: number, code: string, message: string): voi
 export function requirePipelineToken(req: Request, res: Response, next: NextFunction): void {
   const type = req.user?.type;
   if (typeof type !== "string" || !PIPELINE_TOKEN_TYPES.includes(type) || typeof req.user?.userId !== "string") {
-    deny(res, 403, "FORBIDDEN", "This is available in the Employee Portal only");
+    deny(res, 403, "FORBIDDEN", "This is available to staff portals only");
     return;
   }
   next();

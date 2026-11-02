@@ -561,10 +561,11 @@ At GA a reload shows the nav at once. An open HR tab shows it by itself at its f
 8. **Forbidden on pipeline paths:** `requirePermission`, `auditLog`, `dispatchNotification`, `withHeavyQuerySlot`, `/admin/link-preview`, `/uploads` avatars (initials only), and any global `SWRConfig`.
 
 **Auth.** The gate chain is `authenticate` → `requirePipelineToken` → the settings and access memos.
-- `requirePipelineToken` checks the allowlist `PIPELINE_TOKEN_TYPES=["hr"]`, a **code constant**.
-- Client-portal refresh tokens carry no `type` and must stay rejected.
+- `requirePipelineToken` checks the allowlist `PIPELINE_TOKEN_TYPES=["hr","employee"]`, a **code constant**. `"employee"` (staff-portal sessions, which the sales portal also uses) was added 2026-11-02 for the sales portal's Pipeline: both logins admit exactly the same people (any ACTIVE user) and the access memo still re-checks status in the DB, so who can see projects did not change.
+- Client-portal refresh tokens carry no `type` and must stay rejected; `client` tokens stay rejected.
 - Never gate on `[authenticate]` alone.
-- Phase 2 (the internal portal) only needs `"employee"` added to the allowlist, with no schema change.
+
+**Sales portal copy (2026-11-02).** sales.digitalsukoon.com serves the SAME projects and threads at `/pipeline` (board) and `/pipeline/view?id=` (project page; static export, so no `[id]` route), ported from the HR components into `apps/sales/src/components/pipeline/**` + `lib/pipeline-{swr,storage}.ts`, through the sales `apiFetch` (its `ApiError` gained `retryAfterSec`/`current`). Dark-theme swaps: `bg-ink text-white` → `bg-indigo text-white`, `action` → `attention`. The sales portal has no bell: pipeline alerts (bell rows, emails) still link to the HR portal. `clearSession()` and a user switch in `storeSession()` purge the `pl:` keys. A change to the HR pipeline UI is NOT picked up by sales automatically — port it.
 
 **Notifications.**
 - **One permanent enum value, `NotificationType.PIPELINE`,** with the sub-type in `metadata.kind`: `messages`, `mention`, `reply`, `added`, `moved`, `due_soon`, `overdue`.

@@ -5,6 +5,7 @@
 // Staff sign in with their portal account (POST /v1/auth/login); tokens live under the same
 // keys the internal portal uses. This is its own origin, so storage never collides with it.
 import type { StaffSession, StaffUser } from "./types";
+import { purgePipelineStorage } from "./pipeline-storage";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
@@ -29,14 +30,21 @@ export interface ApiEnvelope<T> {
 }
 
 export class ApiError extends Error {
+  /** From `body.error.retryAfterSec` on a 429 (the Pipeline's own rate-limit buckets send it). */
+  retryAfterSec?: number;
+  /** The current server row, sent on some Pipeline 409s (EDIT_CONFLICT / MOVE_CONFLICT). */
+  current?: unknown;
   constructor(
     message: string,
     public code?: string,
     public details?: Array<{ field?: string; message: string }>,
     public status?: number,
+    extra: { retryAfterSec?: number; current?: unknown } = {},
   ) {
     super(message);
     this.name = "ApiError";
+    this.retryAfterSec = extra.retryAfterSec;
+    this.current = extra.current;
   }
 }
 
@@ -53,7 +61,11 @@ function badResponse(status: number): ApiError {
 function apiErrorFrom(data: any, status: number): ApiError {
   const details: ApiError["details"] = Array.isArray(data?.error?.details) ? data.error.details : undefined;
   const fallback = status === 429 ? "Too many attempts — try again in a few minutes." : "Something went wrong. Please try again.";
-  return new ApiError(details?.[0]?.message || data?.error?.message || fallback, data?.error?.code, details, status);
+  const retry = data?.error?.retryAfterSec;
+  return new ApiError(details?.[0]?.message || data?.error?.message || fallback, data?.error?.code, details, status, {
+    retryAfterSec: typeof retry === "number" && Number.isFinite(retry) && retry >= 0 ? retry : undefined,
+    current: data?.error?.current,
+  });
 }
 
 function read(key: string): string | null {
@@ -61,6 +73,8 @@ function read(key: string): string | null {
 }
 
 export function storeSession(session: StaffSession) {
+  // A different person signing in on this browser never inherits the last one's Pipeline drafts.
+  if (readStoredUser()?.id !== session.user.id) purgePipelineStorage();
   storeTokens(session.accessToken, session.refreshToken);
   try { localStorage.setItem(TOKEN_KEYS.user, JSON.stringify(session.user)); } catch { /* storage blocked */ }
 }
@@ -78,6 +92,7 @@ export function clearSession() {
     localStorage.removeItem(TOKEN_KEYS.refresh);
     localStorage.removeItem(TOKEN_KEYS.user);
   } catch { /* storage blocked */ }
+  purgePipelineStorage(); // Pipeline drafts and the unsent outbox (`pl:` keys) leave with the session
 }
 
 export function readStoredUser(): StaffUser | null {

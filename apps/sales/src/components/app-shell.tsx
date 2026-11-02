@@ -19,6 +19,7 @@ const NAV = [
   { href: "/invoices", label: "Invoices" },
   { href: "/recurring", label: "Recurring" },
   { href: "/payments", label: "Payments" },
+  { href: "/pipeline", label: "Pipeline" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -26,8 +27,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()?.replace(/\/+$/, "") || "/";
   const { user, logout } = useAuth();
   const { info } = useCompany();
+  // The Pipeline (board + thread) scrolls inside its own panes, like the HR portal's fitViewport
+  // shell: the frame is exactly the visible height, with no footer and no page padding.
+  const fit = pathname === "/pipeline" || pathname.startsWith("/pipeline/");
   return (
-    <div className="min-h-screen flex flex-col">
+    <div
+      className={fit ? "flex flex-col overflow-hidden" : "min-h-screen flex flex-col"}
+      style={fit ? { height: "var(--pl-vh, 100dvh)" } : undefined}
+    >
       <header className="border-b-2 border-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Link href="/dashboard" className="flex items-center gap-2.5 font-extrabold tracking-tight text-[17px] whitespace-nowrap min-w-0">
@@ -63,10 +70,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <p className="sr-only" aria-live="polite">Billing as {info.name}</p>
-      <main className="flex-1 w-full mx-auto max-w-7xl px-4 sm:px-6 py-8 sm:py-10 min-w-0">{children}</main>
-      <footer className="border-t-2 border-border">
+      {fit ? (
+        <main className="flex-1 w-full min-w-0 min-h-0 flex flex-col overflow-hidden">{children}</main>
+      ) : (
+        <main className="flex-1 w-full mx-auto max-w-7xl px-4 sm:px-6 py-8 sm:py-10 min-w-0">{children}</main>
+      )}
+      {!fit && <footer className="border-t-2 border-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-5 text-[13px] text-ink-3">© {new Date().getFullYear()} Digital Sukoon · internal</div>
-      </footer>
+      </footer>}
     </div>
   );
 }

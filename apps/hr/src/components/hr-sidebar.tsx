@@ -8,7 +8,7 @@ import {
   Wallet, FolderOpen, Calendar, PlaneTakeoff, Home, Gift, ListTodo, Receipt,
   Presentation, ClipboardList, Timer, Award, AlertCircle, Building2, ScrollText,
   FileCheck, Bug, Mail, ChevronLeft, ChevronRight, ChevronDown, Grid3x3,
-  LogOut, Menu, X as CloseIcon, SquareKanban, Inbox,
+  LogOut, Menu, X as CloseIcon, SquareKanban, Inbox, Camera, Gauge,
 } from "lucide-react";
 import { usePipelineBootstrap } from "@/lib/pipeline-swr";
 import { PortalSwitcherRail } from "./portal-switcher";
@@ -19,6 +19,10 @@ type NavItem = { href: string; label: string; icon: React.ElementType; group?: s
 const NAV_PIPELINE: NavItem = { href: "/pipeline", label: "Pipeline", icon: SquareKanban };
 /** Reviews, pages and due projects waiting on me (pipeline work tracking). Same gate as Pipeline. */
 const NAV_MY_WORK: NavItem = { href: "/pipeline/my-work", label: "My Work", icon: Inbox };
+const NAV_SHOOTS: NavItem = { href: "/pipeline/shoots", label: "Shoot Desk", icon: Camera };
+const NAV_WORKLOAD: NavItem = { href: "/pipeline/workload", label: "Workload", icon: Gauge };
+/** Pipeline sub-pages that have their own sidebar row: "/pipeline" must not light up on them. */
+const PIPELINE_SUBPAGES = [NAV_MY_WORK.href, NAV_SHOOTS.href, NAV_WORKLOAD.href];
 
 const NAV_MAIN: NavItem[] = [
   { href: "/dashboard",    label: "Dashboard",      icon: LayoutDashboard },
@@ -136,7 +140,7 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
   let lastGroup: string | undefined;
   // Pipeline sits right after "Daily Update", inside the Daily group.
   const navItems = showPipeline
-    ? NAV_MAIN.flatMap((n) => (n.href === "/plan" ? [n, NAV_PIPELINE, NAV_MY_WORK] : [n]))
+    ? NAV_MAIN.flatMap((n) => (n.href === "/plan" ? [n, NAV_PIPELINE, NAV_MY_WORK, NAV_SHOOTS, NAV_WORKLOAD] : [n]))
     : NAV_MAIN;
 
   return (
@@ -165,9 +169,10 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
       {/* Nav */}
       <nav className="flex-1 px-2 py-3 overflow-y-auto min-h-0">
         {navItems.map((n) => {
-          // "/pipeline" must not light up while its own "My Work" row is the open page.
+          // "/pipeline" must not light up while one of its own sub-page rows is the open page.
           const isActive =
-            pathname.startsWith(n.href) && !(n.href === NAV_PIPELINE.href && pathname.startsWith(NAV_MY_WORK.href));
+            pathname.startsWith(n.href) &&
+            !(n.href === NAV_PIPELINE.href && PIPELINE_SUBPAGES.some((h) => pathname.startsWith(h)));
           const I = n.icon;
           const showGroup = expanded && n.group && n.group !== lastGroup;
           if (n.group) lastGroup = n.group;

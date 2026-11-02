@@ -102,6 +102,10 @@ const FOREIGN_KEYS = [
   "pipeline_deliverables.project_id -> pipeline_projects : c",
   "pipeline_reviews.project_id -> pipeline_projects : c",
   "pipeline_versions.project_id -> pipeline_projects : c",
+  // Part 2 (scripts/pipeline-work2-ddl.sql): comments belong to a version; a shoot outlives its project.
+  "pipeline_version_comments.project_id -> pipeline_projects : c",
+  "pipeline_version_comments.version_id -> pipeline_versions : c",
+  "pipeline_shoots.project_id -> pipeline_projects : n",
 ];
 
 describe("pipeline schema (spec §2)", () => {

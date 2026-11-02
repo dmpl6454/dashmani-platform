@@ -86,12 +86,25 @@ export function MyWork() {
     );
   } else {
     const now = Date.parse(data.now);
-    const total = data.reviewsToDo.length + data.changesRequested.length + data.deliverables.length + data.dueProjects.length;
+    const shoots = data.shoots ?? [];
+    const total =
+      data.reviewsToDo.length + data.changesRequested.length + data.deliverables.length + data.dueProjects.length + shoots.length;
     body = (
       <>
         {total === 0 && (
           <p className="mb-6 rounded-xl bg-success-bg text-success px-3.5 py-3 text-[14px] font-semibold">Nothing waiting on you right now.</p>
         )}
+        <Group title="Shoots" count={shoots.length} empty="No shoots assigned to you.">
+          {shoots.map((sh) => (
+            <Row
+              key={sh.id}
+              href="/pipeline/shoots?view=mine"
+              title={sh.title}
+              project={[sh.location, sh.event].filter(Boolean).join(" · ") || "Shoot"}
+              meta={`${W.PIPELINE_SHOOT_STATUS_LABEL[sh.status]} · call ${when(sh.callTime)}`}
+            />
+          ))}
+        </Group>
         <Group title="Reviews to do" count={data.reviewsToDo.length} empty="No reviews waiting for you.">
           {data.reviewsToDo.map(({ review, project }) => (
             <Row

@@ -112,6 +112,19 @@ export const plApi = {
   editDeliverable: (did: string, body: W.EditDeliverableInput) =>
     call<W.PipelineDeliverableDto>(`/deliverables/${did}`, json("PATCH", body)),
   deleteDeliverable: (did: string) => call<{ id: string }>(`/deliverables/${did}`, { method: "DELETE" }),
+  startUpload: (id: string, body: W.StartUploadInput) => call<W.PipelineUploadTicket>(`/projects/${id}/uploads`, json("POST", body)),
+  versionFile: (vid: string, download: boolean) =>
+    call<{ url: string; expiresAt: string }>(`/versions/${vid}/file${download ? "?download=1" : ""}`),
+  editVersionUsage: (vid: string, body: W.EditVersionUsageInput) =>
+    call<W.PipelineVersionDto>(`/versions/${vid}`, json("PATCH", body)),
+  addComment: (vid: string, body: W.AddCommentInput) =>
+    call<W.PipelineCommentDto>(`/versions/${vid}/comments`, json("POST", body)),
+  resolveComment: (cid: string, resolved: boolean) =>
+    call<W.PipelineCommentDto>(`/comments/${cid}/resolved`, json("PUT", { resolved })),
+  shoots: (view: "upcoming" | "mine" | "past") => call<{ shoots: W.PipelineShootDto[]; now: string }>(`/shoots?view=${view}`),
+  createShoot: (body: W.CreateShootInput) => call<W.PipelineShootDto>("/shoots", json("POST", body)),
+  editShoot: (sid: string, body: W.EditShootInput) => call<W.PipelineShootDto>(`/shoots/${sid}`, json("PATCH", body)),
+  workload: () => call<W.PipelineWorkloadDto>("/workload"),
   /** Keepalive: used on leave / hide, when the page may be going away. */
   markRead: (id: string, seq: number, leaving: boolean) =>
     call<PipelineReadResponse>(`/projects/${id}/read`, json("POST", { seq, leaving }, { keepalive: true })),
@@ -138,6 +151,13 @@ export function retryAfterMs(e: unknown, fallbackSec = 10): number {
 }
 
 const WORDS: Record<string, string> = {
+  UPLOADS_OFF: "File uploads aren't switched on — paste a link to the file instead.",
+  UPLOAD_NOT_FOUND: "The upload didn't finish — upload the file again.",
+  UPLOAD_WRONG_TYPE: "This type of file can't be used here.",
+  UPLOAD_TOO_LARGE: "The file is too big for this kind of version.",
+  FILE_ALREADY_USED: "This file is already on a version.",
+  NO_FILE: "This version is a link, not an uploaded file.",
+  STORAGE_UNAVAILABLE: "Couldn't reach file storage — try again in a moment.",
   PIPELINE_DISABLED: "Pipeline is paused right now.",
   PIPELINE_NOT_IN_PILOT: "Pipeline isn't available for your account yet.",
   ACCOUNT_INACTIVE: "Your account is inactive.",
@@ -180,6 +200,13 @@ const WORDS: Record<string, string> = {
   DELIVERABLE_PUBLISHED: "A published page is kept as a record — mark it cancelled instead.",
   TOO_MANY_VERSIONS: "This project has the most versions it can hold.",
   TOO_MANY_DELIVERABLES: "This project has the most pages it can hold.",
+  USAGE_RESTRICTED: "A file's embargo or licence doesn't allow it to go live then — check its Usage & rights.",
+  TOO_MANY_COMMENTS: "This version has the most comments it can hold.",
+  COMMENT_NOT_FOUND: "That comment no longer exists.",
+  VERSION_NOT_FOUND: "That version no longer exists.",
+  SHOOT_NOT_FOUND: "That shoot no longer exists.",
+  SHOOT_CONFLICT: "Someone else changed this shoot — showing their version.",
+  UPLOAD_URL_REQUIRED: "Add the link to the footage first.",
 };
 
 /** Human words for an error. Never the raw server message; never "Something went wrong". */

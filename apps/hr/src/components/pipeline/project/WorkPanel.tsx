@@ -12,15 +12,16 @@
  * Data: GET /pipeline/projects/:id/work, fetched on mount and on focus (no polling) and after
  * every action here. Errors are worded by describeError — never a raw server message.
  */
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import useSWR from "swr";
-import { ExternalLink } from "lucide-react";
+import { Download, ExternalLink, Paperclip, Play } from "lucide-react";
 import { pipelineWork as W } from "@dashmani/shared";
 import { usePipeline } from "../provider";
 import { PL_SWR } from "@/lib/pipeline-swr";
 import { describeError, isApiError, plApi } from "../api";
 import { PeoplePicker } from "./PeoplePicker";
 import { Skeleton } from "../ui/Skeleton";
+import { UploadError, acceptFor, checkFile, fileTypeOf, openVersionFile, putToR2 } from "../upload";
 
 const inputCls =
   "w-full h-11 px-3 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo";
@@ -79,6 +80,11 @@ function Section({ title, children, right }: { title: string; children: React.Re
       {children}
     </section>
   );
+}
+
+/** Upload failures carry their own words; everything else goes through the API's wording. */
+function errText(e: unknown): string {
+  return e instanceof UploadError ? e.message : describeError(e);
 }
 
 function Err({ text }: { text: string | null }) {
@@ -290,23 +296,83 @@ function VersionsSection({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [withUsage, setWithUsage] = useState(false);
+  const [usage, setUsage] = useState<UsageForm>(() => usageFromVersion());
+  // Uploads (R2): offered when the API says they are switched on, for anything but a caption.
+  const canUpload = work.uploads === true && kind !== "caption";
+  const [source, setSource] = useState<"file" | "link">("file");
+  const useFile = canUpload && source === "file";
+  const [file, setFile] = useState<File | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Leaving the page mid-upload loses the upload: say so.
+  useEffect(() => {
+    if (progress === null) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [progress]);
+
+  const reset = () => {
+    setOpen(false);
+    setUrl("");
+    setBody("");
+    setLabel("");
+    setFile(null);
+    setUsage(usageFromVersion());
+    setWithUsage(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const save = async () => {
-    const input = { kind, url: url.trim() || null, body: kind === "caption" ? body : undefined, label: label.trim() || undefined };
-    const parsed = W.addVersionSchema.safeParse(input);
-    if (!parsed.success) return setErr(parsed.error.issues[0]?.message ?? "Check the details.");
+    if (useFile && !file) return setErr("Choose a file to upload.");
+    if (useFile && file) {
+      const bad = checkFile(kind, file);
+      if (bad) return setErr(bad);
+    }
+    const draft = (fileKey?: string) => ({
+      kind,
+      url: useFile ? null : url.trim() || null,
+      fileKey,
+      fileName: fileKey && file ? file.name.slice(0, W.PIPELINE_WORK_LIMITS.fileNameMax) : undefined,
+      body: kind === "caption" ? body : undefined,
+      label: label.trim() || undefined,
+      ...(withUsage ? usageToWire(usage) : {}),
+    });
+    // Check every other field BEFORE spending an upload on it: the real key only exists after
+    // the upload, so the check stands in a well-formed key under this project.
+    const pre = W.addVersionSchema.safeParse(draft(useFile ? `pipeline/${projectId}/${"0".repeat(32)}` : undefined));
+    if (!pre.success) return setErr(pre.error.issues[0]?.message ?? "Check the details.");
     setBusy(true);
     setErr(null);
     try {
-      await plApi.addVersion(projectId, parsed.data);
-      setOpen(false);
-      setUrl("");
-      setBody("");
-      setLabel("");
+      let wire: W.AddVersionInput = pre.data;
+      if (useFile && file) {
+        const ticket = await plApi.startUpload(projectId, {
+          kind: kind as W.PipelineUploadKind,
+          fileName: file.name.slice(0, W.PIPELINE_WORK_LIMITS.fileNameMax),
+          contentType: fileTypeOf(file),
+          size: file.size,
+        });
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        setProgress(0);
+        await putToR2(ticket, file, setProgress, ctrl.signal);
+        wire = W.addVersionSchema.parse(draft(ticket.key));
+      }
+      await plApi.addVersion(projectId, wire);
+      reset();
       onChanged();
     } catch (e) {
-      setErr(describeError(e));
+      setErr(errText(e));
     } finally {
+      abortRef.current = null;
+      setProgress(null);
       setBusy(false);
     }
   };
@@ -347,16 +413,68 @@ function VersionsSection({
               className="w-full px-3 py-2 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
             />
           )}
-          <input
-            className={inputCls}
-            type="url"
-            inputMode="url"
-            placeholder={kind === "caption" ? "Link (optional)" : "Link to the file — NAS, Drive…"}
-            value={url}
-            maxLength={W.PIPELINE_WORK_LIMITS.urlMax}
-            onChange={(e) => setUrl(e.target.value)}
-            aria-label="Link to the file"
-          />
+          {canUpload && (
+            <div className="flex gap-1.5" role="group" aria-label="Where the file is">
+              {(["file", "link"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={source === s}
+                  disabled={busy}
+                  onClick={() => setSource(s)}
+                  className={`h-9 px-3 rounded-lg text-[12.5px] font-semibold border ${
+                    source === s ? "border-indigo bg-indigo-soft text-indigo" : "border-border text-ink-3"
+                  }`}
+                >
+                  {s === "file" ? "Upload a file" : "Paste a link"}
+                </button>
+              ))}
+            </div>
+          )}
+          {useFile ? (
+            <div className="space-y-1.5">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={acceptFor(kind)}
+                disabled={busy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  setFile(f);
+                  setErr(f ? checkFile(kind, f) : null);
+                }}
+                aria-label="File to upload"
+                className="block w-full max-w-full text-[13px] text-ink-2 file:mr-3 file:h-9 file:px-3 file:rounded-lg file:border-0 file:bg-muted file:text-[12.5px] file:font-semibold file:text-ink"
+              />
+              {file && (
+                <p className="text-[12.5px] text-ink-3 break-all">
+                  {file.name} · {W.formatBytes(file.size)}
+                </p>
+              )}
+              {progress !== null && (
+                <div className="flex items-center gap-2" role="status" aria-live="polite">
+                  <div className="h-2 flex-1 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full bg-indigo transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} />
+                  </div>
+                  <span className="text-[12px] text-ink-3 tabular-nums w-10 text-right">{Math.round(progress * 100)}%</span>
+                  <button type="button" className="h-8 px-2 text-[12.5px] font-semibold text-danger" onClick={() => abortRef.current?.abort()}>
+                    Cancel upload
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <input
+              className={inputCls}
+              type="url"
+              inputMode="url"
+              placeholder={kind === "caption" ? "Link (optional)" : "Link to the file — NAS, Drive…"}
+              value={url}
+              maxLength={W.PIPELINE_WORK_LIMITS.urlMax}
+              onChange={(e) => setUrl(e.target.value)}
+              aria-label="Link to the file"
+            />
+          )}
           <input
             className={inputCls}
             placeholder="Label (optional) — e.g. 9:16 cut"
@@ -365,9 +483,16 @@ function VersionsSection({
             onChange={(e) => setLabel(e.target.value)}
             aria-label="Label"
           />
+          {withUsage ? (
+            <UsageFields value={usage} onChange={setUsage} />
+          ) : (
+            <button type="button" className="h-9 text-[12.5px] font-semibold text-indigo" onClick={() => setWithUsage(true)}>
+              Add usage &amp; rights (optional)
+            </button>
+          )}
           <div className="flex gap-2">
             <button type="button" className={btnPrimary} disabled={busy} onClick={() => void save()}>
-              Save version
+              {progress !== null ? "Uploading…" : useFile ? "Upload & save" : "Save version"}
             </button>
             <button type="button" className={btnGhost} disabled={busy} onClick={() => setOpen(false)}>
               Cancel
@@ -379,7 +504,7 @@ function VersionsSection({
       {work.versions.length === 0 && !open && <p className="text-[13.5px] text-ink-3">No versions yet.</p>}
       <ul className="space-y-2">
         {[...latest, ...(showAll ? older : [])].map((v) => (
-          <VersionRow key={v.id} v={v} isLatest={latestIds.has(v.id)} />
+          <VersionRow key={v.id} v={v} isLatest={latestIds.has(v.id)} readOnly={readOnly} onChanged={onChanged} />
         ))}
       </ul>
       {older.length > 0 && (
@@ -391,7 +516,159 @@ function VersionsSection({
   );
 }
 
-function VersionRow({ v, isLatest }: { v: W.PipelineVersionDto; isLatest: boolean }) {
+/** Usage facts as short badges; an active embargo or a lapsed licence is shown as a warning. */
+function UsageBadges({ v }: { v: W.PipelineVersionDto }) {
+  const today = toLocalInput(new Date().toISOString()).slice(0, 10);
+  const embargoed = v.embargoUntil && Date.parse(v.embargoUntil) > Date.now();
+  const expired = v.licenceExpires && v.licenceExpires < today;
+  if (!v.rights && !v.source && !v.licenceExpires && !v.embargoUntil) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11.5px]">
+      {v.rights && <span className="px-2 py-0.5 rounded-full bg-muted text-ink-2">{W.PIPELINE_RIGHTS_LABEL[v.rights]}</span>}
+      {v.source && <span className="px-2 py-0.5 rounded-full bg-muted text-ink-2 max-w-full truncate">Source: {v.source}</span>}
+      {v.embargoUntil && (
+        <span className={`px-2 py-0.5 rounded-full ${embargoed ? "bg-attention-bg text-attention font-semibold" : "bg-muted text-ink-3"}`}>
+          {embargoed ? "Embargo until " : "Embargo ended "}
+          {when(v.embargoUntil)}
+        </span>
+      )}
+      {v.licenceExpires && (
+        <span className={`px-2 py-0.5 rounded-full ${expired ? "bg-danger-bg text-danger font-semibold" : "bg-muted text-ink-3"}`}>
+          {expired ? "Licence expired " : "Licence until "}
+          {v.licenceExpires}
+        </span>
+      )}
+    </div>
+  );
+}
+
+type UsageForm = { rights: string; source: string; licenceExpires: string; embargoUntil: string; usageNotes: string };
+const usageFromVersion = (v?: W.PipelineVersionDto): UsageForm => ({
+  rights: v?.rights ?? "",
+  source: v?.source ?? "",
+  licenceExpires: v?.licenceExpires ?? "",
+  embargoUntil: toLocalInput(v?.embargoUntil ?? null),
+  usageNotes: v?.usageNotes ?? "",
+});
+const usageToWire = (f: UsageForm) => ({
+  rights: f.rights as W.PipelineRights | "",
+  source: f.source.trim(),
+  licenceExpires: f.licenceExpires || null,
+  embargoUntil: fromLocalInput(f.embargoUntil),
+  usageNotes: f.usageNotes.trim(),
+});
+
+function UsageFields({ value, onChange }: { value: UsageForm; onChange: (f: UsageForm) => void }) {
+  const set = (k: keyof UsageForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+    onChange({ ...value, [k]: e.target.value });
+  return (
+    <div className="space-y-2">
+      <select className={inputCls} value={value.rights} onChange={set("rights")} aria-label="Rights">
+        <option value="">Rights: not set</option>
+        {W.PIPELINE_RIGHTS.map((r) => (
+          <option key={r} value={r}>
+            {W.PIPELINE_RIGHTS_LABEL[r]}
+          </option>
+        ))}
+      </select>
+      <input className={inputCls} placeholder="Source — creator, agency or our shoot" value={value.source} maxLength={W.PIPELINE_WORK_LIMITS.sourceMax} onChange={set("source")} aria-label="Source" />
+      <label className="block text-[12.5px] font-semibold text-ink-2">
+        Licence expires (last day it may be used)
+        <input type="date" className={`${inputCls} mt-1`} value={value.licenceExpires} onChange={set("licenceExpires")} />
+      </label>
+      <label className="block text-[12.5px] font-semibold text-ink-2">
+        Embargo — not before
+        <input type="datetime-local" className={`${inputCls} mt-1`} value={value.embargoUntil} onChange={set("embargoUntil")} />
+      </label>
+      <textarea
+        value={value.usageNotes}
+        onChange={set("usageNotes")}
+        maxLength={W.PIPELINE_WORK_LIMITS.usageNotesMax}
+        rows={2}
+        placeholder="Usage notes — where it may be used, exclusivity, credit line…"
+        aria-label="Usage notes"
+        className="w-full px-3 py-2 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
+      />
+    </div>
+  );
+}
+
+function VersionRow({
+  v,
+  isLatest,
+  readOnly,
+  onChanged,
+}: {
+  v: W.PipelineVersionDto;
+  isLatest: boolean;
+  readOnly: boolean;
+  onChanged: () => void;
+}) {
+  const [editUsage, setEditUsage] = useState(false);
+  const [usage, setUsage] = useState<UsageForm>(() => usageFromVersion(v));
+  const [showComments, setShowComments] = useState(v.comments.some((c) => !c.resolvedAt));
+  const [comment, setComment] = useState("");
+  const [at, setAt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const open = v.comments.filter((c) => !c.resolvedAt).length;
+
+  const fileAction = async (download: boolean) => {
+    setErr(null);
+    try {
+      await openVersionFile(() => plApi.versionFile(v.id, download), download);
+    } catch (e) {
+      setErr(errText(e));
+    }
+  };
+
+  const saveUsage = async () => {
+    const parsed = W.editVersionUsageSchema.safeParse(usageToWire(usage));
+    if (!parsed.success) return setErr(parsed.error.issues[0]?.message ?? "Check the details.");
+    setBusy(true);
+    setErr(null);
+    try {
+      await plApi.editVersionUsage(v.id, parsed.data);
+      setEditUsage(false);
+      onChanged();
+    } catch (e) {
+      setErr(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const postComment = async () => {
+    const atSeconds = at.trim() ? W.parseTimestamp(at) : null;
+    if (at.trim() && atSeconds === null) return setErr("Write the time as 1:23 (minutes:seconds).");
+    if (!comment.trim()) return setErr("Write a comment.");
+    setBusy(true);
+    setErr(null);
+    try {
+      await plApi.addComment(v.id, { body: comment.trim(), atSeconds });
+      setComment("");
+      setAt("");
+      onChanged();
+    } catch (e) {
+      setErr(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleResolved = async (c: W.PipelineCommentDto) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await plApi.resolveComment(c.id, !c.resolvedAt);
+      onChanged();
+    } catch (e) {
+      setErr(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <li className={`rounded-xl border px-3 py-2 min-w-0 ${isLatest ? "border-border" : "border-rule opacity-75"}`}>
       <div className="flex items-center gap-2 min-w-0">
@@ -410,11 +687,132 @@ function VersionRow({ v, isLatest }: { v: W.PipelineVersionDto; isLatest: boolea
             <ExternalLink size={15} />
           </a>
         )}
+        {v.file && (
+          <span className="ml-auto shrink-0 flex">
+            <button
+              type="button"
+              className="h-8 w-8 grid place-items-center rounded-lg text-indigo hover:bg-muted"
+              aria-label={`Open ${W.PIPELINE_VERSION_KIND_LABEL[v.kind]} v${v.number}`}
+              title="Open"
+              onClick={() => void fileAction(false)}
+            >
+              <Play size={15} />
+            </button>
+            <button
+              type="button"
+              className="h-8 w-8 grid place-items-center rounded-lg text-indigo hover:bg-muted"
+              aria-label={`Download ${W.PIPELINE_VERSION_KIND_LABEL[v.kind]} v${v.number}`}
+              title="Download"
+              onClick={() => void fileAction(true)}
+            >
+              <Download size={15} />
+            </button>
+          </span>
+        )}
       </div>
+      {v.file && (
+        <p className="mt-0.5 flex items-center gap-1 text-[12.5px] text-ink-3 min-w-0">
+          <Paperclip size={12} className="shrink-0" />
+          <span className="truncate">{v.file.name}</span>
+          <span className="shrink-0">· {W.formatBytes(v.file.size)}</span>
+        </p>
+      )}
       {v.body && <p className="mt-1 text-[13px] text-ink-2 whitespace-pre-wrap break-words line-clamp-4">{v.body}</p>}
+      <UsageBadges v={v} />
+      {v.usageNotes && <p className="mt-1 text-[12.5px] text-ink-3 whitespace-pre-wrap break-words">{v.usageNotes}</p>}
       <p className="mt-1 text-[12px] text-ink-4">
         {v.createdBy.name} · {when(v.createdAt)}
       </p>
+
+      <div className="mt-1 flex flex-wrap gap-x-3">
+        <button type="button" className="h-9 text-[12.5px] font-semibold text-indigo" onClick={() => setShowComments((x) => !x)}>
+          {showComments ? "Hide comments" : v.comments.length ? `Comments · ${open} open` : "Comment"}
+        </button>
+        {!readOnly && !editUsage && (
+          <button type="button" className="h-9 text-[12.5px] font-semibold text-ink-3" onClick={() => setEditUsage(true)}>
+            Usage &amp; rights
+          </button>
+        )}
+      </div>
+
+      {editUsage && (
+        <div className="mt-2 space-y-2 rounded-xl border border-border p-2.5">
+          <UsageFields value={usage} onChange={setUsage} />
+          <div className="flex gap-2">
+            <button type="button" className={btnPrimary} disabled={busy} onClick={() => void saveUsage()}>
+              Save
+            </button>
+            <button
+              type="button"
+              className={btnGhost}
+              disabled={busy}
+              onClick={() => {
+                setUsage(usageFromVersion(v));
+                setEditUsage(false);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showComments && (
+        <div className="mt-1.5">
+          <ul className="space-y-1.5">
+            {v.comments.map((c) => (
+              <li key={c.id} className={`rounded-lg bg-muted/60 px-2.5 py-1.5 ${c.resolvedAt ? "opacity-60" : ""}`}>
+                <p className="text-[13px] text-ink break-words whitespace-pre-wrap">
+                  {c.atSeconds !== null && (
+                    <span className="mr-1.5 font-mono text-[12px] font-semibold text-indigo">{W.formatTimestamp(c.atSeconds)}</span>
+                  )}
+                  <span className={c.resolvedAt ? "line-through" : ""}>{c.body}</span>
+                </p>
+                <p className="mt-0.5 flex items-center gap-2 text-[11.5px] text-ink-4">
+                  <span className="min-w-0 truncate">
+                    {c.author.name} · {when(c.createdAt)}
+                    {c.resolvedBy ? ` · resolved by ${c.resolvedBy.name}` : ""}
+                  </span>
+                  {!readOnly && (
+                    <button type="button" className="ml-auto shrink-0 h-8 font-semibold text-indigo" disabled={busy} onClick={() => void toggleResolved(c)}>
+                      {c.resolvedAt ? "Reopen" : "Resolve"}
+                    </button>
+                  )}
+                </p>
+              </li>
+            ))}
+          </ul>
+          {!readOnly && (
+            <div className="mt-2 flex gap-2">
+              {(v.kind === "video" || v.kind === "other") && (
+                <input
+                  className="w-[84px] shrink-0 h-11 px-2.5 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
+                  placeholder="1:23"
+                  value={at}
+                  onChange={(e) => setAt(e.target.value)}
+                  aria-label="Time in the video (optional)"
+                  inputMode="numeric"
+                />
+              )}
+              <input
+                className="min-w-0 flex-1 h-11 px-3 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
+                placeholder="Add a comment"
+                value={comment}
+                maxLength={W.PIPELINE_WORK_LIMITS.commentMax}
+                onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void postComment();
+                }}
+                aria-label="Comment"
+              />
+              <button type="button" className={`${btnPrimary} shrink-0`} disabled={busy} onClick={() => void postComment()}>
+                Post
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <Err text={err} />
     </li>
   );
 }

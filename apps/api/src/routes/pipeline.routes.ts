@@ -72,8 +72,14 @@ import {
   getMyWork,
   getWork,
   requestReview,
+  editVersionUsage,
+  startUpload,
+  versionFileUrl,
+  addComment,
+  resolveComment,
   type WorkActor,
 } from "../services/pipeline/work.service";
+import { listShoots, createShoot, editShoot, getWorkload } from "../services/pipeline/shoots.service";
 import { pipelineStats } from "../services/pipeline/stats";
 
 const router = Router();
@@ -423,6 +429,27 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => ok(res, await addVersion(await workActorOf(req), req.params.id, req.body), 201)),
 );
 
+// POST /pipeline/projects/:id/uploads — a signed PUT URL; the browser sends the file to R2 itself
+router.post(
+  "/pipeline/projects/:id/uploads",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(WK.startUploadSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await startUpload(await workActorOf(req), req.params.id, req.body), 201)),
+);
+
+// GET /pipeline/versions/:vid/file?download=1 — a short-lived link to the uploaded file
+router.get(
+  "/pipeline/versions/:vid/file",
+  ...G,
+  pv(WK.versionParamsSchema, "params"),
+  pv(WK.versionFileQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    return ok(res, await versionFileUrl(req.params.vid, req.query.download === "1"));
+  }),
+);
+
 // POST /pipeline/projects/:id/reviews
 router.post(
   "/pipeline/projects/:id/reviews",
@@ -467,6 +494,70 @@ router.delete(
   ...G,
   pv(WK.deliverableParamsSchema, "params"),
   asyncHandler(async (req: Request, res: Response) => ok(res, await deleteDeliverable(await workActorOf(req), req.params.did))),
+);
+
+// PATCH /pipeline/versions/:vid — source, rights, licence, embargo (the file itself never changes)
+router.patch(
+  "/pipeline/versions/:vid",
+  ...G,
+  pv(WK.versionParamsSchema, "params"),
+  pv(WK.editVersionUsageSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await editVersionUsage(await workActorOf(req), req.params.vid, req.body))),
+);
+
+// POST /pipeline/versions/:vid/comments — a review comment, optionally at a point in the video
+router.post(
+  "/pipeline/versions/:vid/comments",
+  ...G,
+  pv(WK.versionParamsSchema, "params"),
+  pv(WK.addCommentSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await addComment(await workActorOf(req), req.params.vid, req.body), 201)),
+);
+
+// PUT /pipeline/comments/:cid/resolved
+router.put(
+  "/pipeline/comments/:cid/resolved",
+  ...G,
+  pv(WK.commentParamsSchema, "params"),
+  pv(WK.resolveCommentSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await resolveComment(await workActorOf(req), req.params.cid, req.body.resolved)),
+  ),
+);
+
+// GET /pipeline/shoots?view=upcoming|mine|past
+router.get(
+  "/pipeline/shoots",
+  ...G,
+  pv(WK.shootListQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { view } = req.query as unknown as { view: "upcoming" | "mine" | "past" };
+    return ok(res, await listShoots(req.pipeline!.userId, await getPipelineDirectory(), view));
+  }),
+);
+
+// POST /pipeline/shoots
+router.post(
+  "/pipeline/shoots",
+  ...G,
+  pv(WK.createShootSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await createShoot(await workActorOf(req), req.body), 201)),
+);
+
+// PATCH /pipeline/shoots/:sid
+router.patch(
+  "/pipeline/shoots/:sid",
+  ...G,
+  pv(WK.shootParamsSchema, "params"),
+  pv(WK.editShootSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await editShoot(await workActorOf(req), req.params.sid, req.body))),
+);
+
+// GET /pipeline/workload — per-person load across pages, reviews, shoots and projects
+router.get(
+  "/pipeline/workload",
+  ...G,
+  asyncHandler(async (_req: Request, res: Response) => ok(res, await getWorkload(await getPipelineDirectory()))),
 );
 
 // ══ end work tracking block ═══════════════════════════════════════════════════════════

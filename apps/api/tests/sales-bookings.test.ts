@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
+import jwt from "jsonwebtoken";
 import { prisma } from "@dashmani/db";
 import app from "../src/app";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
@@ -106,6 +107,44 @@ describe("Sales: campaign bookings", () => {
     expect((await request(app).get("/v1/sales/bookings/00000000-0000-0000-0000-000000000000/media-urls").set(auth(token))).status).toBe(404);
     const other = await createTestUser({ roleNames: [] });
     expect((await request(app).get(`/v1/sales/bookings/${b.id}/media-urls`).set(auth(generateToken(other.id, other.email, [])))).status).toBe(403);
+  });
+
+  it("lets sales review a booking: approve, ask for changes, reject — same rules as the staff portal", async () => {
+    const a = await booking("Approve me", "paid_pending_review", [item(1, "pending", 50_000), item(2, "pending", 40_000)]);
+    const approved = await request(app).post(`/v1/sales/bookings/${a.id}/approve`).set(auth(token));
+    expect(approved.status).toBe(200);
+    expect(approved.body.data).toMatchObject({ id: a.id, status: "approved" });
+    // Same side effects as the staff route: nothing stays pending (auto-publish is off in tests).
+    expect((await prisma.campaignBookingItem.findMany({ where: { bookingId: a.id } })).map((i) => i.status)).toEqual(["manual_pending", "manual_pending"]);
+    const events = await prisma.campaignBookingEvent.findMany({ where: { bookingId: a.id, toStatus: "approved" } });
+    expect(events).toHaveLength(1);
+    // Approving again is a state-machine conflict, never a second approval.
+    expect((await request(app).post(`/v1/sales/bookings/${a.id}/approve`).set(auth(token))).status).toBe(409);
+
+    const c = await booking("Change me", "paid_pending_review", [item(3, "pending", 30_000)]);
+    expect((await request(app).post(`/v1/sales/bookings/${c.id}/request-changes`).set(auth(token)).send({})).status).toBe(400);
+    const changed = await request(app).post(`/v1/sales/bookings/${c.id}/request-changes`).set(auth(token)).send({ note: "Please use the 9:16 cut" });
+    expect(changed.status).toBe(200);
+    expect(changed.body.data).toMatchObject({ status: "changes_requested", reviewNote: "Please use the 9:16 cut" });
+
+    // Reject works from changes_requested too; an offline booking has nothing to refund.
+    const rejected = await request(app).post(`/v1/sales/bookings/${c.id}/reject`).set(auth(token)).send({ note: "Brand not a fit" });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.data).toMatchObject({ status: "rejected", refundError: null });
+    expect((await prisma.campaignBookingItem.findMany({ where: { bookingId: c.id } })).map((i) => i.status)).toEqual(["refunded"]);
+    expect((await request(app).post(`/v1/sales/bookings/${c.id}/reject`).set(auth(token)).send({ note: "again" })).status).toBe(409);
+  });
+
+  it("booking review needs sales:manage and refuses non-staff tokens", async () => {
+    const b = await booking("Guarded", "paid_pending_review", [item(1, "pending", 50_000)]);
+    await createTestRole("Viewer", [{ resource: "sales", action: "view", scope: "global" }]);
+    const viewer = await createTestUser({ roleNames: ["Viewer"] });
+    expect((await request(app).post(`/v1/sales/bookings/${b.id}/approve`).set(auth(generateToken(viewer.id, viewer.email, ["Viewer"])))).status).toBe(403);
+    const plain = await createTestUser({ roleNames: [] });
+    expect((await request(app).post(`/v1/sales/bookings/${b.id}/approve`).set(auth(generateToken(plain.id, plain.email, [])))).status).toBe(403);
+    const clientToken = jwt.sign({ userId: clientId, email: "filmy@c.test", roles: [], type: "client" }, process.env.JWT_SECRET || "dev-secret", { expiresIn: "15m" });
+    expect((await request(app).post(`/v1/sales/bookings/${b.id}/approve`).set(auth(clientToken))).status).toBe(403);
+    expect((await prisma.campaignBooking.findUnique({ where: { id: b.id } }))?.status).toBe("paid_pending_review");
   });
 
   it("is a 404 for an unknown booking and needs sales access", async () => {

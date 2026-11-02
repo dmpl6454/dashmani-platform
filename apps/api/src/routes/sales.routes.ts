@@ -1,5 +1,6 @@
 import { Router, Request } from "express";
 import {
+  campaignReviewNoteSchema,
   clientBillingProfileSchema,
   creditNoteCreateSchema,
   invoiceCancelSchema,
@@ -47,6 +48,7 @@ import * as payments from "../services/sales/payments.service";
 import { getSalesDashboard } from "../services/sales/dashboard.service";
 import { getBooking, listBookings } from "../services/sales/bookings.service";
 import { bookingMediaUrls } from "../services/campaign/media-urls.service";
+import * as campaignReview from "../services/campaign/review.service";
 import { retryEInvoice } from "../services/sales/einvoice.service";
 import { renderCreditNotePdf, renderInvoicePdf } from "../services/sales/pdf.service";
 import { emailInvoice } from "../services/sales/invoice-email.service";
@@ -133,6 +135,21 @@ router.get("/sales/bookings", ...view, asyncHandler(async (req, res) => success(
 // Signed preview links for the booking's creative (the same ones the staff portal gets).
 router.get("/sales/bookings/:id/media-urls", ...view, asyncHandler(async (req, res) => success(res, await bookingMediaUrls(req.params.id))));
 router.get("/sales/bookings/:id", ...view, asyncHandler(async (req, res) => success(res, await getBooking(req.params.id))));
+// Review a client booking from the sales portal (sales:manage). The SAME review.service calls the
+// staff portal's /admin/campaigns/:id/* routes make — state machine, refunds, publishing plan and
+// client emails are shared; only the answer is the sales booking shape (+ refundError on reject).
+router.post("/sales/bookings/:id/approve", ...manage, asyncHandler(async (req, res) => {
+  await campaignReview.approve(req.params.id, staffId(req));
+  return success(res, await getBooking(req.params.id));
+}));
+router.post("/sales/bookings/:id/request-changes", ...manage, validate(campaignReviewNoteSchema), asyncHandler(async (req, res) => {
+  await campaignReview.requestChanges(req.params.id, staffId(req), req.body.note);
+  return success(res, await getBooking(req.params.id));
+}));
+router.post("/sales/bookings/:id/reject", ...manage, validate(campaignReviewNoteSchema), asyncHandler(async (req, res) => {
+  const r = await campaignReview.reject(req.params.id, staffId(req), req.body.note);
+  return success(res, { ...(await getBooking(req.params.id)), refundError: r.refundError });
+}));
 
 // ── Quotes ──────────────────────────────────────────────────────────────────────
 

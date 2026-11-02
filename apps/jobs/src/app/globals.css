@@ -1,4 +1,4 @@
-/* Fonts are loaded via next/font/google in layout.tsx — no render-blocking @import needed. */
+/* Fonts are self-hosted via next/font/local in layout.tsx — no render-blocking @import needed. */
 
 @font-face { font-family: 'Instagram Sans'; src: url('/fonts/InstagramSans-Light.woff2') format('woff2'); font-weight: 300; font-style: normal; font-display: swap; }
 @font-face { font-family: 'Instagram Sans'; src: url('/fonts/InstagramSans-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }

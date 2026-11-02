@@ -15,8 +15,7 @@ import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 import * as review from "../services/campaign/review.service";
 import { listRateCardGrid, upsertRateCards } from "../services/campaign/rate-card.service";
-import { signedMediaPath } from "../services/campaign/media-url";
-import { resolveItemFiles } from "../services/campaign/booking.service";
+import { bookingMediaUrls } from "../services/campaign/media-urls.service";
 
 // Internal portal: campaign review queue, booking actions and the rate-card grid.
 // ⚠️ Gated on Admin/Super Admin (role checked on the token) for internal users only: these
@@ -84,43 +83,9 @@ router.post("/admin/campaigns/:id/items/:itemId/manual", ...gate, asyncHandler(a
 }));
 
 /**
- * Signed links to preview the creative and download the files to post by hand. `media` is
- * the booking's files with the DEFAULT overlay; `items` carries, per account, the exact files
- * to post there (its own render when that account customised its overlay).
+ * Signed links to preview the creative and download the files to post by hand — see
+ * services/campaign/media-urls.service.ts (shared with the sales portal).
  */
-router.get("/admin/campaigns/:id/media-urls", ...gate, asyncHandler(async (req, res) => {
-  const media = await prisma.campaignMedia.findMany({
-    where: { bookingId: req.params.id, purgedAt: null, uploadStatus: "complete" },
-    orderBy: [{ role: "asc" }, { position: "asc" }],
-    select: { id: true, kind: true, role: true, renderStatus: true },
-  });
-  if (!media.length) {
-    const exists = await prisma.campaignBooking.count({ where: { id: req.params.id } });
-    if (!exists) throw new AppError(404, "NOT_FOUND", "Campaign not found");
-  }
-  const TTL = 4 * 3600;
-  const files = await resolveItemFiles(req.params.id);
-  return success(res, {
-    media: media.map((m) => ({
-      id: m.id,
-      kind: m.kind,
-      role: m.role,
-      renderStatus: m.renderStatus,
-      preview: signedMediaPath(m.id, "preview", TTL),
-      original: signedMediaPath(m.id, "original", TTL),
-    })),
-    items: [...files.entries()].map(([itemId, list]) => ({
-      itemId,
-      custom: list.some((f) => f.custom),
-      files: list.map((f) => ({
-        mediaId: f.mediaId,
-        kind: f.kind,
-        role: f.role,
-        status: f.status,
-        url: f.status === "done" ? signedMediaPath(f.mediaId, f.renderId ? `v-${f.renderId}` : "preview", TTL) : null,
-      })),
-    })),
-  });
-}));
+router.get("/admin/campaigns/:id/media-urls", ...gate, asyncHandler(async (req, res) => success(res, await bookingMediaUrls(req.params.id))));
 
 export default router;

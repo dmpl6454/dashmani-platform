@@ -104,8 +104,19 @@ export interface BookingDetail {
   audioIntegration: boolean; audioTrack: string | null; totalPaise: number | null; launchFrom: string | null; launchTo: string | null;
   submittedAt: string | null; paidOnline: boolean; approvedAt: string | null; deliveredAt: string | null; createdAt: string; reviewNote: string | null;
   client: { id: string; companyName: string; contactName: string | null; email: string; billingProfile?: { legalName: string; gstin: string | null; stateCode: string | null } | null };
-  items: Array<{ id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number; audioAddonPaise: number; status: string; permalink: string | null; postedAt: string | null; live: boolean; billed: boolean }>;
+  items: Array<{
+    id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number; audioAddonPaise: number; status: string; permalink: string | null; postedAt: string | null; live: boolean; billed: boolean;
+    /** null = the booking's caption; "" on superTextOverride = no overlay on this account. */
+    captionOverride: string | null; hashtagsOverride: string[]; superTextOverride: string | null;
+  }>;
   billable: boolean; billablePaise: number; invoices: BookingInvoice[];
+  caption: string | null; hashtags: string[]; userTags: string[]; collaborators: string[]; superText: string | null; superTextStyle: string | null;
+  media: Array<{ id: string; kind: string; role: string; originalName: string; durationMs: number | null; width: number | null; height: number | null; renderStatus: string }>;
+}
+/** GET /sales/bookings/:id/media-urls — signed, short-lived (4 h) paths under the API origin. */
+export interface BookingMediaUrls {
+  media: Array<{ id: string; kind: string; role: string; renderStatus: string; preview: string; original: string }>;
+  items: Array<{ itemId: string; custom: boolean; files: Array<{ mediaId: string; kind: string; role: string; status: string; url: string | null }> }>;
 }
 export interface BookingsSummary {
   review: { count: number; totalPaise: number }; active: { count: number; totalPaise: number }; live: { count: number; totalPaise: number };

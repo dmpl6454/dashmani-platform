@@ -11,6 +11,7 @@ import { fmtDate } from "@/lib/format";
 import { companyName, useCompany } from "@/lib/company";
 import type { Invoice } from "@/lib/sales-types";
 import type { PortalDirectory } from "@/lib/types";
+import { BookingContent } from "@/components/booking-content";
 import { LoadError, Loading, Money, PageHead, StatusPill, Toast, platformLabel, titleCase } from "@/components/sales-ui";
 
 function BookingView() {
@@ -75,13 +76,14 @@ function BookingView() {
           )}
         </section>
       </div>
+      <BookingContent b={b} />
       <section className="card overflow-x-auto">
         <table className="w-full text-sm min-w-[640px]">
           <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-3">Account</th><th className="p-3">Post</th><th className="p-3">Status</th><th className="p-3 text-right">Price</th></tr></thead>
           <tbody>
             {b.items.map((i) => (
               <tr key={i.id} className={`border-b border-rule ${i.billed ? "" : "text-ink-4"}`}>
-                <td className="p-3"><span className="font-bold">{i.accountName}</span>{i.accountHandle ? <span className="text-ink-4"> @{i.accountHandle}</span> : null}</td>
+                <td className="p-3"><span className="font-bold">{i.accountName}</span>{i.accountHandle ? <span className="text-ink-4"> @{i.accountHandle}</span> : null}{(i.captionOverride != null || i.superTextOverride != null) && <span className="block text-xs text-ink-3">own caption or overlay — see Content</span>}</td>
                 <td className="p-3">{platformLabel(i.platform)} {titleCase(i.format)}{i.audioAddonPaise ? " + song" : ""}{i.permalink ? <> · <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="underline hover:text-indigo-light">view post</a></> : null}</td>
                 <td className="p-3"><StatusPill status={i.status} />{!i.billed && <span className="text-xs ml-2">not billed</span>}</td>
                 <td className="p-3 text-right"><Money paise={i.pricePaise} /></td>

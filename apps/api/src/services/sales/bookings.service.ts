@@ -5,8 +5,9 @@ import { dateToDay } from "./common";
 
 // Client campaign bookings (client.digitalsukoon.com → Campaigns, reviewed in the staff portal)
 // as the sales team sees them: what was booked, where it stands, and whether it has been billed.
-// Read-only here — review, posting and refunds stay in the staff portal. Bookings belong to no
-// billing company; the invoice made from one belongs to the company chosen when it is created.
+// Read-only here (the creative and caption are shown, never edited) — review, posting and
+// refunds stay in the staff portal. Bookings belong to no billing company; the invoice made from
+// one belongs to the company chosen when it is created.
 
 /** Never billable: nothing was bought, or the money went back. */
 export const UNBILLABLE_BOOKING_STATUSES: readonly BookingStatus[] = ["draft", "awaiting_payment", "rejected", "refunded", "cancelled", "expired"];
@@ -90,10 +91,19 @@ export async function getBooking(id: string) {
     select: {
       id: true, name: true, brand: true, objective: true, status: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true,
       totalPaise: true, launchFrom: true, launchTo: true, submittedAt: true, paidAt: true, approvedAt: true, deliveredAt: true, createdAt: true, reviewNote: true,
+      caption: true, hashtags: true, userTags: true, collaborators: true, superText: true, superTextStyle: true,
+      media: {
+        where: { purgedAt: null, uploadStatus: "complete" },
+        orderBy: [{ role: "asc" }, { position: "asc" }],
+        select: { id: true, kind: true, role: true, originalName: true, durationMs: true, width: true, height: true, renderStatus: true },
+      },
       client: { select: { id: true, companyName: true, contactName: true, email: true, billingProfile: { select: { legalName: true, gstin: true, stateCode: true } } } },
       items: {
         orderBy: [{ createdAt: "asc" }, { accountName: "asc" }, { id: "asc" }],
-        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, pricePaise: true, audioAddonPaise: true, status: true, permalink: true, postedAt: true },
+        select: {
+          id: true, platform: true, format: true, accountName: true, accountHandle: true, pricePaise: true, audioAddonPaise: true, status: true, permalink: true, postedAt: true,
+          captionOverride: true, hashtagsOverride: true, superTextOverride: true,
+        },
       },
     },
   });

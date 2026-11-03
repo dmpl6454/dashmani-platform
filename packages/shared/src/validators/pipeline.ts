@@ -262,3 +262,63 @@ export const editMessageSchema = z.object({ body: pipelineBody });
 export const reactionBodySchema = z.object({ on: z.boolean() });
 
 export const readSchema = z.object({ seq: int4(0), leaving: z.boolean().optional() });
+
+// ── Sales-portal chat: channels and DMs ──────────────────────────────────────────────
+
+/** Slack-style channel names: lowercase letters, digits, hyphens and underscores. */
+export const PIPELINE_CHANNEL_NAME_MAX = 80;
+
+/**
+ * "Social Team!" → "social-team". Pure and regex-light (no lookbehind): lowercase, every run
+ * of characters outside [a-z0-9_-] becomes one hyphen, then hyphens are trimmed at the ends.
+ */
+export function slugifyChannelName(raw: string): string {
+  let out = "";
+  let pendingHyphen = false;
+  for (const ch of raw.toLowerCase()) {
+    const ok = (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "-";
+    if (!ok || ch === "-") {
+      pendingHyphen = out.length > 0;
+      continue;
+    }
+    if (pendingHyphen) out += "-";
+    pendingHyphen = false;
+    out += ch;
+  }
+  return out.slice(0, PIPELINE_CHANNEL_NAME_MAX).replace(/-+$/, "");
+}
+
+export const channelNameSchema = z
+  .string()
+  .max(PIPELINE_LIMITS.titleRawMax)
+  .transform(slugifyChannelName)
+  .pipe(z.string().min(1, "Give the channel a name").max(PIPELINE_CHANNEL_NAME_MAX));
+
+export const createChannelSchema = z.object({
+  clientId: pipelineId,
+  /** The campaign (project) this channel belongs to; omitted for a team-wide channel. */
+  projectId: pipelineId.optional(),
+  name: channelNameSchema,
+  description: pipelineDescription.optional(),
+  isPrivate: z.boolean().default(false),
+  memberIds: pipelineIdArray(PIPELINE_LIMITS.membersPerRequestMax).optional(),
+});
+
+export const editChannelSchema = z
+  .object({
+    name: channelNameSchema.optional(),
+    description: pipelineDescription.optional(),
+    isPrivate: z.boolean().optional(),
+  })
+  .refine((v) => v.name !== undefined || v.description !== undefined || v.isPrivate !== undefined, {
+    message: "Nothing to change",
+  });
+
+export const browseChannelsQuerySchema = z.object({
+  q: z.string().max(PIPELINE_CHANNEL_NAME_MAX).optional(),
+});
+
+export const openDmSchema = z.object({ userId: pipelineId });
+
+/** Delete a channel: its name, typed again (with or without the "#"). */
+export const deleteChannelSchema = z.object({ confirmName: z.string().min(1).max(PIPELINE_CHANNEL_NAME_MAX + 1) });

@@ -4,12 +4,16 @@
  * actions" button (React · Reply · Copy text · Copy link · Edit / Delete if yours); no
  * control is hover-only. Replies show "3 replies · 5m" which opens the ReplySheet.
  *
+ * Sales portal: on devices that can hover, a Slack-style toolbar floats over the row's top
+ * right on hover or keyboard focus — three quick reactions, React (the picker), Reply and ⋯
+ * (the same "Message" sheet). Touch screens keep the ⋯ button only.
+ *
  * Times (2026-10-01): `today` (useLocalDayKey, from the list) is a PROP, so this memoised row
  * re-renders at local midnight and "10:05 am" becomes "Wed, 30 Sep, 10:05 am"; the "· 5m"
  * age is an <Ago> that ticks on its own, so only that span re-renders each minute.
  */
 import { memo, useState } from "react";
-import { Ellipsis, MessageSquare } from "lucide-react";
+import { Ellipsis, MessageSquare, MessageSquareReply, SmilePlus } from "lucide-react";
 import {
   parseDraft,
   serializeDraft,
@@ -18,6 +22,7 @@ import {
   type PendingSend,
   type PipelineMessage,
   type PipelineNotNotified,
+  type PipelineReactionKey,
 } from "@dashmani/shared";
 import { usePipeline } from "../provider";
 import { Ago } from "../ui/Ago";
@@ -29,7 +34,11 @@ import { MessageBody } from "./MessageBody";
 import { ReactionBar, useToggleReaction } from "./ReactionBar";
 import { ReactionPicker } from "./ReactionPicker";
 
-const REASON: Record<string, string> = { inactive: "account inactive", not_in_pilot: "not in the pilot yet", unknown: "unknown person" };
+/** The hover toolbar's one-click reactions (Slack shows three there too). */
+const QUICK_REACTIONS: readonly PipelineReactionKey[] = ["check", "eyes", "thumbs_up"];
+const QUICK_LABEL: Partial<Record<PipelineReactionKey, string>> = { check: "done", eyes: "looking", thumbs_up: "thumbs up" };
+
+const REASON: Record<string, string> = { inactive: "account inactive", not_in_pilot: "not in the pilot yet", unknown: "unknown person", not_member: "not in this conversation" };
 
 function plainText(body: string, nameOf: (id: string) => string): string {
   return parseDraft(body, nameOf).text;
@@ -133,8 +142,50 @@ function MessageItemImpl({
     <li
       ref={observeRef}
       data-msg-id={m.id}
-      className={`list-none group relative flex gap-2.5 px-3 ${grouped ? "pt-0.5" : "pt-3"} pb-1 rounded-xl ${highlight ? "pl-highlight" : ""}`}
+      className={`list-none group relative flex gap-2.5 px-3 ${grouped ? "pt-0.5" : "pt-3"} pb-1 rounded-xl [@media(hover:hover)]:hover:bg-white/[0.03] ${highlight ? "pl-highlight" : ""}`}
     >
+      {/* Hover toolbar (pointer devices): quick reactions · React · Reply · ⋯ */}
+      <div
+        role="toolbar"
+        aria-label={`Actions for the message from ${author}`}
+        className="hidden [@media(hover:hover)]:group-hover:flex [@media(hover:hover)]:group-focus-within:flex absolute right-3 -top-4 z-10 items-center gap-0.5 p-1 border border-border bg-surface shadow-pop"
+      >
+        {!readOnly &&
+          QUICK_REACTIONS.filter((k) => boot.reactions.some((o) => o.key === k)).map((k) => {
+            const opt = boot.reactions.find((o) => o.key === k)!;
+            const on = myReactions.has(k);
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => void toggle(m, k, !on)}
+                aria-label={`${on ? "Remove" : "React with"} ${QUICK_LABEL[k] ?? k}`}
+                aria-pressed={on}
+                title={QUICK_LABEL[k]}
+                className={`h-8 w-8 grid place-items-center text-[17px] hover:bg-muted ${on ? "bg-indigo/20" : ""}`}
+              >
+                {opt.emoji}
+              </button>
+            );
+          })}
+        {!readOnly && (
+          <button type="button" onClick={() => setPicker(true)} className="h-8 px-2 inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink-2 hover:bg-muted hover:text-ink">
+            <SmilePlus size={16} aria-hidden /> React
+          </button>
+        )}
+        {!readOnly && !inReplies && onOpenReplies && (
+          <button
+            type="button"
+            onClick={() => onOpenReplies(m.parentId ?? m.id)}
+            className="h-8 px-2 inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink-2 hover:bg-muted hover:text-ink"
+          >
+            <MessageSquareReply size={16} aria-hidden /> Reply
+          </button>
+        )}
+        <button type="button" onClick={() => setMenu(true)} aria-label="More actions" title="More actions" className="h-8 w-8 grid place-items-center text-ink-3 hover:bg-muted hover:text-ink">
+          <Ellipsis size={16} aria-hidden />
+        </button>
+      </div>
       <div className="w-7 shrink-0">{!grouped && <Initials userId={m.authorId} name={author} initials={dirById.get(m.authorId)?.initials} size={28} />}</div>
       <div className="min-w-0 flex-1">
         {!grouped && (
@@ -172,7 +223,7 @@ function MessageItemImpl({
         type="button"
         onClick={() => setMenu(true)}
         aria-label={`More actions for the message from ${author}`}
-        className="shrink-0 h-11 w-11 grid place-items-center rounded-xl text-ink-4 hover:bg-muted self-start"
+        className="shrink-0 h-11 w-11 grid place-items-center rounded-xl text-ink-4 hover:bg-muted self-start [@media(hover:hover)]:opacity-0 focus:opacity-100"
       >
         <Ellipsis size={18} />
       </button>

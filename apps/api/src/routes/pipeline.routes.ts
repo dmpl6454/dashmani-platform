@@ -81,6 +81,21 @@ import {
 } from "../services/pipeline/work.service";
 import { listShoots, createShoot, editShoot, getWorkload } from "../services/pipeline/shoots.service";
 import { pipelineStats } from "../services/pipeline/stats";
+import {
+  addChannelMembers,
+  browseChannels,
+  createChannel,
+  deleteChannel,
+  editChannel,
+  hideDm,
+  joinChannel,
+  leaveChannel,
+  listCampaignChannels,
+  listConversations,
+  openDm,
+  removeChannelMember,
+} from "../services/pipeline/conversations.service";
+import { onlineUserIds } from "../services/pipeline/live";
 
 const router = Router();
 
@@ -284,6 +299,112 @@ router.put(
   pv(V.followSchema),
   asyncHandler(async (req: Request, res: Response) => ok(res, await setFollow(actorOf(req), req.params.id, req.body.following))),
 );
+
+// ══════════════════════════════════════════════════════════════════════════════════════
+// Sales-portal chat: channels and DMs (conversations.service.ts). Literal /conversations,
+// /channels, /dms and /presence paths — none collide with /projects/:id. A conversation's
+// thread, replies, reactions and read state use the project routes below unchanged.
+// ══════════════════════════════════════════════════════════════════════════════════════
+
+router.get(
+  "/pipeline/conversations",
+  ...G,
+  asyncHandler(async (req: Request, res: Response) => ok(res, await listConversations(actorOf(req)))),
+);
+
+// A campaign's channels (its own sidebar). Declared with the literal chat paths; the
+// /projects/:id/channels suffix collides with no project route.
+router.get(
+  "/pipeline/projects/:id/channels",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await listCampaignChannels(actorOf(req), req.params.id))),
+);
+
+router.get(
+  "/pipeline/channels/browse",
+  ...G,
+  pv(V.browseChannelsQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await browseChannels(actorOf(req), (req.query as { q?: string }).q)),
+  ),
+);
+
+router.post(
+  "/pipeline/channels",
+  ...G,
+  pv(V.createChannelSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { status, data } = await createChannel(actorOf(req), req.body);
+    return ok(res, data, status);
+  }),
+);
+
+router.patch(
+  "/pipeline/channels/:id",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.editChannelSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await editChannel(actorOf(req), req.params.id, req.body))),
+);
+
+router.delete(
+  "/pipeline/channels/:id",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.deleteChannelSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await deleteChannel(actorOf(req), req.params.id, req.body.confirmName))),
+);
+
+router.post(
+  "/pipeline/channels/:id/join",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await joinChannel(actorOf(req), req.params.id))),
+);
+
+router.post(
+  "/pipeline/channels/:id/leave",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await leaveChannel(actorOf(req), req.params.id))),
+);
+
+router.post(
+  "/pipeline/channels/:id/members",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.addMembersSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await addChannelMembers(actorOf(req), req.params.id, req.body.userIds)),
+  ),
+);
+
+router.delete(
+  "/pipeline/channels/:id/members/:userId",
+  ...G,
+  pv(V.memberParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await removeChannelMember(actorOf(req), req.params.id, req.params.userId)),
+  ),
+);
+
+router.post(
+  "/pipeline/dms",
+  ...G,
+  pv(V.openDmSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await openDm(actorOf(req), req.body.userId))),
+);
+
+router.post(
+  "/pipeline/dms/:id/hide",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await hideDm(actorOf(req), req.params.id))),
+);
+
+// In memory, no statement (live.ts). The gate itself stamps the caller as seen.
+router.get("/pipeline/presence", ...G, (_req: Request, res: Response) => ok(res, { online: onlineUserIds() }));
 
 // ══════════════════════════════════════════════════════════════════════════════════════
 // PR 8 — messages and sync (routes #3, #15–21). Kept as one block so it rebases cleanly

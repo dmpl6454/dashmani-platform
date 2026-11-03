@@ -31,6 +31,11 @@ import type {
   PipelineRepliesPage,
   PipelineSyncRequest,
   PipelineSyncResponse,
+  PipelineConversations,
+  PipelineCampaignChannelsResponse,
+  PipelineBrowseChannelsResponse,
+  PipelineConversationResponse,
+  PipelinePresenceResponse,
 } from "@dashmani/shared";
 import type { pipelineWork as W } from "@dashmani/shared";
 import { apiFetch, ApiError } from "@/lib/api";
@@ -124,6 +129,25 @@ export const plApi = {
   createShoot: (body: W.CreateShootInput) => call<W.PipelineShootDto>("/shoots", json("POST", body)),
   editShoot: (sid: string, body: W.EditShootInput) => call<W.PipelineShootDto>(`/shoots/${sid}`, json("PATCH", body)),
   workload: () => call<W.PipelineWorkloadDto>("/workload"),
+  // Chat: channels and DMs (their threads use the project routes above).
+  conversations: () => call<PipelineConversations>("/conversations"),
+  campaignChannels: (projectId: string) => call<PipelineCampaignChannelsResponse>(`/projects/${projectId}/channels`),
+  browseChannels: (q: string) => call<PipelineBrowseChannelsResponse>(`/channels/browse${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  createChannel: (body: { clientId: string; projectId?: string; name: string; description?: string; isPrivate: boolean; memberIds?: string[] }) =>
+    call<PipelineConversationResponse>("/channels", json("POST", body)),
+  editChannel: (id: string, body: { name?: string; description?: string; isPrivate?: boolean }) =>
+    call<PipelineConversationResponse>(`/channels/${id}`, json("PATCH", body)),
+  deleteChannel: (id: string, confirmName: string) =>
+    call<{ deleted: true }>(`/channels/${id}`, json("DELETE", { confirmName })),
+  joinChannel: (id: string) => call<PipelineConversationResponse>(`/channels/${id}/join`, json("POST", {})),
+  leaveChannel: (id: string) => call<{ left: true }>(`/channels/${id}/leave`, json("POST", {})),
+  addChannelMembers: (id: string, userIds: string[]) =>
+    call<PipelineConversationResponse>(`/channels/${id}/members`, json("POST", { userIds })),
+  removeChannelMember: (id: string, userId: string) =>
+    call<PipelineConversationResponse>(`/channels/${id}/members/${userId}`, { method: "DELETE" }),
+  hideDm: (id: string) => call<{ hidden: true }>(`/dms/${id}/hide`, json("POST", {})),
+  openDm: (userId: string) => call<PipelineConversationResponse>("/dms", json("POST", { userId })),
+  presence: () => call<PipelinePresenceResponse>("/presence"),
   /** Keepalive: used on leave / hide, when the page may be going away. */
   markRead: (id: string, seq: number, leaving: boolean) =>
     call<PipelineReadResponse>(`/projects/${id}/read`, json("POST", { seq, leaving }, { keepalive: true })),
@@ -206,6 +230,15 @@ const WORDS: Record<string, string> = {
   SHOOT_NOT_FOUND: "That shoot no longer exists.",
   SHOOT_CONFLICT: "Someone else changed this shoot — showing their version.",
   UPLOAD_URL_REQUIRED: "Add the link to the footage first.",
+  CONVERSATION_NOT_FOUND: "This conversation doesn't exist, or you're not in it.",
+  CHANNEL_NAME_TAKEN: "A channel with that name already exists — pick another name.",
+  NOT_A_MEMBER: "Join this channel first.",
+  NOT_ALLOWED: "Only the channel owner or an admin can do that.",
+  CANT_LEAVE_DM: "You can't leave a direct message.",
+  CANT_DELETE_DM: "A direct message can't be deleted.",
+  NOT_A_DM: "Only a direct message can be removed from your list.",
+  DM_MEMBERS_FIXED: "A direct message is between two people.",
+  CANT_REMOVE_OWNER: "The channel owner can't be removed.",
 };
 
 /** Human words for an error. Never the raw server message; never "Something went wrong". */

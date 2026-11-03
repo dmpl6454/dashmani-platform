@@ -17,6 +17,7 @@
 import { DEFAULT_ROLES, stripBidi, truncateGraphemes, PIPELINE_LIMITS } from "@dashmani/shared";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 import { pipelineRead } from "./tx";
+import { Prisma } from "./db";
 
 export interface PipelineAccess {
   /** ACTIVE and not soft-deleted. */
@@ -132,4 +133,19 @@ export function getPipelineDirectory(): Promise<PipelineDirectory> {
 export function invalidatePipelineAccess(): void {
   accessMemo.clear();
   directoryMemo.clear();
+}
+
+// ── Conversation visibility (sales-portal channels and DMs) ──────────────────────────
+
+/**
+ * SQL: may `me` read the conversation row aliased `alias`? Projects and public channels are
+ * open to every active user (the gates already checked that); private channels and DMs need
+ * a participant row. Used by every read and write of a thread so a non-member sees a 404,
+ * never a message.
+ */
+export function canReadSql(alias: string, me: string): Prisma.Sql {
+  const a = Prisma.raw(alias);
+  return Prisma.sql`(${a}.kind = 'project'
+    OR (${a}.kind = 'channel' AND NOT ${a}.is_private)
+    OR EXISTS (SELECT 1 FROM pipeline_participants cr WHERE cr.project_id = ${a}.id AND cr.user_id = ${me}))`;
 }

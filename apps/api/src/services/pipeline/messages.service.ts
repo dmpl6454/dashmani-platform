@@ -44,7 +44,7 @@ import { PipelineError, classifyDbError, isIdempotencyKeyViolation } from "./err
 import { notifier } from "./notifier";
 import { isPilotUser, type PipelineSettings } from "./settings";
 import { pipelineEmailOn } from "./email-outbox";
-import type { PipelineDirectory } from "./access";
+import { canReadSql, type PipelineDirectory } from "./access";
 import { warnThrottled } from "../../utils/throttled-warn";
 
 // ── Context ──────────────────────────────────────────────────────────────────────────
@@ -194,6 +194,7 @@ const archived = () => new PipelineError(409, "PROJECT_ARCHIVED", "This project 
 const messageDeleted = () => new PipelineError(409, "MESSAGE_DELETED", "That message was deleted");
 const notAuthor = () => new PipelineError(403, "NOT_AUTHOR", "Only the author can change this message");
 const inactive = () => new PipelineError(403, "ACCOUNT_INACTIVE", "Your account is inactive");
+const notMember = () => new PipelineError(403, "NOT_A_MEMBER", "Join this channel to post in it");
 const keyReused = () =>
   new PipelineError(409, "IDEMPOTENCY_KEY_REUSED", "That message id was already used in another project");
 
@@ -222,6 +223,26 @@ interface LockedProject {
   title: string;
   archived_at: Date | null;
   deleted_at: Date | null;
+  /** "project" | "channel" | "dm" (sales-portal chat). */
+  kind: string;
+  can_read: boolean;
+  is_member: boolean;
+}
+
+/**
+ * Channels and DMs (kind <> 'project'): only members post, nobody is auto-followed, a mention
+ * reaches members only, and no bell row or email is written (the bells and emails link to the
+ * HR portal, which has no chat). Unread counts in the sales sidebar are the notification.
+ */
+const isChat = (kind: string | undefined) => kind !== undefined && kind !== "project";
+
+/** Mentions in a chat: members are delivered, everyone else is `not_member`. */
+function membersOnly(v: MentionVerdict, memberIds: Iterable<string>): MentionVerdict {
+  const members = new Set(memberIds);
+  return {
+    delivered: v.delivered.filter((id) => members.has(id)),
+    notNotified: [...v.notNotified, ...v.delivered.filter((id) => !members.has(id)).map((id) => ({ id, reason: "not_member" as const }))],
+  };
 }
 
 interface SendReads {
@@ -290,7 +311,8 @@ export async function postMessage(
     return await pipelineWrite(async (tx) => {
       // S1 — lock first.
       const locked = await tx.$queryRaw<LockedProject[]>`
-        SELECT p.id, p.title, p.archived_at, p.deleted_at
+        SELECT p.id, p.title, p.archived_at, p.deleted_at, p.kind, ${canReadSql("p", me)} AS can_read,
+               EXISTS (SELECT 1 FROM pipeline_participants x WHERE x.project_id = p.id AND x.user_id = ${me}) AS is_member
           FROM pipeline_projects p WHERE p.id = ${projectId} FOR UPDATE`;
       const project = locked[0];
 
@@ -320,16 +342,19 @@ export async function postMessage(
         const { message, root } = await readWithRoot(tx, reads.existing.id);
         if (message) return replayResult(actor, message, root, mentionIds, reads.mention_users);
       }
-      if (!project || project.deleted_at) throw notFoundProject();
+      if (!project || project.deleted_at || !project.can_read) throw notFoundProject();
       if (project.archived_at) throw archived();
       if (reads.actor_active !== true) throw inactive();
+      const chat = isChat(project.kind);
+      if (chat && !project.is_member) throw notMember();
       const parent = parentId ? reads.parent : null;
       if (parentId && (!parent || parent.projectId !== projectId)) throw notFoundMessage();
       if (parent?.rootDeleted) throw messageDeleted();
       const rootId = parent ? parent.rootId : null;
       const k = rootId ? 2 : 1;
 
-      const { delivered, notNotified } = classifyMentions(mentionIds, reads.mention_users, actor.settings);
+      const verdict = classifyMentions(mentionIds, reads.mention_users, actor.settings);
+      const { delivered, notNotified } = chat ? membersOnly(verdict, reads.existing_participants) : verdict;
 
       // Participants (§6 "participant mutation path"; FOLLOWER rows, so member_count is
       // unchanged). The project lock serialises every participant change, so the count
@@ -418,7 +443,7 @@ export async function postMessage(
       if (!message) throw new PipelineError(409, "CONFLICT", "That was changed at the same time — please retry");
       const root = rows.find((r) => r.kind === "root") ?? null;
 
-      await notifier.onMessagePosted(tx, {
+      if (!chat) await notifier.onMessagePosted(tx, {
         projectId,
         projectTitle: project.title,
         actorId: me,
@@ -468,17 +493,21 @@ interface LockedFromMessage {
   id: string;
   title: string;
   archived_at: Date | null;
+  kind: string;
 }
 
-/** S1 for every message-only write: the project derived from the stored row, locked. */
-async function lockProjectOfMessage(tx: PipelineTx, mid: string): Promise<LockedFromMessage> {
-  const rows = await tx.$queryRaw<LockedFromMessage[]>`
-    SELECT p.id, p.title, p.archived_at
+/**
+ * S1 for every message-only write: the project derived from the stored row, locked. A message
+ * in a private channel or DM the actor is not in is "not found" (never a hint it exists).
+ */
+async function lockProjectOfMessage(tx: PipelineTx, mid: string, me: string): Promise<LockedFromMessage> {
+  const rows = await tx.$queryRaw<Array<LockedFromMessage & { can_read: boolean }>>`
+    SELECT p.id, p.title, p.archived_at, p.kind, ${canReadSql("p", me)} AS can_read
       FROM pipeline_messages m
       JOIN pipeline_projects p ON p.id = m.project_id AND p.deleted_at IS NULL
      WHERE m.id = ${mid}
        FOR UPDATE OF p`;
-  if (!rows[0]) throw notFoundMessage();
+  if (!rows[0] || !rows[0].can_read) throw notFoundMessage();
   return rows[0];
 }
 
@@ -514,14 +543,16 @@ export async function editMessage(actor: PipelineActor, mid: string, body: strin
   const email = pipelineEmailOn(actor.settings);
 
   return pipelineWrite(async (tx) => {
-    const project = await lockProjectOfMessage(tx, mid);
+    const project = await lockProjectOfMessage(tx, mid, me);
     const row = await readMessage(tx, mid, me, Prisma.sql`, ${mentionUsersSql(mentionIds)} AS mention_users`);
     if (row.author_id !== me) throw notAuthor();
     if (row.deleted_at) throw messageDeleted();
     if (project.archived_at) throw archived();
     if (row.actor_active !== true) throw inactive();
 
-    const { delivered, notNotified } = classifyMentions(mentionIds, row.mention_users as MentionUser[], actor.settings);
+    const chat = isChat(project.kind);
+    const verdict = classifyMentions(mentionIds, row.mention_users as MentionUser[], actor.settings);
+    const { delivered, notNotified } = chat ? membersOnly(verdict, row.participant_ids) : verdict;
     // Unchanged → nothing to restamp (a retried edit is a no-op).
     if (row.body === body) return { message: toWireMessage(row, actor), notNotified };
 
@@ -538,7 +569,7 @@ export async function editMessage(actor: PipelineActor, mid: string, body: strin
     if (!updated[0]) throw new PipelineError(409, "CONFLICT", "That was changed at the same time — please retry");
 
     const before = new Set(row.mention_ids ?? []);
-    await notifier.onMessageEdited(tx, {
+    if (!chat) await notifier.onMessageEdited(tx, {
       projectId: project.id,
       projectTitle: project.title,
       actorId: me,
@@ -565,7 +596,7 @@ export async function editMessage(actor: PipelineActor, mid: string, body: strin
 export async function deleteMessage(actor: PipelineActor, mid: string): Promise<PipelineDeleteMessageResponse> {
   const me = actor.userId;
   return pipelineWrite(async (tx) => {
-    const project = await lockProjectOfMessage(tx, mid);
+    const project = await lockProjectOfMessage(tx, mid, me);
     const row = await readMessage(tx, mid, me);
     if (row.author_id !== me) throw notAuthor();
     // Idempotent: an existing tombstone is returned as is.
@@ -606,7 +637,7 @@ export async function deleteMessage(actor: PipelineActor, mid: string): Promise<
     const message = rows.find((r) => r.kind === "message");
     if (!message) throw new PipelineError(409, "CONFLICT", "That was changed at the same time — please retry");
 
-    await notifier.onMessageDeleted(tx, {
+    if (!isChat(project.kind)) await notifier.onMessageDeleted(tx, {
       projectId: project.id,
       messageId: mid,
       actorId: me,
@@ -628,7 +659,7 @@ export async function setReaction(
 ): Promise<PipelineReactionResponse> {
   const me = actor.userId;
   return pipelineWrite(async (tx) => {
-    const project = await lockProjectOfMessage(tx, mid);
+    const project = await lockProjectOfMessage(tx, mid, me);
     const rows = await tx.$queryRaw<Array<{ deleted: boolean; reactions: unknown; rev: number; actor_active: boolean | null }>>`
       SELECT m.deleted_at IS NOT NULL AS deleted, m.reactions, m.rev, ${ACTOR_ACTIVE_SQL(me)} AS actor_active
         FROM pipeline_messages m WHERE m.id = ${mid}`;
@@ -685,7 +716,7 @@ export async function listTopLevel(
            WHERE m.project_id = p.id AND m.parent_id IS NULL ${beforeSql}
            ORDER BY m.seq DESC
            LIMIT ${limit + 1}::int) h ON true
-       WHERE p.id = ${projectId} AND p.deleted_at IS NULL`,
+       WHERE p.id = ${projectId} AND p.deleted_at IS NULL AND ${canReadSql("p", actor.userId)}`,
   );
   if (rows.length === 0) throw notFoundProject();
   const found = rows.filter((r) => r.id != null) as unknown as MessageRow[];
@@ -710,7 +741,7 @@ export async function listReplies(
       WITH tgt AS (
         SELECT COALESCE(x.parent_id, x.id) AS root_id, x.project_id
           FROM pipeline_messages x
-          JOIN pipeline_projects p ON p.id = x.project_id AND p.deleted_at IS NULL
+          JOIN pipeline_projects p ON p.id = x.project_id AND p.deleted_at IS NULL AND ${canReadSql("p", actor.userId)}
          WHERE x.id = ${mid})
       SELECT 'root' AS kind, r.*
         FROM tgt CROSS JOIN LATERAL (

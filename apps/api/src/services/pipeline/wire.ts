@@ -110,6 +110,10 @@ export function headerFromRow(r: Raw): PipelineHeader {
     createdAt: ts(r.created_at) ?? "",
     updatedAt: ts(r.updated_at) ?? "",
     linkedClient: linkedClientOf(r),
+    kind: (r.kind === "channel" || r.kind === "dm" ? r.kind : "project") as PipelineHeader["kind"],
+    isPrivate: r.is_private === true,
+    parentProjectId: strOrNull(r.parent_project_id),
+    parentTitle: strOrNull(r.parent_title),
   };
 }
 

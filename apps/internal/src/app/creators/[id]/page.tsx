@@ -202,6 +202,9 @@ function AssetRow({
         >
           <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${a.enabled ? "translate-x-[22px]" : "translate-x-0.5"}`} />
         </button>
+        {a.enabled && (
+          <a href={`#price-${a.id}`} className="block mt-1.5 text-[11.5px] text-ds-gold hover:underline">Set margin ↑</a>
+        )}
         {err && <div role="alert" className="mt-1.5 text-[11.5px] text-[#FB7185] max-w-[220px]">{err}</div>}
       </td>
     </tr>
@@ -336,11 +339,15 @@ export default function CreatorDetailPage() {
         </section>
       </div>
 
+      <div className="mb-4">
+        <CreatorPricing creatorId={c.id} creatorApproved={c.status === "approved"} />
+      </div>
+
       <section className={`${CARD} overflow-hidden`}>
         <div className="px-5 pt-5 pb-3">
           <h2 className="text-[15px] font-semibold text-ds-text">Pages</h2>
           <p className="mt-1 text-[12.5px] text-ds-t3">
-            A page can be turned on only when the creator is approved, it is connected, we can publish to it, and it isn&apos;t already on our network. A page that is on and has a client price (below) is listed to clients.
+            A page can be turned on only when the creator is approved, it is connected, we can publish to it, and it isn&apos;t already on our network. A page that is on gets a card in Prices (above); once it has a margin it is listed to clients.
           </p>
         </div>
         {assets.length === 0 ? (
@@ -365,8 +372,6 @@ export default function CreatorDetailPage() {
           </div>
         )}
       </section>
-
-      <CreatorPricing creatorId={c.id} creatorApproved={c.status === "approved"} />
 
       {pending && (
         <ConfirmDialog

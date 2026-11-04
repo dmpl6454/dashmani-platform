@@ -77,8 +77,18 @@ export const campaignConfig = {
    * independent of CAMPAIGN_PUBLISH_ENABLED (Meta). OFF unless explicitly "1".
    */
   youtubePublishEnabled: () => process.env.CAMPAIGN_YOUTUBE_PUBLISH_ENABLED === "1",
-  /** Either publisher is on — the worker runs, and staff see auto-publish wording. */
-  anyPublishEnabled: () => campaignConfig.publishEnabled() || campaignConfig.youtubePublishEnabled(),
+  /**
+   * Creator marketplace: publish an accepted post on the CREATOR's own page through the
+   * creator's own Facebook Login grant. Its OWN switch, independent of the Meta one for our
+   * pages. OFF unless explicitly "1" — while off, an accepted post goes to the creator (and
+   * staff) to post by hand and paste the link.
+   */
+  creatorPublishEnabled: () => process.env.CREATOR_PUBLISH_ENABLED === "1",
+  /** Hours a creator has to answer an offered post (capped by the campaign's last posting day). */
+  creatorResponseHours: () => envNum("CREATOR_RESPONSE_HOURS", 72, 6),
+  /** Any publisher is on — the worker runs, and staff see auto-publish wording. */
+  anyPublishEnabled: () =>
+    campaignConfig.publishEnabled() || campaignConfig.youtubePublishEnabled() || campaignConfig.creatorPublishEnabled(),
   /**
    * Uploads started per IST day across every channel. videos.insert is the costly call against
    * the Google project's 10,000-unit daily quota (1,600 units until Google's 2025-12-04 revision

@@ -114,12 +114,22 @@ export async function runCreatorTokenHealth(now = new Date()) {
  * Delete page details we no longer need: creator_assets rows disconnected, and connections
  * revoked (cascading their remaining assets), more than PURGE_AFTER_DAYS ago. Tokens were
  * nulled at the disconnect itself. The creators row is kept (see the privacy page).
- * ⚠️ Phase B: when bookings/offers reference creator_assets, keep assets with offers.
+ * ⚠️ A page that was ever booked (a campaign_booking_items row names it) is KEPT, and so is the
+ * connection it hangs off (deleting the connection would cascade the page away): the booked
+ * post's history and the creator's payouts refer to it.
  */
 export async function purgeCreatorPageData(now = new Date()) {
   const cutoff = new Date(now.getTime() - PURGE_AFTER_DAYS * DAY_MS);
-  const assets = await prisma.creatorAsset.deleteMany({ where: { disconnectedAt: { lt: cutoff } } });
-  const connections = await prisma.creatorConnection.deleteMany({ where: { revokedAt: { lt: cutoff } } });
+  const booked = await prisma.campaignBookingItem.findMany({
+    where: { targetType: "creator_asset" },
+    distinct: ["targetId"],
+    select: { targetId: true },
+  });
+  const keep = booked.map((b) => b.targetId);
+  const assets = await prisma.creatorAsset.deleteMany({ where: { disconnectedAt: { lt: cutoff }, id: { notIn: keep } } });
+  const connections = await prisma.creatorConnection.deleteMany({
+    where: { revokedAt: { lt: cutoff }, assets: { none: { id: { in: keep } } } },
+  });
   return { assets: assets.count, connections: connections.count };
 }
 

@@ -7,6 +7,7 @@ import { refundBookingInFull, refundPaymentRow, capturedPaymentFor } from "./pay
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
+import { notifyCreatorsOfOffers, offerCreatorItems, type OfferedItem } from "../creator/creator-offers.service";
 
 // Staff side: the review queue, booking detail, approve / reject / request changes, and the
 // per-item actions (mark posted with its link, mark failed, refund one item).
@@ -111,6 +112,8 @@ export async function approve(id: string, staffId: string) {
   // Phase 2: items the API can publish are queued for the launch day; everything else (and
   // everything while CAMPAIGN_PUBLISH_ENABLED is off) is posted by our team, as in Phase 1.
   const plan = await planPublishing(id);
+  let offered: OfferedItem[] = [];
+  let creatorToStaff: Array<{ accountName: string; reason: string }> = [];
   await prisma.$transaction(async (tx) => {
     await transitionBooking(id, ["paid_pending_review"], "approved", staff(staffId), {
       tx,
@@ -126,12 +129,17 @@ export async function approve(id: string, staffId: string) {
           : { status: "manual_pending", lastError: p.reason ? p.reason.slice(0, 500) : null },
       });
     }
+    // Creator pages: offered to their creator, who accepts or declines before anything is posted.
+    ({ offered, toStaff: creatorToStaff } = await offerCreatorItems(tx, id));
     // Anything the plan didn't see (it can't miss any, but never leave an item pending).
     await tx.campaignBookingItem.updateMany({ where: { bookingId: id, status: "pending" }, data: { status: "manual_pending" } });
   });
   for (const p of plan.filter((x) => !x.auto)) {
     await logBookingEvent(id, staff(staffId), `Post by hand on ${p.accountName}: ${p.reason}`);
   }
+  for (const o of offered) await logBookingEvent(id, staff(staffId), `Offered to the creator: ${o.accountName}`);
+  for (const c of creatorToStaff) await logBookingEvent(id, staff(staffId), `Creator page unavailable — ${c.accountName}: ${c.reason}`);
+  void notifyCreatorsOfOffers(offered);
   void sendStatusEmail(id, "approved").catch((e) => console.error("[campaign] approved email failed", e));
   return getBookingForStaff(id);
 }
@@ -151,7 +159,10 @@ export async function reject(id: string, staffId: string, note: string) {
     note,
     data: { reviewNote: note, reviewedById: staffId },
   });
-  await prisma.campaignBookingItem.updateMany({ where: { bookingId: id, status: { in: ["pending", "manual_pending", "queued"] } }, data: { status: "refunded", lastError: null } });
+  await prisma.campaignBookingItem.updateMany({
+    where: { bookingId: id, status: { in: ["pending", "manual_pending", "queued", "awaiting_creator", "creator_declined"] } },
+    data: { status: "refunded", lastError: null },
+  });
   let refundError: string | null = null;
   try {
     await refundBookingInFull(id, staff(staffId));
@@ -217,7 +228,7 @@ export async function markFailed(bookingId: string, itemId: string, staffId: str
   const item = await itemOf(bookingId, itemId);
   const res = await prisma.campaignBookingItem.updateMany({
     // A queued item mid-publish (locked) can't be failed under the worker's feet.
-    where: { id: itemId, status: { in: ["manual_pending", "queued"] }, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+    where: { id: itemId, status: { in: ["manual_pending", "queued", "creator_declined"] }, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
     data: { status: "failed", lastError: note.slice(0, 500) },
   });
   if (res.count !== 1) throw new AppError(409, "INVALID_STATE", "Only an item that is waiting to be posted can be marked failed.");
@@ -229,7 +240,9 @@ export async function markFailed(bookingId: string, itemId: string, staffId: str
 /** Refund one item that wasn't (and won't be) posted. */
 export async function refundItem(bookingId: string, itemId: string, staffId: string) {
   const item = await itemOf(bookingId, itemId);
-  if (!["manual_pending", "failed", "queued", "pending"].includes(item.status)) {
+  // awaiting_creator: staff may withdraw an offer the creator hasn't answered (the claim below
+  // races the creator's accept on the same status, so only one wins).
+  if (!["manual_pending", "failed", "queued", "pending", "awaiting_creator", "creator_declined"].includes(item.status)) {
     throw new AppError(409, "INVALID_STATE", "Only an item that wasn't posted can be refunded.");
   }
   const pay = await capturedPaymentFor(bookingId, item.pricePaise);
@@ -278,6 +291,10 @@ export async function publishNow(bookingId: string, itemId: string, staffId: str
   if (!b || !["approved", "publishing"].includes(b.status)) throw new AppError(409, "INVALID_STATE", "Approve the campaign first.");
   if (item.status !== "queued" && item.status !== "manual_pending") {
     throw new AppError(409, "INVALID_STATE", "Only an item that is waiting to be posted can be published.");
+  }
+  // A creator page is published only after its creator accepted.
+  if (item.targetType === "creator_asset" && !item.creatorDecidedAt) {
+    throw new AppError(409, "CREATOR_NOT_ACCEPTED", "The creator hasn't accepted this post.");
   }
   const e = await checkEligibility(item, b);
   if (!e.ok) throw new AppError(409, "NOT_PUBLISHABLE", e.reason);

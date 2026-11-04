@@ -50,7 +50,8 @@ export function invalidateInventoryCache(): void {
 
 function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "category" | "bookable" | "inCatalogue"> {
   return {
-    targetType: t.targetType,
+    // listBookableTargets() returns our own accounts only; creator pages are not sold here yet.
+    targetType: t.targetType as InventoryChannel["targetType"],
     targetId: t.targetId,
     platform: t.platform,
     name: t.name,

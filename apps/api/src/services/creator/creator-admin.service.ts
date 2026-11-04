@@ -7,6 +7,7 @@ import { scrubSecrets } from "../../utils/token-crypto";
 import { toAssetView, toConnectionView, toCreatorMe, isPublishable, liveConnectionWhere, LIVE_CONNECTION_STATUSES } from "./creator-view";
 import { syncNetworkDuplicates } from "./creator-discovery.service";
 import { sendCreatorEmail, esc, button, creatorLink } from "./creator-email";
+import { invalidateCatalogueCache } from "../campaign/rate-card.service";
 
 // Staff review queue for the creator portal (internal portal → /creators).
 // ⚠️ Every response goes through creator-view.ts builders plus the admin extras below — never a
@@ -221,6 +222,8 @@ export async function reviewCreator(id: string, action: ReviewAction, staffId: s
     return res.count;
   });
 
+  // A suspended creator's pages leave the client catalogue now, not when the memo expires.
+  if (count === 1) invalidateCatalogueCache();
   if (count === 0) {
     const exists = await prisma.creator.findUnique({ where: { id }, select: { status: true } });
     if (!exists) throw new AppError(404, "NOT_FOUND", "Creator not found");
@@ -321,6 +324,7 @@ export async function setAssetEnabled(creatorId: string, assetId: string, enable
     });
   }
 
+  invalidateCatalogueCache();
   const row = await prisma.creatorAsset.findUnique({ where: { id: assetId } });
   if (!row) throw new AppError(404, "NOT_FOUND", "Page not found");
   return (await toAdminAssetViews([row]))[0];

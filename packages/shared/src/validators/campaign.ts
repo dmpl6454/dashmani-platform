@@ -91,6 +91,8 @@ export const ITEM_STATUSES = [
   "published", // auto-published by the API
   "failed",
   "refunded",
+  "awaiting_creator", // creator page: approved by staff, waiting for the creator to accept
+  "creator_declined", // creator page: the creator declined (or did not answer) — staff refund it
 ] as const;
 export type ItemStatus = (typeof ITEM_STATUSES)[number];
 /** An item that is live on the platform with a link. */

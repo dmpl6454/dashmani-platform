@@ -3,6 +3,7 @@ import {
   creatorReviewSchema,
   creatorReviewNoteRequiredSchema,
   creatorAssetToggleSchema,
+  creatorPricingSchema,
 } from "@dashmani/shared/src/validators/creator";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
@@ -11,6 +12,7 @@ import { validate } from "../middleware/validate";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 import * as admin from "../services/creator/creator-admin.service";
+import * as pricing from "../services/creator/creator-pricing.service";
 
 // Internal portal: the creator review queue (/creators). Creator portal Phase A.
 // ⚠️ Gated on Admin/Super Admin for internal users only: these endpoints show creators' contact
@@ -49,6 +51,15 @@ router.post("/admin/creators/:id/reinstate", ...gate, validate(creatorReviewSche
 
 router.put("/admin/creators/:id/assets/:assetId", ...gate, validate(creatorAssetToggleSchema), asyncHandler(async (req, res) => {
   return success(res, await admin.setAssetEnabled(req.params.id, req.params.assetId, req.body.enabled, staffId(req)));
+}));
+
+// Marketplace: staff price each creator page per format (client price + the creator's payout).
+router.get("/admin/creators/:id/pricing", ...gate, asyncHandler(async (req, res) => {
+  return success(res, await pricing.getCreatorPricing(req.params.id));
+}));
+
+router.put("/admin/creators/:id/pricing", ...gate, validate(creatorPricingSchema), asyncHandler(async (req, res) => {
+  return success(res, await pricing.upsertCreatorPricing(req.params.id, req.body, staffId(req)));
 }));
 
 export default router;

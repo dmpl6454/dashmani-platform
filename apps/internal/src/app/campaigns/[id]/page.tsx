@@ -15,6 +15,8 @@ type Item = {
   audioAddonPaise: number; status: string; nextAttemptAt: string | null; attempts: number; permalink: string | null; postedAt: string | null; lastError: string | null;
   /** Per-account text: null = the booking's. superTextOverride "" = no overlay on this account. */
   captionOverride: string | null; hashtagsOverride: string[]; superTextOverride: string | null; superTextStyleOverride: string | null;
+  /** Creator pages ("creator_asset"): the creator accepts each post; payout is what we pay them. */
+  targetType?: string; creatorPayoutPaise?: number | null; creatorRespondBy?: string | null; creatorDecidedAt?: string | null; creatorDeclineReason?: string | null;
 };
 type ItemFiles = { itemId: string; custom: boolean; files: Array<{ mediaId: string; kind: string; role: string; status: string; url: string | null }> };
 type Booking = {
@@ -291,7 +293,11 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
 }) {
   const [url, setUrl] = useState(i.permalink ?? "");
   const [editing, setEditing] = useState(false);
-  const open = ["manual_pending", "queued", "failed"].includes(i.status);
+  const isCreator = i.targetType === "creator_asset";
+  // Refundable while it hasn't gone out; a creator page that declined (or never answered) too.
+  const open = ["manual_pending", "queued", "failed", "awaiting_creator", "creator_declined"].includes(i.status);
+  // Recording a link is for posts someone can actually make: not while it sits with the creator.
+  const postFormOpen = ["manual_pending", "failed"].includes(i.status);
   const queued = i.status === "queued";
   const live = i.status === "posted_manual" || i.status === "published";
   const ownCaption = i.captionOverride != null;
@@ -305,6 +311,13 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold text-ds-text truncate">{i.accountName}{i.accountHandle && <span className="text-ds-t3 font-normal"> @{i.accountHandle}</span>}</div>
           <div className="text-[12px] text-ds-t3">{i.platform} · {i.format} · {rupees(i.pricePaise)}{i.audioAddonPaise > 0 ? ` (incl. ${rupees(i.audioAddonPaise)} audio)` : ""}{i.postedAt ? ` · posted ${fmtWhen(i.postedAt)}` : ""}</div>
+          {isCreator && (
+            <div className="text-[12px] text-[#7DD3FC]">
+              Creator page · payout {i.creatorPayoutPaise != null ? rupees(i.creatorPayoutPaise) : "not set"} (paid by hand)
+              {i.status === "awaiting_creator" && i.creatorRespondBy ? ` · waiting for the creator until ${fmtWhen(i.creatorRespondBy)}` : ""}
+              {i.creatorDecidedAt && i.status !== "creator_declined" ? ` · accepted ${fmtWhen(i.creatorDecidedAt)}` : ""}
+            </div>
+          )}
         </div>
         <StatusPill status={i.status} map={ITEM_STATUS} />
         {i.permalink && (
@@ -345,12 +358,17 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
           {autoPublish && i.attempts > 0 ? ` · attempt ${i.attempts + 1} of 5` : ""}
         </div>
       )}
-      {i.lastError && i.status !== "refunded" && i.status !== "posted_manual" && (
+      {i.status === "creator_declined" && (
+        <div className="mt-1.5 text-[12px] text-[#FB7185]">
+          {i.creatorDeclineReason === "No answer in time" ? "The creator didn't answer in time." : `The creator declined${i.creatorDeclineReason ? `: ${i.creatorDeclineReason}` : "."}`} Refund it, or tell the client and arrange another page.
+        </div>
+      )}
+      {i.lastError && i.status !== "refunded" && i.status !== "posted_manual" && i.status !== "creator_declined" && (
         <div className={`mt-1.5 text-[12px] ${queued ? "text-ds-t3" : i.status === "manual_pending" ? "text-ds-gold" : "text-[#FB7185]"}`}>
           {queued ? `Last try: ${i.lastError}` : i.status === "manual_pending" ? `Post by hand — ${i.lastError}` : i.lastError}
         </div>
       )}
-      {postable && !queued && (open || editing) && (
+      {postable && !queued && (postFormOpen || editing) && (
         <form
           className="mt-2.5 flex flex-col sm:flex-row gap-2"
           onSubmit={async (e) => {
@@ -375,12 +393,12 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
               </button>
             </>
           )}
-          {autoPublish && i.status === "manual_pending" && (
+          {autoPublish && i.status === "manual_pending" && (!isCreator || !!i.creatorDecidedAt) && (
             <button type="button" className="text-ds-t2 hover:text-ds-text" disabled={!!busy} onClick={() => act(`now-${i.id}`, `/admin/campaigns/${bookingId}/items/${i.id}/publish-now`)}>
               Try auto-publish
             </button>
           )}
-          {(i.status === "manual_pending" || i.status === "queued") && (
+          {(i.status === "manual_pending" || i.status === "queued" || i.status === "creator_declined") && (
             <button
               type="button"
               className="text-ds-t2 hover:text-ds-text"

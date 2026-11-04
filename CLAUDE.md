@@ -887,6 +887,28 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 - `creator-meta-oauth` covers the review fixes: wrong account, staff refusal, identity release, page take-over, inconclusive probe, the daily duplicate re-check, 190 → NEEDS_REAUTH, idempotent reminders and the purge.
 - `creator-auth` covers Google pre-account hijack and the email cap.
 
+## Creator marketplace — creator portal Phase B/C (2026-11-04, `feat/creator-marketplace`; ⚠️ apply `scripts/creator-marketplace-ddl.sql` with `bash scripts/apply-creator-marketplace-ddl.sh` on prod BEFORE merging)
+
+**What it is.** A client books a creator's page beside our own accounts; the creator accepts each paid post before anything is posted; the accepted post goes out through the creator's OWN Facebook Login grant.
+1. **Staff price** each creator page per format on internal `/creators/[id]` → "Prices": client price (brand), optional entertainment price and reel song add-on, and the **creator payout** (what we pay the creator by hand). `GET/PUT /v1/admin/creators/:id/pricing` (`creator-pricing.service.ts`). ⚠️ **Departs from the recorded Phase C decision "the creator sets the price" — owner to confirm.** The payout can never exceed the client price (400 `PAYOUT_ABOVE_PRICE`).
+2. **Inventory:** prices are rows of `campaign_rate_cards` with `target_type = "creator_asset"`, `target_id = creator_assets.id`, so `priceFor()`, checkout, GST and refunds are unchanged. `listCreatorTargets()` (rate-card.service) lists a page only while the creator is approved, staff switched it on, it is connected through a live grant, `canPublish`, and not a network duplicate. `getCatalogue()` serves them with `source: "creator"` (client portal shows a "Creator" tag). ⚠️ Creator pages are read from the creator tables ONLY, never `meta_assets`; the network rate-card grid (`/campaigns/rate-cards`) and the sales inventory exclude them. `creator_payout_paise` never leaves the server towards a client.
+3. **Offer:** staff approval (`review.service.approve` → `offerCreatorItems`) moves each creator item to **`awaiting_creator`**, freezing `creator_id` (the page's owner at that moment), `creator_payout_paise`, `creator_offered_at`, `creator_respond_by` (`CREATOR_RESPONSE_HOURS`, default 72 h, capped at the end of the last posting day IST, at least 6 h). A page no longer bookable at approval goes to staff (`manual_pending` + reason). The creator is emailed.
+4. **Creator** (`apps/creators` → **Bookings**, `/offers` and `/offers/view?id=`; API `/v1/creator/offers[/:id]`, `POST …/accept | decline | posted`, `creator-offers.service.ts`): sees brand, campaign name, posting window, caption/hashtags/tags/collaborators (per-account text), the RENDERED files (signed media URLs) and the payout — never the client's identity or price. Accept → `queued` (due launch day 10:00 IST) when the API can post it, else `manual_pending` with the reason and the creator posts it and records the link (`posted_manual`). Decline (reason required) or **no answer by the deadline** (`expireCreatorOffers`, campaign cron every 10 min, ≤50/run) → **`creator_declined`** + admin alert; staff refund / drop it (refund now accepts `awaiting_creator` and `creator_declined`). Neither new status is "settled", so a booking cannot complete until staff act. Sales: `creator_declined` items are not billed.
+5. **Publish:** `checkCreatorEligibility` (publish.service) reads `creator_assets` + `creator_connections` tokens (FB page token; IG = the creator's user token, else the linked creator FB page's token). ⚠️ Its OWN switch **`CREATOR_PUBLISH_ENABLED=1`** (dark by default; independent of `CAMPAIGN_PUBLISH_ENABLED`): the worker claims creator items only when it is on; while off, an accepted post goes to the creator to post by hand. Same never-post-twice machinery as our pages.
+
+**Rules (do not regress).**
+- ⚠️ Nothing is posted on a creator page without that creator's accept: `publishItem` refuses a creator item without `creator_decided_at`; staff "Publish now" answers 409 `CREATOR_NOT_ACCEPTED`.
+- ⚠️ The decision belongs to the creator frozen in `creator_id`: another creator gets 404; a page that changed hands, was disconnected, switched off, or whose creator was suspended can't be accepted, and the worker hands such an item to staff instead of posting.
+- Every status change is a conditional `updateMany` on the current status (accept vs expiry vs staff refund race cleanly). Events use actor type `creator`.
+- `purgeCreatorPageData` keeps any page a booking item names, and its connection.
+- Approve / suspend / page switch / pricing invalidate the 60 s catalogue memo; checkout always re-resolves targets uncached.
+
+**Schema.** `campaign_rate_cards.creator_payout_paise`; `campaign_booking_items.creator_id / creator_payout_paise / creator_offered_at / creator_respond_by / creator_decided_at / creator_decline_reason` + index `(creator_id, status)`. All nullable, additive; CI rehearses the script.
+
+**Tests:** `apps/api/tests/creator-marketplace.test.ts` (22; the ownership guard and the separate publish switch were red-green checked).
+
+**Not built:** payout ledger (marking a creator paid), creator-set prices, creator pages in the sales inventory/quotes.
+
 ## Client Portal (`apps/client`) — design system = digitalsukoon.com (2026-10-10)
 
 The client portal shares the website's "Channel Surf" look (`apps/web/src/app/globals.css`): black canvas, white type, one indigo accent (`#403cfa`), 2px hairline dividers at 18% white, **square corners**, Manrope. The portal was already token-driven, so the restyle lives in two files and the token NAMES did not change, only their values:

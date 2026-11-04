@@ -104,3 +104,35 @@ export function useCreators(status: string, q: string) {
 export function useCreatorDetail(id: string | undefined) {
   return useSWR<AdminCreatorDetail>(id ? `/admin/creators/${id}` : null, unwrap, { revalidateOnFocus: false });
 }
+
+// ── Marketplace: staff prices per creator page and format (/admin/creators/:id/pricing) ─────
+
+export interface CreatorPriceCard {
+  id: string;
+  format: string;
+  pricePaise: number;
+  entertainmentPricePaise: number | null;
+  audioAddonPaise: number | null;
+  creatorPayoutPaise: number | null;
+  active: boolean;
+}
+
+export interface CreatorPricedPage {
+  assetId: string;
+  kind: "facebook_page" | "instagram_account";
+  platform: "facebook" | "instagram";
+  name: string;
+  username: string | null;
+  followers: number | null;
+  enabled: boolean;
+  disconnected: boolean;
+  /** Shown to clients right now (bookable and priced). */
+  listed: boolean;
+  category: string | null;
+  formats: string[];
+  cards: CreatorPriceCard[];
+}
+
+export function useCreatorPricing(id: string | undefined) {
+  return useSWR<CreatorPricedPage[]>(id ? `/admin/creators/${id}/pricing` : null, unwrap, { revalidateOnFocus: false });
+}

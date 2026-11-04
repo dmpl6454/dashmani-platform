@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { safeString, normalizedEmail } from "../utils/sanitize";
+import { safeString, normalizedEmail, isHttpUrl, HTTP_URL_MESSAGE } from "../utils/sanitize";
 
 // Creator portal (creators.digitalsukoon.com). Used by the API (input validation) and the
 // creators app (form validation) — import by module path, not the @dashmani/shared barrel.
@@ -87,3 +87,55 @@ export const creatorReviewNoteRequiredSchema = z.object({
 });
 
 export const creatorAssetToggleSchema = z.object({ enabled: z.boolean() });
+
+// ── Marketplace (Phase B/C): staff prices, the creator's decision on each booked post ────────
+
+/** Formats a creator page can be priced for (clients book reel, post and carousel only). */
+export const CREATOR_PRICED_FORMATS = ["reel", "post", "carousel"] as const;
+export type CreatorPricedFormat = (typeof CREATOR_PRICED_FORMATS)[number];
+
+const paise = z.number().int().min(100, "Minimum ₹1").max(100_000_000);
+
+/**
+ * Staff set, per creator page and format, what the CLIENT pays (brand price, optional
+ * entertainment price and reel song add-on) and what WE pay the creator (settled by hand).
+ * pricePaise null = stop offering that format on that page (the card is deleted).
+ */
+export const creatorPricingSchema = z.object({
+  cards: z
+    .array(
+      z.object({
+        assetId: z.string().uuid(),
+        format: z.enum(CREATOR_PRICED_FORMATS),
+        pricePaise: paise.nullable(),
+        entertainmentPricePaise: paise.nullable().optional(),
+        audioAddonPaise: paise.nullable().optional(),
+        creatorPayoutPaise: paise.nullable().optional(),
+        active: z.boolean().optional().default(true),
+        category: safeString.pipe(z.string().max(60)).optional().nullable(),
+      }),
+    )
+    .min(1)
+    .max(60),
+});
+export type CreatorPricingInput = z.infer<typeof creatorPricingSchema>;
+
+export const creatorOfferDeclineSchema = z.object({
+  reason: safeString.pipe(z.string().min(3, "Tell us briefly why").max(500)),
+});
+
+export const creatorOfferPostedSchema = z.object({
+  url: z.string().trim().url("Paste the full link to the post").max(500).refine(isHttpUrl, HTTP_URL_MESSAGE),
+});
+
+/** Item statuses as the creator sees them. */
+export const CREATOR_OFFER_STATUS_LABELS: Record<string, string> = {
+  awaiting_creator: "Waiting for you",
+  queued: "Accepted — scheduled",
+  manual_pending: "Accepted — post it yourself",
+  published: "Live",
+  posted_manual: "Live",
+  creator_declined: "Declined",
+  failed: "Not posted",
+  refunded: "Cancelled",
+};

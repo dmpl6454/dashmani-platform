@@ -1,6 +1,7 @@
 import { renderNext } from "../services/campaign/render.service";
 import { runCampaignRetention } from "../services/campaign/retention.service";
 import { runPublishTick } from "../services/campaign/publish.service";
+import { runCreatorOfferExpiry } from "../services/creator/creator-offers.service";
 
 // Campaign booking background work:
 //  • render worker — every 30 s, at most ONE file per tick (renderNext has its own overlap
@@ -30,6 +31,18 @@ export function startCampaignCrons() {
     publishTick();
     setInterval(publishTick, 60_000);
   }, 3 * 60_000);
+
+  // Creator marketplace: an offer nobody answered by its deadline becomes "declined" and staff
+  // are told. Every 10 min, ≤50 rows per run; its own overlap guard.
+  const offerExpiryTick = () => {
+    runCreatorOfferExpiry()
+      .then((n) => { if (n) console.log(`[creator-offers] ${n} offer(s) expired`); })
+      .catch((err) => console.error("[creator-offers] tick failed:", err));
+  };
+  setTimeout(() => {
+    offerExpiryTick();
+    setInterval(offerExpiryTick, 10 * 60_000);
+  }, 4 * 60_000);
 
   const retentionTick = async () => {
     if (retentionRunning) return;

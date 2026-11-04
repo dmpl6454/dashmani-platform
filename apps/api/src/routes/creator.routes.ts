@@ -1,8 +1,14 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { validate } from "../middleware/validate";
 import { requireCreatorsEnabled, authenticateCreator, requireActiveCreator, creatorOf } from "../middleware/creator-auth";
-import { creatorProfileSchema, creatorChangePasswordSchema } from "@dashmani/shared/src/validators/creator";
+import {
+  creatorProfileSchema,
+  creatorChangePasswordSchema,
+  creatorOfferDeclineSchema,
+  creatorOfferPostedSchema,
+} from "@dashmani/shared/src/validators/creator";
 import * as creatorSelf from "../services/creator/creator-self.service";
+import * as offers from "../services/creator/creator-offers.service";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 
@@ -61,6 +67,48 @@ router.delete(
   "/creator/me",
   ...signedIn,
   asyncHandler(async (req: Request, res: Response) => success(res, await creatorSelf.closeCreatorAccount(creatorOf(req).id))),
+);
+
+// ── Marketplace (Phase B): booked posts offered to this creator ──────────────────────────────
+// Read while suspended (a creator can always see their history); answering needs an active
+// account, and the service re-checks the page is still theirs.
+
+router.get(
+  "/creator/offers",
+  ...signedIn,
+  asyncHandler(async (req: Request, res: Response) =>
+    success(res, await offers.listOffers(creatorOf(req).id, req.query.filter === "open" ? "open" : "all"))),
+);
+
+router.get(
+  "/creator/offers/:id",
+  ...signedIn,
+  asyncHandler(async (req: Request, res: Response) => success(res, await offers.getOffer(creatorOf(req).id, req.params.id))),
+);
+
+router.post(
+  "/creator/offers/:id/accept",
+  ...signedIn,
+  requireActiveCreator,
+  asyncHandler(async (req: Request, res: Response) => success(res, await offers.acceptOffer(creatorOf(req).id, req.params.id))),
+);
+
+router.post(
+  "/creator/offers/:id/decline",
+  ...signedIn,
+  requireActiveCreator,
+  validate(creatorOfferDeclineSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    success(res, await offers.declineOffer(creatorOf(req).id, req.params.id, req.body.reason))),
+);
+
+router.post(
+  "/creator/offers/:id/posted",
+  ...signedIn,
+  requireActiveCreator,
+  validate(creatorOfferPostedSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    success(res, await offers.recordCreatorPost(creatorOf(req).id, req.params.id, req.body.url))),
 );
 
 export default router;

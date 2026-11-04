@@ -60,6 +60,8 @@ type Eligibility = { ok: true; target: PublishTarget | YoutubePublishTarget } | 
 
 interface ItemLike {
   targetType: string;
+  /** Creator pages: the creator the post was offered to (frozen at the offer). */
+  creatorId?: string | null;
   targetId: string;
   platform: string;
   format: string;
@@ -75,6 +77,7 @@ interface BookingLike {
 /** Can this item be published by the API right now? Reason is shown to staff when not. */
 export async function checkEligibility(item: ItemLike, booking: BookingLike): Promise<Eligibility> {
   if (item.platform === "youtube" && item.targetType === "social_account") return checkYoutubeEligibility(item, booking);
+  if (item.targetType === "creator_asset") return checkCreatorEligibility(item, booking);
   if (!campaignConfig.publishEnabled()) return { ok: false, reason: "Auto-publishing is switched off." };
   if (item.targetType !== "meta_asset" || (item.platform !== "instagram" && item.platform !== "facebook")) {
     return { ok: false, reason: "This platform is posted by hand." };
@@ -142,6 +145,85 @@ export async function checkEligibility(item: ItemLike, booking: BookingLike): Pr
   }
 }
 
+/** What a post needs whichever page it goes on (song audio, stories, FB carousel/thumbnail limits). */
+function contentReason(item: ItemLike, booking: BookingLike): string | null {
+  if (booking.audioIntegration && item.format === "reel") {
+    return "Song audio integration has to be added in the app — the API cannot attach a song.";
+  }
+  if (item.format === "story") return "Stories are posted by hand.";
+  const creative = booking.media.filter((m) => m.role !== "thumbnail");
+  if (creative.length === 0) return "No prepared media.";
+  if (item.platform === "facebook" && item.format === "carousel" && creative.some((m) => m.kind === "video")) {
+    return "Facebook carousels can only hold images through the API.";
+  }
+  if (item.platform === "facebook" && booking.media.some((m) => m.role === "thumbnail") && creative.some((m) => m.kind === "video")) {
+    return "The client chose a thumbnail — Facebook can't take it through the API, so post it by hand with the thumbnail.";
+  }
+  return null;
+}
+
+/**
+ * Creator pages (marketplace): publish through the CREATOR's own grant — never a staff token, and
+ * never from meta_assets. The page must still belong to the creator the post was offered to,
+ * still be switched on by staff, and the creator must still be approved; otherwise the post goes
+ * to staff instead (a page that changed hands must never publish under someone else's deal).
+ */
+async function checkCreatorEligibility(item: ItemLike, booking: BookingLike): Promise<Eligibility> {
+  if (!campaignConfig.creatorPublishEnabled()) {
+    return { ok: false, reason: "Auto-posting on creator pages is switched off — post it on the page and paste the link." };
+  }
+  if (item.platform !== "instagram" && item.platform !== "facebook") return { ok: false, reason: "This platform is posted by hand." };
+  const content = contentReason(item, booking);
+  if (content) return { ok: false, reason: content };
+
+  const asset = await prisma.creatorAsset.findUnique({
+    where: { id: item.targetId },
+    select: {
+      kind: true, metaId: true, pageTokenEnc: true, parentPageId: true, connectionId: true, creatorId: true,
+      enabled: true, disconnectedAt: true, canPublish: true, networkDuplicateOf: true,
+      creator: { select: { status: true } },
+      connection: { select: { userTokenEnc: true, grantedScopes: true, status: true, revokedAt: true, tokenExpiresAt: true } },
+    },
+  });
+  if (!asset || asset.disconnectedAt) return { ok: false, reason: "The creator's page is no longer connected." };
+  if (!item.creatorId || asset.creatorId !== item.creatorId) {
+    return { ok: false, reason: "This page now belongs to a different creator account — check with the creator before posting." };
+  }
+  if (asset.creator.status !== "approved") return { ok: false, reason: "The creator's account is not active." };
+  if (!asset.enabled) return { ok: false, reason: "Staff switched this creator page off." };
+  if (asset.networkDuplicateOf) return { ok: false, reason: "This page is also one of our own pages." };
+  const conn = asset.connection;
+  if (!conn || conn.revokedAt || conn.status === "REVOKED" || conn.status === "NEEDS_REAUTH") {
+    return { ok: false, reason: "The creator's Facebook connection needs reconnecting." };
+  }
+  const scopes = new Set((conn.grantedScopes ?? "").split(",").map((x) => x.trim()).filter(Boolean));
+  const needed = item.platform === "instagram" ? IG_SCOPE : FB_SCOPE;
+  if (!scopes.has(needed)) return { ok: false, reason: `The creator didn't grant publishing (${needed}).` };
+  const loginLapsed = conn.tokenExpiresAt != null && conn.tokenExpiresAt.getTime() <= Date.now();
+
+  try {
+    if (item.platform === "instagram") {
+      if (asset.kind !== "instagram_account") return { ok: false, reason: "No Instagram account behind this page." };
+      if (conn.userTokenEnc && !loginLapsed) {
+        return { ok: true, target: { platform: "instagram", metaId: asset.metaId, token: decryptToken(conn.userTokenEnc) } };
+      }
+      // The linked Facebook Page's token (from the same creator grant) has no timer.
+      const page = asset.parentPageId
+        ? await prisma.creatorAsset.findFirst({
+            where: { connectionId: asset.connectionId, kind: "facebook_page", metaId: asset.parentPageId, disconnectedAt: null, pageTokenEnc: { not: null } },
+            select: { pageTokenEnc: true },
+          })
+        : null;
+      if (page?.pageTokenEnc) return { ok: true, target: { platform: "instagram", metaId: asset.metaId, token: decryptToken(page.pageTokenEnc) } };
+      return { ok: false, reason: "The creator's Facebook login has expired — they must reconnect it." };
+    }
+    if (asset.kind !== "facebook_page" || !asset.pageTokenEnc) return { ok: false, reason: "No Page token for this creator page." };
+    return { ok: true, target: { platform: "facebook", metaId: asset.metaId, token: decryptToken(asset.pageTokenEnc) } };
+  } catch {
+    return { ok: false, reason: "The creator's stored token could not be read — they must reconnect." };
+  }
+}
+
 /** YouTube (Phase 3): one rendered video, a Short (reel) or a video (post), on a connected channel. */
 async function checkYoutubeEligibility(item: ItemLike, booking: BookingLike): Promise<Eligibility> {
   if (!campaignConfig.youtubePublishEnabled()) return { ok: false, reason: "YouTube auto-upload is switched off." };
@@ -186,6 +268,9 @@ export async function planPublishing(bookingId: string) {
   const at = launchAt(b.launchFrom);
   const plan: Array<{ itemId: string; accountName: string; auto: boolean; reason?: string; at?: Date }> = [];
   for (const item of b.items) {
+    // Creator pages are offered to their creator on approval (creator-offers.service); the
+    // creator's accept decides between queued and posting by hand.
+    if (item.targetType === "creator_asset") continue;
     const e = await checkEligibility(item, b);
     plan.push(e.ok ? { itemId: item.id, accountName: item.accountName, auto: true, at } : { itemId: item.id, accountName: item.accountName, auto: false, reason: e.reason });
   }
@@ -473,6 +558,7 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
     select: {
       id: true, bookingId: true, status: true, targetType: true, targetId: true, platform: true, format: true,
       accountName: true, attempts: true, containerId: true, captionOverride: true, hashtagsOverride: true, remotePostId: true,
+      creatorId: true, creatorDecidedAt: true,
       booking: {
         select: {
           name: true, brand: true, status: true, caption: true, hashtags: true, userTags: true, collaborators: true, audioIntegration: true,
@@ -485,7 +571,11 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
   if (!["approved", "publishing"].includes(item.booking.status)) return null;
 
   let outcome: Outcome;
-  const e = await checkEligibility(item, item.booking);
+  // A creator page is never posted without its creator's accept (belt and braces: only an
+  // accept moves a creator item to queued).
+  const e = item.targetType === "creator_asset" && !item.creatorDecidedAt
+    ? ({ ok: false, reason: "The creator has not accepted this post." } as const)
+    : await checkEligibility(item, item.booking);
   if (!e.ok) {
     outcome = { kind: "manual", reason: e.reason };
   } else {
@@ -618,11 +708,16 @@ export async function runPublishTick(): Promise<number> {
   running = true; // claimed before the first await — a concurrent tick skips
   try {
     const now = new Date();
+    // Each publisher only touches its own items: a switched-off one leaves its queue alone.
+    const lanes = [
+      ...(campaignConfig.publishEnabled() ? [{ targetType: "meta_asset", platform: { in: ["instagram", "facebook"] } }] : []),
+      ...(campaignConfig.youtubePublishEnabled() ? [{ targetType: "social_account", platform: "youtube" }] : []),
+      ...(campaignConfig.creatorPublishEnabled() ? [{ targetType: "creator_asset", platform: { in: ["instagram", "facebook"] } }] : []),
+    ];
     const due = await prisma.campaignBookingItem.findMany({
       where: {
         status: "queued",
-        // Each publisher only touches its own items: a switched-off one leaves its queue alone.
-        platform: { in: [...(campaignConfig.publishEnabled() ? ["instagram", "facebook"] : []), ...(campaignConfig.youtubePublishEnabled() ? ["youtube"] : [])] },
+        OR: lanes,
         AND: [
           { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
           { OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] },

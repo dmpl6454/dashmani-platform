@@ -2502,6 +2502,9 @@ model CampaignRateCard {
   active                  Boolean  @default(true)
   /// Shown to clients ("Bollywood news", "Lifestyle"…). Staff-entered: Instagram exposes none.
   category                String?  @db.VarChar(60)
+  /// Creator pages only (target_type "creator_asset"): what WE pay the creator for one post of
+  /// this format, settled by hand. Never shown to clients. null = not set yet.
+  creatorPayoutPaise      Int?     @map("creator_payout_paise")
   updatedById             String?  @map("updated_by_id")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
@@ -2665,6 +2668,17 @@ model CampaignBookingItem {
   lastError              String?   @map("last_error") @db.VarChar(500)
   /// When the client was emailed that THIS post is live (per-item "your post is live" mail).
   notifiedAt             DateTime? @map("notified_at")
+  /// Creator pages (target_type "creator_asset"): frozen when staff approve and the post is
+  /// offered to the creator. The creator who owned the page then decides; a later page
+  /// take-over never hands the decision to someone else. No FK (creators are their own tables).
+  creatorId              String?   @map("creator_id")
+  /// What we pay the creator for this post (settled by hand), frozen at the offer.
+  creatorPayoutPaise     Int?      @map("creator_payout_paise")
+  creatorOfferedAt       DateTime? @map("creator_offered_at")
+  /// No answer by then = declined (staff are told).
+  creatorRespondBy       DateTime? @map("creator_respond_by")
+  creatorDecidedAt       DateTime? @map("creator_decided_at")
+  creatorDeclineReason   String?   @map("creator_decline_reason") @db.VarChar(500)
   createdAt              DateTime  @default(now()) @map("created_at")
   updatedAt              DateTime  @updatedAt @map("updated_at")
 
@@ -2672,6 +2686,7 @@ model CampaignBookingItem {
 
   @@unique([bookingId, targetType, targetId, format])
   @@index([status, nextAttemptAt])
+  @@index([creatorId, status])
   @@map("campaign_booking_items")
 }
 

@@ -62,8 +62,9 @@ export async function checkout(clientId: string, bookingId: string) {
     const p = card ? priceFor(card, b) : null;
     if (!p) throw new AppError(409, "RATE_CARD_UNAVAILABLE", `${i.accountName} is no longer available for this campaign. Remove it and try again.`);
     // Creator pages: the creator's payout is frozen at the same instant as the client price, so a
-    // later change of the creator's own price can never move what this booking pays out.
-    const creatorPayoutPaise = i.targetType === "creator_asset" ? card!.creatorPayoutPaise ?? null : null;
+    // later change of the creator's own price can never move what this booking pays out. The song
+    // add-on (owner, 2026-11-04) is passed to the creator IN FULL — no margin on it.
+    const creatorPayoutPaise = i.targetType === "creator_asset" && card!.creatorPayoutPaise != null ? card!.creatorPayoutPaise + p.addon : null;
     return { ...i, pricePaise: p.total, basePaise: p.base, audioAddonPaise: p.addon, creatorPayoutPaise };
   });
   if (computeTotal(priced) < 100) throw new AppError(400, "AMOUNT_TOO_LOW", "The total is below the minimum payment.");

@@ -35,6 +35,7 @@ export default function PricesPage() {
     <div className="flex flex-col gap-6">
       <PageHead kicker="Prices" title="Your price per post">
         Set what you want to be paid for one post on each page. Brands see your page with our service included; you are paid your price after the post is live.
+        If a brand adds a song to a reel, the song add-on is paid to you in full on top of your price.
         Changing a price applies to new bookings only — posts already booked keep the price they were booked at.
       </PageHead>
       {readOnly && <Banner tone="warn" title="Your account is suspended, so prices can't be changed." />}

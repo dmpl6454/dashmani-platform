@@ -9,7 +9,8 @@ import { BTN_GOLD, CARD, INPUT, ErrorBar, Pill, compact, fmtWhen, rupees } from 
 // creators.digitalsukoon.com — that is their payout. Staff add OUR MARGIN as a percentage on top:
 // client price = creator price + margin %, rounded up to a whole rupee (the same shared function
 // the API uses, so the preview here is exactly what clients are charged). Brand and
-// entertainment campaigns each have their own margin; the reel song add-on stays a fixed charge.
+// entertainment campaigns each have their own margin; the reel song add-on is a fixed charge that
+// is paid to the creator in full (no margin on it — owner, 2026-11-04).
 // Inputs are kept as typed text until Save (no reformatting under the cursor).
 
 type Field = "marginBps" | "entertainmentMarginBps" | "audioAddonPaise";
@@ -109,7 +110,7 @@ function PageCard({ page, creatorId, onSaved }: { page: CreatorPricedPage; creat
               <th className="py-1.5 pr-3 font-semibold">Client pays</th>
               <th className="py-1.5 pr-3 font-semibold" title="Empty = not offered for film / OTT / music campaigns">Ent. margin %</th>
               <th className="py-1.5 pr-3 font-semibold">Client pays (ent.)</th>
-              <th className="py-1.5 pr-3 font-semibold" title="Reels only, a fixed charge on top. Empty = no song.">Song add-on ₹</th>
+              <th className="py-1.5 pr-3 font-semibold" title="Reels only, a fixed charge on top — paid to the creator in full, no margin. Empty = no song.">Song add-on ₹ (to creator)</th>
               <th className="py-1.5 pr-3 font-semibold">On</th>
             </tr>
           </thead>
@@ -170,7 +171,8 @@ export function CreatorPricing({ creatorId, creatorApproved }: { creatorId: stri
       <div className="px-5 pt-5 pb-3">
         <h2 className="text-[15px] font-semibold text-ds-text">Prices</h2>
         <p className="mt-1 text-[12.5px] text-ds-t3">
-          The creator sets their own price per format — that is their payout, paid by hand after the post is live. You add our margin as a percentage on top;
+          The creator sets their own price per format — that is their payout, paid by hand after the post is live. You add our margin as a percentage on top
+          (the reel song add-on carries no margin: it is added to the creator&apos;s payout in full);
           the client pays the creator&apos;s price + margin (rounded up to the rupee, + GST). A format is listed {creatorApproved ? "" : "once the creator is approved, "}when the page is on,
           the creator has set a price and you have set a brand margin. If the creator changes their price, the client price for new bookings follows;
           posts already booked keep the price and payout they were booked at. The creator never sees the margin or the client price.

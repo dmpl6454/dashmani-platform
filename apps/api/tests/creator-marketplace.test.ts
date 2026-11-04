@@ -357,6 +357,36 @@ describe("creator marketplace", () => {
       expect(offered).toMatchObject({ status: "awaiting_creator", pricePaise: 450_000, creatorPayoutPaise: 300_000 });
     });
 
+    it("a song reel: the song add-on goes to the creator in full (no margin on it)", async () => {
+      expect((await request(app).put("/v1/creator/prices").set("Authorization", `Bearer ${creatorToken}`)
+        .send({ prices: [{ assetId: pageId, format: "reel", pricePaise: 300_000 }] })).status).toBe(200);
+      expect((await setMargin({ format: "reel", marginBps: 5000, audioAddonPaise: 50_000 })).status).toBe(200);
+      const card = await prisma.campaignRateCard.findFirstOrThrow({ where: { targetType: "creator_asset", format: "reel" } });
+      expect(card).toMatchObject({ pricePaise: 450_000, audioAddonPaise: 50_000, creatorPayoutPaise: 300_000 });
+      const b = await prisma.campaignBooking.create({
+        data: {
+          clientId, name: "Song", brand: "Brand Q", status: "draft", format: "reel", caption: "Hi", audioIntegration: true, audioTrack: "Kesariya",
+          launchFrom: new Date("2099-01-01T00:00:00Z"), launchTo: new Date("2099-01-02T00:00:00Z"),
+        },
+      });
+      keySeq++;
+      await prisma.campaignMedia.create({
+        data: {
+          clientId, bookingId: b.id, position: 0, kind: "video", role: "creative", originalName: "f.mp4", bytes: 10n, durationMs: 20_000,
+          storageKey: `mksong${keySeq}-${Date.now()}`, ext: "mp4", uploadStatus: "complete", chunkSize: 1, totalChunks: 1,
+          renderStatus: "done", renderKey: `mksongr${keySeq}-${Date.now()}`,
+        },
+      });
+      expect((await request(app).put(`/v1/client/campaigns/${b.id}/items`).set("Authorization", `Bearer ${clientToken}`).send({ rateCardIds: [card.id] })).status).toBe(200);
+      expect((await request(app).post(`/v1/client/campaigns/${b.id}/checkout`).set("Authorization", `Bearer ${clientToken}`)).status).toBe(200);
+      const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: b.id } });
+      // Client pays ₹4,500 + ₹500 song; the creator gets ₹3,000 + the whole ₹500.
+      expect(item).toMatchObject({ pricePaise: 500_000, audioAddonPaise: 50_000, creatorPayoutPaise: 350_000 });
+      await approve(b.id);
+      const offer = await asCreator().get(`/creator/offers/${item.id}`);
+      expect(offer.body.data).toMatchObject({ payoutPaise: 350_000, campaign: expect.objectContaining({ songTrack: "Kesariya" }) });
+    });
+
     it("a page switched off before approval goes to staff instead of being offered", async () => {
       const { bookingId, itemId } = await paidBooking();
       await prisma.creatorAsset.update({ where: { id: pageId }, data: { enabled: false } });

@@ -69,7 +69,7 @@ export interface OfferedItem {
 export async function offerCreatorItems(tx: Tx, bookingId: string, now = new Date()) {
   const b = await tx.campaignBooking.findUnique({
     where: { id: bookingId },
-    select: { launchTo: true, items: { where: { status: "pending", targetType: "creator_asset" }, select: { id: true, targetId: true, rateCardId: true, accountName: true, creatorPayoutPaise: true } } },
+    select: { launchTo: true, items: { where: { status: "pending", targetType: "creator_asset" }, select: { id: true, targetId: true, rateCardId: true, accountName: true, creatorPayoutPaise: true, audioAddonPaise: true } } },
   });
   const offered: OfferedItem[] = [];
   const toStaff: Array<{ itemId: string; accountName: string; reason: string }> = [];
@@ -103,8 +103,9 @@ export async function offerCreatorItems(tx: Tx, bookingId: string, now = new Dat
       data: {
         status: "awaiting_creator",
         creatorId: a.creatorId,
-        // Frozen at checkout with the client price; the card is only a fallback for older rows.
-        creatorPayoutPaise: item.creatorPayoutPaise ?? payoutOf.get(item.rateCardId) ?? null,
+        // Frozen at checkout with the client price; the card is only a fallback for older rows
+        // (plus the song add-on, which goes to the creator in full).
+        creatorPayoutPaise: item.creatorPayoutPaise ?? (payoutOf.get(item.rateCardId) != null ? payoutOf.get(item.rateCardId)! + item.audioAddonPaise : null),
         creatorOfferedAt: now,
         creatorRespondBy: respondBy,
         creatorDecidedAt: null,

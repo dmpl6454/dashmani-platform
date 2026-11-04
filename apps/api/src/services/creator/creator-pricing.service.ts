@@ -13,7 +13,9 @@ import { invalidateCatalogueCache, listCreatorTargets } from "../campaign/rate-c
 //    That price IS their payout;
 //  • STAFF add our margin on top (internal portal /creators/[id] → Prices): a percentage for
 //    brand campaigns, an optional percentage for entertainment campaigns, and the reel song
-//    add-on as a fixed client charge. Staff never type the payout or the client price;
+//    add-on amount. The song add-on carries NO margin: it is paid to the creator in full
+//    (owner, 2026-11-04; added to the payout at checkout). Staff never type the payout or the
+//    client price;
 //  • client price = creatorClientPricePaise(creator price, margin) — creator price + margin %,
 //    rounded UP to a whole rupee (packages/shared, so the staff preview uses the same rule).
 //

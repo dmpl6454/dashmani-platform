@@ -138,7 +138,7 @@ function OfferView() {
           {o.hashtags.length > 0 && <Row label="Hashtags">{o.hashtags.map((h) => `#${h}`).join(" ")}</Row>}
           {o.userTags.length > 0 && <Row label="Tagged accounts">{o.userTags.map((h) => `@${h}`).join(", ")}</Row>}
           {o.collaborators.length > 0 && <Row label="Collaborators">{o.collaborators.map((h) => `@${h}`).join(", ")}</Row>}
-          {o.campaign.songTrack && <Row label="Song to add">{o.campaign.songTrack} <span className="text-ink-3">(added in the app — you post this one yourself)</span></Row>}
+          {o.campaign.songTrack && <Row label="Song to add">{o.campaign.songTrack} <span className="text-ink-3">(added in the app — you post this one yourself; your payout includes the song add-on in full)</span></Row>}
           <Row label="Campaign">{o.campaign.name}</Row>
         </dl>
       </section>

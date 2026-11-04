@@ -4,6 +4,7 @@ import { AppError } from "../../middleware/error-handler";
 import { resolveDuplicateAssetIds } from "../meta-oauth/meta-channels.service";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 import { LINK_DELIVERY_MINUTES } from "./config";
+import { liveConnectionWhere, profileUrl as creatorProfileUrl } from "../creator/creator-view";
 
 // Rate cards (our price per account per format) and the client-facing catalogue built from
 // them. A "target" is either a connected Meta asset (Facebook Page / Instagram account) or a
@@ -12,11 +13,19 @@ import { LINK_DELIVERY_MINUTES } from "./config";
 //
 // ⚠️ The catalogue is served to CLIENTS. It returns explicit fields only: never earnings,
 // tokens, connection ids or anything else from meta_assets beyond what is listed below.
+//
+// Creator pages (creator portal Phase B/C) are a third target type, "creator_asset" =
+// creator_assets.id. They are read from the creator tables ONLY — never from meta_assets — and
+// are bookable while the creator is approved and staff have switched the page on. Their prices
+// live in this same table, set by staff on the internal portal's creator page. A creator card's
+// creator_payout_paise (what we pay the creator) never leaves the server towards a client.
 
-export type TargetType = "meta_asset" | "social_account";
+export type TargetType = "meta_asset" | "social_account" | "creator_asset";
 
 export interface CatalogueTarget {
   targetType: TargetType;
+  /** network = one of our own accounts; creator = a creator's page (they accept each post). */
+  source: "network" | "creator";
   targetId: string;
   platform: CampaignPlatform;
   name: string;
@@ -78,6 +87,7 @@ export async function listBookableTargets(): Promise<CatalogueTarget[]> {
     const eng = big(a.engagements28d);
     out.push({
       targetType: "meta_asset",
+      source: "network",
       targetId: a.id,
       platform: a.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram",
       name: a.name,
@@ -95,6 +105,7 @@ export async function listBookableTargets(): Promise<CatalogueTarget[]> {
     const platform = s.platform.slug === "snapchat" ? "snapchat" : "youtube";
     out.push({
       targetType: "social_account",
+      source: "network",
       targetId: s.id,
       platform,
       name: s.displayName,
@@ -112,10 +123,56 @@ export async function listBookableTargets(): Promise<CatalogueTarget[]> {
   return out;
 }
 
+/**
+ * Creator pages that may be booked now: the creator is approved, staff switched the page on,
+ * it is still connected through a live grant, we can publish there, and it is not one of our
+ * own pages. Every condition is in the query, so a suspend, a disconnect or a lapsed grant takes
+ * the page out of the catalogue (and out of checkout) at once.
+ */
+export async function listCreatorTargets(): Promise<CatalogueTarget[]> {
+  const rows = await prisma.creatorAsset.findMany({
+    where: {
+      enabled: true,
+      canPublish: true,
+      disconnectedAt: null,
+      networkDuplicateOf: null,
+      creator: { status: "approved" },
+      connection: liveConnectionWhere,
+    },
+    select: {
+      id: true, kind: true, metaId: true, name: true, username: true, pictureUrl: true,
+      followerCount: true, views28d: true, engagements28d: true,
+    },
+  });
+  return rows.map((a) => {
+    const views = big(a.views28d);
+    const eng = big(a.engagements28d);
+    return {
+      targetType: "creator_asset" as const,
+      source: "creator" as const,
+      targetId: a.id,
+      platform: a.kind === "facebook_page" ? ("facebook" as const) : ("instagram" as const),
+      name: a.name,
+      username: a.username,
+      pictureUrl: a.pictureUrl,
+      followers: a.followerCount,
+      views28d: views,
+      engagements28d: eng,
+      engagementRatePct: engagementRate(eng, views),
+      profileUrl: creatorProfileUrl(a),
+    };
+  });
+}
+
 /** Resolve the given targets to their live catalogue entries (missing = no longer bookable). */
 export async function resolveCatalogueTargets(keys: Array<{ targetType: string; targetId: string }>) {
   const wanted = new Set(keys.map((k) => `${k.targetType}:${k.targetId}`));
-  const all = await listBookableTargets();
+  const needCreators = keys.some((k) => k.targetType === "creator_asset");
+  const needNetwork = keys.some((k) => k.targetType !== "creator_asset");
+  const all = [
+    ...(needNetwork ? await listBookableTargets() : []),
+    ...(needCreators ? await listCreatorTargets() : []),
+  ];
   const map = new Map<string, CatalogueTarget>();
   for (const t of all) {
     const k = `${t.targetType}:${t.targetId}`;
@@ -153,8 +210,12 @@ export function priceFor(
 
 // ── Admin: the rate-card grid ───────────────────────────────────────────────────
 
+/** Our own accounts only — creator pages are priced on their creator's page in the portal. */
 export async function listRateCardGrid() {
-  const [targets, cards] = await Promise.all([listBookableTargets(), prisma.campaignRateCard.findMany()]);
+  const [targets, cards] = await Promise.all([
+    listBookableTargets(),
+    prisma.campaignRateCard.findMany({ where: { targetType: { not: "creator_asset" } } }),
+  ]);
   const byTarget = new Map<string, typeof cards>();
   for (const c of cards) {
     const k = `${c.targetType}:${c.targetId}`;
@@ -181,6 +242,7 @@ export async function listRateCardGrid() {
 }
 
 export async function upsertRateCards(input: CampaignRateCardUpsertInput, staffId: string) {
+  // The schema allows only our own target types; creator prices go through creator-pricing.
   const targets = await resolveCatalogueTargets(input.cards);
   let upserted = 0;
   let deleted = 0;
@@ -244,6 +306,7 @@ export function invalidateCatalogueCache() {
 
 export interface CatalogueEntry {
   targetType: TargetType;
+  source: "network" | "creator";
   targetId: string;
   platform: CampaignPlatform;
   name: string;
@@ -269,10 +332,12 @@ export interface CatalogueEntry {
 /** Bookable accounts with at least one active price. Only the listed fields leave the server. */
 export async function getCatalogue(): Promise<CatalogueEntry[]> {
   return catalogueMemo.memo("all", async () => {
-    const [targets, cards] = await Promise.all([
+    const [network, creators, cards] = await Promise.all([
       listBookableTargets(),
+      listCreatorTargets(),
       prisma.campaignRateCard.findMany({ where: { active: true } }),
     ]);
+    const targets = [...network, ...creators];
     const byTarget = new Map<string, typeof cards>();
     for (const c of cards) {
       const k = `${c.targetType}:${c.targetId}`;
@@ -284,6 +349,7 @@ export async function getCatalogue(): Promise<CatalogueEntry[]> {
       if (!own?.length) continue;
       out.push({
         targetType: t.targetType,
+        source: t.source,
         targetId: t.targetId,
         platform: t.platform,
         name: t.name,

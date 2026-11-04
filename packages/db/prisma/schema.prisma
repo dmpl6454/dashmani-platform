@@ -2502,6 +2502,9 @@ model CampaignRateCard {
   active                  Boolean  @default(true)
   /// Shown to clients ("Bollywood news", "Lifestyle"…). Staff-entered: Instagram exposes none.
   category                String?  @db.VarChar(60)
+  /// Creator pages only (target_type "creator_asset"): what WE pay the creator for one post of
+  /// this format, settled by hand. Never shown to clients. null = not set yet.
+  creatorPayoutPaise      Int?     @map("creator_payout_paise")
   updatedById             String?  @map("updated_by_id")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
@@ -2665,6 +2668,17 @@ model CampaignBookingItem {
   lastError              String?   @map("last_error") @db.VarChar(500)
   /// When the client was emailed that THIS post is live (per-item "your post is live" mail).
   notifiedAt             DateTime? @map("notified_at")
+  /// Creator pages (target_type "creator_asset"): frozen when staff approve and the post is
+  /// offered to the creator. The creator who owned the page then decides; a later page
+  /// take-over never hands the decision to someone else. No FK (creators are their own tables).
+  creatorId              String?   @map("creator_id")
+  /// What we pay the creator for this post (settled by hand), frozen at the offer.
+  creatorPayoutPaise     Int?      @map("creator_payout_paise")
+  creatorOfferedAt       DateTime? @map("creator_offered_at")
+  /// No answer by then = declined (staff are told).
+  creatorRespondBy       DateTime? @map("creator_respond_by")
+  creatorDecidedAt       DateTime? @map("creator_decided_at")
+  creatorDeclineReason   String?   @map("creator_decline_reason") @db.VarChar(500)
   createdAt              DateTime  @default(now()) @map("created_at")
   updatedAt              DateTime  @updatedAt @map("updated_at")
 
@@ -2672,6 +2686,7 @@ model CampaignBookingItem {
 
   @@unique([bookingId, targetType, targetId, format])
   @@index([status, nextAttemptAt])
+  @@index([creatorId, status])
   @@map("campaign_booking_items")
 }
 
@@ -2892,11 +2907,42 @@ model CreatorAsset {
 
   creator    Creator           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   connection CreatorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  prices     CreatorPagePrice[]
 
   @@unique([kind, metaId])
   @@index([creatorId])
   @@index([connectionId])
   @@map("creator_assets")
+}
+
+/// Marketplace pricing of one creator page × format (owner decision 2026-11-04): the CREATOR sets
+/// their own price (= their payout); staff add our margin on top. The client-facing rate card
+/// (campaign_rate_cards, target_type "creator_asset") is DERIVED from this row by
+/// creator-pricing.service and exists only while both sides are set.
+model CreatorPagePrice {
+  id                     String    @id @default(uuid())
+  assetId                String    @map("asset_id")
+  format                 String    @db.VarChar(16)
+  /// The creator's own price for one post = what we pay them. null = not offered by the creator.
+  creatorPricePaise      Int?      @map("creator_price_paise")
+  creatorUpdatedAt       DateTime? @map("creator_updated_at")
+  /// Our margin on top of the creator's price for BRAND campaigns, in basis points (2500 = 25%).
+  marginBps              Int?      @map("margin_bps")
+  /// Margin for ENTERTAINMENT campaigns. null = the page isn't offered for entertainment.
+  entertainmentMarginBps Int?      @map("entertainment_margin_bps")
+  /// Song audio add-on (reels only), a fixed client charge set by staff. null = no song.
+  audioAddonPaise        Int?      @map("audio_addon_paise")
+  /// Staff switch for this format (off = not listed, prices kept).
+  active                 Boolean   @default(true)
+  staffUpdatedById       String?   @map("staff_updated_by_id")
+  staffUpdatedAt         DateTime? @map("staff_updated_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  asset CreatorAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, format])
+  @@map("creator_page_prices")
 }
 
 /// Meta "deauthorize" and "data deletion" callbacks (app-wide: they also arrive for people who

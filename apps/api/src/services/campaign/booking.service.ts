@@ -31,7 +31,8 @@ import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
 // that must touch exactly one row. Two racing actors (a webhook and a staff click, two tabs)
 // cannot both win — the loser gets a 409 instead of silently overwriting.
 
-export type Actor = { type: "client" | "staff" | "system"; id?: string | null };
+/** "creator" = the owner of a creator page accepting / declining / posting a booked post. */
+export type Actor = { type: "client" | "staff" | "system" | "creator"; id?: string | null };
 
 type Tx = Prisma.TransactionClient;
 

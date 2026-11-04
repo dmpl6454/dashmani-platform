@@ -72,3 +72,48 @@ export interface ConnectionPayload {
   connection: ConnectionView | null;
   assets: CreatorAssetView[];
 }
+
+/** A booked post offered to this creator (GET /v1/creator/offers[/:id]). No client identity, no client price. */
+export interface CreatorOffer {
+  id: string;
+  status: string;
+  platform: "instagram" | "facebook";
+  format: string;
+  formatLabel: string;
+  page: { id: string; name: string; handle: string | null };
+  campaign: { name: string; brand: string; type: string; launchFrom: string | null; launchTo: string | null; songTrack: string | null };
+  caption: string;
+  hashtags: string[];
+  userTags: string[];
+  collaborators: string[];
+  payoutPaise: number | null;
+  offeredAt: string | null;
+  respondBy: string | null;
+  decidedAt: string | null;
+  declineReason: string | null;
+  scheduledFor: string | null;
+  permalink: string | null;
+  postedAt: string | null;
+  /** Why we can't post it for you (shown while you post it yourself). */
+  note: string | null;
+  canAccept: boolean;
+  canDecline: boolean;
+  canRecordPost: boolean;
+  /** Only on GET /creator/offers/:id: the exact files that would be posted, as signed paths. */
+  files?: Array<{ kind: string; role: string; ready: boolean; url: string }>;
+}
+
+export interface CreatorOfferList {
+  offers: CreatorOffer[];
+  counts: { waiting: number; toPost: number; payoutAcceptedPaise: number };
+}
+
+/** GET /v1/creator/prices — the creator's own price per page and format (= their payout). */
+export interface CreatorPagePrices {
+  assetId: string;
+  platform: "instagram" | "facebook";
+  name: string;
+  username: string | null;
+  enabled: boolean;
+  prices: Array<{ format: "reel" | "post" | "carousel"; pricePaise: number | null; updatedAt: string | null }>;
+}

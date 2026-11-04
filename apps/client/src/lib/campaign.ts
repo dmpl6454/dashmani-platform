@@ -115,6 +115,8 @@ export interface CampaignListRow {
 
 export interface CatalogueEntry {
   targetType: string;
+  /** "creator" = an independent creator's page: they confirm each post before it goes live. */
+  source?: "network" | "creator";
   targetId: string;
   platform: "instagram" | "facebook" | "youtube" | "snapchat";
   name: string;

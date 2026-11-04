@@ -2,12 +2,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { mutate as mutateKey } from "swr";
 import { ChevronLeft, ExternalLink, Facebook, Instagram } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useCreatorDetail, type AdminAssetView, type AdminCreatorDetail } from "@/lib/hooks/use-creators";
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, INPUT, ErrorBar, PageHead, Pill, compact, fmtWhen } from "../../campaigns/_ds";
 import { ConnectionPill, CreatorStatusPill } from "../_status";
+import { CreatorPricing } from "../_pricing";
 
 type Action = "approve" | "reject" | "suspend" | "reinstate";
 
@@ -252,6 +254,8 @@ export default function CreatorDetailPage() {
 
   const onAssetChanged = (next: AdminAssetView) => {
     mutate((prev) => (prev ? { ...prev, assets: prev.assets.map((a) => (a.id === next.id ? next : a)) } : prev), { revalidate: false });
+    // "Listed to clients" in Prices depends on the switch.
+    void mutateKey(`/admin/creators/${c.id}/pricing`);
   };
 
   return (
@@ -336,7 +340,7 @@ export default function CreatorDetailPage() {
         <div className="px-5 pt-5 pb-3">
           <h2 className="text-[15px] font-semibold text-ds-text">Pages</h2>
           <p className="mt-1 text-[12.5px] text-ds-t3">
-            A page can be turned on only when the creator is approved, it is connected, we can publish to it, and it isn&apos;t already on our network. Turning a page on does not offer it for booking yet.
+            A page can be turned on only when the creator is approved, it is connected, we can publish to it, and it isn&apos;t already on our network. A page that is on and has a client price (below) is listed to clients.
           </p>
         </div>
         {assets.length === 0 ? (
@@ -361,6 +365,8 @@ export default function CreatorDetailPage() {
           </div>
         )}
       </section>
+
+      <CreatorPricing creatorId={c.id} creatorApproved={c.status === "approved"} />
 
       {pending && (
         <ConfirmDialog

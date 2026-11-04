@@ -4,6 +4,8 @@
 import type { CreatorSession } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
+/** The API's origin, for the signed media paths ("/v1/campaign-media/…") the API returns. */
+export const API_ORIGIN = API_URL.replace(/\/v1\/?$/, "");
 
 export const TOKEN_KEYS = {
   access: "creatorAccessToken",
@@ -16,7 +18,7 @@ export const TOKEN_KEYS = {
  * sent to /login?next=. Every other path renders publicly — including unknown ones, so a
  * mistyped URL shows the 404 page instead of the sign-in form.
  */
-export const PRIVATE_ROUTES = ["/dashboard", "/connect", "/settings"];
+export const PRIVATE_ROUTES = ["/dashboard", "/offers", "/prices", "/connect", "/settings"];
 
 export function isPrivatePath(path: string): boolean {
   const p = path.length > 1 ? path.replace(/\/+$/, "") : path;

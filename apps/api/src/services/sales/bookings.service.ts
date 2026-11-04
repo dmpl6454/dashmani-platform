@@ -12,7 +12,7 @@ import { dateToDay } from "./common";
 /** Never billable: nothing was bought, or the money went back. */
 export const UNBILLABLE_BOOKING_STATUSES: readonly BookingStatus[] = ["draft", "awaiting_payment", "rejected", "refunded", "cancelled", "expired"];
 /** Item statuses that are not billed: the post was never made (failed) or was refunded. */
-export const UNBILLED_ITEM_STATUSES = ["failed", "refunded"] as const;
+export const UNBILLED_ITEM_STATUSES = ["failed", "refunded", "creator_declined"] as const;
 
 export const BOOKING_STAGES = {
   review: ["paid_pending_review", "changes_requested"],

@@ -102,6 +102,8 @@ const ITEM: Record<string, { label: string; cls: string }> = {
   published: { label: "Live", cls: "bg-success-bg text-success" },
   failed: { label: "Not posted", cls: "bg-danger-bg text-danger" },
   refunded: { label: "Not posted — refunded", cls: "bg-muted text-ink-2" },
+  awaiting_creator: { label: "Creator confirming", cls: "bg-indigo/10 text-indigo" },
+  creator_declined: { label: "Creator declined — we'll sort it", cls: "bg-muted text-ink-2" },
 };
 
 /**

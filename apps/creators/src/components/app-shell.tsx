@@ -5,10 +5,12 @@ import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { CREATOR_STATUS_LABELS } from "@dashmani/shared/src/validators/creator";
 
-// The signed-in frame: brand, three channels (Overview / Pages / Settings) and sign-out, in the
+// The signed-in frame: brand, five channels (Overview / Bookings / Prices / Pages / Settings) and sign-out, in the
 // site's header style. Nav wraps rather than scrolls so nothing overflows at 390px.
 const NAV = [
   { href: "/dashboard", label: "Overview" },
+  { href: "/offers", label: "Bookings" },
+  { href: "/prices", label: "Prices" },
   { href: "/connect", label: "Pages" },
   { href: "/settings", label: "Settings" },
 ];
@@ -27,7 +29,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
           <nav aria-label="Creator portal" className="order-3 w-full sm:order-none sm:w-auto flex flex-wrap gap-1">
             {NAV.map((n) => {
-              const active = pathname === n.href;
+              const active = pathname === n.href || pathname.startsWith(`${n.href}/`);
               return (
                 <Link
                   key={n.href}

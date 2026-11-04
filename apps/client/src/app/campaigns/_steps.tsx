@@ -451,6 +451,14 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                     <div className="flex items-center gap-1.5 min-w-0">
                       <PlatformDot platform={a.platform} />
                       <span className="text-[13.5px] font-semibold text-ink truncate">{a.name}</span>
+                      {a.source === "creator" && (
+                        <span
+                          className="shrink-0 inline-flex items-center h-5 px-1.5 text-[10px] font-bold uppercase tracking-[0.06em] border border-indigo/40 text-indigo"
+                          title="An independent creator's page. The creator confirms your post before it goes live; if they decline, we refund that post."
+                        >
+                          Creator
+                        </span>
+                      )}
                       {a.profileUrl && (
                         <a href={a.profileUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="p-2 -m-2 text-ink-3 hover:text-ink shrink-0" aria-label={`Open ${a.name}`}>
                           <Icon.External size={12} />

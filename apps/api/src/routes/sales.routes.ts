@@ -207,9 +207,10 @@ router.post("/sales/invoices/:id/email", ...manage, asyncHandler(async (req, res
 }));
 router.post("/sales/invoices/:id/sent", ...manage, asyncHandler(async (req, res) => success(res, await invoices.markInvoiceSent(req.params.id, staffId(req)))));
 router.get("/sales/invoices/:id/pdf", ...view, asyncHandler(async (req, res) => {
-  const inv = await invoices.getInvoice(req.params.id);
+  // A draft prints as a preview (seller and buyer as issuing would freeze them, watermarked DRAFT).
+  const inv = await invoices.previewInvoice(req.params.id);
   const pdf = await renderInvoicePdf(inv);
-  const name = `${(inv.number ?? `draft-${inv.id.slice(0, 8)}`).replace(/[^\w.-]+/g, "-")}.pdf`;
+  const name = `${(inv.number ?? `preview-draft-${inv.id.slice(0, 8)}`).replace(/[^\w.-]+/g, "-")}.pdf`;
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `${req.query.inline === "1" ? "inline" : "attachment"}; filename="${name}"`);
   res.setHeader("Cache-Control", "no-store");

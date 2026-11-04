@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState } from "react";
 import { mutate as mutateGlobal } from "swr";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Download, Mail } from "lucide-react";
+import { Download, Eye, Mail } from "lucide-react";
 import { useClientReceipts, useEvents, useInvoice } from "@/lib/hooks";
 import { companyName, companyOfDoc } from "@/lib/company";
 import type { Invoice, Payment } from "@/lib/sales-types";
@@ -75,6 +75,18 @@ function InvoiceView() {
   async function pdf() {
     try { const { blob, filename } = await apiFetchBlob(`/sales/invoices/${id}/pdf`); downloadBlob(blob, filename ?? `${inv!.number ?? "invoice"}.pdf`); } catch (err) { fail(err); }
   }
+  // A draft's PDF is a watermarked preview, built as issuing would freeze it. The tab is opened
+  // before the request so the browser does not treat it as an unrequested pop-up.
+  async function preview() {
+    const tab = window.open("", "_blank");
+    try {
+      const { blob, filename } = await apiFetchBlob(`/sales/invoices/${id}/pdf?inline=1`);
+      if (!tab) { downloadBlob(blob, filename ?? "invoice-preview.pdf"); return; }
+      const url = URL.createObjectURL(blob);
+      tab.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) { tab?.close(); fail(err); }
+  }
   async function applyReceipt(paymentId: string, amountPaise: number, tdsPaise: number) {
     try {
       const p = await apiFetch<Payment>(`/sales/payments/${paymentId}/allocations`, { method: "POST", body: JSON.stringify({ allocations: [{ invoiceId: id, amountPaise, tdsPaise }] }) });
@@ -119,6 +131,7 @@ function InvoiceView() {
     <>
       <PageHead kicker={<><Link href="/invoices" className="hover:text-white">Invoices</Link> · {companyName(inv.companyKey)}{inv.order && <> · <Link href={`/orders/view?id=${inv.order.id}`} className="hover:text-white">{inv.order.number}</Link></>}</> as unknown as string} title={<><span className="font-mono">{inv.number ?? "Draft invoice"}</span> <StatusPill status={ds} />{inv.kind === "proforma" && <span className="text-sm text-ink-3 ml-2">proforma</span>}</>}>
         {ds === "draft" && <Link href={`/invoices/edit?id=${inv.id}`} className="btn btn-light">Edit</Link>}
+        {ds === "draft" && <button type="button" className="btn btn-light" onClick={preview}><Eye size={14} /> Preview</button>}
         {ds === "draft" && <button type="button" className="btn" onClick={() => { setIssueDate(inv.issueDate ?? todayIST()); setDueDate(inv.dueDate ?? ""); setModal("issue"); }}>Issue</button>}
         {ds !== "draft" && <button type="button" className="btn btn-light" onClick={pdf}><Download size={14} /> PDF</button>}
         {(open || ds === "paid") && <button type="button" className="btn btn-light" onClick={emailNow}><Mail size={14} /> Email invoice</button>}
@@ -130,7 +143,7 @@ function InvoiceView() {
         {open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("cancel")}>Cancel</button>}
         {ds === "draft" && <button type="button" className="btn btn-ghost" onClick={() => setModal("delete")}>Delete draft</button>}
       </PageHead>
-      {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; nothing can be edited after that.</div>}
+      {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; nothing can be edited after that. Use Preview to see the PDF exactly as it will be issued.</div>}
       {inv.einvoice && inv.einvoice.status !== "cancelled" && <EInvoicePanel e={inv.einvoice} onRetry={() => retryEInvoice(`/sales/invoices/${inv.id}/einvoice`)} />}
       {inv.recurringId && <div className="card p-3 text-sm mb-4">Made by a <Link href={`/recurring/view?id=${inv.recurringId}`} className="underline hover:text-indigo-light">recurring invoice</Link>.</div>}
       {inv.convertedFrom && <div className="card p-3 text-sm mb-4">Made from proforma <Link href={`/invoices/view?id=${inv.convertedFrom.id}`} className="font-mono hover:text-indigo-light">{inv.convertedFrom.number}</Link>. Issuing it moves the proforma&apos;s payments onto this invoice and retires the proforma.</div>}
@@ -185,7 +198,7 @@ function InvoiceView() {
       </div>
       {modal === "issue" && (
         <Confirm title={`Issue this ${inv.kind === "proforma" ? "proforma" : "tax invoice"}?`} confirmLabel="Issue" onConfirm={() => issue()} onClose={() => setModal(null)}
-          body={<div className="grid gap-3"><p>The next serial of the financial year is assigned and the document is frozen.</p><Field label="Issue date"><input className="input" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></Field><Field label="Due date (blank = default terms)"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field></div>} />
+          body={<div className="grid gap-3"><p>The next serial of the financial year is assigned and the document is frozen. <button type="button" className="underline hover:text-white" onClick={preview}>Preview the PDF first</button></p><Field label="Issue date"><input className="input" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></Field><Field label="Due date (blank = default terms)"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field></div>} />
       )}
       {modal === "cancel" && <Confirm title="Cancel this invoice?" danger confirmLabel="Cancel invoice" onConfirm={() => cancel()} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>The number stays on record as cancelled; issue a new invoice if needed.</p><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Duplicate / wrong client / …" /></Field></div>} />}
       {modal === "delete" && <Confirm title="Delete this draft?" danger confirmLabel="Delete" onConfirm={() => cancel("Draft deleted")} onClose={() => setModal(null)} />}

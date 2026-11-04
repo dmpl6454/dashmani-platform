@@ -357,3 +357,52 @@ describe("sales API", () => {
     expect(res.body.data.items.map((i: { description: string }) => i.description)).toEqual(["Bollywood Society (@bollywoodsociety) · Instagram Reel", "Paparazzi · Facebook Post"]);
   });
 });
+
+describe("draft invoice preview", () => {
+  beforeEach(seedWorld);
+
+  const pdfOf = (id: string) => request(app).get(`/v1/sales/invoices/${id}/pdf?inline=1`).set(auth(salesToken)).buffer(true).parse((res, cb) => { const chunks: Buffer[] = []; res.on("data", (c: Buffer) => chunks.push(c)); res.on("end", () => cb(null, Buffer.concat(chunks))); });
+
+  it("prints a draft as issuing would freeze it, without writing anything or taking a number", async () => {
+    await request(app).put("/v1/sales/settings/seller").set(auth(adminToken)).send(SELLER);
+    const draft = (await request(app).post("/v1/sales/invoices").set(auth(salesToken)).send({ clientId: clientKa, items: [{ description: "Instagram reel", quantity: 1, unitPricePaise: 1_000_000 }] })).body.data;
+    expect(draft).toMatchObject({ status: "draft", number: null });
+
+    const { previewInvoice } = await import("../src/services/sales/invoices.service");
+    const p = await previewInvoice(draft.id);
+    expect(p.number).toBeNull();
+    expect(p.sellerSnapshot).toMatchObject({ legalName: SELLER.legalName, gstin: SELLER.gstin, stateCode: "27" });
+    expect(p.buyerSnapshot).toMatchObject({ legalName: "Bengaluru Apps LLP", gstin: "29AAACB1234F1Z9", stateCode: "29" });
+    expect(p.issueDate).toBe(todayIST());
+    expect(p.dueDate).not.toBeNull();
+    expect(p.amountInWords).toBe(rupeesInWords(draft.totalPaise));
+    expect(p.terms).toBe(SELLER.terms);
+
+    const pdf = await pdfOf(draft.id);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers["content-type"]).toContain("application/pdf");
+    expect(pdf.headers["content-disposition"]).toMatch(/^inline; filename="preview-draft-/);
+    expect((pdf.body as Buffer).subarray(0, 4).toString()).toBe("%PDF");
+
+    // Nothing was frozen and no serial was used: issuing still takes the first number.
+    const row = await prisma.salesInvoice.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(row).toMatchObject({ status: "draft", number: null, sellerSnapshot: null, buyerSnapshot: null, amountInWords: null, issueDate: null });
+    const issued = (await request(app).post(`/v1/sales/invoices/${draft.id}/issue`).set(auth(salesToken)).send({})).body.data;
+    expect(issued.number).toBe(documentNumber("DS", fy.label, 1));
+  });
+
+  it("leaves an issued invoice printing its frozen snapshot", async () => {
+    await request(app).put("/v1/sales/settings/seller").set(auth(adminToken)).send(SELLER);
+    const draft = (await request(app).post("/v1/sales/invoices").set(auth(salesToken)).send({ clientId: clientMh, items: [{ description: "Reel", quantity: 1, unitPricePaise: 500_000 }] })).body.data;
+    await request(app).post(`/v1/sales/invoices/${draft.id}/issue`).set(auth(salesToken)).send({});
+    // The company changes its name after issue: the issued invoice must still print the old one.
+    await request(app).put("/v1/sales/settings/seller").set(auth(adminToken)).send({ ...SELLER, legalName: "Renamed Media Private Limited" });
+    const { previewInvoice } = await import("../src/services/sales/invoices.service");
+    expect((await previewInvoice(draft.id)).sellerSnapshot).toMatchObject({ legalName: SELLER.legalName });
+  });
+
+  it("is gated like the PDF: a user without sales access is refused", async () => {
+    const draft = (await request(app).post("/v1/sales/invoices").set(auth(salesToken)).send({ clientId: clientMh, items: [{ description: "Reel", quantity: 1, unitPricePaise: 500_000 }] })).body.data;
+    expect((await request(app).get(`/v1/sales/invoices/${draft.id}/pdf`).set(auth(employeeToken))).status).toBe(403);
+  });
+});

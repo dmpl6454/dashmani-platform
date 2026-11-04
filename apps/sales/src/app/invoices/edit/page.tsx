@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { useClients, useInvoice, useSeller } from "@/lib/hooks";
+import { useClients, useInvoice, useNextInvoiceNumber, useSeller } from "@/lib/hooks";
 import { companyOfDoc, SALES_COMPANIES, useCompany } from "@/lib/company";
 import { errorSentence } from "@/lib/messages";
 import type { Invoice, InvoiceItem, TaxMode } from "@/lib/sales-types";
@@ -35,6 +35,9 @@ function Editor() {
     if (inv) setForm({ clientId: inv.clientId, kind: inv.kind, issueDate: inv.issueDate ?? "", dueDate: inv.dueDate ?? "", poNumber: inv.poNumber ?? "", poDate: inv.poDate ?? "", taxMode: inv.taxMode, sellerGstin: inv.sellerGstin ?? "", gstRateBp: inv.gstRateBp, discountPaise: inv.discountPaise, notes: inv.notes ?? "", terms: inv.terms ?? "", internalNotes: inv.internalNotes ?? "", items: inv.items.length ? inv.items.map((i) => ({ ...i })) : [blank()] });
   }, [inv]);
   useEffect(() => { if (seller && !form.terms && !inv) setForm((f) => ({ ...f, terms: seller.profile.terms ?? "", gstRateBp: seller.profile.defaultGstRateBp })); }, [seller, inv, form.terms]);
+  // What the invoice will be numbered when issued — follows the client's state, the picked
+  // registration, the kind and the date. Only for drafts: an issued one shows its own number.
+  const { data: nextNo } = useNextInvoiceNumber(!inv || inv.status === "draft" ? { company: companyKey, kind: form.kind, clientId: form.clientId, sellerGstin: form.sellerGstin, issueDate: form.issueDate } : null);
   const client = clients?.find((c) => c.id === form.clientId);
   const placeOfSupply = client?.billingProfile?.stateCode ?? null;
   const autoMode = taxModeFor(seller ? registrationChoice(seller.profile, placeOfSupply, form.sellerGstin || null).stateCode : null, client?.billingProfile?.stateCode, client?.billingProfile?.country ?? "IN");
@@ -75,8 +78,11 @@ function Editor() {
       <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5">
         {issued && <div className="card border-attention p-3 text-sm">This {inv!.kind === "proforma" ? "proforma" : "tax invoice"} is already issued. Saving keeps its number <span className="font-mono">{inv!.number}</span> and GST registration, re-prints it with the client&apos;s current billing details, and records what changed in its history. If the client already has the old copy, email them the corrected one.</div>}
         <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={inv ? "A saved draft stays with its company." : "Switch company at the top of the page before saving."}>
+          <Field label="Billed by" className="sm:col-span-2" hint={inv ? "A saved draft stays with its company." : "Switch company at the top of the page before saving."}>
             <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
+          </Field>
+          <Field label={`${form.kind === "proforma" ? "Proforma" : "Invoice"} number`} className="sm:col-span-2" hint={issued ? "Stays the same when you edit." : `Assigned when you issue it — the next in ${nextNo?.registration ? `the ${nextNo.registration === "Principal" ? "principal" : nextNo.registration} series` : "the series"}. You can type a different number in the Issue dialog.`}>
+            <p className="font-mono font-bold py-2">{issued ? inv!.number : nextNo ? <>{nextNo.number} <span className="font-sans font-normal text-ink-3 text-sm">(next)</span></> : "…"}</p>
           </Field>
           <ClientSelect className="sm:col-span-2" clients={clients} value={form.clientId} onChange={(clientId) => setForm((f) => ({ ...f, clientId }))} />
           <Field label="Kind"><select className="input" disabled={issued} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as typeof form.kind })}><option value="tax_invoice">Tax invoice</option><option value="proforma">Proforma</option></select></Field>

@@ -4,7 +4,7 @@ import { mutate as mutateGlobal } from "swr";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Download, Eye, Mail } from "lucide-react";
-import { useClientReceipts, useEvents, useInvoice } from "@/lib/hooks";
+import { useClientReceipts, useEvents, useInvoice, useNextInvoiceNumber } from "@/lib/hooks";
 import { companyName, companyOfDoc } from "@/lib/company";
 import type { Invoice, Payment } from "@/lib/sales-types";
 import { ApiError, apiFetch, apiFetchBlob, downloadBlob } from "@/lib/api";
@@ -42,6 +42,8 @@ function InvoiceView() {
   const [creditPaise, setCreditPaise] = useState(0);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   const [taxQuestion, setTaxQuestion] = useState<string | null>(null);
+  // While the Issue dialog is open: the number it will take if the box is left blank.
+  const { data: nextNo } = useNextInvoiceNumber(modal === "issue" && inv ? { company: companyOfDoc(inv), kind: inv.kind, clientId: inv.clientId, sellerGstin: inv.sellerGstin ?? undefined, issueDate } : null);
   // Same route, new ?id= (e.g. after "Convert to tax invoice"): the component is reused, so an
   // open dialog would carry over onto the other invoice. Close everything when the id changes.
   useEffect(() => { setModal(null); setTaxQuestion(null); }, [id]);
@@ -206,7 +208,7 @@ function InvoiceView() {
       </div>
       {modal === "issue" && (
         <Confirm title={`Issue this ${inv.kind === "proforma" ? "proforma" : "tax invoice"}?`} confirmLabel="Issue" onConfirm={() => issue()} onClose={() => setModal(null)}
-          body={<div className="grid gap-3"><p>The next serial of the financial year is assigned and the document is frozen. <button type="button" className="underline hover:text-white" onClick={preview}>Preview the PDF first</button></p><Field label={`${inv.kind === "proforma" ? "Proforma" : "Invoice"} number`} hint="Leave blank for the next number in the series. Type one to continue a series from another billing app — the series then carries on after it."><input className="input font-mono" maxLength={16} placeholder="Automatic" value={manualNumber} onChange={(e) => setManualNumber(e.target.value.replace(/[^A-Za-z0-9/-]/g, ""))} /></Field><Field label="Issue date"><input className="input" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></Field><Field label="Due date (blank = default terms)"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field></div>} />
+          body={<div className="grid gap-3"><p>The next serial of the financial year is assigned and the document is frozen. <button type="button" className="underline hover:text-white" onClick={preview}>Preview the PDF first</button></p><Field label={`${inv.kind === "proforma" ? "Proforma" : "Invoice"} number`} hint={`Leave blank to issue it as ${nextNo?.number ?? "the next number in the series"}. Type one to continue a series from another billing app — the series then carries on after it.`}><input className="input font-mono" maxLength={16} placeholder={nextNo?.number ?? "Automatic"} value={manualNumber} onChange={(e) => setManualNumber(e.target.value.replace(/[^A-Za-z0-9/-]/g, ""))} /></Field><Field label="Issue date"><input className="input" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></Field><Field label="Due date (blank = default terms)"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field></div>} />
       )}
       {modal === "cancel" && <Confirm title="Cancel this invoice?" danger confirmLabel="Cancel invoice" onConfirm={() => cancel()} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>The number stays on record as cancelled; issue a new invoice if needed.</p><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Duplicate / wrong client / …" /></Field></div>} />}
       {modal === "delete" && <Confirm title="Delete this draft?" danger confirmLabel="Delete" onConfirm={() => cancel("Draft deleted")} onClose={() => setModal(null)} />}

@@ -25,6 +25,9 @@ export const useSeller = (forCompany?: CompanyKey) => {
   const { company } = useCompany();
   return useSWR<SellerSettings>(`/sales/settings/seller${qs({ company: forCompany ?? company })}`, fetcher, opts);
 };
+/** The number an invoice will get when issued (read-only preview; Issue takes the real one). Null key = don't ask. */
+export const useNextInvoiceNumber = (q: { company: CompanyKey; kind: string; clientId?: string; sellerGstin?: string; issueDate?: string } | null) =>
+  useSWR<{ number: string; gstin: string | null; registration: string | null }>(q ? `/sales/invoices/next-number${qs({ company: q.company, kind: q.kind, clientId: q.clientId || undefined, sellerGstin: q.sellerGstin || undefined, issueDate: q.issueDate || undefined })}` : null, fetcher, { ...opts, dedupingInterval: 2_000 });
 export const useInventory = () => useSWR<InventoryChannel[]>("/sales/inventory", fetcher, opts);
 export const useClients = (q?: string) => useSWR<ClientRow[]>(`/sales/clients${qs({ q })}`, fetcher, opts);
 export const useClient = (id: string | null) => useSWR<ClientRow>(id ? `/sales/clients/${id}` : null, fetcher, opts);

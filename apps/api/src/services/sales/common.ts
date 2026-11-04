@@ -58,6 +58,17 @@ export async function nextDocumentNumber(tx: Tx, kind: NumberKind, prefix: strin
 }
 
 /**
+ * The number the next document in a series WILL get, without taking it (no lock, nothing written).
+ * For showing on screen only: another invoice issued first takes it, and Issue then numbers this
+ * one with the next.
+ */
+export async function peekDocumentNumber(kind: NumberKind, prefix: string, day: string, scope: string | null = null, digits = 4): Promise<string> {
+  const fy = financialYear(day);
+  const rows = await prisma.$queryRaw<Array<{ next: number }>>`SELECT "next" FROM sales_sequences WHERE "key" = ${sequenceKey(kind, scope, fy.label)}`;
+  return documentNumber(prefix, fy.label, rows[0]?.next ?? 1, digits);
+}
+
+/**
  * A number typed by hand at Issue (e.g. continuing a series started in another billing app).
  * Inside the caller's transaction. When it belongs to this series — PREFIX/26-27/<serial> for the
  * document's financial year — the series moves past it, so the automatic number after it can

@@ -20,7 +20,9 @@ const EMPTY: SellerProfile = {
   defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, autoEmailInvoices: true, terms: "", signatory: "", branches: [],
   eInvoicing: { enabled: false, applicableFrom: null, thirtyDayLimit: false },
 };
-const EMPTY_BRANCH: SellerBranch = { label: "", gstin: "", stateCode: "", state: "", addressLine1: "", addressLine2: "", city: "", pincode: "", invoicePrefix: "", creditNotePrefix: "" };
+const DIGIT_OPTIONS = [3, 4, 5, 6];
+const digitsLabel = (prefix: string, d: number) => `${d} — ${prefix || "INV"}/26-27/${"1".padStart(d, "0")}`;
+const EMPTY_BRANCH: SellerBranch = { label: "", gstin: "", stateCode: "", state: "", addressLine1: "", addressLine2: "", city: "", pincode: "", invoicePrefix: "", creditNotePrefix: "", serialDigits: 4 };
 
 const LABELS: Record<string, string> = { legalName: "legal name", gstin: "GSTIN", addressLine1: "address", city: "city", stateCode: "state", pincode: "PIN code" };
 
@@ -110,7 +112,10 @@ export default function SettingsPage() {
                 <Field label="Address line 2" className="sm:col-span-2">{t("addressLine2")}</Field>
                 <Field label="City">{t("city")}</Field>
                 <Field label="PIN code">{t("pincode")}</Field>
-                <Field label="Invoice prefix" hint="Up to 5; different from every other registration">{t("invoicePrefix", "DSHR")}</Field>
+                <Field label="Invoice prefix" hint="Up to 5. May match another registration's only if the digits differ">{t("invoicePrefix", "DSHR")}</Field>
+                <Field label="Invoice serial digits">
+                  <select className="input" value={b.serialDigits ?? 4} onChange={(e) => set("branches", form.branches.map((x, j) => (j === i ? { ...x, serialDigits: Number(e.target.value) } : x)) as never)}>{DIGIT_OPTIONS.map((d) => <option key={d} value={d}>{digitsLabel(b.invoicePrefix, d)}</option>)}</select>
+                </Field>
                 <Field label="Credit note prefix">{t("creditNotePrefix", "CNHR")}</Field>
                 <div className="sm:col-span-2"><button type="button" className="btn btn-ghost btn-sm" onClick={() => set("branches", form.branches.filter((_, j) => j !== i) as never)}>Remove this registration</button></div>
               </div>
@@ -141,6 +146,9 @@ export default function SettingsPage() {
         <section className="card p-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
           <h2 className="font-bold sm:col-span-3">Documents</h2>
           <Field label="Invoice prefix" hint="Up to 5 letters, digits or hyphens. Numbers run per financial year: DS/26-27/0001">{text("invoicePrefix")}</Field>
+          <Field label="Invoice serial digits" hint="Of the principal registration's invoice numbers">
+            <select className="input" value={form.serialDigits ?? 4} onChange={(e) => set("serialDigits", Number(e.target.value) as never)}>{DIGIT_OPTIONS.map((d) => <option key={d} value={d}>{digitsLabel(form.invoicePrefix, d)}</option>)}</select>
+          </Field>
           <Field label="Quote prefix">{text("quotePrefix")}</Field>
           <Field label="Order prefix">{text("orderPrefix")}</Field>
           <Field label="Credit note prefix" hint="Up to 5 letters, digits or hyphens">{text("creditNotePrefix")}</Field>

@@ -36,6 +36,8 @@ function InvoiceView() {
   const { data: receipts, mutate: mutateReceipts } = useClientReceipts(inv?.clientId, inv ? companyOfDoc(inv) : undefined);
   const [issueDate, setIssueDate] = useState(todayIST());
   const [dueDate, setDueDate] = useState("");
+  // Typed by hand at Issue; blank = the next number of the registration's series.
+  const [manualNumber, setManualNumber] = useState("");
   const [reason, setReason] = useState("");
   const [creditPaise, setCreditPaise] = useState(0);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
@@ -53,7 +55,7 @@ function InvoiceView() {
   // (TAX_CHANGED) until staff choose: update it, or keep it as drafted on purpose.
   async function issue(taxResolution?: "recompute" | "keep") {
     try {
-      await apiFetch(`/sales/invoices/${id}/issue`, { method: "POST", body: JSON.stringify({ issueDate, dueDate: dueDate || null, ...(taxResolution ? { taxResolution } : {}) }) });
+      await apiFetch(`/sales/invoices/${id}/issue`, { method: "POST", body: JSON.stringify({ issueDate, dueDate: dueDate || null, number: manualNumber.trim() || null, ...(taxResolution ? { taxResolution } : {}) }) });
       await refresh(); setModal(null); setTaxQuestion(null); setToast({ message: "Issued.", tone: "ok" });
     } catch (err) {
       if (err instanceof ApiError && err.code === "TAX_CHANGED") { setModal(null); setTaxQuestion(err.message); return; }
@@ -126,13 +128,18 @@ function InvoiceView() {
   // A proforma converts once; the tax invoice made from it (draft or issued) is its live conversion.
   const liveConversion = inv.conversions?.find((c) => c.status !== "cancelled") ?? null;
   const open = ds === "issued" || ds === "partially_paid" || ds === "overdue";
+  // An issued invoice can still be edited (same number, every change recorded) until money, a
+  // credit note, a conversion or a registered e-invoice hangs on it — the server re-checks.
+  const editableIssued = open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && !inv.allocations.some((a) => a.payment.status !== "voided")
+    && !inv.creditNotes?.some((c) => c.status !== "cancelled") && !liveConversion && !(inv.einvoice && ["registered", "registering"].includes(inv.einvoice.status));
   const pct = (bp: number) => `${bp / 100}%`;
   return (
     <>
       <PageHead kicker={<><Link href="/invoices" className="hover:text-white">Invoices</Link> · {companyName(inv.companyKey)}{inv.order && <> · <Link href={`/orders/view?id=${inv.order.id}`} className="hover:text-white">{inv.order.number}</Link></>}</> as unknown as string} title={<><span className="font-mono">{inv.number ?? "Draft invoice"}</span> <StatusPill status={ds} />{inv.kind === "proforma" && <span className="text-sm text-ink-3 ml-2">proforma</span>}</>}>
         {ds === "draft" && <Link href={`/invoices/edit?id=${inv.id}`} className="btn btn-light">Edit</Link>}
         {ds === "draft" && <button type="button" className="btn btn-light" onClick={preview}><Eye size={14} /> Preview</button>}
-        {ds === "draft" && <button type="button" className="btn" onClick={() => { setIssueDate(inv.issueDate ?? todayIST()); setDueDate(inv.dueDate ?? ""); setModal("issue"); }}>Issue</button>}
+        {ds === "draft" && <button type="button" className="btn" onClick={() => { setIssueDate(inv.issueDate ?? todayIST()); setDueDate(inv.dueDate ?? ""); setManualNumber(""); setModal("issue"); }}>Issue</button>}
+        {editableIssued && <Link href={`/invoices/edit?id=${inv.id}`} className="btn btn-light">Edit</Link>}
         {ds !== "draft" && <button type="button" className="btn btn-light" onClick={pdf}><Download size={14} /> PDF</button>}
         {(open || ds === "paid") && <button type="button" className="btn btn-light" onClick={emailNow}><Mail size={14} /> Email invoice</button>}
         {open && !inv.sentAt && <button type="button" className="btn btn-ghost" onClick={markSent}>Mark sent</button>}
@@ -143,7 +150,7 @@ function InvoiceView() {
         {open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("cancel")}>Cancel</button>}
         {ds === "draft" && <button type="button" className="btn btn-ghost" onClick={() => setModal("delete")}>Delete draft</button>}
       </PageHead>
-      {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; nothing can be edited after that. Use Preview to see the PDF exactly as it will be issued.</div>}
+      {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; after that it can still be edited until a payment or credit note is recorded. Use Preview to see the PDF exactly as it will be issued.</div>}
       {inv.einvoice && inv.einvoice.status !== "cancelled" && <EInvoicePanel e={inv.einvoice} onRetry={() => retryEInvoice(`/sales/invoices/${inv.id}/einvoice`)} />}
       {inv.recurringId && <div className="card p-3 text-sm mb-4">Made by a <Link href={`/recurring/view?id=${inv.recurringId}`} className="underline hover:text-indigo-light">recurring invoice</Link>.</div>}
       {inv.convertedFrom && <div className="card p-3 text-sm mb-4">Made from proforma <Link href={`/invoices/view?id=${inv.convertedFrom.id}`} className="font-mono hover:text-indigo-light">{inv.convertedFrom.number}</Link>. Issuing it moves the proforma&apos;s payments onto this invoice and retires the proforma.</div>}
@@ -158,6 +165,7 @@ function InvoiceView() {
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Issue date</dt><dd>{fmtDate(inv.issueDate)}</dd></div>
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Due date</dt><dd>{fmtDate(inv.dueDate)}</dd></div>
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Place of supply</dt><dd>{inv.placeOfSupplyCode ? `${inv.placeOfSupplyCode} · ${GST_STATE_CODES[inv.placeOfSupplyCode] ?? ""}` : "—"}</dd></div>
+              {inv.poNumber && <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Client PO</dt><dd className="font-mono">{inv.poNumber}{inv.poDate && <span className="font-sans text-ink-3"> · {fmtDate(inv.poDate)}</span>}</dd></div>}
               {inv.sellerGstin && <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Billed from (picked)</dt><dd className="font-mono">{inv.sellerGstin}</dd></div>}
               <div><dt className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Tax</dt><dd>{inv.taxMode === "intra" ? `CGST + SGST ${pct(inv.gstRateBp)}` : inv.taxMode === "inter" ? `IGST ${pct(inv.gstRateBp)}` : "No GST"}</dd></div>
             </dl>
@@ -198,7 +206,7 @@ function InvoiceView() {
       </div>
       {modal === "issue" && (
         <Confirm title={`Issue this ${inv.kind === "proforma" ? "proforma" : "tax invoice"}?`} confirmLabel="Issue" onConfirm={() => issue()} onClose={() => setModal(null)}
-          body={<div className="grid gap-3"><p>The next serial of the financial year is assigned and the document is frozen. <button type="button" className="underline hover:text-white" onClick={preview}>Preview the PDF first</button></p><Field label="Issue date"><input className="input" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></Field><Field label="Due date (blank = default terms)"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field></div>} />
+          body={<div className="grid gap-3"><p>The next serial of the financial year is assigned and the document is frozen. <button type="button" className="underline hover:text-white" onClick={preview}>Preview the PDF first</button></p><Field label={`${inv.kind === "proforma" ? "Proforma" : "Invoice"} number`} hint="Leave blank for the next number in the series. Type one to continue a series from another billing app — the series then carries on after it."><input className="input font-mono" maxLength={16} placeholder="Automatic" value={manualNumber} onChange={(e) => setManualNumber(e.target.value.replace(/[^A-Za-z0-9/-]/g, ""))} /></Field><Field label="Issue date"><input className="input" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></Field><Field label="Due date (blank = default terms)"><input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field></div>} />
       )}
       {modal === "cancel" && <Confirm title="Cancel this invoice?" danger confirmLabel="Cancel invoice" onConfirm={() => cancel()} onClose={() => setModal(null)} body={<div className="grid gap-3"><p>The number stays on record as cancelled; issue a new invoice if needed.</p><Field label="Reason"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Duplicate / wrong client / …" /></Field></div>} />}
       {modal === "delete" && <Confirm title="Delete this draft?" danger confirmLabel="Delete" onConfirm={() => cancel("Draft deleted")} onClose={() => setModal(null)} />}

@@ -1,11 +1,11 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, findRegistration, registrationChoice, type SellerRegistration, GST_STATE_CODES, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
+import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, findRegistration, registrationChoice, type SellerRegistration, GST_STATE_CODES, financialYear, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
-import { assertMoneyFits, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
+import { assertMoneyFits, claimManualNumber, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { assertSameCompany, resolveDocumentTax, type ResolvedTax } from "./documents.service";
 import { getSellerProfile, sellerMissingFields, type SellerProfile } from "./settings.service";
 import { UNBILLABLE_BOOKING_STATUSES, UNBILLED_ITEM_STATUSES } from "./bookings.service";
-import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueInvoiceEInvoice, registerEInvoice } from "./einvoice.service";
+import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueInvoiceEInvoice, refreshInvoiceEInvoicePayload, registerEInvoice } from "./einvoice.service";
 
 // GST invoices. A draft has no number and may be edited freely; ISSUING assigns the next
 // serial of the financial year, freezes the seller and buyer as JSON snapshots and the totals
@@ -98,6 +98,8 @@ export async function getInvoice(id: string) {
     placeOfSupplyCode: row.placeOfSupplyCode,
     sellerGstin: row.sellerGstin,
     recurringId: row.recurringId,
+    poNumber: row.poNumber,
+    poDate: dateToDay(row.poDate),
     client,
     order,
     convertedFrom,
@@ -154,6 +156,8 @@ export async function createInvoice(input: InvoiceUpsertInput, actorId: string, 
       campaignBookingId: input.campaignBookingId ?? null,
       issueDate: input.issueDate ? dayToDate(input.issueDate) : null,
       dueDate: input.dueDate ? dayToDate(input.dueDate) : null,
+      poNumber: input.poNumber ?? null,
+      poDate: input.poDate ? dayToDate(input.poDate) : null,
       placeOfSupplyCode: tax.placeOfSupplyCode,
       taxMode: tax.taxMode,
       gstRateBp: tax.gstRateBp,
@@ -173,23 +177,85 @@ export async function createInvoice(input: InvoiceUpsertInput, actorId: string, 
   return getInvoice(created.id);
 }
 
+/**
+ * Why an issued invoice may not be edited any more, or null when it may. Edits keep the number and
+ * are recorded; they stop once money or a government record hangs on the figures: a payment or
+ * TDS allocated to it, a credit note, a proforma already converted, or an e-invoice (IRN) that is
+ * registered — those are cancelled or credited instead.
+ */
+async function issuedEditBlock(db: Tx | typeof prisma, id: string): Promise<string | null> {
+  const inv = await db.salesInvoice.findUnique({
+    where: { id },
+    select: {
+      status: true, paidPaise: true, tdsPaise: true, creditedPaise: true,
+      allocations: { where: { payment: { status: "recorded" } }, select: { id: true }, take: 1 },
+      creditNotes: { where: { status: { not: "cancelled" } }, select: { number: true }, take: 1 },
+      conversions: { where: { status: { not: "cancelled" } }, select: { number: true }, take: 1 },
+      einvoice: { select: { status: true } },
+    },
+  });
+  if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+  if (inv.status === "cancelled") return "A cancelled invoice can't be edited";
+  if (inv.paidPaise || inv.tdsPaise || inv.allocations.length) return "A payment is recorded against this invoice — cancel the receipt first, or use a credit note";
+  if (inv.creditedPaise || inv.creditNotes.length) return `Credit note ${inv.creditNotes[0]?.number ?? ""} is issued against this invoice — edit it no further, issue another credit note instead`.replace("  ", " ");
+  if (inv.conversions.length) return "This proforma is already converted to a tax invoice — edit that invoice instead";
+  if (inv.einvoice && ["registered", "registering"].includes(inv.einvoice.status)) return "Its e-invoice (IRN) is registered with the GST portal, which does not allow edits — cancel the IRN within 24 hours, or issue a credit note";
+  return null;
+}
+
+/** What changed, in words, for the invoice history ("Total ₹1,00,000 → ₹1,18,000; Due date …"). */
+function describeEdit(before: { clientName: string; issueDate: string | null; dueDate: string | null; totalPaise: number; taxMode: string; poNumber: string | null; lines: number; notes: string | null; terms: string | null }, after: typeof before): string {
+  const rs = (p: number) => `₹${(p / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const out: string[] = [];
+  if (before.clientName !== after.clientName) out.push(`Client ${before.clientName} → ${after.clientName}`);
+  if (before.issueDate !== after.issueDate) out.push(`Invoice date ${before.issueDate ?? "—"} → ${after.issueDate ?? "—"}`);
+  if (before.dueDate !== after.dueDate) out.push(`Due date ${before.dueDate ?? "—"} → ${after.dueDate ?? "—"}`);
+  if (before.totalPaise !== after.totalPaise) out.push(`Total ${rs(before.totalPaise)} → ${rs(after.totalPaise)}`);
+  if (before.taxMode !== after.taxMode) out.push(`GST ${TAX_MODE_LABELS[before.taxMode as TaxMode] ?? before.taxMode} → ${TAX_MODE_LABELS[after.taxMode as TaxMode] ?? after.taxMode}`);
+  if (before.poNumber !== after.poNumber) out.push(`PO ${before.poNumber ?? "—"} → ${after.poNumber ?? "—"}`);
+  if (before.lines !== after.lines) out.push(`Lines ${before.lines} → ${after.lines}`);
+  if ((before.notes ?? "") !== (after.notes ?? "")) out.push("Notes changed");
+  if ((before.terms ?? "") !== (after.terms ?? "")) out.push("Terms changed");
+  return out.length ? out.join("; ") : "Lines or details changed (totals unchanged)";
+}
+
 export async function updateInvoice(id: string, input: InvoiceUpsertInput, actorId: string) {
-  const existing = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true, companyKey: true } });
+  const existing = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true, companyKey: true, kind: true, issueDate: true, dueDate: true, sellerSnapshot: true, number: true } });
   if (!existing) throw new AppError(404, "NOT_FOUND", "Invoice not found");
-  if (existing.status !== "draft") throw new AppError(409, "INVOICE_LOCKED", "Only a draft invoice can be edited — cancel and re-issue instead");
   assertSameCompany(existing.companyKey, input.companyKey, "invoice");
+  const issued = existing.status !== "draft";
+  let issueDay: string | null = input.issueDate ?? null;
+  let dueDay: string | null = input.dueDate ?? null;
+  if (issued) {
+    const block = await issuedEditBlock(prisma, id);
+    if (block) throw new AppError(409, "INVOICE_LOCKED", block);
+    if (input.kind !== existing.kind) throw new AppError(409, "KIND_FIXED", `An issued ${existing.kind === "proforma" ? "proforma" : "tax invoice"} keeps its kind — its number belongs to that series`);
+    // The number belongs to the financial year of its date, so the date stays in that year.
+    const was = dateToDay(existing.issueDate)!;
+    issueDay = input.issueDate ?? was;
+    if (financialYear(issueDay).label !== financialYear(was).label) throw new AppError(422, "DATE_OUTSIDE_FY", `${existing.number} is numbered in financial year ${financialYear(was).label}, so its date must stay between ${financialYear(was).startDay} and ${financialYear(was).endDay}`);
+    dueDay = input.dueDate ?? dateToDay(existing.dueDate);
+    if (dueDay && dueDay < issueDay) throw new AppError(422, "DUE_BEFORE_ISSUE", `The due date (${dueDay}) is before the invoice date (${issueDay})`);
+  }
+  // An issued invoice stays with the GST registration that numbered it.
+  const frozenGstin = issued ? ((existing.sellerSnapshot as { gstin?: string | null } | null)?.gstin ?? null) : null;
   await assertOrderCompany(input.orderId, input.companyKey);
-  const tax = await resolveDocumentTax(input.clientId, input, input.companyKey);
+  const tax = await resolveDocumentTax(input.clientId, issued ? { ...input, sellerGstin: frozenGstin } : input, input.companyKey);
   const lines = invoiceLines(input.items, tax.seller.defaultSac);
   const totals = invoiceTotals(lines, input.discountPaise, tax);
   await prisma.$transaction(async (tx) => {
-    // Re-checked under the lock Issue also takes: an edit can never rewrite an invoice that was
-    // issued (numbered, snapshotted, amount in words) a moment earlier from another tab.
+    // Re-checked under the lock Issue, payments and credit notes also take: a draft edit can never
+    // rewrite an invoice issued a moment ago, nor an issued edit one that just took money.
     await lockInvoices(tx, [id]);
-    const cur = await tx.salesInvoice.findUnique({ where: { id }, select: { status: true } });
+    const cur = await tx.salesInvoice.findUnique({ where: { id }, include: { client: { select: { companyName: true } }, _count: { select: { items: true } } } });
     if (!cur) throw new AppError(404, "NOT_FOUND", "Invoice not found");
-    if (cur.status !== "draft") throw new AppError(409, "INVOICE_LOCKED", "This invoice was issued a moment ago and can no longer be edited — reload it");
+    if (!issued && cur.status !== "draft") throw new AppError(409, "INVOICE_LOCKED", "This invoice was issued a moment ago — reload it to edit the issued invoice");
+    if (issued) {
+      const block = await issuedEditBlock(tx, id);
+      if (block) throw new AppError(409, "INVOICE_LOCKED", block);
+    }
     await tx.salesInvoiceItem.deleteMany({ where: { invoiceId: id } });
+    const client = issued ? await tx.client.findUniqueOrThrow({ where: { id: input.clientId }, select: clientBrief.select }) : null;
     await tx.salesInvoice.update({
       where: { id },
       data: {
@@ -197,20 +263,33 @@ export async function updateInvoice(id: string, input: InvoiceUpsertInput, actor
         clientId: input.clientId,
         orderId: input.orderId ?? null,
         campaignBookingId: input.campaignBookingId ?? null,
-        issueDate: input.issueDate ? dayToDate(input.issueDate) : null,
-        dueDate: input.dueDate ? dayToDate(input.dueDate) : null,
+        issueDate: issueDay ? dayToDate(issueDay) : null,
+        dueDate: dueDay ? dayToDate(dueDay) : null,
+        poNumber: input.poNumber ?? null,
+        poDate: input.poDate ? dayToDate(input.poDate) : null,
         placeOfSupplyCode: tax.placeOfSupplyCode,
         taxMode: tax.taxMode,
         gstRateBp: tax.gstRateBp,
-        sellerGstin: tax.sellerGstin,
+        sellerGstin: issued ? cur.sellerGstin : tax.sellerGstin,
         ...totals,
         notes: input.notes ?? null,
         terms: input.terms ?? null,
         internalNotes: input.internalNotes ?? null,
         items: { create: lines },
+        // An issued invoice re-freezes the buyer (the client may have been corrected) and its
+        // amount in words; the seller snapshot and the number stay as issued.
+        ...(issued && client ? { buyerSnapshot: buyerSnapshotFor(client as Parameters<typeof buyerSnapshotFor>[0]) as Prisma.InputJsonValue, amountInWords: rupeesInWords(totals.totalPaise) } : {}),
       },
     });
-    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "updated" });
+    if (!issued) {
+      await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "updated" });
+      return;
+    }
+    const after = await tx.salesInvoice.findUniqueOrThrow({ where: { id }, include: { client: { select: { companyName: true } } } });
+    const shape = (r: typeof after, n: number) => ({ clientName: r.client.companyName, issueDate: dateToDay(r.issueDate), dueDate: dateToDay(r.dueDate), totalPaise: r.totalPaise, taxMode: r.taxMode, poNumber: r.poNumber, lines: n, notes: r.notes, terms: r.terms });
+    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "edited_after_issue", note: `${cur.number}: ${describeEdit(shape(cur, cur._count.items), shape(after, lines.length))}` });
+    // A pending or failed e-invoice is registered from the payload frozen when it was queued.
+    await refreshInvoiceEInvoicePayload(tx, id);
   });
   return getInvoice(id);
 }
@@ -245,7 +324,8 @@ export async function createInvoiceFromOrder(orderId: string, actorId: string) {
       gstRateBp: order.gstRateBp,
       // The order-level discount belongs to the first invoice for the order, never to a later one.
       discountPaise: taken.size === 0 ? order.discountPaise : 0,
-      notes: `${order.number} — ${order.title}${order.poNumber ? ` · PO ${order.poNumber}` : ""}`,
+      poNumber: order.poNumber,
+      notes: `${order.number} — ${order.title}`,
       items: remaining
         .map((it) => ({ description: it.description, sac: it.sac, quantity: it.quantity, unitPricePaise: it.unitPricePaise, discountPaise: it.discountPaise, orderItemId: it.id })),
     },
@@ -351,7 +431,7 @@ export type SellerSnapshot = ReturnType<typeof sellerSnapshotFor>;
 /** Assign the serial, freeze both parties and the totals, and make the document final. */
 export async function issueInvoice(
   id: string,
-  input: { issueDate?: string; dueDate?: string | null; taxResolution?: "recompute" | "keep" },
+  input: { number?: string | null; issueDate?: string; dueDate?: string | null; taxResolution?: "recompute" | "keep" },
   actorId: string,
 ) {
   // The company never changes after creation, so reading it before the lock is safe.
@@ -444,9 +524,19 @@ export async function issueInvoice(
     const wantsIrn = inv.kind === "tax_invoice" && needsEInvoice(seller, buyerSnap, issueDate);
     if (wantsIrn) assertEInvoiceData(sellerSnap, buyerSnap);
     // Proformas are not tax invoices: their own PI series, so the tax-invoice serials stay consecutive.
-    const number = inv.kind === "proforma"
-      ? await nextDocumentNumber(tx, "proforma", SALES_COMPANIES[company].proformaPrefix, issueDate, companyScope(company, null))
-      : await nextDocumentNumber(tx, "invoice", reg.invoicePrefix, issueDate, companyScope(company, reg.scope));
+    const series = inv.kind === "proforma"
+      ? { kind: "proforma" as const, prefix: SALES_COMPANIES[company].proformaPrefix, scope: companyScope(company, null), digits: 4 }
+      : { kind: "invoice" as const, prefix: reg.invoicePrefix, scope: companyScope(company, reg.scope), digits: reg.serialDigits };
+    const number = input.number
+      ? await claimManualNumber(tx, series.kind, series.prefix, issueDate, series.scope, input.number)
+      : await nextDocumentNumber(tx, series.kind, series.prefix, issueDate, series.scope, series.digits);
+    // Numbers are unique across every invoice; say so plainly instead of failing on the index.
+    const taken = await tx.salesInvoice.findFirst({ where: { number: { equals: number, mode: "insensitive" }, id: { not: id } }, select: { id: true } });
+    if (taken) {
+      throw new AppError(409, "NUMBER_TAKEN", input.number
+        ? `${number} is already used by another invoice — type a different number, or leave it blank for the next one in the series`
+        : `The next number in this series, ${number}, is already used by another invoice — type the number by hand`);
+    }
     await tx.salesInvoice.update({
       where: { id },
       data: {
@@ -463,7 +553,7 @@ export async function issueInvoice(
       },
     });
     const taxNote = !taxChanged ? "" : recompute ? ` · GST updated to ${TAX_MODE_LABELS[expectedMode]}` : ` · GST kept as drafted (${TAX_MODE_LABELS[storedMode]})`;
-    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "issued", fromStatus: "draft", toStatus: "issued", note: `${number}${taxNote}` });
+    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "issued", fromStatus: "draft", toStatus: "issued", note: `${number}${input.number ? " (number entered by hand)" : ""}${taxNote}` });
     if (wantsIrn) einvoiceId = await queueInvoiceEInvoice(tx, id);
 
     // A tax invoice converted from a proforma takes over the proforma's payments; the proforma is
@@ -624,6 +714,8 @@ export async function convertProforma(id: string, actorId: string) {
       gstRateBp: pf.gstRateBp,
       discountPaise: pf.discountPaise,
       sellerGstin: pf.sellerGstin,
+      poNumber: pf.poNumber,
+      poDate: dateToDay(pf.poDate),
       notes: `Against proforma ${pf.number}${pf.notes ? ` — ${pf.notes}` : ""}`,
       terms: pf.terms,
       internalNotes: pf.internalNotes,

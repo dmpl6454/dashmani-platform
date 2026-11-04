@@ -177,6 +177,15 @@ export async function queueInvoiceEInvoice(tx: Tx, invoiceId: string): Promise<s
   return row.id;
 }
 
+/** After an issued invoice is edited: a pending or failed e-invoice is re-built from the edited figures. */
+export async function refreshInvoiceEInvoicePayload(tx: Tx, invoiceId: string): Promise<void> {
+  const row = await tx.salesEInvoice.findUnique({ where: { invoiceId }, select: { id: true, status: true } });
+  if (!row || !["pending", "failed"].includes(row.status)) return;
+  const inv = await tx.salesInvoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { items: true } });
+  const payload = buildInvoicePayload(inv);
+  await tx.salesEInvoice.update({ where: { id: row.id }, data: { docDate: payload.DocDtls.Dt, payload: payload as Prisma.InputJsonValue } });
+}
+
 export async function queueCreditNoteEInvoice(tx: Tx, creditNoteId: string): Promise<string> {
   const cn = await tx.salesCreditNote.findUniqueOrThrow({ where: { id: creditNoteId }, include: { invoice: { include: { items: { take: 1, orderBy: { position: "asc" } } } } } });
   const payload = buildCreditNotePayload(cn);

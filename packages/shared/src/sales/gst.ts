@@ -29,9 +29,14 @@ export function financialYear(day: string): { label: string; short: string; star
 }
 
 /** "DS/26-27/0001" — prefix, FY short form, 4-digit serial (grows past 9999 without truncation). */
-export function documentNumber(prefix: string, fyLabel: string, serial: number): string {
-  const short = fyLabel.length === 7 ? `${fyLabel.slice(2, 4)}-${fyLabel.slice(5)}` : fyLabel;
-  return `${prefix}/${short}/${String(serial).padStart(4, "0")}`;
+/** "2026-27" → "26-27", the financial year as printed inside a document number. */
+export function shortFy(fyLabel: string): string {
+  return fyLabel.length === 7 ? `${fyLabel.slice(2, 4)}-${fyLabel.slice(5)}` : fyLabel;
+}
+
+/** PREFIX/26-27/0001. `digits` is the zero-padded serial length (a registration may print 3, e.g. INV/26-27/059). */
+export function documentNumber(prefix: string, fyLabel: string, serial: number, digits = 4): string {
+  return `${prefix}/${shortFy(fyLabel)}/${String(serial).padStart(digits, "0")}`;
 }
 
 /**
@@ -179,27 +184,29 @@ export interface SellerRegistration {
   pincode: string | null;
   invoicePrefix: string;
   creditNotePrefix: string;
+  /** Zero-padded length of this registration's invoice serial (default 4). */
+  serialDigits: number;
   /** Numbering scope: null for the principal registration (its series keys stay as they were), the GSTIN otherwise. */
   scope: string | null;
 }
 
 type SellerLike = {
   gstin?: string | null; stateCode?: string | null; state?: string | null; addressLine1?: string | null; addressLine2?: string | null;
-  city?: string | null; pincode?: string | null; invoicePrefix: string; creditNotePrefix: string;
-  branches?: Array<{ label: string; gstin: string; stateCode?: string | null; state?: string | null; addressLine1?: string | null; addressLine2?: string | null; city?: string | null; pincode?: string | null; invoicePrefix: string; creditNotePrefix: string }> | null;
+  city?: string | null; pincode?: string | null; invoicePrefix: string; creditNotePrefix: string; serialDigits?: number | null;
+  branches?: Array<{ label: string; gstin: string; stateCode?: string | null; state?: string | null; addressLine1?: string | null; addressLine2?: string | null; city?: string | null; pincode?: string | null; invoicePrefix: string; creditNotePrefix: string; serialDigits?: number | null }> | null;
 };
 
 function principal(s: SellerLike): SellerRegistration {
   return {
     label: "Principal", gstin: s.gstin ?? null, stateCode: s.stateCode ?? null, state: s.state ?? null, addressLine1: s.addressLine1 ?? null,
-    addressLine2: s.addressLine2 ?? null, city: s.city ?? null, pincode: s.pincode ?? null, invoicePrefix: s.invoicePrefix, creditNotePrefix: s.creditNotePrefix, scope: null,
+    addressLine2: s.addressLine2 ?? null, city: s.city ?? null, pincode: s.pincode ?? null, invoicePrefix: s.invoicePrefix, creditNotePrefix: s.creditNotePrefix, serialDigits: s.serialDigits ?? 4, scope: null,
   };
 }
 
 function branchReg(b: NonNullable<SellerLike["branches"]>[number]): SellerRegistration {
   return {
     label: b.label, gstin: b.gstin, stateCode: b.stateCode ?? b.gstin.slice(0, 2), state: b.state ?? null, addressLine1: b.addressLine1 ?? null,
-    addressLine2: b.addressLine2 ?? null, city: b.city ?? null, pincode: b.pincode ?? null, invoicePrefix: b.invoicePrefix, creditNotePrefix: b.creditNotePrefix, scope: b.gstin,
+    addressLine2: b.addressLine2 ?? null, city: b.city ?? null, pincode: b.pincode ?? null, invoicePrefix: b.invoicePrefix, creditNotePrefix: b.creditNotePrefix, serialDigits: b.serialDigits ?? 4, scope: b.gstin,
   };
 }
 

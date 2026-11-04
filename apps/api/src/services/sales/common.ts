@@ -1,5 +1,5 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { documentNumber, financialYear, MAX_PAISE } from "@dashmani/shared";
+import { documentNumber, financialYear, MAX_PAISE, shortFy } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 
 // Shared plumbing for the sales services: the transaction client type, IST day <-> DATE column
@@ -39,20 +39,44 @@ const GST_NUMBERED: ReadonlySet<NumberKind> = new Set(["invoice", "credit_note"]
  * transaction, so the FOR UPDATE row lock holds until the document is committed and two staff
  * issuing at once can never share or skip a number.
  */
-export async function nextDocumentNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null = null): Promise<string> {
+const sequenceKey = (kind: NumberKind, scope: string | null, fyLabel: string) => (scope ? `${kind}@${scope}:${fyLabel}` : `${kind}:${fyLabel}`);
+
+export async function nextDocumentNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null = null, digits = 4): Promise<string> {
   const fy = financialYear(day);
   // GST numbers run per GSTIN: an additional registration gets its own series (scope = its GSTIN).
-  const key = scope ? `${kind}@${scope}:${fy.label}` : `${kind}:${fy.label}`;
+  const key = sequenceKey(kind, scope, fy.label);
   await tx.$executeRaw`INSERT INTO sales_sequences ("key", "next", "updated_at") VALUES (${key}, 1, now()) ON CONFLICT ("key") DO NOTHING`;
   const rows = await tx.$queryRaw<Array<{ next: number }>>`SELECT "next" FROM sales_sequences WHERE "key" = ${key} FOR UPDATE`;
   const serial = rows[0]?.next ?? 1;
-  const number = documentNumber(prefix, fy.label, serial);
+  const number = documentNumber(prefix, fy.label, serial, digits);
   if (GST_NUMBERED.has(kind) && number.length > 16) {
     // Thrown before the sequence moves, so the transaction rolls back with no serial spent.
     throw new AppError(422, "NUMBER_TOO_LONG", `${number} is longer than the 16 characters GST allows — shorten the prefix in Settings`);
   }
   await tx.$executeRaw`UPDATE sales_sequences SET "next" = ${serial + 1}, "updated_at" = now() WHERE "key" = ${key}`;
   return number;
+}
+
+/**
+ * A number typed by hand at Issue (e.g. continuing a series started in another billing app).
+ * Inside the caller's transaction. When it belongs to this series — PREFIX/26-27/<serial> for the
+ * document's financial year — the series moves past it, so the automatic number after it can
+ * never repeat it; a number in any other format leaves the series alone. Uniqueness is the
+ * caller's check (and the column's unique index).
+ */
+export async function claimManualNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null, number: string): Promise<string> {
+  const fy = financialYear(day);
+  const n = number.trim();
+  if (GST_NUMBERED.has(kind) && n.length > 16) throw new AppError(422, "NUMBER_TOO_LONG", `${n} is longer than the 16 characters GST allows`);
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+  const m = n.match(new RegExp(`^${esc(prefix)}/${esc(shortFy(fy.label))}/(\\d+)$`, "i"));
+  if (m) {
+    const serial = Number(m[1]);
+    const key = sequenceKey(kind, scope, fy.label);
+    await tx.$executeRaw`INSERT INTO sales_sequences ("key", "next", "updated_at") VALUES (${key}, 1, now()) ON CONFLICT ("key") DO NOTHING`;
+    await tx.$executeRaw`UPDATE sales_sequences SET "next" = GREATEST("next", ${serial + 1}), "updated_at" = now() WHERE "key" = ${key}`;
+  }
+  return n;
 }
 
 /**

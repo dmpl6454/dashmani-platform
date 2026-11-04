@@ -291,7 +291,8 @@ describe("sales API", () => {
     expect(issued.sellerSnapshot.gstin).toBe("27AAACD1234E1Z5");
     expect(issued.buyerSnapshot).toMatchObject({ legalName: "Filmy Brands Private Limited", gstin: "27AABCU9603R1ZX" });
     expect((await request(app).post(`/v1/sales/invoices/${draft.id}/issue`).set(auth(salesToken)).send({})).status).toBe(409);
-    expect((await request(app).put(`/v1/sales/invoices/${draft.id}`).set(auth(salesToken)).send({ clientId: clientMh, items: [{ description: "x", unitPricePaise: 1 }] })).status).toBe(409);
+    // An issued invoice can be edited (tests/sales-numbering-edit.test.ts), but never into another kind.
+    expect((await request(app).put(`/v1/sales/invoices/${draft.id}`).set(auth(salesToken)).send({ clientId: clientMh, kind: "proforma", items: [{ description: "x", unitPricePaise: 1 }] })).body.error.code).toBe("KIND_FIXED");
 
     const pdf = await request(app).get(`/v1/sales/invoices/${draft.id}/pdf`).set(auth(salesToken)).buffer(true).parse((res, cb) => { const chunks: Buffer[] = []; res.on("data", (c: Buffer) => chunks.push(c)); res.on("end", () => cb(null, Buffer.concat(chunks))); });
     expect(pdf.status).toBe(200);

@@ -36,6 +36,7 @@ import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineError, PipelineDbError, isIdempotencyKeyViolation } from "./errors";
 import { headerFromRow, participantFromRow, ts } from "./wire";
 import { pickableByMode, type PipelineActor } from "./projects.service";
+import { parentLiveSql } from "./access";
 import { isPipelineAdmin } from "../../middleware/pipeline-gates";
 
 type Row = Record<string, unknown>;
@@ -62,7 +63,6 @@ export function dmKeyOf(a: string, b: string): string {
 interface LockedChat {
   row: Row;
   isMember: boolean;
-  actorActive: boolean;
 }
 
 /**
@@ -76,7 +76,7 @@ async function lockChat(tx: PipelineTx, id: string, me: string, opts: { admins?:
            EXISTS (SELECT 1 FROM pipeline_participants pp WHERE pp.project_id = p.id AND pp.user_id = ${me}) AS is_member,
            (SELECT (u.status = 'ACTIVE' AND u.deleted_at IS NULL) FROM users u WHERE u.id = ${me}) AS actor_active
       FROM pipeline_projects p
-     WHERE p.id = ${id} AND p.kind <> 'project' AND p.deleted_at IS NULL
+     WHERE p.id = ${id} AND p.kind <> 'project' AND p.deleted_at IS NULL AND ${parentLiveSql("p")}
        FOR UPDATE OF p`;
   const row = rows[0];
   const isMember = row?.is_member === true;
@@ -86,8 +86,12 @@ async function lockChat(tx: PipelineTx, id: string, me: string, opts: { admins?:
     if (!(opts.admins && row.kind === "channel" && (await isPipelineAdmin(tx, me)))) throw notFound();
   }
   if (row.actor_active !== true) throw inactive();
-  return { row, isMember, actorActive: true };
+  return { row, isMember };
 }
+
+/** Slack rule: the owner can't walk away from a channel (nobody could then manage it). */
+const ownerCantLeave = () =>
+  new PipelineError(409, "OWNER_CANT_LEAVE", "The channel owner can't leave — delete the channel instead");
 
 /** Recount MEMBER rows and bump header_rev, so open tabs pick up the new member list. */
 async function recount(tx: PipelineTx, id: string): Promise<void> {
@@ -178,7 +182,7 @@ export async function listConversations(actor: PipelineActor): Promise<PipelineC
         FROM pipeline_participants pp
         JOIN pipeline_projects p ON p.id = pp.project_id
        WHERE pp.user_id = ${me} AND p.kind <> 'project' AND p.deleted_at IS NULL
-       ORDER BY p.id
+       ORDER BY p.last_message_at DESC NULLS LAST, p.id
        LIMIT 500`,
   );
   const channels: PipelineConversations["channels"] = [];
@@ -435,6 +439,7 @@ export async function leaveChannel(actor: PipelineActor, id: string): Promise<{ 
   return pipelineWrite(async (tx) => {
     const { row, isMember } = await lockChat(tx, id, me);
     if (row.kind !== "channel") throw new PipelineError(409, "CANT_LEAVE_DM", "You can't leave a direct message");
+    if (row.owner_id === me) throw ownerCantLeave();
     if (isMember) {
       await tx.$executeRaw`DELETE FROM pipeline_participants WHERE project_id = ${id} AND user_id = ${me}`;
       await recount(tx, id);
@@ -470,7 +475,9 @@ export async function removeChannelMember(actor: PipelineActor, id: string, targ
   return pipelineWrite(async (tx) => {
     const { row } = await lockChat(tx, id, me, { admins: true });
     if (row.kind !== "channel") throw new PipelineError(409, "DM_MEMBERS_FIXED", "A direct message is between two people");
-    if (targetId !== me) {
+    if (targetId === me) {
+      if (row.owner_id === me) throw ownerCantLeave();
+    } else {
       if (row.owner_id !== me && !(await isPipelineAdmin(tx, me))) throw notAllowed("remove people");
       if (targetId === row.owner_id) throw new PipelineError(409, "CANT_REMOVE_OWNER", "The channel owner can't be removed");
     }

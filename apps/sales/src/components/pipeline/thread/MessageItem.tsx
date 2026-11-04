@@ -223,7 +223,7 @@ function MessageItemImpl({
         type="button"
         onClick={() => setMenu(true)}
         aria-label={`More actions for the message from ${author}`}
-        className="shrink-0 h-11 w-11 grid place-items-center rounded-xl text-ink-4 hover:bg-muted self-start [@media(hover:hover)]:opacity-0 focus:opacity-100"
+        className="shrink-0 h-11 w-11 grid place-items-center rounded-xl text-ink-4 hover:bg-muted self-start [@media(hover:hover)]:sr-only [@media(hover:hover)]:focus:not-sr-only"
       >
         <Ellipsis size={18} />
       </button>

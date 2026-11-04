@@ -292,7 +292,8 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
           FROM pipeline_participants pp
           JOIN pipeline_projects pr ON pr.id = pp.project_id
          WHERE pp.user_id = ${me} AND pr.archived_at IS NULL AND pr.deleted_at IS NULL
-         ORDER BY pp.project_id
+         -- Projects first: sales-portal channels and DMs never push a project out of the cap.
+         ORDER BY (pr.kind <> 'project'), pp.project_id
          LIMIT ${MINE_LIMIT}::int)
       SELECT (SELECT bs.seq FROM pipeline_board_state bs WHERE bs.id = 1) AS v,
              (SELECT COALESCE(json_agg(json_build_object('projectId', mine.project_id, 'role', mine.role,

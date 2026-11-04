@@ -494,6 +494,7 @@ interface LockedFromMessage {
   title: string;
   archived_at: Date | null;
   kind: string;
+  is_member: boolean;
 }
 
 /**
@@ -502,7 +503,8 @@ interface LockedFromMessage {
  */
 async function lockProjectOfMessage(tx: PipelineTx, mid: string, me: string): Promise<LockedFromMessage> {
   const rows = await tx.$queryRaw<Array<LockedFromMessage & { can_read: boolean }>>`
-    SELECT p.id, p.title, p.archived_at, p.kind, ${canReadSql("p", me)} AS can_read
+    SELECT p.id, p.title, p.archived_at, p.kind, ${canReadSql("p", me)} AS can_read,
+           EXISTS (SELECT 1 FROM pipeline_participants x WHERE x.project_id = p.id AND x.user_id = ${me}) AS is_member
       FROM pipeline_messages m
       JOIN pipeline_projects p ON p.id = m.project_id AND p.deleted_at IS NULL
      WHERE m.id = ${mid}
@@ -668,6 +670,7 @@ export async function setReaction(
     if (row.deleted) throw messageDeleted();
     if (project.archived_at) throw archived();
     if (row.actor_active !== true) throw inactive();
+    if (isChat(project.kind) && !project.is_member) throw notMember();
 
     const current = cleanReactions(row.reactions);
     const has = (current[emoji] ?? []).includes(me);

@@ -7,6 +7,8 @@ export interface SellerProfile {
   email?: string | null; billingEmails?: string[]; phone?: string | null; website?: string | null;
   bankName?: string | null; accountName?: string | null; accountNumber?: string | null; ifsc?: string | null; upiId?: string | null;
   invoicePrefix: string; quotePrefix: string; orderPrefix: string; creditNotePrefix: string; receiptPrefix: string;
+  /** Zero-padded length of the invoice serial (INV/26-27/0014 = 4, INV/26-27/059 = 3). */
+  serialDigits?: number;
   defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; autoEmailInvoices?: boolean; terms?: string | null; signatory?: string | null;
   /** Additional GST registrations in other states; a client in that state is billed from it. */
   branches: SellerBranch[];
@@ -14,7 +16,7 @@ export interface SellerProfile {
 }
 export interface SellerBranch {
   label: string; gstin: string; stateCode?: string | null; state?: string | null; addressLine1: string; addressLine2?: string | null; city: string; pincode: string;
-  invoicePrefix: string; creditNotePrefix: string;
+  invoicePrefix: string; creditNotePrefix: string; serialDigits?: number;
 }
 export interface EInvoiceBrief { status: "pending" | "registering" | "registered" | "failed" | "cancelled"; irn: string | null; ackNo: string | null; ackDate: string | null; lastError: string | null }
 export interface SellerSettings { company: string; profile: SellerProfile; saved: boolean; missing: string[] }
@@ -60,6 +62,8 @@ export interface Invoice extends DocumentTotals {
   campaignBookingId: string | null; issueDate: string | null; dueDate: string | null; taxMode: TaxMode; gstRateBp: number; placeOfSupplyCode: string | null;
   /** The GST registration picked by hand (null = automatic), and the recurring invoice that made it. */
   sellerGstin: string | null; recurringId: string | null;
+  /** The client's purchase order, printed on the invoice. */
+  poNumber: string | null; poDate: string | null;
   roundOffPaise: number; paidPaise: number; tdsPaise: number; creditedPaise: number; balancePaise: number; amountInWords: string | null;
   notes: string | null; terms: string | null; internalNotes: string | null; cancelReason: string | null; issuedAt: string | null; sentAt: string | null; paidAt: string | null; createdAt: string;
   sellerSnapshot: Record<string, string | null> | null; buyerSnapshot: Record<string, string | null> | null;

@@ -37,6 +37,8 @@ const paise = z.number().int().min(0).max(MAX_PAISE, "That amount is too large f
  * characters at most — PREFIX/26-27/0001 is the prefix + 11, so the prefix gets 5. */
 const gstPrefix = (fallback: string) =>
   z.string().trim().regex(/^[A-Za-z0-9-]{1,5}$/, "Use 1–5 letters, digits or hyphens (GST numbers allow 16 characters)").default(fallback);
+/** How many digits an invoice serial is padded to: INV/26-27/059 is 3, DS/26-27/0001 is 4. */
+const serialDigits = z.number().int().min(3, "At least 3 digits").max(6, "At most 6 digits").default(4);
 const optionalText = (max: number) => safeString.pipe(z.string().max(max)).optional().nullable();
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -72,6 +74,7 @@ export const sellerBranchSchema = z.object({
   pincode: safeString.pipe(z.string().min(6).max(10)),
   invoicePrefix: gstPrefix("DSH"),
   creditNotePrefix: gstPrefix("CNH"),
+  serialDigits: serialDigits,
 }).superRefine(checkGstinState).transform(fillStateFromGstin);
 
 /** Our own GST identity and document defaults (system_settings key "sales.seller"). */
@@ -97,6 +100,7 @@ export const sellerProfileSchema = z.object({
   ifsc: z.string().trim().transform(upper).pipe(z.string().regex(IFSC_RE, "That is not a valid IFSC")).optional().nullable(),
   upiId: optionalText(80),
   invoicePrefix: gstPrefix("DS"),
+  serialDigits: serialDigits,
   quotePrefix: safeString.pipe(z.string().min(1).max(10)).default("Q"),
   orderPrefix: safeString.pipe(z.string().min(1).max(10)).default("SO"),
   creditNotePrefix: gstPrefix("CN"),
@@ -128,8 +132,14 @@ export const sellerProfileSchema = z.object({
   if (new Set(states).size !== states.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "Each GST registration must be in a different state" });
   const gstins = [v.gstin, ...v.branches.map((b) => b.gstin)].filter(Boolean);
   if (new Set(gstins).size !== gstins.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "The same GSTIN is listed twice" });
-  const prefixes = [v.invoicePrefix, v.creditNotePrefix, ...v.branches.flatMap((b) => [b.invoicePrefix, b.creditNotePrefix]), "PI"].map((p) => p.toUpperCase());
-  if (new Set(prefixes).size !== prefixes.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "Every registration needs its own invoice and credit-note prefixes (and PI is taken by proformas)" });
+  // Registrations may share an invoice prefix (INV/26-27/0014 in Mumbai, INV/26-27/059 in
+  // Gurugram) only when their serials differ in length, so the two series can never print the
+  // same number. Credit-note prefixes and PI stay unique and apart from every invoice prefix.
+  const invoiceSeries = [{ p: v.invoicePrefix, d: v.serialDigits }, ...v.branches.map((b) => ({ p: b.invoicePrefix, d: b.serialDigits }))].map((x) => `${x.p.toUpperCase()}#${x.d}`);
+  if (new Set(invoiceSeries).size !== invoiceSeries.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "Two registrations use the same invoice prefix with the same number of digits — give one a different prefix or digit count, so their invoice numbers can never repeat" });
+  const invoicePrefixes = new Set([v.invoicePrefix, ...v.branches.map((b) => b.invoicePrefix)].map((p) => p.toUpperCase()));
+  const others = [v.creditNotePrefix, ...v.branches.map((b) => b.creditNotePrefix), "PI"].map((p) => p.toUpperCase());
+  if (new Set(others).size !== others.length || others.some((p) => invoicePrefixes.has(p))) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["branches"], message: "Every registration needs its own credit-note prefix, different from the invoice prefixes (and PI is taken by proformas)" });
 }).transform(fillStateFromGstin);
 export type SellerProfileInput = z.infer<typeof sellerProfileSchema>;
 
@@ -249,6 +259,9 @@ export const invoiceUpsertSchema = z.object({
   campaignBookingId: z.string().uuid().optional().nullable(),
   issueDate: day.optional().nullable(),
   dueDate: day.optional().nullable(),
+  /** The client's purchase order number and date, printed on the invoice. */
+  poNumber: optionalText(60),
+  poDate: day.optional().nullable(),
   placeOfSupplyCode: stateCodeSchema.optional().nullable(),
   taxMode: z.enum(TAX_MODE_VALUES).optional(),
   gstRateBp: z.number().int().min(0).max(4000).optional(),
@@ -306,6 +319,8 @@ export const recurringUpsertSchema = z
 export type RecurringUpsertInput = z.infer<typeof recurringUpsertSchema>;
 
 export const invoiceIssueSchema = z.object({
+  /** Typed by hand at Issue; blank = the next number of the registration's series. GST: ≤ 16 characters, letters, digits, "/" and "-". */
+  number: z.string().trim().max(16, "GST invoice numbers are at most 16 characters").regex(/^[A-Za-z0-9/-]*$/, "Use only letters, digits, / and -").optional().nullable().transform((v) => (v ? v : null)),
   issueDate: day.optional(),
   dueDate: day.optional().nullable(),
   /** When the GST type the draft was saved with no longer matches the seller and buyer: update it, or keep it on purpose. */

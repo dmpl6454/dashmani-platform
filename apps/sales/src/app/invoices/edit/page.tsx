@@ -28,11 +28,11 @@ function Editor() {
   const { company: current } = useCompany();
   const companyKey = id ? companyOfDoc(inv) : current;
   const { data: seller } = useSeller(id && !inv ? undefined : companyKey);
-  const [form, setForm] = useState({ clientId: params.get("clientId") ?? "", kind: "tax_invoice" as "tax_invoice" | "proforma", issueDate: "", dueDate: "", taxMode: "auto" as "auto" | TaxMode, sellerGstin: "", gstRateBp: 1800, discountPaise: 0, notes: "", terms: "", internalNotes: "", items: [blank()] as InvoiceItem[] });
+  const [form, setForm] = useState({ clientId: params.get("clientId") ?? "", kind: "tax_invoice" as "tax_invoice" | "proforma", issueDate: "", dueDate: "", poNumber: "", poDate: "", taxMode: "auto" as "auto" | TaxMode, sellerGstin: "", gstRateBp: 1800, discountPaise: 0, notes: "", terms: "", internalNotes: "", items: [blank()] as InvoiceItem[] });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   useEffect(() => {
-    if (inv) setForm({ clientId: inv.clientId, kind: inv.kind, issueDate: inv.issueDate ?? "", dueDate: inv.dueDate ?? "", taxMode: inv.taxMode, sellerGstin: inv.sellerGstin ?? "", gstRateBp: inv.gstRateBp, discountPaise: inv.discountPaise, notes: inv.notes ?? "", terms: inv.terms ?? "", internalNotes: inv.internalNotes ?? "", items: inv.items.length ? inv.items.map((i) => ({ ...i })) : [blank()] });
+    if (inv) setForm({ clientId: inv.clientId, kind: inv.kind, issueDate: inv.issueDate ?? "", dueDate: inv.dueDate ?? "", poNumber: inv.poNumber ?? "", poDate: inv.poDate ?? "", taxMode: inv.taxMode, sellerGstin: inv.sellerGstin ?? "", gstRateBp: inv.gstRateBp, discountPaise: inv.discountPaise, notes: inv.notes ?? "", terms: inv.terms ?? "", internalNotes: inv.internalNotes ?? "", items: inv.items.length ? inv.items.map((i) => ({ ...i })) : [blank()] });
   }, [inv]);
   useEffect(() => { if (seller && !form.terms && !inv) setForm((f) => ({ ...f, terms: seller.profile.terms ?? "", gstRateBp: seller.profile.defaultGstRateBp })); }, [seller, inv, form.terms]);
   const client = clients?.find((c) => c.id === form.clientId);
@@ -43,7 +43,10 @@ function Editor() {
   const setItem = (i: number, patch: Partial<InvoiceItem>) => setForm((f) => ({ ...f, items: f.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) }));
   if (error) return <LoadError error={error} />;
   if (id && (isLoading || !inv)) return <Loading />;
-  if (inv && inv.status !== "draft") return <div className="card p-6"><p>Issued invoices are never edited. <Link href={`/invoices/view?id=${inv.id}`} className="underline">Open {inv.number}</Link> to cancel it or add a credit note.</p></div>;
+  // An issued invoice is edited in place (same number, every change recorded) until money or a
+  // credit note is on it; a paid or cancelled one never is. The server re-checks either way.
+  const issued = !!inv && inv.status !== "draft";
+  if (inv && (inv.status === "paid" || inv.status === "cancelled")) return <div className="card p-6"><p>A {inv.status} invoice can&apos;t be edited. <Link href={`/invoices/view?id=${inv.id}`} className="underline">Open {inv.number}</Link> to add a credit note.</p></div>;
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -53,7 +56,7 @@ function Editor() {
     try {
       const body = {
         companyKey, clientId: form.clientId, kind: form.kind, orderId: inv?.orderId ?? null, campaignBookingId: inv?.campaignBookingId ?? null,
-        issueDate: form.issueDate || null, dueDate: form.dueDate || null, gstRateBp: form.gstRateBp, discountPaise: form.discountPaise, sellerGstin: form.sellerGstin || null,
+        issueDate: form.issueDate || null, dueDate: form.dueDate || null, poNumber: form.poNumber.trim() || null, poDate: form.poDate || null, gstRateBp: form.gstRateBp, discountPaise: form.discountPaise, sellerGstin: form.sellerGstin || null,
         notes: form.notes || null, terms: form.terms || null, internalNotes: form.internalNotes || null, ...(form.taxMode !== "auto" ? { taxMode: form.taxMode } : {}),
         items: form.items.map((i) => ({ description: i.description.trim(), sac: i.sac || null, quantity: i.quantity, unitPricePaise: i.unitPricePaise, discountPaise: i.discountPaise, orderItemId: i.orderItemId ?? null })),
       };
@@ -68,21 +71,24 @@ function Editor() {
   if (!clients) return <Loading />;
   return (
     <>
-      <PageHead kicker={<Link href="/invoices" className="hover:text-white">Invoices</Link> as unknown as string} title={inv ? "Edit draft invoice" : "New invoice"} />
+      <PageHead kicker={<Link href="/invoices" className="hover:text-white">Invoices</Link> as unknown as string} title={issued ? `Edit ${inv!.number}` : inv ? "Edit draft invoice" : "New invoice"} />
       <form onSubmit={save} className="grid grid-cols-[minmax(0,1fr)] gap-5">
+        {issued && <div className="card border-attention p-3 text-sm">This {inv!.kind === "proforma" ? "proforma" : "tax invoice"} is already issued. Saving keeps its number <span className="font-mono">{inv!.number}</span> and GST registration, re-prints it with the client&apos;s current billing details, and records what changed in its history. If the client already has the old copy, email them the corrected one.</div>}
         <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={inv ? "A saved draft stays with its company." : "Switch company at the top of the page before saving."}>
             <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
           </Field>
           <ClientSelect className="sm:col-span-2" clients={clients} value={form.clientId} onChange={(clientId) => setForm((f) => ({ ...f, clientId }))} />
-          <Field label="Kind"><select className="input" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as typeof form.kind })}><option value="tax_invoice">Tax invoice</option><option value="proforma">Proforma</option></select></Field>
+          <Field label="Kind"><select className="input" disabled={issued} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as typeof form.kind })}><option value="tax_invoice">Tax invoice</option><option value="proforma">Proforma</option></select></Field>
           <Field label="GST rate (%)"><input className="input" type="number" min={0} max={40} step={0.01} value={form.gstRateBp / 100} onChange={(e) => setForm({ ...form, gstRateBp: Math.round(Number(e.target.value) * 100) })} /></Field>
           <Field label="Issue date" hint="Defaults to today when issued."><input className="input" type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} /></Field>
           <Field label="Due date" hint={`Defaults to issue + ${seller?.profile.defaultDueDays ?? 15} days.`}><input className="input" type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></Field>
+          <Field label="Client PO number" hint="Printed on the invoice."><input className="input font-mono" maxLength={60} placeholder="PO-2026-118" value={form.poNumber} onChange={(e) => setForm({ ...form, poNumber: e.target.value })} /></Field>
+          <Field label="PO date"><input className="input" type="date" value={form.poDate} onChange={(e) => setForm({ ...form, poDate: e.target.value })} /></Field>
           <Field label="GST" className="sm:col-span-2" hint={form.taxMode === "auto" ? `Auto from the client's state: ${client?.billingProfile?.stateCode ? `${client.billingProfile.stateCode} ${GST_STATE_CODES[client.billingProfile.stateCode] ?? ""}` : "none on file → IGST"}` : undefined}>
             <select className="input" value={form.taxMode} onChange={(e) => setForm({ ...form, taxMode: e.target.value as typeof form.taxMode })}><option value="auto">Auto ({autoMode === "intra" ? "CGST + SGST" : autoMode === "inter" ? "IGST" : "no GST"})</option><option value="intra">CGST + SGST</option><option value="inter">IGST</option><option value="none">No GST (export / SEZ)</option></select>
           </Field>
-          <BilledFromSelect className="sm:col-span-2" profile={seller?.profile} placeOfSupplyCode={placeOfSupply} value={form.sellerGstin} onChange={(g) => setForm({ ...form, sellerGstin: g, taxMode: "auto" })} />
+          {issued ? <Field label="Billed from" className="sm:col-span-2" hint="Fixed: the number belongs to this registration's series."><p className="font-mono py-2">{inv!.sellerSnapshot?.gstin ?? "—"}</p></Field> : <BilledFromSelect className="sm:col-span-2" profile={seller?.profile} placeOfSupplyCode={placeOfSupply} value={form.sellerGstin} onChange={(g) => setForm({ ...form, sellerGstin: g, taxMode: "auto" })} />}
         </section>
         <section className="card p-4">
           <div className="flex items-center justify-between mb-3"><h2 className="font-bold">Lines</h2><button type="button" className="btn btn-ghost btn-sm" onClick={() => setForm((f) => ({ ...f, items: [...f.items, blank()] }))}><Plus size={14} /> Add line</button></div>
@@ -121,7 +127,7 @@ function Editor() {
             </dl>
           </div>
         </section>
-        <div className="flex gap-2"><button type="submit" className="btn" disabled={busy}>{busy ? "Saving…" : "Save draft"}</button><button type="button" className="btn btn-ghost" onClick={() => router.back()}>Cancel</button></div>
+        <div className="flex gap-2"><button type="submit" className="btn" disabled={busy}>{busy ? "Saving…" : issued ? "Save changes" : "Save draft"}</button><button type="button" className="btn btn-ghost" onClick={() => router.back()}>Cancel</button></div>
       </form>
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>

@@ -3205,6 +3205,9 @@ model SalesInvoice {
   sellerGstin       String?   @map("seller_gstin") @db.VarChar(15)
   /// The recurring template that created this invoice, if any.
   recurringId       String?   @map("recurring_id")
+  /// The client's purchase order this invoice bills (printed on the document); copied from the sales order.
+  poNumber          String?   @map("po_number") @db.VarChar(60)
+  poDate            DateTime? @map("po_date") @db.Date
   createdById       String    @map("created_by_id")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")

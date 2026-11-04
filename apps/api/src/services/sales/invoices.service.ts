@@ -1,9 +1,9 @@
 import { prisma, Prisma } from "@dashmani/db";
 import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, findRegistration, registrationChoice, type SellerRegistration, GST_STATE_CODES, financialYear, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
-import { assertMoneyFits, claimManualNumber, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
+import { assertMoneyFits, claimManualNumber, peekDocumentNumber, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { assertSameCompany, resolveDocumentTax, type ResolvedTax } from "./documents.service";
-import { getSellerProfile, sellerMissingFields, type SellerProfile } from "./settings.service";
+import { getSellerOrDefaults, getSellerProfile, sellerMissingFields, type SellerProfile } from "./settings.service";
 import { UNBILLABLE_BOOKING_STATUSES, UNBILLED_ITEM_STATUSES } from "./bookings.service";
 import { assertEInvoiceData, cancelEInvoiceFor, needsEInvoice, queueInvoiceEInvoice, refreshInvoiceEInvoicePayload, registerEInvoice } from "./einvoice.service";
 
@@ -369,6 +369,26 @@ export async function createInvoiceFromBooking(bookingId: string, actorId: strin
     },
     actorId,
   );
+}
+
+/**
+ * The number an invoice will get when issued, for the editor and the Issue dialog: the series of
+ * the registration Issue would bill from (the one picked, else the client's state, else the
+ * principal), or the company's proforma series. Read-only; the number is still only taken at Issue.
+ */
+export async function nextInvoiceNumber(input: { company: CompanyKey; kind: "tax_invoice" | "proforma"; clientId?: string | null; sellerGstin?: string | null; issueDate?: string | null }) {
+  const seller = await getSellerOrDefaults(input.company);
+  const day = input.issueDate ?? todayIST();
+  if (input.kind === "proforma") {
+    return { number: await peekDocumentNumber("proforma", SALES_COMPANIES[input.company].proformaPrefix, day, companyScope(input.company, null)), gstin: null, registration: null };
+  }
+  const client = input.clientId ? await prisma.client.findUnique({ where: { id: input.clientId }, select: { billingProfile: { select: { stateCode: true } } } }) : null;
+  const reg = registrationChoice(seller, client?.billingProfile?.stateCode ?? null, input.sellerGstin ?? null);
+  return {
+    number: await peekDocumentNumber("invoice", reg.invoicePrefix, day, companyScope(input.company, reg.scope), reg.serialDigits),
+    gstin: reg.gstin,
+    registration: reg.label,
+  };
 }
 
 /**

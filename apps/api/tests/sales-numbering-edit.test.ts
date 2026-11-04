@@ -141,3 +141,26 @@ describe("editing an issued invoice", () => {
     expect((await prisma.salesInvoice.findUniqueOrThrow({ where: { id: d.id } })).totalPaise).toBe(issued.totalPaise);
   });
 });
+
+describe("next invoice number preview", () => {
+  beforeEach(seed);
+  const peek = (q: Record<string, string>) => request(app).get("/v1/sales/invoices/next-number").query(q).set(auth(salesToken));
+
+  it("shows the number Issue will take, per registration, without taking it", async () => {
+    const mh = await peek({ company: "dspl", kind: "tax_invoice", clientId: mumbaiClient });
+    expect(mh.status, JSON.stringify(mh.body)).toBe(200);
+    expect(mh.body.data).toMatchObject({ number: documentNumber("INV", fy().label, 1, 4), gstin: SELLER.gstin });
+    expect((await peek({ company: "dspl", kind: "tax_invoice", clientId: mumbaiClient })).body.data.number).toBe(mh.body.data.number); // nothing consumed
+    const d = await draft(mumbaiClient);
+    expect((await issue(d.id)).body.data.number).toBe(mh.body.data.number);
+    expect((await peek({ company: "dspl", kind: "tax_invoice", clientId: mumbaiClient })).body.data.number).toBe(documentNumber("INV", fy().label, 2, 4));
+
+    // Gurugram client → the Gurugram series, 3 digits; after a typed 060 the preview says 061.
+    expect((await peek({ company: "dspl", kind: "tax_invoice", clientId: gurugramClient })).body.data).toMatchObject({ number: documentNumber("INV", fy().label, 1, 3), gstin: HARYANA.gstin, registration: "Gurugram" });
+    await issue((await draft(gurugramClient)).id, { number: documentNumber("INV", fy().label, 60, 3) });
+    expect((await peek({ company: "dspl", kind: "tax_invoice", clientId: gurugramClient })).body.data.number).toBe(documentNumber("INV", fy().label, 61, 3));
+    // Picking the registration by hand wins over the client's state; a proforma uses PI.
+    expect((await peek({ company: "dspl", kind: "tax_invoice", clientId: gurugramClient, sellerGstin: SELLER.gstin })).body.data.number).toBe(documentNumber("INV", fy().label, 2, 4));
+    expect((await peek({ company: "dspl", kind: "proforma", clientId: mumbaiClient })).body.data.number).toBe(documentNumber("PI", fy().label, 1, 4));
+  });
+});

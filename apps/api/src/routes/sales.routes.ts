@@ -190,6 +190,17 @@ router.post("/sales/recurring/:id/run", ...manage, asyncHandler(async (req, res)
 router.get("/sales/invoices", ...view, asyncHandler(async (req, res) => success(res, await invoices.listInvoices({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q), companyKey: companyQuery(req) }))));
 router.post("/sales/invoices", ...manage, validate(invoiceUpsertSchema), asyncHandler(async (req, res) => success(res, await invoices.createInvoice(req.body, staffId(req)), undefined, 201)));
 router.post("/sales/invoices/from-booking/:bookingId", ...manage, asyncHandler(async (req, res) => success(res, await invoices.createInvoiceFromBooking(req.params.bookingId, staffId(req), companyOf(req)), undefined, 201)));
+// Before /sales/invoices/:id, or Express would read "next-number" as an id.
+router.get("/sales/invoices/next-number", ...view, asyncHandler(async (req, res) => {
+  const day = str(req.query.issueDate);
+  return success(res, await invoices.nextInvoiceNumber({
+    company: companyQuery(req) ?? "dspl",
+    kind: str(req.query.kind) === "proforma" ? "proforma" : "tax_invoice",
+    clientId: str(req.query.clientId) ?? null,
+    sellerGstin: str(req.query.sellerGstin) ?? null,
+    issueDate: day && /^\d{4}-\d{2}-\d{2}$/.test(day) && !Number.isNaN(Date.parse(day)) ? day : null,
+  }));
+}));
 router.get("/sales/invoices/:id", ...view, asyncHandler(async (req, res) => success(res, await invoices.getInvoice(req.params.id))));
 router.put("/sales/invoices/:id", ...manage, validate(invoiceUpsertSchema), asyncHandler(async (req, res) => success(res, await invoices.updateInvoice(req.params.id, req.body, staffId(req)))));
 router.post("/sales/invoices/:id/issue", ...manage, validate(invoiceIssueSchema), asyncHandler(async (req, res) => success(res, await invoices.issueInvoice(req.params.id, req.body, staffId(req)))));

@@ -291,6 +291,33 @@ export async function createInvoiceFromBooking(bookingId: string, actorId: strin
   );
 }
 
+/**
+ * What a draft will look like once issued, for "Preview" before issuing: the seller, the buyer and
+ * the amount in words are worked out now exactly as `issueInvoice` would freeze them (the chosen
+ * registration, else the client's state, else the principal one), with today as the issue date
+ * when none is set. Nothing is written and no number is taken — the PDF marks it as a draft.
+ * An issued (or cancelled) invoice is returned unchanged: it always prints its frozen snapshots.
+ */
+export async function previewInvoice(id: string): Promise<InvoiceView> {
+  const inv = await getInvoice(id);
+  if (inv.status !== "draft") return inv;
+  const company = inv.companyKey as CompanyKey;
+  const seller = await getSellerProfile(company);
+  if (!seller) return inv;
+  const pos = inv.client.billingProfile?.stateCode ?? inv.placeOfSupplyCode ?? null;
+  const reg = registrationChoice(seller, pos, inv.sellerGstin);
+  const issueDate: string = inv.issueDate ?? todayIST();
+  return {
+    ...inv,
+    issueDate: issueDate as typeof inv.issueDate,
+    dueDate: (inv.dueDate ?? addDays(issueDate, seller.defaultDueDays)) as typeof inv.dueDate,
+    sellerSnapshot: sellerSnapshotFor(seller, reg) as unknown as Prisma.JsonValue,
+    buyerSnapshot: buyerSnapshotFor(inv.client as Parameters<typeof buyerSnapshotFor>[0]) as unknown as Prisma.JsonValue,
+    amountInWords: rupeesInWords(inv.totalPaise),
+    terms: inv.terms ?? seller.terms ?? null,
+  };
+}
+
 function buyerSnapshotFor(client: NonNullable<Awaited<ReturnType<typeof getInvoice>>["client"]>) {
   const p = client.billingProfile;
   return {

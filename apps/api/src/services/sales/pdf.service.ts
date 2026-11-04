@@ -82,6 +82,19 @@ async function drawEInvoice(doc: PDFKit.PDFDocument, e: EInvoiceView, left: numb
   doc.y = Math.max(doc.y, top + 90) + 6;
 }
 
+function drawDraftMark(doc: PDFKit.PDFDocument): void {
+  // text() moves the cursor; the page content must start where it would have.
+  const { x, y } = doc;
+  doc.save();
+  doc.rotate(-35, { origin: [PAGE.width / 2, PAGE.height / 2] });
+  doc.font("Helvetica-Bold").fontSize(64).fillColor("#b00020").fillOpacity(0.08);
+  doc.text("DRAFT — NOT ISSUED", 0, PAGE.height / 2 - 32, { width: PAGE.width, align: "center", lineBreak: false });
+  doc.restore();
+  doc.fillOpacity(1);
+  doc.x = x;
+  doc.y = y;
+}
+
 export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   const seller = (inv.sellerSnapshot ?? {}) as Partial<SellerSnapshot>;
   const buyer = (inv.buyerSnapshot ?? {}) as Partial<BuyerSnapshot>;
@@ -96,6 +109,13 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   const left = PAGE.margin;
   const right = PAGE.width - PAGE.margin;
   const width = right - left;
+
+  // A draft is only a preview: a faint diagonal mark behind the page so it can never pass for a bill.
+  const isDraft = inv.status === "draft";
+  if (isDraft) {
+    drawDraftMark(doc);
+    doc.on("pageAdded", () => drawDraftMark(doc));
+  }
 
   // ── Header: seller + document title ────────────────────────────────────────
   const col = sellerColumn(doc, inv.companyKey, left, width);
@@ -124,7 +144,11 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   doc.moveTo(left, doc.y).lineTo(right, doc.y).strokeColor(RULE).lineWidth(1).stroke();
   doc.y += 12;
 
-  if (inv.kind === "tax_invoice") await drawEInvoice(doc, inv.einvoice, left, width);
+  if (isDraft) {
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#b00020").text(`PREVIEW OF A DRAFT — not issued. The ${inv.kind === "proforma" ? "proforma" : "invoice"} number is assigned when it is issued; this copy is not a valid ${inv.kind === "proforma" ? "proforma" : "tax invoice"}.`, left, doc.y, { width });
+    doc.y += 8;
+  }
+  if (inv.kind === "tax_invoice" && !isDraft) await drawEInvoice(doc, inv.einvoice, left, width);
   // ── Bill to ─────────────────────────────────────────────────────────────────
   doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("BILL TO", left, doc.y);
   doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(buyer.legalName ?? buyer.companyName ?? "—", { width: width * 0.6 });

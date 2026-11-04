@@ -11,6 +11,7 @@ import { todayIST } from "@/lib/format";
 import type { Recurring, RecurringLine, TaxMode } from "@/lib/sales-types";
 import { Field, LoadError, Loading, Money, MoneyInput, PageHead, Toast } from "@/components/sales-ui";
 import { BilledFromSelect } from "@/components/billed-from";
+import { ClientSelect } from "@/components/client-select";
 import { FREQUENCY_LABEL, MODE_LABEL } from "@/components/recurring-table";
 import { computeTotals, registrationChoice, taxModeFor } from "@dashmani/shared/src/sales/gst";
 
@@ -84,9 +85,7 @@ function Editor() {
           <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={rec ? "A recurring invoice stays with its company." : "Switch company at the top of the page before saving."}>
             <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
           </Field>
-          <Field label="Client" className="sm:col-span-2">
-            <select className="input" required value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })}><option value="">Choose a client…</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.companyName}{c.billingProfile?.gstin ? ` · ${c.billingProfile.gstin}` : ""}</option>)}</select>
-          </Field>
+          <ClientSelect className="sm:col-span-2" clients={clients} value={form.clientId} onChange={(clientId) => setForm((f) => ({ ...f, clientId }))} />
           <Field label="Title" className="sm:col-span-2" hint="Printed in each invoice's notes with the period, e.g. “Monthly retainer — November 2026”."><input className="input" required minLength={2} maxLength={200} placeholder="Monthly retainer" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
           <Field label="Every"><select className="input" value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value as Recurring["frequency"] })}>{Object.entries(FREQUENCY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
           <Field label="On day" hint="1–28, so every month has it."><input className="input" type="number" min={1} max={28} value={form.dayOfMonth} onChange={(e) => setForm({ ...form, dayOfMonth: Math.min(28, Math.max(1, Number(e.target.value) || 1)) })} /></Field>

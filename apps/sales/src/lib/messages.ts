@@ -12,7 +12,7 @@ const CODES: Record<string, string> = {
   INVOICE_SETTLED: "This invoice has payments or credit notes against it — use a credit note instead of cancelling.",
   OVER_ALLOCATED: "That is more than the invoice has outstanding.",
   OVER_CREDITED: "That is more than can still be credited on this invoice.",
-  EMAIL_EXISTS: "A client with this email already exists.",
+  EMAIL_EXISTS: "This email already belongs to a client or one of their portal logins. Use another email, or pick that client.",
   BAD_TRANSITION: "That action isn't available in the document's current state.",
   NETWORK: "Couldn't reach the server — check your connection and try again.",
 };

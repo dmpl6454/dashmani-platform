@@ -11,6 +11,7 @@ import type { Invoice, InvoiceItem, TaxMode } from "@/lib/sales-types";
 import { Field, LoadError, Loading, Money, MoneyInput, PageHead, Toast } from "@/components/sales-ui";
 import { computeTotals, registrationChoice, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 import { BilledFromSelect } from "@/components/billed-from";
+import { ClientSelect } from "@/components/client-select";
 
 // A free-form invoice (the usual path is "Create invoice" on an order, which lands here as a
 // draft to review). Drafts only: an issued invoice is never edited.
@@ -73,9 +74,7 @@ function Editor() {
           <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={inv ? "A saved draft stays with its company." : "Switch company at the top of the page before saving."}>
             <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
           </Field>
-          <Field label="Client" className="sm:col-span-2">
-            <select className="input" required value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })}><option value="">Choose a client…</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.companyName}{c.billingProfile?.gstin ? ` · ${c.billingProfile.gstin}` : ""}</option>)}</select>
-          </Field>
+          <ClientSelect className="sm:col-span-2" clients={clients} value={form.clientId} onChange={(clientId) => setForm((f) => ({ ...f, clientId }))} />
           <Field label="Kind"><select className="input" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as typeof form.kind })}><option value="tax_invoice">Tax invoice</option><option value="proforma">Proforma</option></select></Field>
           <Field label="GST rate (%)"><input className="input" type="number" min={0} max={40} step={0.01} value={form.gstRateBp / 100} onChange={(e) => setForm({ ...form, gstRateBp: Math.round(Number(e.target.value) * 100) })} /></Field>
           <Field label="Issue date" hint="Defaults to today when issued."><input className="input" type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} /></Field>

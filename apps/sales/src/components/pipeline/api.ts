@@ -239,6 +239,7 @@ const WORDS: Record<string, string> = {
   NOT_A_DM: "Only a direct message can be removed from your list.",
   DM_MEMBERS_FIXED: "A direct message is between two people.",
   CANT_REMOVE_OWNER: "The channel owner can't be removed.",
+  OWNER_CANT_LEAVE: "The channel owner can't leave — delete the channel instead.",
 };
 
 /** Human words for an error. Never the raw server message; never "Something went wrong". */

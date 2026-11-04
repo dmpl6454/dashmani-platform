@@ -16,6 +16,7 @@ import app from "../../src/app";
 import { resetPipelineStateForTests } from "../../src/services/pipeline";
 import { pipelineDb } from "../../src/services/pipeline/db";
 import { getBoardSnapshot } from "../../src/services/pipeline/board";
+import { purgeDeletedProjects } from "../../src/services/pipeline/jobs";
 import { onlineUserIds, resetPresenceForTests, touchPresence, PRESENCE_WINDOW_MS } from "../../src/services/pipeline/live";
 import { dmKeyOf } from "../../src/services/pipeline/conversations.service";
 import { pipelineValidators as V } from "@dashmani/shared";
@@ -302,6 +303,48 @@ describe("pipeline chat: channels and DMs", () => {
 
     const dm = (await request(app).post(`${B}/dms`).set(auth(asha.token)).send({ userId: ravi.id })).body.data.id as string;
     expect((await request(app).delete(`${B}/channels/${dm}`).set(auth(asha.token)).send({ confirmName: "x" })).body.error.code).toBe("CANT_DELETE_DM");
+  });
+
+  it("review fixes: owner can't leave, non-members can't react, a campaign's channels go (and come back) with it, purge chunks them", async () => {
+    const asha = await person("Asha Rao");
+    const ravi = await person("Ravi Jain");
+    const meera = await person("Meera Das");
+    const proj = await request(app).post(`${B}/projects`).set(auth(asha.token)).send({ clientId: uuid(), title: "Jio Campaign", memberIds: [ravi.id] });
+    const pid = proj.body.data.card.id as string;
+    const id = (await newChannel(asha.token, { name: "shoot-day", projectId: pid })).body.data.id as string;
+
+    // The owner can't walk away (by leave or by removing themself); others still can.
+    expect((await request(app).post(`${B}/channels/${id}/leave`).set(auth(asha.token))).body.error.code).toBe("OWNER_CANT_LEAVE");
+    expect((await request(app).delete(`${B}/channels/${id}/members/${asha.id}`).set(auth(asha.token))).body.error.code).toBe("OWNER_CANT_LEAVE");
+
+    // Reacting in a channel needs membership, like posting (public channels are still readable).
+    const mid = (await post(ravi.token, id, "call time 9am")).body.data.message.id as string;
+    const r = await request(app).put(`${B}/messages/${mid}/reactions/thumbs_up`).set(auth(meera.token)).send({ on: true });
+    expect(r.status).toBe(403);
+    expect(r.body.error.code).toBe("NOT_A_MEMBER");
+    expect((await request(app).put(`${B}/messages/${mid}/reactions/thumbs_up`).set(auth(asha.token)).send({ on: true })).status).toBe(200);
+
+    // Deleting the campaign takes its channels with it on every path …
+    expect((await request(app).delete(`${B}/projects/${pid}`).set(auth(asha.token)).send({ confirmTitle: "Jio Campaign" })).status).toBe(200);
+    expect((await request(app).get(`${B}/projects/${id}`).set(auth(ravi.token))).status).toBe(404);
+    expect((await post(ravi.token, id, "still there?")).status).toBe(404);
+    expect((await request(app).post(`${B}/channels/${id}/join`).set(auth(meera.token))).status).toBe(404);
+    const s = await request(app).post(`${B}/sync`).set(auth(ravi.token)).send({ clientBuild: 1, project: { id, rev: 0, hv: 0 } });
+    expect(s.body.data.project.status).toBe("deleted");
+
+    // … restoring it brings them back.
+    expect((await request(app).post(`${B}/projects/${pid}/restore`).set(auth(asha.token)).send({})).status).toBe(200);
+    expect((await request(app).get(`${B}/projects/${id}`).set(auth(ravi.token))).status).toBe(200);
+
+    // Purge: the campaign's channel messages are deleted in the chunked phases, then the rows.
+    await request(app).delete(`${B}/projects/${pid}`).set(auth(asha.token)).send({ confirmTitle: "Jio Campaign" });
+    await pipelineDb.$executeRaw`UPDATE pipeline_projects SET deleted_at = deleted_at - interval '31 days' WHERE id = ${pid}`;
+    const chunks: Array<{ phase: string; rows: number }> = [];
+    expect(await purgeDeletedProjects({ onChunk: (c) => chunks.push(c) })).toEqual({ purged: 1 });
+    // The campaign's own thread is empty, so the one root deleted in a chunk is the channel's.
+    expect(chunks.filter((c) => c.phase === "roots").reduce((n, c) => n + c.rows, 0)).toBe(1);
+    expect(await pipelineDb.pipelineProject.findUnique({ where: { id } })).toBeNull();
+    expect(await pipelineDb.pipelineMessage.count({ where: { projectId: id } })).toBe(0);
   });
 
   it("deleting a DM hides it from my list only; a new message or reopening brings it back", async () => {

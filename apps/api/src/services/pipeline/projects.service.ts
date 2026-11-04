@@ -377,7 +377,8 @@ export async function getProjectDetail(
     db.$queryRaw<DetailRow[]>`
       WITH p AS (
         SELECT pr.*, (SELECT c.company_name FROM clients c WHERE c.id = pr.linked_client_id) AS linked_client_name,
-               (SELECT t.title FROM pipeline_projects t WHERE t.id = pr.parent_project_id) AS parent_title
+               (SELECT t.title FROM pipeline_projects t WHERE t.id = pr.parent_project_id) AS parent_title,
+               (SELECT t.deleted_at IS NOT NULL FROM pipeline_projects t WHERE t.id = pr.parent_project_id) AS parent_deleted
           FROM pipeline_projects pr WHERE pr.id = ${projectId}),
       me AS (
         SELECT role, notify, last_read_seq FROM pipeline_participants
@@ -432,7 +433,10 @@ export async function getProjectDetail(
   );
   const d = rows[0];
   if (!d?.project) throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");
-  if (d.project.deleted_at) throw new PipelineError(404, "PROJECT_DELETED", "This project was deleted");
+  // A channel of a deleted campaign is gone with it (access.ts parentLiveSql).
+  if (d.project.deleted_at || d.project.parent_deleted === true) {
+    throw new PipelineError(404, "PROJECT_DELETED", "This project was deleted");
+  }
   // A private channel or DM is visible to its participants only (sales-portal chat).
   if ((d.project.kind === "dm" || d.project.is_private === true) && !d.me) {
     throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");

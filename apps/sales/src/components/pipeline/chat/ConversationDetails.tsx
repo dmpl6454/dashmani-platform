@@ -182,7 +182,7 @@ export function ConversationDetails({
         )}
       </section>
 
-      {isChannel && isMember && (
+      {isChannel && isMember && !isOwner && (
         <button
           type="button"
           disabled={busy === "leave"}

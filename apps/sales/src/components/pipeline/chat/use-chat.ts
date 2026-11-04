@@ -10,7 +10,7 @@
  * - Presence (green dots) is the one poll here: GET /pipeline/presence every 30 s while the
  *   tab is visible. It is answered from memory on the API (no database statement).
  */
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
 import type { PipelineCampaignChannelsResponse, PipelineConversations } from "@dashmani/shared";
 import { PL_SWR } from "@/lib/pipeline-swr";
@@ -66,6 +66,29 @@ export function useCampaignChannels(projectId: string | null) {
     { ...PL_SWR, revalidateOnFocus: true },
   );
   const mine = useStoreSelector(store, (s) => s.mine?.entries ?? null);
+  // Someone created this campaign a channel (or added me to one): it shows up in the live
+  // overlay as a channel this list doesn't have yet → refresh the list. Channels of other
+  // campaigns are always "unknown" here, so only an id NEW since the first load refetches.
+  const unknown = useMemo(() => {
+    if (!mine || !swr.data) return null;
+    const known = new Set(swr.data.channels.map((c) => c.id));
+    return Object.values(mine)
+      .filter((e) => e.kind === "channel" && !known.has(e.projectId))
+      .map((e) => e.projectId)
+      .sort()
+      .join(",");
+  }, [mine, swr.data]);
+  const seen = useRef<Set<string> | null>(null);
+  const { mutate } = swr;
+  useEffect(() => {
+    if (unknown === null) return;
+    const ids = unknown ? unknown.split(",") : [];
+    if (seen.current === null) seen.current = new Set(ids);
+    else if (ids.some((id) => !seen.current!.has(id))) {
+      ids.forEach((id) => seen.current!.add(id));
+      void mutate();
+    }
+  }, [unknown, mutate]);
   const unreadOf = (id: string, fallback: number) => mine?.[id]?.unread ?? fallback;
   return { ...swr, unreadOf };
 }

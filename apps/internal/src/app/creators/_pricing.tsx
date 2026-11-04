@@ -89,7 +89,7 @@ function PageCard({ page, creatorId, onSaved }: { page: CreatorPricedPage; creat
   };
 
   return (
-    <div className="px-5 py-4 border-t border-[#132430]">
+    <div id={`price-${page.assetId}`} className="px-5 py-4 border-t border-[#132430] scroll-mt-20">
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <span className="font-semibold text-ds-text">{page.name}</span>
         <span className="text-[12px] text-ds-t3">{page.username ? `@${page.username} · ` : ""}{page.platform === "instagram" ? "Instagram" : "Facebook Page"} · {compact(page.followers)} followers</span>
@@ -166,8 +166,13 @@ function PageCard({ page, creatorId, onSaved }: { page: CreatorPricedPage; creat
 
 export function CreatorPricing({ creatorId, creatorApproved }: { creatorId: string; creatorApproved: boolean }) {
   const { data, error, mutate } = useCreatorPricing(creatorId);
+  // Only pages that are switched on (and still connected) get a card: a creator can bring dozens
+  // of pages, and a margin on a page that is off lists nothing. Switching a page on in the Pages
+  // table below revalidates this list, so its card appears at once.
+  const shown = data?.filter((p) => p.enabled && !p.disconnected) ?? [];
+  const off = (data?.length ?? 0) - shown.length;
   return (
-    <section className={`${CARD} overflow-hidden mt-4`}>
+    <section className={`${CARD} overflow-hidden`}>
       <div className="px-5 pt-5 pb-3">
         <h2 className="text-[15px] font-semibold text-ds-text">Prices</h2>
         <p className="mt-1 text-[12.5px] text-ds-t3">
@@ -180,8 +185,15 @@ export function CreatorPricing({ creatorId, creatorApproved }: { creatorId: stri
       </div>
       {error && !data && <div className="px-5 pb-4"><ErrorBar message={error.message || "Couldn't load the prices."} /></div>}
       {!data && !error && <div className="px-5 pb-5 text-[13px] text-ds-t3">Loading…</div>}
-      {data && data.length === 0 && <div className="px-5 pb-5 text-[13px] text-ds-t3 border-t border-[#132430] pt-4">No pages connected.</div>}
-      {data?.map((p) => (
+      {data && shown.length === 0 && (
+        <div className="px-5 pb-5 text-[13px] text-ds-t3 border-t border-[#132430] pt-4">
+          {data.length === 0 ? "No pages connected." : "No page is switched on yet — turn a page on in the Pages table below to set its margin."}
+        </div>
+      )}
+      {shown.length > 0 && off > 0 && (
+        <div className="px-5 pb-3 text-[12px] text-ds-t4">{off} page{off === 1 ? "" : "s"} switched off {off === 1 ? "is" : "are"} hidden here — turn a page on below to price it.</div>
+      )}
+      {shown.map((p) => (
         <PageCard key={p.assetId} page={p} creatorId={creatorId} onSaved={(pages) => mutate(pages, { revalidate: false })} />
       ))}
     </section>

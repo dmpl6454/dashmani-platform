@@ -9,6 +9,7 @@ import { errorSentence } from "@/lib/messages";
 import { fmtCompact, fmtInr } from "@/lib/format";
 import type { InventoryChannel, LineItem, Order, Quote, TaxMode } from "@/lib/sales-types";
 import { Field, Loading, Money, MoneyInput, Toast, platformLabel, titleCase } from "@/components/sales-ui";
+import { ClientSelect } from "@/components/client-select";
 import { computeTotals, registrationFor, taxModeFor, GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 
 // One editor for quotes and orders: the same lines, the same tax resolution, live totals from
@@ -106,12 +107,7 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
         <Field label="Billed by" className="sm:col-span-2 lg:col-span-4" hint={initial ? "A saved document stays with its company." : "Switch company at the top of the page before saving."}>
           <p className="font-bold py-2">{SALES_COMPANIES[companyKey].name}</p>
         </Field>
-        <Field label="Client" className="sm:col-span-2">
-          <select className="input" required value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })}>
-            <option value="">Choose a client…</option>
-            {clients.map((c) => <option key={c.id} value={c.id}>{c.companyName}{c.billingProfile?.gstin ? ` · ${c.billingProfile.gstin}` : ""}</option>)}
-          </select>
-        </Field>
+        <ClientSelect className="sm:col-span-2" clients={clients} value={form.clientId} onChange={(clientId) => setForm((f) => ({ ...f, clientId }))} />
         <Field label="Title" className="sm:col-span-2"><input className="input" required maxLength={200} placeholder="Diwali reels across 6 pages" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
         <Field label="Campaign type" hint="Entertainment uses the entertainment column of the rate card.">
           <select className="input" value={form.campaignType} onChange={(e) => setForm({ ...form, campaignType: e.target.value as FormState["campaignType"] })}><option value="brand">Brand promotion</option><option value="entertainment">Entertainment (film, OTT, music)</option></select>

@@ -5,7 +5,7 @@ import { flushSalesBackground } from "../src/services/sales/common";
 const TRUNCATE_SQL = `
     TRUNCATE TABLE youtube_connections, sales_einvoices, sales_recurring_invoices, sales_refunds, sales_events, sales_credit_notes, sales_payment_allocations, sales_payments, sales_invoice_items, sales_invoices, sales_order_items, sales_orders, sales_quote_items, sales_quotes, sales_sequences, client_billing_profiles,
       pipeline_shoots, pipeline_version_comments, pipeline_deliverables, pipeline_reviews, pipeline_versions, pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state,
-      meta_deletion_requests, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators,
+      meta_deletion_requests, creator_page_prices, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators,
       campaign_media_renders, campaign_booking_events, campaign_payments, campaign_booking_items, campaign_media, campaign_bookings, campaign_rate_cards, razorpay_webhook_events,
       content_posts, approvals, project_files, project_tasks, project_accounts, projects,
       client_refresh_tokens, client_users, client_invites, clients,

@@ -105,16 +105,21 @@ export function useCreatorDetail(id: string | undefined) {
   return useSWR<AdminCreatorDetail>(id ? `/admin/creators/${id}` : null, unwrap, { revalidateOnFocus: false });
 }
 
-// ── Marketplace: staff prices per creator page and format (/admin/creators/:id/pricing) ─────
+// ── Marketplace: the creator's price + our margin (/admin/creators/:id/pricing) ─────────────
 
-export interface CreatorPriceCard {
-  id: string;
+export interface CreatorFormatPrice {
   format: string;
-  pricePaise: number;
-  entertainmentPricePaise: number | null;
+  /** The creator's own price = their payout. null = the creator doesn't offer this format. */
+  creatorPricePaise: number | null;
+  creatorUpdatedAt: string | null;
+  /** Our margin in basis points (2500 = 25%). */
+  marginBps: number | null;
+  entertainmentMarginBps: number | null;
   audioAddonPaise: number | null;
-  creatorPayoutPaise: number | null;
   active: boolean;
+  /** The derived client price as listed now (null = not listed). */
+  clientPricePaise: number | null;
+  entertainmentClientPricePaise: number | null;
 }
 
 export interface CreatorPricedPage {
@@ -129,8 +134,7 @@ export interface CreatorPricedPage {
   /** Shown to clients right now (bookable and priced). */
   listed: boolean;
   category: string | null;
-  formats: string[];
-  cards: CreatorPriceCard[];
+  formats: CreatorFormatPrice[];
 }
 
 export function useCreatorPricing(id: string | undefined) {

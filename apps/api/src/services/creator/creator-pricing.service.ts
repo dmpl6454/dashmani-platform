@@ -1,25 +1,78 @@
-import { prisma } from "@dashmani/db";
-import { CREATOR_PRICED_FORMATS, type CreatorPricingInput } from "@dashmani/shared/src/validators/creator";
+import { prisma, type Prisma } from "@dashmani/db";
+import {
+  CREATOR_PRICED_FORMATS,
+  creatorClientPricePaise,
+  type CreatorMarginsInput,
+  type CreatorOwnPricesInput,
+} from "@dashmani/shared/src/validators/creator";
 import { AppError } from "../../middleware/error-handler";
 import { invalidateCatalogueCache, listCreatorTargets } from "../campaign/rate-card.service";
 
-// Staff set the price of each creator page, per format, on the internal portal's creator page
-// (/creators/[id]). The prices live in campaign_rate_cards (target_type "creator_asset"), so the
-// client catalogue, checkout, GST and refunds treat a creator page exactly like one of ours.
+// Creator page pricing (owner decision 2026-11-04, keeping the recorded Phase C decision):
+//  • the CREATOR sets their own price per page and format (creators.digitalsukoon.com → Prices).
+//    That price IS their payout;
+//  • STAFF add our margin on top (internal portal /creators/[id] → Prices): a percentage for
+//    brand campaigns, an optional percentage for entertainment campaigns, and the reel song
+//    add-on as a fixed client charge. Staff never type the payout or the client price;
+//  • client price = creatorClientPricePaise(creator price, margin) — creator price + margin %,
+//    rounded UP to a whole rupee (packages/shared, so the staff preview uses the same rule).
 //
-// ⚠️ OWNER DECISION PENDING: the creator-portal plan recorded "Phase C: the CREATOR sets the
-// price". This request has STAFF set it (client price and the creator's payout). If the owner
-// keeps the recorded decision, the creator's own price becomes the payout here and staff add
-// the margin on top.
+// Both sides live in creator_page_prices. The client-facing rate card (campaign_rate_cards,
+// target_type "creator_asset") is DERIVED from it by syncCreatorCards() after every change on
+// either side, so priceFor(), checkout, GST and refunds treat a creator page like one of ours.
+// A format is listed only while the creator has a price AND staff have set a brand margin AND
+// staff left it active; otherwise its card is switched off (kept, never deleted — booked items
+// name it).
 //
-// Rules:
-//  • A page can be priced whatever its state (staff may prepare prices before switching it on);
-//    it reaches the client catalogue only while bookable (listCreatorTargets()).
-//  • The payout can never exceed what the client pays for that format (brand or entertainment):
-//    we would lose money on every post.
-//  • Instagram pages take reel / post / carousel; Facebook Pages the same. Song add-on: reels only.
+// When the creator changes their price, the client price for NEW bookings follows automatically
+// (the margin is a percentage). It never changes a post already in a booking: checkout freezes
+// the client price AND the payout on the item (payment.service), and the offer keeps that payout.
+//
+// ⚠️ The creator never sees the margin or the client price; the client never sees the payout.
 
 const PLATFORM_OF: Record<string, "instagram" | "facebook"> = { instagram_account: "instagram", facebook_page: "facebook" };
+
+type Tx = Prisma.TransactionClient;
+
+/** Rebuild the derived rate cards of these pages from creator_page_prices. Inside the caller's tx. */
+export async function syncCreatorCards(tx: Tx, assetIds: string[], staffId: string | null) {
+  if (assetIds.length === 0) return;
+  const [assets, rows, cards] = await Promise.all([
+    tx.creatorAsset.findMany({ where: { id: { in: assetIds } }, select: { id: true, kind: true } }),
+    tx.creatorPagePrice.findMany({ where: { assetId: { in: assetIds } } }),
+    tx.campaignRateCard.findMany({ where: { targetType: "creator_asset", targetId: { in: assetIds } } }),
+  ]);
+  const kindOf = new Map(assets.map((a) => [a.id, a.kind]));
+  const rowOf = new Map(rows.map((r) => [`${r.assetId}:${r.format}`, r]));
+  const cardOf = new Map(cards.map((c) => [`${c.targetId}:${c.format}`, c]));
+  for (const assetId of assetIds) {
+    const kind = kindOf.get(assetId);
+    if (!kind) continue;
+    for (const format of CREATOR_PRICED_FORMATS) {
+      const r = rowOf.get(`${assetId}:${format}`);
+      const card = cardOf.get(`${assetId}:${format}`);
+      const complete = r && r.active && r.creatorPricePaise != null && r.marginBps != null;
+      if (!complete) {
+        // Not listable: switch the card off, keep it (booked items reference its id).
+        if (card?.active) await tx.campaignRateCard.update({ where: { id: card.id }, data: { active: false, updatedById: staffId ?? card.updatedById } });
+        continue;
+      }
+      const data = {
+        platform: PLATFORM_OF[kind],
+        pricePaise: creatorClientPricePaise(r.creatorPricePaise!, r.marginBps!),
+        entertainmentPricePaise: r.entertainmentMarginBps != null ? creatorClientPricePaise(r.creatorPricePaise!, r.entertainmentMarginBps) : null,
+        audioAddonPaise: format === "reel" ? r.audioAddonPaise : null,
+        creatorPayoutPaise: r.creatorPricePaise,
+        active: true,
+        ...(staffId ? { updatedById: staffId } : {}),
+      };
+      if (card) await tx.campaignRateCard.update({ where: { id: card.id }, data });
+      else await tx.campaignRateCard.create({ data: { targetType: "creator_asset", targetId: assetId, format, ...data } });
+    }
+  }
+}
+
+// ── Staff ─────────────────────────────────────────────────────────────────────────────────────
 
 export async function getCreatorPricing(creatorId: string) {
   const assets = await prisma.creatorAsset.findMany({
@@ -31,8 +84,10 @@ export async function getCreatorPricing(creatorId: string) {
     const exists = await prisma.creator.findUnique({ where: { id: creatorId }, select: { id: true } });
     if (!exists) throw new AppError(404, "NOT_FOUND", "Creator not found");
   }
-  const [cards, bookable] = await Promise.all([
-    prisma.campaignRateCard.findMany({ where: { targetType: "creator_asset", targetId: { in: assets.map((a) => a.id) } } }),
+  const ids = assets.map((a) => a.id);
+  const [rows, cards, bookable] = await Promise.all([
+    prisma.creatorPagePrice.findMany({ where: { assetId: { in: ids } } }),
+    prisma.campaignRateCard.findMany({ where: { targetType: "creator_asset", targetId: { in: ids } } }),
     listCreatorTargets(),
   ]);
   const bookableIds = new Set(bookable.map((t) => t.targetId));
@@ -47,78 +102,104 @@ export async function getCreatorPricing(creatorId: string) {
       followers: a.followerCount,
       enabled: a.enabled,
       disconnected: a.disconnectedAt != null,
-      /** Listed to clients right now (bookable AND at least one active price). */
+      /** Shown to clients right now (bookable AND at least one active derived price). */
       listed: bookableIds.has(a.id) && own.some((c) => c.active),
       category: own.find((c) => c.category)?.category ?? null,
-      formats: CREATOR_PRICED_FORMATS,
-      cards: own.map((c) => ({
-        id: c.id,
-        format: c.format,
-        pricePaise: c.pricePaise,
-        entertainmentPricePaise: c.entertainmentPricePaise,
-        audioAddonPaise: c.audioAddonPaise,
-        creatorPayoutPaise: c.creatorPayoutPaise,
-        active: c.active,
-      })),
+      formats: CREATOR_PRICED_FORMATS.map((format) => {
+        const r = rows.find((x) => x.assetId === a.id && x.format === format);
+        const card = own.find((c) => c.format === format);
+        return {
+          format,
+          creatorPricePaise: r?.creatorPricePaise ?? null,
+          creatorUpdatedAt: r?.creatorUpdatedAt ?? null,
+          marginBps: r?.marginBps ?? null,
+          entertainmentMarginBps: r?.entertainmentMarginBps ?? null,
+          audioAddonPaise: format === "reel" ? r?.audioAddonPaise ?? null : null,
+          active: r?.active ?? true,
+          /** The derived client prices as listed (null = not listed for that campaign type). */
+          clientPricePaise: card?.active ? card.pricePaise : null,
+          entertainmentClientPricePaise: card?.active ? card.entertainmentPricePaise : null,
+        };
+      }),
     };
   });
 }
 
-export async function upsertCreatorPricing(creatorId: string, input: CreatorPricingInput, staffId: string) {
+/** Staff set our margin (and song add-on / category / active) — never the payout. */
+export async function setCreatorMargins(creatorId: string, input: CreatorMarginsInput, staffId: string) {
   const ids = [...new Set(input.cards.map((c) => c.assetId))];
-  const assets = await prisma.creatorAsset.findMany({ where: { id: { in: ids }, creatorId }, select: { id: true, kind: true } });
-  const kindOf = new Map(assets.map((a) => [a.id, a.kind]));
-  for (const c of input.cards) {
-    if (!kindOf.has(c.assetId)) throw new AppError(404, "NOT_FOUND", "One of the pages doesn't belong to this creator.");
-    if (c.pricePaise == null) continue;
-    const payout = c.creatorPayoutPaise;
-    if (payout != null && (payout > c.pricePaise || (c.entertainmentPricePaise != null && payout > c.entertainmentPricePaise))) {
-      throw new AppError(400, "PAYOUT_ABOVE_PRICE", "The creator's payout can't be more than what the client pays.");
-    }
-  }
-
-  let upserted = 0;
-  let deleted = 0;
+  const owned = await prisma.creatorAsset.findMany({ where: { id: { in: ids }, creatorId }, select: { id: true } });
+  if (owned.length !== ids.length) throw new AppError(404, "NOT_FOUND", "One of the pages doesn't belong to this creator.");
+  const now = new Date();
   await prisma.$transaction(async (tx) => {
     for (const c of input.cards) {
-      const platform = PLATFORM_OF[kindOf.get(c.assetId)!];
-      const key = { targetType: "creator_asset", targetId: c.assetId, format: c.format };
-      if (c.pricePaise == null) {
-        deleted += (await tx.campaignRateCard.deleteMany({ where: key })).count;
-        continue;
-      }
-      const audio = c.format === "reel" ? c.audioAddonPaise ?? null : null;
-      await tx.campaignRateCard.upsert({
-        where: { targetType_targetId_format: key },
-        create: {
-          ...key,
-          platform,
-          pricePaise: c.pricePaise,
-          entertainmentPricePaise: c.entertainmentPricePaise ?? null,
-          audioAddonPaise: audio,
-          creatorPayoutPaise: c.creatorPayoutPaise ?? null,
-          active: c.active ?? true,
-          category: c.category ?? null,
-          updatedById: staffId,
-        },
-        update: {
-          pricePaise: c.pricePaise,
-          ...(c.entertainmentPricePaise !== undefined ? { entertainmentPricePaise: c.entertainmentPricePaise } : {}),
-          ...(c.audioAddonPaise !== undefined ? { audioAddonPaise: audio } : {}),
-          ...(c.creatorPayoutPaise !== undefined ? { creatorPayoutPaise: c.creatorPayoutPaise } : {}),
-          active: c.active ?? true,
-          ...(c.category !== undefined ? { category: c.category } : {}),
-          updatedById: staffId,
-        },
+      const staff = {
+        marginBps: c.marginBps,
+        ...(c.entertainmentMarginBps !== undefined ? { entertainmentMarginBps: c.entertainmentMarginBps } : {}),
+        ...(c.audioAddonPaise !== undefined ? { audioAddonPaise: c.format === "reel" ? c.audioAddonPaise : null } : {}),
+        active: c.active ?? true,
+        staffUpdatedById: staffId,
+        staffUpdatedAt: now,
+      };
+      await tx.creatorPagePrice.upsert({
+        where: { assetId_format: { assetId: c.assetId, format: c.format } },
+        create: { assetId: c.assetId, format: c.format, ...staff },
+        update: staff,
       });
-      upserted++;
     }
-    // Category is per page: keep it the same on every format.
+    await syncCreatorCards(tx, ids, staffId);
+    // Category is per page: the same on every format's card.
     for (const c of input.cards) {
       if (c.category === undefined) continue;
       await tx.campaignRateCard.updateMany({ where: { targetType: "creator_asset", targetId: c.assetId }, data: { category: c.category } });
     }
   });
   invalidateCatalogueCache();
-  return { upserted, deleted, pages: await getCreatorPricing(creatorId) };
+  return { pages: await getCreatorPricing(creatorId) };
+}
+
+// ── Creator ───────────────────────────────────────────────────────────────────────────────────
+
+/** The creator's own prices. Explicit fields only: no margin, no client price. */
+export async function getOwnPrices(creatorId: string) {
+  const assets = await prisma.creatorAsset.findMany({
+    where: { creatorId, disconnectedAt: null },
+    orderBy: [{ kind: "asc" }, { name: "asc" }],
+    select: { id: true, kind: true, name: true, username: true, enabled: true, prices: { select: { format: true, creatorPricePaise: true, creatorUpdatedAt: true } } },
+  });
+  return assets.map((a) => ({
+    assetId: a.id,
+    platform: PLATFORM_OF[a.kind],
+    name: a.name,
+    username: a.username,
+    /** Our team has switched this page on for bookings. */
+    enabled: a.enabled,
+    prices: CREATOR_PRICED_FORMATS.map((format) => {
+      const p = a.prices.find((x) => x.format === format);
+      return { format, pricePaise: p?.creatorPricePaise ?? null, updatedAt: p?.creatorUpdatedAt ?? null };
+    }),
+  }));
+}
+
+/**
+ * The creator sets their own price (= payout) per page and format. New bookings follow it at
+ * once (client price = price + our margin); posts already booked keep the price they were booked at.
+ */
+export async function setOwnPrices(creatorId: string, input: CreatorOwnPricesInput) {
+  const ids = [...new Set(input.prices.map((p) => p.assetId))];
+  const owned = await prisma.creatorAsset.findMany({ where: { id: { in: ids }, creatorId, disconnectedAt: null }, select: { id: true } });
+  if (owned.length !== ids.length) throw new AppError(404, "NOT_FOUND", "One of the pages isn't connected to your account.");
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    for (const p of input.prices) {
+      await tx.creatorPagePrice.upsert({
+        where: { assetId_format: { assetId: p.assetId, format: p.format } },
+        create: { assetId: p.assetId, format: p.format, creatorPricePaise: p.pricePaise, creatorUpdatedAt: now },
+        update: { creatorPricePaise: p.pricePaise, creatorUpdatedAt: now },
+      });
+    }
+    await syncCreatorCards(tx, ids, null);
+  });
+  invalidateCatalogueCache();
+  return getOwnPrices(creatorId);
 }

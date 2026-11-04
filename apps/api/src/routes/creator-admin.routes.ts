@@ -3,7 +3,7 @@ import {
   creatorReviewSchema,
   creatorReviewNoteRequiredSchema,
   creatorAssetToggleSchema,
-  creatorPricingSchema,
+  creatorMarginsSchema,
 } from "@dashmani/shared/src/validators/creator";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
@@ -53,13 +53,13 @@ router.put("/admin/creators/:id/assets/:assetId", ...gate, validate(creatorAsset
   return success(res, await admin.setAssetEnabled(req.params.id, req.params.assetId, req.body.enabled, staffId(req)));
 }));
 
-// Marketplace: staff price each creator page per format (client price + the creator's payout).
+// Marketplace: the creator sets their price (= payout); staff add our margin per page and format.
 router.get("/admin/creators/:id/pricing", ...gate, asyncHandler(async (req, res) => {
   return success(res, await pricing.getCreatorPricing(req.params.id));
 }));
 
-router.put("/admin/creators/:id/pricing", ...gate, validate(creatorPricingSchema), asyncHandler(async (req, res) => {
-  return success(res, await pricing.upsertCreatorPricing(req.params.id, req.body, staffId(req)));
+router.put("/admin/creators/:id/pricing", ...gate, validate(creatorMarginsSchema), asyncHandler(async (req, res) => {
+  return success(res, await pricing.setCreatorMargins(req.params.id, req.body, staffId(req)));
 }));
 
 export default router;

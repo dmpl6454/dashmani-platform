@@ -107,3 +107,13 @@ export interface CreatorOfferList {
   offers: CreatorOffer[];
   counts: { waiting: number; toPost: number; payoutAcceptedPaise: number };
 }
+
+/** GET /v1/creator/prices — the creator's own price per page and format (= their payout). */
+export interface CreatorPagePrices {
+  assetId: string;
+  platform: "instagram" | "facebook";
+  name: string;
+  username: string | null;
+  enabled: boolean;
+  prices: Array<{ format: "reel" | "post" | "carousel"; pricePaise: number | null; updatedAt: string | null }>;
+}

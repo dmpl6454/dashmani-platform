@@ -61,7 +61,7 @@ export interface OfferedItem {
 
 /**
  * Inside the approval transaction: every pending creator item of the booking becomes an offer to
- * the page's current owner, with the payout from its rate card frozen. A page that is no longer
+ * the page's current owner, with the payout frozen at checkout (the card is a fallback). A page that is no longer
  * bookable (creator suspended, page switched off or disconnected) goes straight to staff instead
  * (`manual_pending` with the reason) — the client has paid for it, so it must be refunded or
  * re-arranged, never left waiting on someone who cannot answer.
@@ -69,7 +69,7 @@ export interface OfferedItem {
 export async function offerCreatorItems(tx: Tx, bookingId: string, now = new Date()) {
   const b = await tx.campaignBooking.findUnique({
     where: { id: bookingId },
-    select: { launchTo: true, items: { where: { status: "pending", targetType: "creator_asset" }, select: { id: true, targetId: true, rateCardId: true, accountName: true } } },
+    select: { launchTo: true, items: { where: { status: "pending", targetType: "creator_asset" }, select: { id: true, targetId: true, rateCardId: true, accountName: true, creatorPayoutPaise: true } } },
   });
   const offered: OfferedItem[] = [];
   const toStaff: Array<{ itemId: string; accountName: string; reason: string }> = [];
@@ -103,7 +103,8 @@ export async function offerCreatorItems(tx: Tx, bookingId: string, now = new Dat
       data: {
         status: "awaiting_creator",
         creatorId: a.creatorId,
-        creatorPayoutPaise: payoutOf.get(item.rateCardId) ?? null,
+        // Frozen at checkout with the client price; the card is only a fallback for older rows.
+        creatorPayoutPaise: item.creatorPayoutPaise ?? payoutOf.get(item.rateCardId) ?? null,
         creatorOfferedAt: now,
         creatorRespondBy: respondBy,
         creatorDecidedAt: null,

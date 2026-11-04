@@ -36,7 +36,7 @@ export async function checkout(clientId: string, bookingId: string) {
   const mode = razorpayConfig.paymentMode();
   const b = await prisma.campaignBooking.findFirst({
     where: { id: bookingId, clientId },
-    select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true } } },
+    select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, targetType: true, pricePaise: true, platform: true, format: true, accountName: true } } },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
   if (!["draft", "awaiting_payment"].includes(b.status)) {
@@ -61,7 +61,10 @@ export async function checkout(clientId: string, bookingId: string) {
     const card = cardById.get(i.rateCardId);
     const p = card ? priceFor(card, b) : null;
     if (!p) throw new AppError(409, "RATE_CARD_UNAVAILABLE", `${i.accountName} is no longer available for this campaign. Remove it and try again.`);
-    return { ...i, pricePaise: p.total, basePaise: p.base, audioAddonPaise: p.addon };
+    // Creator pages: the creator's payout is frozen at the same instant as the client price, so a
+    // later change of the creator's own price can never move what this booking pays out.
+    const creatorPayoutPaise = i.targetType === "creator_asset" ? card!.creatorPayoutPaise ?? null : null;
+    return { ...i, pricePaise: p.total, basePaise: p.base, audioAddonPaise: p.addon, creatorPayoutPaise };
   });
   if (computeTotal(priced) < 100) throw new AppError(400, "AMOUNT_TOO_LOW", "The total is below the minimum payment.");
   // GST is charged on top of the rate-card prices; the client pays the GST-inclusive total.
@@ -87,7 +90,7 @@ export async function checkout(clientId: string, bookingId: string) {
 
   if (mode === "offline") {
     await prisma.$transaction(async (tx) => {
-      for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise } });
+      for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise, creatorPayoutPaise: i.creatorPayoutPaise } });
       // No payment row and no paidAt: the webhook is the only writer of paidAt, and every
       // "was this paid online?" decision (refunds, email wording) keys on it.
       await transitionBooking(b.id, ["draft", "awaiting_payment"], "paid_pending_review", { type: "client", id: clientId }, {
@@ -105,7 +108,7 @@ export async function checkout(clientId: string, bookingId: string) {
   if (order.amount !== total || order.currency !== "INR") throw new AppError(502, "PAYMENT_ERROR", "Payment setup failed. Please try again.");
 
   await prisma.$transaction(async (tx) => {
-    for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise } });
+    for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise, creatorPayoutPaise: i.creatorPayoutPaise } });
     await tx.campaignPayment.create({ data: { bookingId: b.id, razorpayOrderId: order.id, amountPaise: total } });
     if (b.status === "draft") {
       await transitionBooking(b.id, ["draft"], "awaiting_payment", { type: "client", id: clientId }, {

@@ -15,7 +15,7 @@
 #      lock on them;
 #   4. schema-only backup;
 #   5. applies the DDL — one transaction, lock_timeout 3s, ADD COLUMN / CREATE INDEX IF NOT EXISTS;
-#   6. verifies the 7 columns and the index;
+#   6. verifies the 7 columns, the index, the creator_page_prices table, its 2 indexes and its FK;
 #   7. drift check (inspect only, never applied): no campaign_* statement may remain between the
 #      database and the PR's schema.prisma.
 # It restarts nothing and changes no file in /opt/dashmani-platform. Safe to re-run. Exit code 0 =
@@ -72,12 +72,19 @@ echo "    connected as: $ROLE  (database $(q "SELECT current_database()"), $(q "
 echo "==> 3. Pre-flight (read-only)"
 HEALTH_BEFORE=$(health)
 echo "    API health before: $HEALTH_BEFORE"
-for t in campaign_rate_cards campaign_booking_items; do
+for t in campaign_rate_cards campaign_booking_items creator_assets; do
   OWNER=$(q "SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='$t'")
   [ -n "$OWNER" ] || fail "table $t does not exist — scripts/campaign-booking-ddl.sql has to be applied first"
   [ "$OWNER" = "$ROLE" ] || fail "table $t is owned by '$OWNER', not '$ROLE' — fix ownership first"
 done
-echo "    campaign_rate_cards, campaign_booking_items: present, owned by $ROLE"
+echo "    campaign_rate_cards, campaign_booking_items, creator_assets: present, owned by $ROLE"
+EXPECTED_PRICE_COLS="active,asset_id,audio_addon_paise,created_at,creator_price_paise,creator_updated_at,entertainment_margin_bps,format,id,margin_bps,staff_updated_at,staff_updated_by_id,updated_at"
+TABLE_BEFORE=$(q "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='creator_page_prices'")
+if [ "$TABLE_BEFORE" = "1" ]; then
+  # IF NOT EXISTS silently keeps a table of a different shape, so an existing one is checked, not trusted.
+  HAVE=$(q "SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_schema='public' AND table_name='creator_page_prices'")
+  [ "$HAVE" = "$EXPECTED_PRICE_COLS" ] || fail "creator_page_prices exists with different columns ($HAVE) — investigate before applying"
+fi
 
 NEW_COLS_SQL="SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND (
   (table_name='campaign_rate_cards' AND column_name='creator_payout_paise' AND data_type='integer') OR
@@ -90,13 +97,13 @@ echo "    state: $COLS_BEFORE of 7 new columns present (re-running is a no-op fo
 
 LONG=$(q "SELECT a.pid || ' ' || coalesce(a.application_name,'') || ' ' || date_trunc('second', now() - a.xact_start) || ' ' || left(regexp_replace(coalesce(a.query,''), '\s+', ' ', 'g'), 80)
   FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-  WHERE l.relation IN ('public.campaign_rate_cards'::regclass, 'public.campaign_booking_items'::regclass)
+  WHERE l.relation IN ('public.campaign_rate_cards'::regclass, 'public.campaign_booking_items'::regclass, 'public.creator_assets'::regclass)
     AND a.pid <> pg_backend_pid() AND a.xact_start < now() - interval '5 seconds'")
 if [ -n "$LONG" ]; then
   echo "$LONG" | sed 's/^/      /'
   fail "a transaction older than 5 s holds a lock on a campaign table; wait a minute and re-run"
 fi
-echo "    no long transaction on campaign_rate_cards / campaign_booking_items"
+echo "    no long transaction on campaign_rate_cards / campaign_booking_items / creator_assets"
 
 echo "==> 4. Schema-only backup"
 pg_dump "$DBURL" --schema-only --no-owner --no-privileges --lock-wait-timeout=5s > "$WORK/pre-ddl-schema.sql" 2> "$WORK/pg_dump.err"
@@ -121,6 +128,17 @@ echo "    new columns with the expected type: $COLS (expected 7)"
 IDX=$(q "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='campaign_booking_items' AND indexname='campaign_booking_items_creator_id_status_idx'")
 echo "    index campaign_booking_items_creator_id_status_idx: $IDX (expected 1)"
 [ "$IDX" = "1" ] || fail "index missing"
+TOWNER=$(q "SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='creator_page_prices'")
+echo "    creator_page_prices owner: ${TOWNER:-missing} (expected $ROLE)"
+[ "$TOWNER" = "$ROLE" ] || fail "creator_page_prices missing or owned by the wrong role"
+HAVE=$(q "SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_schema='public' AND table_name='creator_page_prices'")
+[ "$HAVE" = "$EXPECTED_PRICE_COLS" ] || fail "creator_page_prices columns are $HAVE"
+PIDX=$(q "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='creator_page_prices' AND indexname IN ('creator_page_prices_pkey','creator_page_prices_asset_id_format_key')")
+echo "    creator_page_prices indexes: $PIDX (expected 2 incl. the primary key)"
+[ "$PIDX" = "2" ] || fail "expected 2 indexes on creator_page_prices"
+FK=$(q "SELECT count(*) FROM pg_constraint WHERE conrelid='public.creator_page_prices'::regclass AND contype='f' AND conname='creator_page_prices_asset_id_fkey' AND confdeltype='c'")
+echo "    foreign key to creator_assets (ON DELETE CASCADE): $FK (expected 1)"
+[ "$FK" = "1" ] || fail "expected the cascading foreign key on creator_page_prices"
 echo "    creator rate cards: $(q "SELECT count(*) FROM campaign_rate_cards WHERE target_type='creator_asset'") (0 until staff price a creator page)"
 
 echo "==> 7. Drift check against the PR's schema.prisma (inspect only, never applied)"
@@ -130,10 +148,10 @@ if [ -d "$APP_DIR/packages/db" ] && (cd "$APP_DIR/packages/db" && DATABASE_URL="
   STMTS=$(grep -cvE '^\s*(--.*)?$' "$WORK/drift.sql" || true)
   echo "    $STMTS drift line(s) in $WORK/drift.sql (known hand-built indexes are expected here):"
   grep -vE '^\s*(--.*)?$' "$WORK/drift.sql" | head -20 | sed 's/^/      /'
-  if grep -qiE 'campaign_' "$WORK/drift.sql"; then
-    fail "the database still differs from the PR schema on a campaign object — do NOT merge; see $WORK/drift.sql"
+  if grep -qiE 'campaign_|creator_page_prices' "$WORK/drift.sql"; then
+    fail "the database still differs from the PR schema on a campaign / creator price object — do NOT merge; see $WORK/drift.sql"
   fi
-  echo "    no campaign_* drift"
+  echo "    no campaign_* / creator_page_prices drift"
   DRIFT_RAN=1
 else
   echo "    WARNING: could not run prisma migrate diff: $(head -c 300 "$WORK/drift.err" 2>/dev/null)"

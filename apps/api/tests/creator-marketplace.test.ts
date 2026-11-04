@@ -28,6 +28,7 @@ import { encryptToken } from "../src/utils/token-crypto";
 import { runPublishTick } from "../src/services/campaign/publish.service";
 import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.service";
 import { expireCreatorOffers, respondByFor } from "../src/services/creator/creator-offers.service";
+import { creatorClientPricePaise } from "@dashmani/shared/src/validators/creator";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
 import { generateToken, generateClientToken, generateCreatorToken } from "./helpers";
 
@@ -108,11 +109,24 @@ async function seed() {
   pageId = page.id;
 }
 
-async function priceCreatorPage(over: Record<string, unknown> = {}) {
+/** The creator sets their own price (= payout) for a format. */
+async function setCreatorPrice(pricePaise: number | null, token = creatorToken, assetId = pageId) {
+  return request(app).put("/v1/creator/prices").set("Authorization", `Bearer ${token}`)
+    .send({ prices: [{ assetId, format: "post", pricePaise }] });
+}
+
+/** Staff set our margin for a format. */
+async function setMargin(over: Record<string, unknown> = {}, forCreator = creatorId) {
   return request(app)
-    .put(`/v1/admin/creators/${creatorId}/pricing`)
+    .put(`/v1/admin/creators/${forCreator}/pricing`)
     .set("Authorization", `Bearer ${adminToken}`)
-    .send({ cards: [{ assetId: pageId, format: "post", pricePaise: 500_000, creatorPayoutPaise: 300_000, category: "Food", ...over }] });
+    .send({ cards: [{ assetId: pageId, format: "post", marginBps: 5000, category: "Food", ...over }] });
+}
+
+/** Creator price ₹3,000 + our 50% margin → the client pays ₹4,500 for a post. */
+async function priceCreatorPage() {
+  expect((await setCreatorPrice(300_000)).status).toBe(200);
+  expect((await setMargin()).status).toBe(200);
 }
 
 let keySeq = 0;
@@ -141,7 +155,9 @@ async function paidBooking(opts: { launchFrom?: Date; launchTo?: Date; audio?: b
   const item = await prisma.campaignBookingItem.create({
     data: {
       bookingId: b.id, rateCardId: card.id, targetType: "creator_asset", targetId: pageId, platform: "facebook", format: "post",
-      accountName: "Asha Eats", accountHandle: "ashaeats", pricePaise: 500_000,
+      accountName: "Asha Eats", accountHandle: "ashaeats", pricePaise: 450_000,
+      // Frozen at checkout with the client price (payment.service), as a real checkout does.
+      creatorPayoutPaise: 300_000,
     },
   });
   return { bookingId: b.id, itemId: item.id, cardId: card.id };
@@ -174,40 +190,77 @@ describe("creator marketplace", () => {
 
   // ── Pricing ────────────────────────────────────────────────────────────────────────────────
 
-  describe("staff pricing", () => {
-    it("stores a creator_asset rate card with the payout, and lists it back", async () => {
-      const res = await priceCreatorPage();
-      expect(res.status).toBe(200);
+  describe("pricing: the creator's price + our margin", () => {
+    it("derives the client card from the creator's price and the margin; payout = the creator's price", async () => {
+      await priceCreatorPage();
+      expect((await setMargin({ entertainmentMarginBps: 2000, category: "Food" })).status).toBe(200);
       const card = await prisma.campaignRateCard.findFirstOrThrow({ where: { targetType: "creator_asset", targetId: pageId } });
-      expect(card).toMatchObject({ platform: "facebook", format: "post", pricePaise: 500_000, creatorPayoutPaise: 300_000, category: "Food" });
+      expect(card).toMatchObject({ platform: "facebook", format: "post", active: true, pricePaise: 450_000, entertainmentPricePaise: 360_000, creatorPayoutPaise: 300_000, category: "Food" });
       const get = await request(app).get(`/v1/admin/creators/${creatorId}/pricing`).set("Authorization", `Bearer ${adminToken}`);
       expect(get.status).toBe(200);
-      expect(get.body.data[0]).toMatchObject({ assetId: pageId, listed: true, cards: [expect.objectContaining({ creatorPayoutPaise: 300_000 })] });
+      expect(get.body.data[0]).toMatchObject({ assetId: pageId, listed: true });
+      expect(get.body.data[0].formats.find((f: { format: string }) => f.format === "post")).toMatchObject({
+        creatorPricePaise: 300_000, marginBps: 5000, clientPricePaise: 450_000, entertainmentClientPricePaise: 360_000,
+      });
     });
 
-    it("refuses a payout above the client price, and a page of another creator", async () => {
-      expect((await priceCreatorPage({ creatorPayoutPaise: 600_000 })).status).toBe(400);
-      const other = await request(app)
-        .put(`/v1/admin/creators/${otherCreatorId}/pricing`)
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ cards: [{ assetId: pageId, format: "post", pricePaise: 500_000 }] });
-      expect(other.status).toBe(404);
-      expect(await prisma.campaignRateCard.count()).toBe(0);
+    it("rounds the client price UP to a whole rupee", () => {
+      expect(creatorClientPricePaise(123_456, 2500)).toBe(154_400);
+      expect(creatorClientPricePaise(100_000, 0)).toBe(100_000);
+      expect(creatorClientPricePaise(99_950, 1)).toBe(100_000);
     });
 
-    it("is staff-only: a client or creator token is refused", async () => {
+    it("is listed only once BOTH the creator's price and our margin are set", async () => {
+      expect((await setCreatorPrice(300_000)).status).toBe(200);
+      expect(await prisma.campaignRateCard.count({ where: { active: true } })).toBe(0);
+      expect((await setMargin()).status).toBe(200);
+      expect(await prisma.campaignRateCard.count({ where: { active: true } })).toBe(1);
+      // The creator withdraws the format → the card switches off (kept: bookings name it).
+      expect((await setCreatorPrice(null)).status).toBe(200);
+      expect(await prisma.campaignRateCard.count({ where: { active: true } })).toBe(0);
+      expect(await prisma.campaignRateCard.count()).toBe(1);
+      // Staff withdrawing the margin does the same.
+      await setCreatorPrice(300_000);
+      await setMargin({ marginBps: null });
+      expect(await prisma.campaignRateCard.count({ where: { active: true } })).toBe(0);
+    });
+
+    it("a creator price change moves NEW bookings' client price automatically", async () => {
+      await priceCreatorPage();
+      await setCreatorPrice(400_000);
+      const card = await prisma.campaignRateCard.findFirstOrThrow({ where: { targetType: "creator_asset" } });
+      expect(card).toMatchObject({ pricePaise: 600_000, creatorPayoutPaise: 400_000, active: true });
+    });
+
+    it("the creator sees their own price only — never our margin or the client price", async () => {
+      await priceCreatorPage();
+      const res = await asCreator().get("/creator/prices");
+      expect(res.status).toBe(200);
+      expect(res.body.data[0].prices.find((p: { format: string }) => p.format === "post")).toMatchObject({ pricePaise: 300_000 });
+      const body = JSON.stringify(res.body);
+      expect(body).not.toMatch(/margin/i);
+      expect(body).not.toContain("450000");
+    });
+
+    it("each side can only price its own pages; staff can't set the payout", async () => {
+      expect((await setCreatorPrice(300_000, otherCreatorToken)).status).toBe(404);
+      expect((await setMargin({}, otherCreatorId)).status).toBe(404);
+      await setCreatorPrice(300_000);
+      // A payout or client price smuggled into the staff request is ignored (not in the schema).
+      await setMargin({ creatorPayoutPaise: 1, creatorPricePaise: 1, pricePaise: 1 });
+      const card = await prisma.campaignRateCard.findFirstOrThrow({ where: { targetType: "creator_asset" } });
+      expect(card).toMatchObject({ pricePaise: 450_000, creatorPayoutPaise: 300_000 });
+      await prisma.creator.update({ where: { id: creatorId }, data: { status: "suspended" } });
+      expect((await setCreatorPrice(500_000)).status).toBe(403);
+    });
+
+    it("is staff-only: a client or creator token is refused on the margin endpoint", async () => {
       const asClient = await request(app).get(`/v1/admin/creators/${creatorId}/pricing`).set("Authorization", `Bearer ${clientToken}`);
       const asCreatorRes = await request(app).get(`/v1/admin/creators/${creatorId}/pricing`).set("Authorization", `Bearer ${creatorToken}`);
       expect(asClient.status).toBeGreaterThanOrEqual(401);
       expect(asClient.status).toBeLessThan(404);
       expect(asCreatorRes.status).toBeGreaterThanOrEqual(401);
       expect(asCreatorRes.status).toBeLessThan(404);
-    });
-
-    it("null price deletes the card", async () => {
-      await priceCreatorPage();
-      await priceCreatorPage({ pricePaise: null });
-      expect(await prisma.campaignRateCard.count()).toBe(0);
     });
   });
 
@@ -226,7 +279,7 @@ describe("creator marketplace", () => {
       const rows = await catalogue();
       const row = rows.find((r) => r.targetId === pageId)!;
       expect(row).toMatchObject({ targetType: "creator_asset", source: "creator", platform: "facebook", name: "Asha Eats", followers: 42_000 });
-      expect(row.offers).toEqual([expect.objectContaining({ format: "post", pricePaise: 500_000 })]);
+      expect(row.offers).toEqual([expect.objectContaining({ format: "post", pricePaise: 450_000 })]);
       expect(JSON.stringify(rows)).not.toMatch(/payout/i);
     });
 
@@ -251,7 +304,7 @@ describe("creator marketplace", () => {
       const ok = await request(app).put(`/v1/client/campaigns/${b.id}/items`).set("Authorization", `Bearer ${clientToken}`).send({ rateCardIds: [card.id] });
       expect(ok.status).toBe(200);
       const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: b.id } });
-      expect(item).toMatchObject({ targetType: "creator_asset", targetId: pageId, pricePaise: 500_000, creatorId: null });
+      expect(item).toMatchObject({ targetType: "creator_asset", targetId: pageId, pricePaise: 450_000, creatorId: null });
       expect(JSON.stringify(ok.body)).not.toMatch(/payout/i);
 
       await prisma.creatorAsset.update({ where: { id: pageId }, data: { enabled: false } });
@@ -271,9 +324,37 @@ describe("creator marketplace", () => {
       expect(item).toMatchObject({ status: "awaiting_creator", creatorId, creatorPayoutPaise: 300_000, nextAttemptAt: null });
       expect(item.creatorRespondBy!.getTime()).toBeGreaterThan(Date.now() + 70 * 3600_000);
       expect(vi.mocked(sendEmail).mock.calls.some(([m]) => /paid post/i.test(m.subject))).toBe(true);
-      // A later payout change does not move an offer already made.
-      await priceCreatorPage({ creatorPayoutPaise: 100_000 });
+      // The creator raising their price later does not move a post already booked and offered.
+      await setCreatorPrice(800_000);
       expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } })).creatorPayoutPaise).toBe(300_000);
+    });
+
+    it("checkout freezes the payout with the client price; a later creator price change moves neither", async () => {
+      await priceCreatorPage();
+      const card = await prisma.campaignRateCard.findFirstOrThrow({ where: { targetType: "creator_asset" } });
+      const b = await prisma.campaignBooking.create({
+        data: { clientId, name: "Fest", brand: "Brand Q", status: "draft", format: "post", caption: "Hi", launchFrom: new Date("2099-01-01T00:00:00Z"), launchTo: new Date("2099-01-02T00:00:00Z") },
+      });
+      keySeq++;
+      await prisma.campaignMedia.create({
+        data: {
+          clientId, bookingId: b.id, position: 0, kind: "image", role: "creative", originalName: "f.jpg", bytes: 10n,
+          storageKey: `mkco${keySeq}-${Date.now()}`, ext: "jpg", uploadStatus: "complete", chunkSize: 1, totalChunks: 1,
+          renderStatus: "done", renderKey: `mkcor${keySeq}-${Date.now()}`,
+        },
+      });
+      expect((await request(app).put(`/v1/client/campaigns/${b.id}/items`).set("Authorization", `Bearer ${clientToken}`).send({ rateCardIds: [card.id] })).status).toBe(200);
+      const co = await request(app).post(`/v1/client/campaigns/${b.id}/checkout`).set("Authorization", `Bearer ${clientToken}`);
+      expect(co.status).toBe(200);
+      expect(JSON.stringify(co.body)).not.toMatch(/payout/i);
+      const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: b.id } });
+      expect(item).toMatchObject({ pricePaise: 450_000, creatorPayoutPaise: 300_000 });
+
+      await setCreatorPrice(900_000);
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: b.id } })).status).toBe("paid_pending_review");
+      expect((await approve(b.id)).status).toBe(200);
+      const offered = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } });
+      expect(offered).toMatchObject({ status: "awaiting_creator", pricePaise: 450_000, creatorPayoutPaise: 300_000 });
     });
 
     it("a page switched off before approval goes to staff instead of being offered", async () => {
@@ -302,7 +383,7 @@ describe("creator marketplace", () => {
       const body = JSON.stringify([list.body, one.body]);
       expect(body).not.toContain("Secret Client Pvt");
       expect(body).not.toContain("cara-");
-      expect(body).not.toContain("500000");
+      expect(body).not.toContain("450000");
       expect(body).not.toMatch(/Enc"|TOKEN/);
       // Another creator cannot see it.
       expect((await asCreator(otherCreatorToken).get(`/creator/offers/${itemId}`)).status).toBe(404);

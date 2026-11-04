@@ -6,9 +6,11 @@ import {
   creatorChangePasswordSchema,
   creatorOfferDeclineSchema,
   creatorOfferPostedSchema,
+  creatorOwnPricesSchema,
 } from "@dashmani/shared/src/validators/creator";
 import * as creatorSelf from "../services/creator/creator-self.service";
 import * as offers from "../services/creator/creator-offers.service";
+import * as pricing from "../services/creator/creator-pricing.service";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 
@@ -67,6 +69,21 @@ router.delete(
   "/creator/me",
   ...signedIn,
   asyncHandler(async (req: Request, res: Response) => success(res, await creatorSelf.closeCreatorAccount(creatorOf(req).id))),
+);
+
+// ── Marketplace (Phase C): the creator's own price per page and format (= their payout) ─────
+router.get(
+  "/creator/prices",
+  ...signedIn,
+  asyncHandler(async (req: Request, res: Response) => success(res, await pricing.getOwnPrices(creatorOf(req).id))),
+);
+
+router.put(
+  "/creator/prices",
+  ...signedIn,
+  requireActiveCreator,
+  validate(creatorOwnPricesSchema),
+  asyncHandler(async (req: Request, res: Response) => success(res, await pricing.setOwnPrices(creatorOf(req).id, req.body))),
 );
 
 // ── Marketplace (Phase B): booked posts offered to this creator ──────────────────────────────

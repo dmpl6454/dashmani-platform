@@ -483,6 +483,7 @@ model Client {
   salesRefunds     SalesRefund[]
   salesRecurring   SalesRecurringInvoice[]
   pipelineProjects PipelineProject[]
+  // smart-invoicing: tally (PR 2)
 
   @@map("clients")
 }
@@ -3228,6 +3229,7 @@ model SalesInvoice {
   @@index([convertedFromId])
   @@index([recurringId])
   @@index([companyKey])
+  // smart-invoicing: import (PR 3)
   @@map("sales_invoices")
 }
 
@@ -3279,6 +3281,9 @@ model SalesPayment {
 
   @@index([clientId, paidOn])
   @@index([companyKey])
+  // smart-invoicing: import (PR 3)
+
+  // smart-invoicing: bank (PR 4)
   @@map("sales_payments")
 }
 
@@ -3483,3 +3488,11 @@ model SalesRecurringInvoice {
   @@index([companyKey])
   @@map("sales_recurring_invoices")
 }
+
+// ─── smart-invoicing: accounts (PR 1) ───
+
+// ─── smart-invoicing: tally (PR 2) ───
+
+// ─── smart-invoicing: import (PR 3) ───
+
+// ─── smart-invoicing: bank (PR 4) ───

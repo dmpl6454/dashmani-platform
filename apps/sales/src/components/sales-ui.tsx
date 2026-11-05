@@ -46,6 +46,41 @@ const STATUS_TONE: Record<string, string> = {
   posted_manual: "border-success text-success",
   manual_pending: "border-indigo-light text-indigo-light",
   queued: "border-indigo-light text-indigo-light",
+  // ── Smart invoicing (spec-00 §2.11) — every feature's keys, added once; never redefined. ──
+  // Tally
+  open: "border-attention text-attention",
+  pushing: "border-attention text-attention",
+  partial: "border-attention text-attention",
+  unknown: "border-attention text-attention",
+  changed: "border-attention text-attention",
+  pushed: "border-success text-success",
+  synced: "border-success text-success",
+  adopted: "border-success text-success",
+  sending: "border-indigo-light text-indigo-light",
+  blocked: "border-danger text-danger",
+  discarded: "border-border text-ink-3",
+  superseded: "border-border text-ink-3",
+  unchanged: "border-border text-ink-3",
+  // Import (labels "left out" / "already in" go through StatusPill's label prop)
+  applying: "border-indigo-light text-indigo-light",
+  applied: "border-success text-success",
+  ready: "border-success text-success",
+  imported: "border-success text-success",
+  warning: "border-attention text-attention",
+  error: "border-danger text-danger",
+  undone: "border-border text-ink-3",
+  excluded: "border-border text-ink-3",
+  duplicate: "border-border text-ink-3",
+  // Bank
+  unmatched: "border-attention text-attention",
+  partly_matched: "border-attention text-attention",
+  suggested: "border-indigo-light text-indigo-light",
+  matched: "border-success text-success",
+  ignored: "border-border text-ink-3",
+  // Accounts
+  not_filed: "border-attention text-attention",
+  filed: "border-success text-success",
+  running: "border-indigo-light text-indigo-light",
 };
 
 export function StatusPill({ status, label }: { status: string; label?: string }) {

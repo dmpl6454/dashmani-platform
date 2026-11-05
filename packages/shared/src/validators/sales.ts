@@ -379,3 +379,11 @@ export const creditNoteCreateSchema = z.object({
   issueDate: day.optional(),
 });
 export type CreditNoteCreateInput = z.infer<typeof creditNoteCreateSchema>;
+
+// ─── smart-invoicing: accounts (PR 1) ───
+
+// ─── smart-invoicing: tally (PR 2) ───
+
+// ─── smart-invoicing: import (PR 3) ───
+
+// ─── smart-invoicing: bank (PR 4) ───

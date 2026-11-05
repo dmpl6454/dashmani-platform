@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import { prisma } from "@dashmani/db";
-import { documentNumber, financialYear, todayIST } from "@dashmani/shared";
+import { documentNumber, financialYear, seriesSerial, todayIST } from "@dashmani/shared";
 import app from "../src/app";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
 
@@ -19,6 +19,22 @@ const SELLER = {
   legalName: "Digital Sukoon Private Limited", gstin: "27AAKCD3352K1ZF", pan: "AAKCD3352K", addressLine1: "702, Parinee I, Andheri West",
   city: "Mumbai", state: "Maharashtra", stateCode: "27", pincode: "400053", invoicePrefix: "INV", serialDigits: 4, creditNotePrefix: "CN", branches: [HARYANA],
 };
+
+// T-08 (spec-import §8, moved to PR 0 by spec-00 §2.10): pure, no database.
+describe("seriesSerial — a typed number is a series' own only in its exact format", () => {
+  it("reads the serial only when prefix, financial year AND digit count all match", () => {
+    expect(seriesSerial("INV/26-27/060", "INV", "2026-27", 3)).toBe(60);
+    expect(seriesSerial("INV/26-27/060", "INV", "2026-27", 4)).toBeNull();
+    expect(seriesSerial("INV/26-27/0016", "INV", "2026-27", 4)).toBe(16);
+    expect(seriesSerial("INV/26-27/0016", "INV", "2026-27", 3)).toBeNull();
+    expect(seriesSerial("INV/26-27/10000", "INV", "2026-27", 4)).toBe(10000);
+    expect(seriesSerial("INV/25-26/0016", "INV", "2026-27", 4)).toBeNull();
+    expect(seriesSerial(" inv/26-27/0016 ", "INV", "2026-27", 4)).toBe(16);
+    expect(seriesSerial("DSHR/26-27/0016", "INV", "2026-27", 4)).toBeNull();
+    expect(seriesSerial("INV/26-27/00x6", "INV", "2026-27", 4)).toBeNull();
+    expect(seriesSerial("INV/26-27/", "INV", "2026-27", 4)).toBeNull();
+  });
+});
 
 let salesToken: string;
 let adminToken: string;
@@ -71,6 +87,39 @@ describe("invoice numbers", () => {
     expect((await issue((await draft(gurugramClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 61, 3));
     // …and the Mumbai series did not move.
     expect((await issue((await draft(mumbaiClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 17, 4));
+  });
+
+  // T-30 (spec-import §8, PR 0 per spec-00 §2.10): both registrations print INV; only the digits differ.
+  it("a number typed in the OTHER registration's format never moves this registration's series", async () => {
+    await issue((await draft(mumbaiClient)).id, { number: documentNumber("INV", fy().label, 15, 4) });
+    // Gurugram's 3-digit format typed on a Mumbai draft: accepted as typed, Mumbai stays at 16.
+    const odd = await issue((await draft(mumbaiClient)).id, { number: documentNumber("INV", fy().label, 60, 3) });
+    expect(odd.status, JSON.stringify(odd.body)).toBe(200);
+    expect(odd.body.data.number).toBe(documentNumber("INV", fy().label, 60, 3));
+    expect((await issue((await draft(mumbaiClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 16, 4));
+    // Mumbai's 4-digit format typed on a Gurugram draft leaves Gurugram's series alone.
+    const odd2 = await issue((await draft(gurugramClient)).id, { number: documentNumber("INV", fy().label, 20, 4) });
+    expect(odd2.status, JSON.stringify(odd2.body)).toBe(200);
+    expect((await issue((await draft(gurugramClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 1, 3));
+  });
+
+  // PR 0 review: the series' own prefix with different zero-padding must still move the series,
+  // or the next automatic number repeats the serial (INV/26-27/16 then INV/26-27/0016).
+  it("a number in this series' prefix but padded differently still moves the series", async () => {
+    const short = `${fy().label.slice(2, 4)}-${fy().label.slice(5)}`;
+    const unpadded = await issue((await draft(mumbaiClient)).id, { number: `INV/${short}/16` });
+    expect(unpadded.status, JSON.stringify(unpadded.body)).toBe(200);
+    expect(unpadded.body.data.number).toBe(`INV/${short}/16`);
+    expect((await issue((await draft(mumbaiClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 17, 4));
+    // Over-padded on Mumbai (5 digits: no registration's format) moves Mumbai too.
+    expect((await issue((await draft(mumbaiClient)).id, { number: `INV/${short}/00020` })).status).toBe(200);
+    expect((await issue((await draft(mumbaiClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 21, 4));
+    // Gurugram (3 digits) with an unpadded number: not Mumbai's exact format either, so Gurugram moves.
+    expect((await issue((await draft(gurugramClient)).id, { number: `INV/${short}/7` })).status).toBe(200);
+    expect((await issue((await draft(gurugramClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 8, 3));
+    // A proforma (its own PI series, no sibling) typed unpadded.
+    expect((await issue((await draft(mumbaiClient, { kind: "proforma" })).id, { number: `PI/${short}/5` })).status).toBe(200);
+    expect((await issue((await draft(mumbaiClient, { kind: "proforma" })).id)).body.data.number).toBe(`PI/${short}/0006`);
   });
 
   it("refuses a number already used, an invalid one, and leaves the series alone for another format", async () => {

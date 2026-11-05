@@ -40,6 +40,29 @@ export function documentNumber(prefix: string, fyLabel: string, serial: number, 
 }
 
 /**
+ * The serial when `number` is exactly this series' format — documentNumber(prefix, fyLabel, serial,
+ * digits) equals it (case-insensitive) — else null. "INV/26-27/060" → 60 for digits 3, null for
+ * digits 4; "INV/26-27/10000" → 10000 for digits 4 (documentNumber grows past 10^digits).
+ * Two registrations can share a prefix (Mumbai INV 4 digits, Gurugram INV 3 digits): only the
+ * digit count tells their numbers apart, so a typed number moves a series only when it is that
+ * series' exact format. No regex over the prefix (it is staff-typed text).
+ */
+export function seriesSerial(number: string, prefix: string, fyLabel: string, digits: number): number | null {
+  const n = number.trim().toUpperCase();
+  const head = `${prefix}/${shortFy(fyLabel)}/`.toUpperCase();
+  if (!n.startsWith(head)) return null;
+  const tail = n.slice(head.length);
+  if (!tail.length || tail.length > 15) return null;
+  for (let i = 0; i < tail.length; i++) {
+    const c = tail.charCodeAt(i);
+    if (c < 48 || c > 57) return null;
+  }
+  const serial = Number(tail);
+  if (!Number.isSafeInteger(serial)) return null;
+  return documentNumber(prefix, fyLabel, serial, digits).toUpperCase() === n ? serial : null;
+}
+
+/**
  * CGST+SGST when the buyer is in the seller's state, IGST otherwise, no GST when the buyer is
  * outside India (export of services — the document says so). Unknown buyer state → inter, the
  * conservative default that never under-collects; staff can override on the document.

@@ -1,5 +1,5 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, findRegistration, registrationChoice, type SellerRegistration, GST_STATE_CODES, financialYear, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
+import { BOOKING_STATUS_LABELS, type BookingStatus, companyScope, SALES_COMPANIES, type CompanyKey, computeTotals, findRegistration, registrationChoice, sellerRegistrations, type SellerRegistration, GST_STATE_CODES, financialYear, lineAmountPaise, rupeesInWords, TAX_MODE_LABELS, taxModeFor, todayIST, type InvoiceUpsertInput, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { assertMoneyFits, claimManualNumber, peekDocumentNumber, dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { assertSameCompany, resolveDocumentTax, type ResolvedTax } from "./documents.service";
@@ -547,8 +547,12 @@ export async function issueInvoice(
     const series = inv.kind === "proforma"
       ? { kind: "proforma" as const, prefix: SALES_COMPANIES[company].proformaPrefix, scope: companyScope(company, null), digits: 4 }
       : { kind: "invoice" as const, prefix: reg.invoicePrefix, scope: companyScope(company, reg.scope), digits: reg.serialDigits };
+    // The company's other registrations printing the same prefix (Settings makes their digit counts differ).
+    const siblingDigits = series.kind === "invoice"
+      ? sellerRegistrations(seller).filter((r) => r.scope !== reg.scope && r.invoicePrefix.toUpperCase() === reg.invoicePrefix.toUpperCase()).map((r) => r.serialDigits)
+      : [];
     const number = input.number
-      ? await claimManualNumber(tx, series.kind, series.prefix, issueDate, series.scope, input.number)
+      ? await claimManualNumber(tx, series.kind, series.prefix, issueDate, series.scope, input.number, series.digits, siblingDigits)
       : await nextDocumentNumber(tx, series.kind, series.prefix, issueDate, series.scope, series.digits);
     // Numbers are unique across every invoice; say so plainly instead of failing on the index.
     const taken = await tx.salesInvoice.findFirst({ where: { number: { equals: number, mode: "insensitive" }, id: { not: id } }, select: { id: true } });

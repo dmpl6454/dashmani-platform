@@ -483,6 +483,14 @@ await journey("client-statement-and-search", async () => {
   check("invoice search narrows to the client", rows > 0 && rows < 10, rows);
 });
 
+// smart-invoicing: accounts steps
+
+// smart-invoicing: tally steps
+
+// smart-invoicing: import steps
+
+// smart-invoicing: bank steps
+
 await journey("desktop-screens", async () => {
   for (const [n, p] of [["dashboard", "/dashboard"], ["inventory", "/inventory"], ["clients", "/clients"], ["client", `/clients/view?id=${ids.client}`], ["quotes", "/quotes"], ["quote", `/quotes/view?id=${ids.quote}`], ["order", `/orders/view?id=${ids.order}`], ["invoices", "/invoices"], ["invoice", `/invoices/view?id=${ids.invoice}`], ["invoice-ka", `/invoices/view?id=${ids.kaInv}`], ["payments", "/payments"], ["receipt", `/payments/view?id=${ids.receipt}`], ["bookings", "/bookings"], ["quote-edit", `/quotes/edit?clientId=${ids.client}`], ["pay-record", `/payments/record?clientId=${ids.client}`]]) {
     await go(p); await ready(); await page.waitForTimeout(300); await shot(`desk-${n}`);
@@ -493,6 +501,13 @@ await journey("desktop-screens", async () => {
 await journey("phone-pass", async () => {
   await page.setViewportSize({ width: 390, height: 844 });
   const pages = ["/dashboard", "/inventory", "/clients", `/clients/view?id=${ids.client}`, "/quotes", `/quotes/view?id=${ids.quote}`, "/orders", `/orders/view?id=${ids.order}`, "/invoices", `/invoices/view?id=${ids.invoice}`, "/payments", `/payments/view?id=${ids.receipt}`, "/bookings", "/settings", `/quotes/edit?clientId=${ids.client}`, `/orders/edit?clientId=${ids.client}`, `/invoices/edit?clientId=${ids.client}`, `/payments/record?clientId=${ids.client}`, `/payments/record?clientId=${ids.ka}`, `/invoices/view?id=${ids.kaInv}`];
+  pages.push(/* accounts (PR 1) */);
+
+  pages.push(/* tally (PR 2) */);
+
+  pages.push(/* import (PR 3) */);
+
+  pages.push(/* bank (PR 4) */);
   for (const p of pages) { await go(p); await ready(); await page.waitForTimeout(300); await overflowCheck(p); await shot(`phone-${p.replace(/[^a-z]+/g, "-")}`); }
   check("no page scrolls sideways at 390 px", out.overflow.length === 0, JSON.stringify(out.overflow));
   await shot("phone-dashboard");

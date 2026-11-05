@@ -74,3 +74,11 @@ export const useRecurringList = (f: { clientId?: string; status?: string } = {})
   return useSWR<Recurring[]>(`/sales/recurring${qs(f.clientId ? f : { ...f, company })}`, fetcher, opts);
 };
 export const useRecurring = (id: string | null) => useSWR<Recurring>(id ? `/sales/recurring/${id}` : null, fetcher, opts);
+
+// ─── smart-invoicing: accounts (PR 1) ───
+
+// ─── smart-invoicing: tally (PR 2) ───
+
+// ─── smart-invoicing: import (PR 3) ───
+
+// ─── smart-invoicing: bank (PR 4) ───

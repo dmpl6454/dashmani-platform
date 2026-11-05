@@ -30,6 +30,10 @@ import pipelineRoutes from "./pipeline.routes";
 import campaignClientRoutes from "./campaign-client.routes";
 import campaignAdminRoutes from "./campaign-admin.routes";
 import salesRoutes from "./sales.routes";
+import salesAccountsRoutes from "./sales-accounts.routes";
+import salesTallyRoutes from "./sales-tally.routes";
+import salesImportRoutes from "./sales-import.routes";
+import salesBankRoutes from "./sales-bank.routes";
 import creatorAuthRoutes from "./creator-auth.routes";
 import creatorRoutes from "./creator.routes";
 import creatorMetaRoutes from "./creator-meta.routes";
@@ -73,6 +77,12 @@ router.use(overviewRoutes);
 router.use(campaignAdminRoutes);
 // Sales portal (sales.digitalsukoon.com): /sales/* — staff only, gated on the `sales` permission.
 router.use(salesRoutes);
+// Smart invoicing feature routers (spec-00 §2.1), in PR order. Each owns its own /sales/<feature>/
+// paths; they start empty and are filled by their feature PRs.
+router.use(salesAccountsRoutes);
+router.use(salesTallyRoutes);
+router.use(salesImportRoutes);
+router.use(salesBankRoutes);
 // Creator portal (creators.digitalsukoon.com): /creator/* (own auth, dark unless CREATORS_ENABLED=1),
 // the staff review queue /admin/creators* (before any parameterised /admin/:x router), and Meta's
 // app-wide deauthorize / data-deletion callbacks.

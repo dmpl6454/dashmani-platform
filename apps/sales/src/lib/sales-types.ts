@@ -75,10 +75,12 @@ export interface Invoice extends DocumentTotals {
   creditNotes: Array<{ id: string; number: string; status: string; issueDate: string | null; reason: string; totalPaise: number; taxablePaise: number; einvoice: EInvoiceBrief | null }>;
   /** The IRP registration, when this document needs one. */
   einvoice: (EInvoiceBrief & { id: string; docType: string; gstin: string; attempts: number }) | null;
+  // smart-invoicing: import (PR 3)
 }
 export interface InvoiceRow extends DocumentTotals {
   id: string; companyKey: string; number: string | null; kind: string; status: string; derivedStatus: DerivedInvoiceStatus; issueDate: string | null; dueDate: string | null;
   paidPaise: number; tdsPaise: number; creditedPaise: number; balancePaise: number; clientId: string; client?: { id: string; companyName: string; billingProfile?: { legalName: string } | null };
+  // smart-invoicing: import (PR 3)
 }
 export interface Refund {
   id: string; number: string; paymentId: string; amountPaise: number; mode: string; reference: string | null; refundedOn: string | null; notes: string | null;
@@ -92,6 +94,9 @@ export interface Payment {
   refunds: Refund[];
   /** Computed by the API: on invoices, refunded, and what is left to apply or refund. */
   allocatedPaise: number; allocatedTdsPaise: number; refundedPaise: number; unallocatedPaise: number; unallocatedTdsPaise: number;
+  // smart-invoicing: import (PR 3)
+
+  // smart-invoicing: bank (PR 4)
 }
 export interface CreditNote { id: string; number: string; invoiceId: string; status: string; issueDate: string | null; reason: string; taxablePaise: number; totalPaise: number; invoice?: { id: string; number: string | null }; client?: { id: string; companyName: string } }
 export interface Statement { client: ClientRow; invoices: InvoiceRow[]; payments: Payment[]; creditNotes: CreditNote[]; totals: { invoicedPaise: number; collectedPaise: number; tdsPaise: number; creditedPaise: number; outstandingPaise: number; overduePaise: number; refundedPaise: number; unappliedPaise: number } }
@@ -145,3 +150,11 @@ export interface Recurring {
   lastInvoice?: { id: string; number: string | null; status: string; totalPaise: number } | null;
   invoices?: Array<{ id: string; number: string | null; kind: string; status: string; issueDate: string | null; totalPaise: number; notes: string | null }>;
 }
+
+// ─── smart-invoicing: accounts (PR 1) ───
+
+// ─── smart-invoicing: tally (PR 2) ───
+
+// ─── smart-invoicing: import (PR 3) ───
+
+// ─── smart-invoicing: bank (PR 4) ───

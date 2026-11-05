@@ -287,6 +287,9 @@ describe("sales API", () => {
 
     const issued = (await request(app).post(`/v1/sales/invoices/${draft.id}/issue`).set(auth(salesToken)).send({ issueDate: "2026-10-20" })).body.data;
     expect(issued).toMatchObject({ number: documentNumber("DS", financialYear("2026-10-20").label, 1), status: "issued", issueDate: "2026-10-20", dueDate: "2026-11-04", balancePaise: 13_216_000 });
+    // The default terms put the due date in the past once the calendar passes 4 Nov 2026; push it
+    // out so the "partially paid" checks below do not turn into "overdue" with the date.
+    await prisma.salesInvoice.update({ where: { id: draft.id }, data: { dueDate: new Date("2099-12-31T00:00:00.000Z") } });
     expect(issued.amountInWords).toBe("Rupees One Lakh Thirty Two Thousand One Hundred Sixty Only");
     expect(issued.sellerSnapshot.gstin).toBe("27AAACD1234E1Z5");
     expect(issued.buyerSnapshot).toMatchObject({ legalName: "Filmy Brands Private Limited", gstin: "27AABCU9603R1ZX" });

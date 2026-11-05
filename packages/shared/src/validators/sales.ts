@@ -461,6 +461,176 @@ export type ConfirmationResponseInput = z.infer<typeof confirmationResponseSchem
 // smart-invoicing: reconcile BRS (PR 6)
 
 // ─── smart-invoicing: tally (PR 2) ───
+// Tally XML export and Send to Tally (spec-tally.md §3.2). Settings live under their own
+// system_settings keys (sales.tally / sales.tally.dmpl) — never inside the seller profile, which
+// is frozen into every issued invoice.
+
+/** Whole days from a to b (YYYY-MM-DD), UTC arithmetic: daysBetween("2026-11-01", "2026-11-30") = 29. Private: validators/campaign.ts already exports a daysBetween through the barrel. */
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00.000Z`) - Date.parse(`${a}T00:00:00.000Z`)) / 86_400_000);
+
+export const TALLY_RELEASES = ["prime3", "legacy"] as const; // TallyPrime 3.0+ | ERP 9 / TallyPrime 1–2
+export const TALLY_MODES = ["new_only", "everything"] as const;
+export const TALLY_DOC_TYPES = ["invoice", "credit_note", "receipt", "refund"] as const;
+export type TallyRelease = (typeof TALLY_RELEASES)[number];
+export type TallyMode = (typeof TALLY_MODES)[number];
+export type TallyDocType = (typeof TALLY_DOC_TYPES)[number];
+
+/** A Tally ledger / group / voucher-type / registration name: trimmed, single-spaced, 1–100 chars, no control chars. */
+const tallyName = safeString
+  .pipe(z.string().min(1, "Enter the name exactly as in Tally").max(100, "Tally names are at most 100 characters"))
+  .transform((s) => s.replace(/\s+/g, " "))
+  .refine((s) => !/[\u0000-\u001f\u007f]/.test(s), "Remove control characters");
+const tallyCompanyName = safeString.pipe(z.string().min(2, "Enter the company name exactly as in Tally").max(120));
+
+export const tallyRegistrationSchema = z.object({
+  gstin: gstinSchema,
+  tallyCompany: tallyCompanyName, // SVCURRENTCOMPANY for this registration's documents
+  registrationName: tallyName.nullable().default(null), // prime3, 2+ registrations in one Tally company
+  salesVoucherType: tallyName.nullable().default(null), // null = voucherTypes.sales
+  creditNoteVoucherType: tallyName.nullable().default(null), // null = voucherTypes.creditNote
+});
+
+/** The account-ledger roles of tallySettingsSchema.ledgers, in the order the settings page shows them. */
+export const TALLY_LEDGER_ROLES = ["outputCgst", "outputSgst", "outputIgst", "roundOff", "tdsReceivable", "bank", "cash", "gateway", "other", "zeroRatedSales"] as const;
+
+export const tallySettingsSchema = z.object({
+  release: z.enum(TALLY_RELEASES).default("prime3"),
+  booksFrom: day.nullable().default(null), // REQUIRED to export: "Tally already has everything before"
+  registrations: z.array(tallyRegistrationSchema).max(11).default([]),
+  gstr1Filing: z.enum(["monthly", "quarterly"]).default("monthly"),
+  partyGroup: tallyName.default("Sundry Debtors"),
+  salesLedgers: z.array(z.object({
+    name: tallyName,
+    sac: z.string().trim().regex(/^\d{4,8}$/, "SAC is 4–8 digits"),
+    gstRateBp: z.number().int().min(0).max(4000),
+  })).min(1, "Add at least one sales ledger").max(20)
+    .default([{ name: "Sales - Advertising Services", sac: "998365", gstRateBp: 1800 }]),
+  ledgers: z.object({
+    outputCgst: tallyName.default("Output CGST"),
+    outputSgst: tallyName.default("Output SGST"),
+    outputIgst: tallyName.default("Output IGST"),
+    roundOff: tallyName.default("Round Off"),
+    tdsReceivable: tallyName.default("TDS Receivable"), // "{fy}" → "2026-27"
+    bank: tallyName.nullable().default(null), // bank_transfer | upi | cheque
+    cash: tallyName.default("Cash"), // cash
+    gateway: tallyName.nullable().default(null), // razorpay
+    other: tallyName.nullable().default(null), // other
+    /** Owner 2026-11-05: "No GST" invoices are SEZ / export and billed regularly. null = held back (ZERO_RATED_UNSUPPORTED). */
+    zeroRatedSales: tallyName.nullable().default(null),
+  }).default({}),
+  voucherTypes: z.object({
+    sales: tallyName.default("Sales"),
+    creditNote: tallyName.default("Credit Note"),
+    receipt: tallyName.default("Receipt"),
+    payment: tallyName.default("Payment"),
+  }).default({}),
+  createAccountLedgers: z.boolean().default(false), // also write the account ledgers into masters (new Tally company)
+  bankAllocations: z.boolean().default(true), // BANKALLOCATIONS.LIST on bank lines (C9)
+  ledgersConfirmed: z.boolean().default(false), // "These names match our Tally" — server resets on any name change
+  pushUrl: z.string().trim().max(200).url("Enter an address like http://100.101.102.103:9000").nullable().default(null),
+}).superRefine((s, ctx) => {
+  const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path, message });
+  // 1. each registration once
+  const gstins = new Set<string>();
+  s.registrations.forEach((r, i) => {
+    if (gstins.has(r.gstin)) issue(["registrations", i, "gstin"], "That GSTIN is listed twice");
+    gstins.add(r.gstin);
+  });
+  // 2. ledger names distinct across roles (case-insensitive); a sales ledger may repeat across its own rows
+  const key = (n: string) => n.toLowerCase().replace(/\s+/g, " ").trim();
+  const seen = new Map<string, { label: string; kind: string }>();
+  const take = (name: string | null, label: string, kind: string, path: (string | number)[]) => {
+    if (!name) return;
+    const k = key(name);
+    const prev = seen.get(k);
+    if (prev && !(prev.kind === "sales" && kind === "sales")) issue(path, `${prev.label} and ${label} are the same Tally ledger — use different names`);
+    else if (!prev) seen.set(k, { label, kind });
+  };
+  s.salesLedgers.forEach((l, i) => take(l.name, l.name, "sales", ["salesLedgers", i, "name"]));
+  for (const role of TALLY_LEDGER_ROLES) take(s.ledgers[role], s.ledgers[role] ?? role, role, ["ledgers", role]);
+  // 3. (sac, rate) once
+  const pairs = new Set<string>();
+  s.salesLedgers.forEach((l, i) => {
+    const p = `${l.sac}:${l.gstRateBp}`;
+    if (pairs.has(p)) issue(["salesLedgers", i, "sac"], `SAC ${l.sac} at ${l.gstRateBp / 100}% is listed twice`);
+    pairs.add(p);
+  });
+  // 4. legacy releases hold one GSTIN per company
+  if (s.release === "legacy") {
+    const names = new Set<string>();
+    s.registrations.forEach((r, i) => {
+      if (names.has(key(r.tallyCompany))) issue(["registrations", i, "tallyCompany"], "Tally ERP 9 and TallyPrime before 3.0 keep one GSTIN per company — give each registration its own Tally company");
+      names.add(key(r.tallyCompany));
+    });
+  }
+  // 5. equal company names must be equal exactly (one routing group, never two by case)
+  const exact = new Map<string, string>();
+  s.registrations.forEach((r, i) => {
+    const k = key(r.tallyCompany);
+    const prev = exact.get(k);
+    if (prev !== undefined && prev !== r.tallyCompany) issue(["registrations", i, "tallyCompany"], `Write the company name exactly as "${prev}" — Tally company names must match`);
+    else if (prev === undefined) exact.set(k, r.tallyCompany);
+  });
+});
+export type TallySettingsInput = z.infer<typeof tallySettingsSchema>;
+
+const tallyPeriodRules = <T extends z.ZodTypeAny>(schema: T) => schema
+  .refine((q: { from: string; to: string }) => q.from <= q.to, { path: ["to"], message: "The period ends before it starts" })
+  .refine((q: { from: string; to: string }) => daysBetween(q.from, q.to) <= 366, { path: ["to"], message: "Export at most one year at a time" });
+
+export const tallyPreviewQuerySchema = tallyPeriodRules(z.object({
+  company: companyKeySchema,
+  from: day,
+  to: day,
+  gstin: gstinSchema.optional(),
+  mode: z.enum(TALLY_MODES).default("new_only"),
+}));
+export type TallyPreviewQuery = z.infer<typeof tallyPreviewQuerySchema>;
+
+export const tallyRunCreateSchema = tallyPeriodRules(z.object({
+  companyKey: companyKeySchema,
+  from: day,
+  to: day,
+  gstin: gstinSchema.nullable().optional(),
+  mode: z.enum(TALLY_MODES),
+  previewHash: z.string().regex(/^[0-9a-f]{64}$/),
+  acknowledge: z.array(z.string().max(120)).max(500).default([]),
+  allowPartial: z.boolean().default(false),
+}));
+export type TallyRunCreateInput = z.infer<typeof tallyRunCreateSchema>;
+
+export const tallyRunConfirmSchema = z.object({
+  created: z.number().int().min(0),
+  altered: z.number().int().min(0).default(0),
+  cancelled: z.number().int().min(0).default(0),
+  errors: z.number().int().min(0),
+  note: safeString.pipe(z.string().min(3, "Say who imported it and when").max(500)),
+});
+export type TallyRunConfirmInput = z.infer<typeof tallyRunConfirmSchema>;
+export const tallyReasonSchema = z.object({ reason: safeString.pipe(z.string().min(3, "Give a reason").max(300)) });
+export const tallyPartyUpdateSchema = z.object({
+  ledgerName: tallyName,
+  existsInTally: z.boolean().optional(),
+  confirmRenamedInTally: z.boolean().default(false),
+});
+export type TallyPartyUpdateInput = z.infer<typeof tallyPartyUpdateSchema>;
+export const tallyPartyMatchSchema = z.object({
+  companyKey: companyKeySchema,
+  source: z.enum(["push", "xml"]),
+  xml: z.string().max(5_000_000, "That file is over 5 MB — export only the ledgers").optional(),
+}).refine((b) => b.source === "push" || !!b.xml, { path: ["xml"], message: "Attach Tally's ledger export" });
+export type TallyPartyMatchInput = z.infer<typeof tallyPartyMatchSchema>;
+export const tallyPartyApplySchema = z.object({
+  companyKey: companyKeySchema,
+  mappings: z.array(z.object({ clientId: z.string().uuid(), ledgerName: tallyName, existsInTally: z.boolean() })).min(1).max(600),
+});
+export type TallyPartyApplyInput = z.infer<typeof tallyPartyApplySchema>;
+export const tallyResolveSchema = z.object({
+  companyKey: companyKeySchema,
+  docs: z.array(z.object({ docType: z.enum(TALLY_DOC_TYPES), docId: z.string().uuid() })).min(1).max(200),
+  note: safeString.pipe(z.string().min(3).max(500)),
+});
+export type TallyResolveInput = z.infer<typeof tallyResolveSchema>;
 
 // ─── smart-invoicing: import (PR 3) ───
 

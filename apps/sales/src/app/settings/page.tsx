@@ -170,6 +170,7 @@ export default function SettingsPage() {
       {/* smart-invoicing: bank accounts card (PR 4) */}
 
       {/* smart-invoicing: tally link card (PR 2) */}
+      <a href="/tally/settings" className="card p-4 mt-4 block hover:border-indigo">Tally — company, ledger names, books-from date →</a>
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>
   );

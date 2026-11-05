@@ -112,6 +112,27 @@ export const useLedger = (clientId: string | null, from?: string, to?: string) =
 // ─── smart-invoicing: reconcile BRS (PR 6) ───
 
 // ─── smart-invoicing: tally (PR 2) ───
+import type { TallyDocStatus, TallyDocType, TallyPartyRow, TallyPreview, TallyRunRow, TallyRunView, TallySettingsView } from "./sales-types";
+// Keys are API paths, so mutate((k) => k.startsWith("/sales/tally")) refreshes all of them.
+export type TallyPreviewQuery = { company: CompanyKey; from: string; to: string; gstin?: string; mode: "new_only" | "everything" };
+export const useTallySettings = (forCompany?: CompanyKey) => {
+  const { company } = useCompany();
+  return useSWR<TallySettingsView>(`/sales/tally/settings${qs({ company: forCompany ?? company })}`, fetcher, opts);
+};
+export const useTallyPreview = (q: TallyPreviewQuery | null) =>
+  useSWR<TallyPreview>(q ? `/sales/tally/preview${qs({ company: q.company, from: q.from, to: q.to, gstin: q.gstin, mode: q.mode })}` : null, fetcher, { ...opts, dedupingInterval: 2_000, keepPreviousData: true, shouldRetryOnError: false });
+export const useTallyRuns = () => {
+  const { company } = useCompany();
+  return useSWR<TallyRunRow[]>(`/sales/tally/runs${qs({ company })}`, fetcher, opts);
+};
+export const useTallyRun = (id: string | null) =>
+  useSWR<TallyRunView>(id ? `/sales/tally/runs/${id}` : null, fetcher, { ...opts, refreshInterval: (d) => (d?.status === "pushing" || d?.status === "queued" ? 2_000 : 0) });
+export const useTallyParties = (q: string, state: string) => {
+  const { company } = useCompany();
+  return useSWR<TallyPartyRow[]>(`/sales/tally/parties${qs({ company, q: q || undefined, state })}`, fetcher, opts);
+};
+export const useTallyDoc = (docType: TallyDocType, docId: string | null) =>
+  useSWR<TallyDocStatus>(docId ? `/sales/tally/documents/${docType}/${docId}` : null, fetcher, { ...opts, shouldRetryOnError: false });
 
 // ─── smart-invoicing: import (PR 3) ───
 

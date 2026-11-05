@@ -291,11 +291,15 @@ export interface TallyDocRow {
   docType: TallyDocType; docId: string; number: string; date: string; party: string; partyAmountPaise: number; action: TallyAction;
   reason: "new" | "changed" | "resend" | "cancelled" | "needed" | "earlier_change" | null; issueIds: string[];
   lastSent: { runNo: number; at: string; action: string } | null;
+  /** a credit note's invoice, a refund's receipt */
+  parentId: string | null;
 }
 export type TallyGst = { count: number; taxablePaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number };
 export type TallyActionCounts = { create: number; alter: number; cancel: number };
 export interface TallyShouldShow {
-  gst: Array<{ gstin: string; label: string; month: string; b2b: TallyGst; b2c: TallyGst; creditNotes: TallyGst; documents: { issued: number; cancelled: number; fromNo: string | null; toNo: string | null } }>;
+  gst: Array<{ gstin: string; label: string; month: string; b2b: TallyGst; b2c: TallyGst; sezwop?: TallyGst; expwop?: TallyGst; creditNotes: TallyGst; zeroRatedCreditNotes?: TallyGst; documents: { issued: number; cancelled: number; fromNo: string | null; toNo: string | null } }>;
+  /** export / SEZ invoices are not in the file yet: they are entered in Tally by hand */
+  zeroRatedByHand?: boolean;
   tds: Array<{ fy: string; ledger: string; paise: number; receipts: number }>;
 }
 export interface TallyPreview {
@@ -322,13 +326,13 @@ export interface TallyRunView extends TallyRunRow {
   pushTarget: string | null; pushResult: { error?: string | null; synced?: number; adopted?: number; failed?: number; unknown?: number } | null;
   tallyReported: { created: number; altered: number; cancelled: number; errors: number } | null; statusNote: string | null; previewHash: string;
   items: Array<{ id: string; docType: TallyDocType; docId: string; docNumber: string; docDate: string; voucherType: string; action: string; outcome: string;
-    partyAmountPaise: number; issueCode: string | null; error: string | null; tallyVchId: string | null; attempts: number }>;
+    partyAmountPaise: number; issueCode: string | null; error: string | null; tallyVchId: string | null; attempts: number; parentId: string | null }>;
   itemsTruncated: boolean; progress: { done: number; failed: number; waiting: number; total: number } | null; stale: boolean;
   files: { masters: boolean; vouchers: boolean };
 }
 export interface TallyPartyRow { clientId: string; client: string; gstin: string | null; ledgerName: string; proposed: boolean; existsInTally: boolean; lockedAt: string | null; lastRunNo: number | null }
 export interface TallyDocStatus { state: "not_set_up" | "never" | "before_books" | "pending" | "synced" | "changed" | "failed" | "cancelled_in_tally"; runId: string | null; runNo: number | null; at: string | null; error: string | null }
-export interface TallyTestResult { reachable: true; latencyMs: number; server: string; openCompanies: string[]; missingCompanies: string[]; ledgers: Array<{ role: string; name: string; found: boolean }> }
+export interface TallyTestResult { reachable: true; latencyMs: number; server: string | null; openCompanies: string[]; missingCompanies: string[]; ledgers: Array<{ role: string; name: string; found: boolean }> }
 
 // ─── smart-invoicing: import (PR 3) ───
 

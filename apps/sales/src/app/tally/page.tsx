@@ -11,7 +11,7 @@ import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
 import { Confirm, Empty, LoadError, Loading, Money, PageHead, Stat, StatusPill, Toast } from "@/components/sales-ui";
 import { defaultPeriod, TallyPeriod, type TallyPeriodValue } from "@/components/tally-period";
-import { refreshTally } from "@/lib/tally";
+import { docHref, refreshTally } from "@/lib/tally";
 import type { TallyIssue, TallyPreview, TallyRunView } from "@/lib/sales-types";
 
 // Tally — the monthly export (spec-tally §5.2). Choose a period; the preview loads by itself and
@@ -21,7 +21,6 @@ import type { TallyIssue, TallyPreview, TallyRunView } from "@/lib/sales-types";
 
 const ACTION_LABEL: Record<string, string> = { create: "new", alter: "change", cancel: "cancel", unchanged: "already in Tally", skip: "skipped", blocked: "held back" };
 const DOC_LABEL: Record<string, string> = { invoice: "Sales", credit_note: "Credit note", receipt: "Receipt", refund: "Refund" };
-const docHref = (d: { docType: string; docId: string }) => (d.docType === "invoice" ? `/invoices/view?id=${d.docId}` : d.docType === "receipt" ? `/payments/view?id=${d.docId}` : null);
 const monthName = (m: string) => fmtDate(`${m}-01`).split(" ").slice(1).join(" ");
 const sumCounts = (c: { create: number; alter: number; cancel: number }) => c.create + c.alter + c.cancel;
 
@@ -89,7 +88,10 @@ export default function TallyPage() {
   const infos = p?.issues.filter((i) => i.severity === "info") ?? [];
   const allTicked = ackIssues.every((i) => acks.has(i.id));
   const reason = !p ? "" : p.openRun ? `Export #${p.openRun.runNo} is still open.` : p.counts.vouchers === 0 ? "Nothing to send." : blocks.length && !allowPartial ? "Tick 'Leave out' or fix the held-back documents." : !allTicked ? "Tick every warning first." : "";
-  const canGo = !!p && !reason && !busy && !isValidating;
+  // keepPreviousData shows the last good preview while a new one loads; never export it under a
+  // different period / registration / mode, and never once the new one failed.
+  const matches = !!p && !!query && p.company === query.company && p.period.from === query.from && p.period.to === query.to && p.mode === query.mode && (p.scopeGstin ?? undefined) === query.gstin;
+  const canGo = !!p && matches && !error && !reason && !busy && !isValidating;
   const pushOn = admin && setup.pushEnabled && !!setup.settings.pushUrl;
   const body = () => ({ companyKey: company, from: period.from, to: period.to, gstin: effectiveGstin || null, mode, previewHash: p!.previewHash, acknowledge: [...acks], allowPartial });
   const fail = (err: unknown) => {
@@ -151,7 +153,7 @@ export default function TallyPage() {
 
       <section className="card p-4 mb-4 grid grid-cols-[minmax(0,1fr)] gap-4">
         <h2 className="font-bold">In this export {isValidating && p && <span className="text-xs text-ink-3 font-normal">· updating…</span>}</h2>
-        {error && !p ? <LoadError error={error} retry={() => mutate()} /> : isLoading && !p ? <Loading label="Checking what's new…" /> : p && (
+        {error ? <LoadError error={error} retry={() => mutate()} /> : (isLoading && !p) || (p && !matches) ? <Loading label="Checking what's new…" /> : p && (
           <>
             {p.counts.vouchers === 0 && !blocks.length ? (
               <Empty title={`Nothing new for ${fmtDate(p.period.from)} – ${fmtDate(p.period.to)} — everything here is already in Tally.`}
@@ -247,17 +249,21 @@ function Problems({ blocks, acks, infos, ticked, onTick, allowPartial, setAllowP
 
 function ShouldShow({ p }: { p: Pick<TallyPreview, "tallyShouldShow" | "totals"> }) {
   const rows = p.tallyShouldShow.gst;
+  const zr = (g: (typeof rows)[number]) => (g.sezwop?.taxablePaise ?? 0) + (g.expwop?.taxablePaise ?? 0);
+  const anyZr = rows.some((g) => zr(g) !== 0 || (g.zeroRatedCreditNotes?.taxablePaise ?? 0) !== 0);
   return (
     <details open className="card-inset p-3">
       <summary className="cursor-pointer text-sm font-bold">After importing, Tally should show</summary>
-      <div className="overflow-x-auto mt-2"><table className="w-full min-w-[520px] text-sm [&_td]:px-2 [&_th]:px-2"><thead><tr className="text-left text-ink-3 text-xs"><th className="py-1">Registration</th><th>Month</th><th className="text-right">B2B taxable</th><th className="text-right">B2C taxable</th><th className="text-right">CGST</th><th className="text-right">SGST</th><th className="text-right">IGST</th><th className="text-right">Credit notes</th><th>Invoices</th></tr></thead>
+      <div className="overflow-x-auto mt-2"><table className="w-full min-w-[520px] text-sm [&_td]:px-2 [&_th]:px-2"><thead><tr className="text-left text-ink-3 text-xs"><th className="py-1">Registration</th><th>Month</th><th className="text-right">B2B taxable</th><th className="text-right">B2C taxable</th><th className="text-right">CGST</th><th className="text-right">SGST</th><th className="text-right">IGST</th><th className="text-right">Credit notes</th>{anyZr && <th className="text-right">SEZ / export</th>}<th>Invoices</th></tr></thead>
         <tbody>{rows.length ? rows.map((g) => (
           <tr key={`${g.gstin}${g.month}`} className="border-t border-border"><td className="py-1">{g.label}</td><td>{monthName(g.month)}</td>
             <td className="text-right"><Money paise={g.b2b.taxablePaise} /></td><td className="text-right"><Money paise={g.b2c.taxablePaise} /></td>
             <td className="text-right"><Money paise={g.b2b.cgstPaise + g.b2c.cgstPaise} /></td><td className="text-right"><Money paise={g.b2b.sgstPaise + g.b2c.sgstPaise} /></td>
             <td className="text-right"><Money paise={g.b2b.igstPaise + g.b2c.igstPaise} /></td><td className="text-right"><Money paise={g.creditNotes.taxablePaise} /></td>
+            {anyZr && <td className="text-right"><Money paise={zr(g)} />{g.sezwop?.count ? <span className="block text-[11px] text-ink-3">SEZWOP {g.sezwop.count}</span> : null}{g.expwop?.count ? <span className="block text-[11px] text-ink-3">EXPWOP {g.expwop.count}</span> : null}</td>}
             <td className="text-xs">{g.documents.issued} issued / {g.documents.cancelled} cancelled{g.documents.fromNo ? `, ${g.documents.fromNo} – ${g.documents.toNo}` : ""}</td></tr>
         )) : <tr><td colSpan={9} className="py-2 text-ink-3">No invoices in this period.</td></tr>}</tbody></table></div>
+      {anyZr && <p className="text-xs text-ink-3 mt-2">SEZ / export invoices are not B2B or B2C in GSTR-1{p.tallyShouldShow.zeroRatedByHand ? " — they aren't in this file yet; enter them in Tally by hand" : ""}.</p>}
       {p.tallyShouldShow.tds.map((t) => <p key={t.fy} className="text-sm mt-2">{t.ledger}: +<Money paise={t.paise} /> ({t.receipts} receipt{t.receipts === 1 ? "" : "s"})</p>)}
       <p className="text-sm mt-1">Control total <Money paise={p.totals.controlTotalPaise} /></p>
     </details>

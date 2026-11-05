@@ -2,8 +2,8 @@ import type { CompanyKey, TallyDocType, TallyMode, TallyRelease } from "@dashman
 import { financialYear } from "@dashmani/shared";
 import { renderAccountLedger, renderPartyLedger, accountLedgerGroup, type AccountLedgerKind, type PartyMaster } from "./masters";
 import {
-  assertBalanced, buildDoc, contentHash, renderVoucher, salesShares, sha256, taxRoundingDiffers, tdsLedgerName,
-  type AnyDoc, type CreditNoteDoc, type InvoiceDoc, type ReceiptDoc, type RefundDoc, type TallySettings, type Voucher,
+  assertBalanced, buildDoc, contentHash, isZeroRated, renderVoucher, salesShares, sha256, taxRoundingDiffers, tdsLedgerName, ZERO_RATED_CALIBRATED,
+  type AnyDoc, type Built, type CreditNoteDoc, type InvoiceDoc, type ReceiptDoc, type RefundDoc, type TallySettings, type Voucher,
 } from "./vouchers";
 import { importEnvelope } from "./xml";
 
@@ -74,6 +74,8 @@ export interface PlanRow {
   issueIds: string[]; lastSent: { runNo: number; at: string; action: string } | null;
   /** invoice doc ids (in this plan) this row needs in Tally first */
   dependsOn: string[];
+  /** the document a credit note (its invoice) or a refund (its receipt) belongs to */
+  parentId: string | null;
 }
 
 type Gst = { count: number; taxablePaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number };
@@ -87,7 +89,7 @@ export interface Plan {
   accountLedgers: Array<{ name: string; kind: AccountLedgerKind }>;
   counts: Record<string, unknown> & { vouchers: number; blocked: number };
   totals: Record<string, number>;
-  tallyShouldShow: { gst: unknown[]; tds: Array<{ fy: string; ledger: string; paise: number; receipts: number }> };
+  tallyShouldShow: { gst: unknown[]; zeroRatedByHand: boolean; tds: Array<{ fy: string; ledger: string; paise: number; receipts: number }> };
   ledgers: Array<{ role: string; name: string; group: string | null; createdByExport: boolean; debitPaise: number; creditPaise: number }>;
   previewHash: string;
   controlTotalPaise: number;
@@ -186,6 +188,34 @@ export function renderRow(r: PlanRow, release: TallyRelease): string {
 
 // ── The planner ───────────────────────────────────────────────────────────────────
 
+const isExport = (inv: InvoiceDoc) => !!inv.buyer.country && inv.buyer.country.toUpperCase() !== "IN";
+
+/**
+ * Build one document, never throwing. A live document worth ₹0 has no ledger entries Tally can take
+ * (ZERO_VALUE_INVOICE); a voucher that fails its own balance check (I2, a bug) is held back with a
+ * block issue instead of turning the whole preview into a 500.
+ */
+function safeBuild(d: AnyDoc, ctx: Parameters<typeof buildDoc>[1], number: string): Built {
+  let built: Built;
+  try {
+    built = buildDoc(d, ctx);
+  } catch (e) {
+    console.error(`[tally] ${number}: building the voucher failed`, e);
+    return { ok: false, code: "TALLY_BUILD_FAILED", message: `${number} couldn't be turned into a Tally voucher — enter it in Tally by hand, then mark it as done there.` };
+  }
+  if (!built.ok) return built;
+  if (!built.v.cancelled && built.v.partyPaise === 0) {
+    return { ok: false, code: "ZERO_VALUE_INVOICE", message: `${number} is for ₹0 — Tally can't import it. Enter it in Tally by hand, then mark it as done there.` };
+  }
+  try {
+    assertBalanced(built.v);
+  } catch (e) {
+    console.error(`[tally] ${number}: the voucher failed its balance check`, e);
+    return { ok: false, code: "TALLY_BUILD_FAILED", message: `${number} couldn't be turned into a Tally voucher — enter it in Tally by hand, then mark it as done there.` };
+  }
+  return built;
+}
+
 export function planTally(input: PlanInput): Plan {
   const s = input.settings;
   const accountKeys = accountLedgerKeys(s);
@@ -213,16 +243,16 @@ export function planTally(input: PlanInput): Plan {
   const candidates = new Map<string, PlanRow>();
   for (const p of input.docs) {
     const b = basics(p.d);
-    const built = buildDoc(p.d, ctx);
+    const built = safeBuild(p.d, ctx, b.number);
     const last = input.lastGood.get(p.d.doc.id) ?? null;
     const voucher = built.ok ? built.v : null;
-    if (voucher) assertBalanced(voucher);
     const hash = voucher ? contentHash(voucher) : null;
     const row: PlanRow = {
       docType: p.d.docType, docId: p.d.doc.id, number: b.number, date: b.date, clientId: b.clientId, party: parties.get(b.clientId)?.name ?? "—",
       partyAmountPaise: b.partyAmountPaise, action: "unchanged", reason: null, voucher, hash,
       blockCode: built.ok ? null : built.code, blockMessage: built.ok ? null : built.message, issueIds: [],
       lastSent: last ? { runNo: last.runNo, at: last.at, action: last.action } : null, dependsOn: [],
+      parentId: p.d.docType === "credit_note" ? p.d.doc.invoice.id : p.d.docType === "refund" ? p.d.doc.paymentId : null,
     };
     const earlier = p.origin === "earlier";
     if (!last) {
@@ -236,8 +266,14 @@ export function planTally(input: PlanInput): Plan {
     } else if (last.action === "cancel") {
       row.action = "unchanged";
     } else if (b.cancelled) {
-      row.action = "cancel";
-      row.reason = earlier ? "earlier_change" : "cancelled";
+      // Exported as a cancelled voucher (ISCANCELLED create) and unchanged since: Tally already holds
+      // it cancelled. A cancelled voucher's hash carries `cancelled: true`, so it never equals a live one's.
+      if (hash !== null && hash === last.contentHash) {
+        row.action = "unchanged";
+      } else {
+        row.action = "cancel";
+        row.reason = earlier ? "earlier_change" : "cancelled";
+      }
     } else if (hash !== last.contentHash) {
       row.action = "alter";
       row.reason = earlier ? "earlier_change" : "changed";
@@ -446,12 +482,14 @@ export function planTally(input: PlanInput): Plan {
 
   // 9. "After importing, Tally should show" — every live document of the period in scope, any mode.
   const regLabel = new Map(input.registrations.map((r) => [r.gstin, r.label]));
-  const gstRows = new Map<string, { gstin: string; label: string; month: string; b2b: Gst; b2c: Gst; creditNotes: Gst; documents: { issued: number; cancelled: number; fromNo: string | null; toNo: string | null } }>();
+  // Export / SEZ (zero-rated) invoices are not B2B or B2CS in GSTR-1: they are SEZWOP (buyer with a
+  // GSTIN) or EXPWOP (buyer abroad), in their own columns — entered by hand while not calibrated.
+  const gstRows = new Map<string, { gstin: string; label: string; month: string; b2b: Gst; b2c: Gst; sezwop: Gst; expwop: Gst; creditNotes: Gst; zeroRatedCreditNotes: Gst; documents: { issued: number; cancelled: number; fromNo: string | null; toNo: string | null } }>();
   const zero = (): Gst => ({ count: 0, taxablePaise: 0, cgstPaise: 0, sgstPaise: 0, igstPaise: 0 });
   const bucket = (gstin: string, day: string) => {
     const key = `${gstin}|${day.slice(0, 7)}`;
     let g = gstRows.get(key);
-    if (!g) { g = { gstin, label: regLabel.get(gstin) ?? gstin, month: day.slice(0, 7), b2b: zero(), b2c: zero(), creditNotes: zero(), documents: { issued: 0, cancelled: 0, fromNo: null, toNo: null } }; gstRows.set(key, g); }
+    if (!g) { g = { gstin, label: regLabel.get(gstin) ?? gstin, month: day.slice(0, 7), b2b: zero(), b2c: zero(), sezwop: zero(), expwop: zero(), creditNotes: zero(), zeroRatedCreditNotes: zero(), documents: { issued: 0, cancelled: 0, fromNo: null, toNo: null } }; gstRows.set(key, g); }
     return g;
   };
   const add = (g: Gst, x: { taxablePaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number }) => {
@@ -468,11 +506,13 @@ export function planTally(input: PlanInput): Plan {
       if (!docs.toNo || inv.number > docs.toNo) docs.toNo = inv.number;
       if (inv.status === "cancelled") { docs.cancelled += 1; continue; }
       docs.issued += 1;
-      add(inv.buyer.gstin ? g.b2b : g.b2c, inv);
+      if (isZeroRated(inv)) add(isExport(inv) ? g.expwop : g.sezwop, inv);
+      else add(inv.buyer.gstin ? g.b2b : g.b2c, inv);
     } else if (p.d.docType === "credit_note") {
       const cn = p.d.doc;
       if (cn.status === "cancelled") continue;
-      add(bucket(cn.invoice.seller.gstin ?? "", cn.issueDate).creditNotes, cn);
+      const g = bucket(cn.invoice.seller.gstin ?? "", cn.issueDate);
+      add(isZeroRated(cn.invoice) ? g.zeroRatedCreditNotes : g.creditNotes, cn);
     } else if (p.d.docType === "receipt") {
       const r = p.d.doc;
       if (r.status !== "recorded" || !r.tdsPaise) continue;
@@ -484,6 +524,7 @@ export function planTally(input: PlanInput): Plan {
   }
   const tallyShouldShow = {
     gst: [...gstRows.values()].sort((a, b) => (a.gstin + a.month < b.gstin + b.month ? -1 : 1)),
+    zeroRatedByHand: !(input.zeroRatedEnabled ?? ZERO_RATED_CALIBRATED),
     tds: [...tds.values()].sort((a, b) => (a.fy < b.fy ? -1 : 1)),
   };
 

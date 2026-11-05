@@ -128,7 +128,8 @@ async function nominateEarlier(tx: Tx, company: CompanyKey): Promise<Array<{ doc
        OR (g.doc_type = 'refund'      AND EXISTS (SELECT 1 FROM sales_refunds r WHERE r.id = g.doc_id AND r.cancelled_at > g.built_at))
        OR (g.doc_type = 'receipt'     AND (
               EXISTS (SELECT 1 FROM sales_payments p WHERE p.id = g.doc_id AND p.voided_at > g.built_at)
-           OR EXISTS (SELECT 1 FROM sales_events e WHERE e.entity_type = 'payment' AND e.entity_id = g.doc_id AND e.created_at > g.built_at)
+           OR EXISTS (SELECT 1 FROM sales_events e WHERE e.entity_type = 'payment' AND e.entity_id = g.doc_id AND e.created_at > g.built_at
+                      AND e.action NOT LIKE 'tally%')
            OR EXISTS (SELECT 1 FROM sales_payment_allocations a JOIN sales_invoices v ON v.id = a.invoice_id
                       WHERE a.payment_id = g.doc_id AND (a.created_at > g.built_at OR v.updated_at > g.built_at))))`;
 }

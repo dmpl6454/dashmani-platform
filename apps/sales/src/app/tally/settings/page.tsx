@@ -49,14 +49,14 @@ export default function TallySettingsPage() {
   const setVt = (k: keyof TallySettings["voucherTypes"], v: string) => setForm({ ...form, voucherTypes: { ...form.voucherTypes, [k]: v } });
   const reg = (gstin: string) => form.registrations.find((r) => r.gstin === gstin) ?? { gstin, tallyCompany: "", registrationName: null, salesVoucherType: null, creditNoteVoucherType: null };
   const setReg = (gstin: string, patch: Partial<TallySettings["registrations"][number]>) =>
-    setForm({ ...form, registrations: data.registrations.map((x) => (x.gstin === gstin ? { ...reg(gstin), ...patch } : reg(x.gstin))).filter((r) => r.tallyCompany.trim()) });
+    setForm({ ...form, registrations: data.registrations.map((x) => (x.gstin === gstin ? { ...reg(gstin), ...patch } : reg(x.gstin))) });
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
       const wasTicked = form!.ledgersConfirmed;
-      const r = (await apiFetch<TallySettingsView>(`/sales/tally/settings?company=${company}`, { method: "PUT", body: JSON.stringify(form) })).data;
+      const r = (await apiFetch<TallySettingsView>(`/sales/tally/settings?company=${company}`, { method: "PUT", body: JSON.stringify({ ...form, registrations: form!.registrations.filter((x) => x.tallyCompany.trim()) }) })).data;
       await mutate(r, { revalidate: false });
       await refreshTally();
       const unticked = wasTicked && !r.settings.ledgersConfirmed;

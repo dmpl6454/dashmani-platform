@@ -36,7 +36,7 @@ async function planFor(q: CollectQuery): Promise<{ col: Collected; plan: Plan }>
 function docRow(r: PlanRow) {
   return {
     docType: r.docType, docId: r.docId, number: r.number, date: r.date, party: r.party, partyAmountPaise: r.partyAmountPaise,
-    action: r.action, reason: r.reason, issueIds: r.issueIds, lastSent: r.lastSent,
+    action: r.action, reason: r.reason, issueIds: r.issueIds, lastSent: r.lastSent, parentId: r.parentId,
   };
 }
 
@@ -176,7 +176,12 @@ type RunLite = Prisma.SalesTallyRunGetPayload<{ select: typeof RUN_ROW_SELECT }>
 const activePushes = new Set<string>();
 export const pushRegistry = activePushes;
 const STALE_MS = 2 * 60_000;
-export const isStale = (r: { status: string; id: string; updatedAt: Date }) => r.status === "pushing" && !activePushes.has(r.id) && Date.now() - r.updatedAt.getTime() > STALE_MS;
+/**
+ * A push with no worker and no heartbeat for 2 minutes: "pushing" (the server restarted mid-send) or
+ * "queued" (it restarted before the worker claimed the run). Retry or Close recovers either.
+ */
+export const isStale = (r: { status: string; id: string; updatedAt: Date }) =>
+  (r.status === "pushing" || r.status === "queued") && !activePushes.has(r.id) && Date.now() - r.updatedAt.getTime() > STALE_MS;
 
 async function names(ids: string[]) {
   const users = await prisma.user.findMany({ where: { id: { in: [...new Set(ids)] } }, select: { id: true, name: true } });
@@ -208,6 +213,7 @@ export async function getTallyRun(id: string) {
   const n = (o: string[]) => counts.filter((c) => o.includes(c.outcome)).reduce((s, c) => s + c._count._all, 0);
   const pushResult = r.pushResult as Record<string, unknown> | null;
   const { plan: _p, ...pushShown } = pushResult ?? {};
+  const parents = await parentIds(items);
   return {
     ...rowView(r, who),
     summary: r.summary, acknowledged: r.acknowledged, pushTarget: r.pushTarget, pushResult: pushResult ? pushShown : null,
@@ -217,7 +223,7 @@ export async function getTallyRun(id: string) {
       || a.docDate.getTime() - b.docDate.getTime() || (a.docNumber < b.docNumber ? -1 : a.docNumber > b.docNumber ? 1 : 0)).map((i) => ({
       id: i.id, docType: i.docType, docId: i.docId, docNumber: i.docNumber, docDate: dateToDay(i.docDate)!, voucherType: i.voucherType,
       action: i.action, outcome: i.outcome, partyAmountPaise: toSafeNumber(i.partyAmountPaise), issueCode: i.issueCode, error: i.error,
-      tallyVchId: i.tallyVchId, attempts: i.attempts,
+      tallyVchId: i.tallyVchId, attempts: i.attempts, parentId: parents.get(i.docId) ?? null,
     })),
     itemsTruncated: items.length > MAX_VIEW_ITEMS,
     progress: r.channel === "push" ? { done: n(["synced", "adopted"]), failed: n(["failed"]), waiting: n(["pending", "sending", "unknown"]), total: n(["synced", "adopted", "failed", "pending", "sending", "unknown", "superseded"]) } : null,
@@ -226,6 +232,29 @@ export async function getTallyRun(id: string) {
   };
 }
 export type TallyRunView = Awaited<ReturnType<typeof getTallyRun>>;
+
+/** A credit note's invoice and a refund's receipt, for the run page's links. */
+async function parentIds(items: Array<{ docType: string; docId: string }>): Promise<Map<string, string>> {
+  const ids = (t: string) => items.filter((i) => i.docType === t).map((i) => i.docId);
+  const [cns, rfs] = await Promise.all([
+    ids("credit_note").length ? prisma.salesCreditNote.findMany({ where: { id: { in: ids("credit_note") } }, select: { id: true, invoiceId: true } }) : [],
+    ids("refund").length ? prisma.salesRefund.findMany({ where: { id: { in: ids("refund") } }, select: { id: true, paymentId: true } }) : [],
+  ]);
+  return new Map([...cns.map((c) => [c.id, c.invoiceId] as const), ...rfs.map((f) => [f.id, f.paymentId] as const)]);
+}
+
+/** The client of each document an item stands for. */
+async function clientsOf(tx: Tx, items: Array<{ docType: string; docId: string }>): Promise<Set<string>> {
+  const ids = (t: string) => items.filter((i) => i.docType === t).map((i) => i.docId);
+  const sel = { select: { clientId: true } } as const;
+  const rows = await Promise.all([
+    ids("invoice").length ? tx.salesInvoice.findMany({ where: { id: { in: ids("invoice") } }, ...sel }) : [],
+    ids("credit_note").length ? tx.salesCreditNote.findMany({ where: { id: { in: ids("credit_note") } }, ...sel }) : [],
+    ids("receipt").length ? tx.salesPayment.findMany({ where: { id: { in: ids("receipt") } }, ...sel }) : [],
+    ids("refund").length ? tx.salesRefund.findMany({ where: { id: { in: ids("refund") } }, ...sel }) : [],
+  ]);
+  return new Set(rows.flat().map((r) => r.clientId));
+}
 
 /** The stored XML, verified against its sha256 (I7). A mismatch is never served. */
 export async function tallyRunFile(id: string, part: "masters" | "vouchers") {
@@ -259,7 +288,11 @@ async function lockRun(tx: Tx, id: string) {
 }
 const stateError = (r: { runNo: number; status: string }, action: string) => new AppError(409, "TALLY_RUN_STATE", `Export #${r.runNo} is ${r.status}; it can't be ${action}.`);
 
-/** Per-document tally_synced events + lock the party mappings a successful run used. */
+/**
+ * Per-document tally_synced events + lock the party mappings this run used — only those of clients
+ * with a voucher that actually reached Tally (synced / adopted). A push that stopped before sending
+ * leaves its new parties unlocked, so the next export still writes their masters.
+ */
 export async function markSynced(tx: Tx, run: RunRow, actorId: string, docIds?: string[]) {
   const items = await tx.salesTallyItem.findMany({ where: { runId: run.id, outcome: { in: ["synced", "adopted"] }, ...(docIds ? { docId: { in: docIds } } : {}) } });
   const refunds = await tx.salesRefund.findMany({ where: { id: { in: items.filter((i) => i.docType === "refund").map((i) => i.docId) } }, select: { id: true, paymentId: true } });
@@ -272,7 +305,8 @@ export async function markSynced(tx: Tx, run: RunRow, actorId: string, docIds?: 
   });
   for (let k = 0; k < events.length; k += 500) await tx.salesEvent.createMany({ data: events.slice(k, k + 500) });
   const parties = ((run.ledgerMap as { parties?: Record<string, string> } | null)?.parties) ?? {};
-  const ids = Object.keys(parties);
+  const reached = items.length ? await clientsOf(tx, items) : new Set<string>();
+  const ids = Object.keys(parties).filter((id) => reached.has(id));
   if (ids.length) await tx.salesTallyParty.updateMany({ where: { companyKey: run.companyKey, clientId: { in: ids }, lockedAt: null }, data: { lockedAt: new Date() } });
 }
 
@@ -315,7 +349,10 @@ export async function resolveByHand(body: TallyResolveInput, actorId: string) {
   const runId = await prisma.$transaction(async (tx) => {
     const settingsRow = await requireSettings(tx, company, seller);
     await lockTallySettings(tx, company);
-    const open = await tx.salesTallyRun.findFirst({ where: { companyKey: company, status: { in: OPEN_STATUSES } } });
+    // The run the documents come from (its failed / held-back items) may be the open one; any OTHER
+    // open run still refuses.
+    const source = body.fromRunId ? await sourceRun(tx, company, body.fromRunId, body.docs) : null;
+    const open = await tx.salesTallyRun.findFirst({ where: { companyKey: company, status: { in: OPEN_STATUSES }, ...(source ? { NOT: { id: source.id } } : {}) } });
     if (open) throw runOpenError(open);
     const docs = await loadDocsByRef(tx, company, body.docs);
     if (docs.length !== new Set(body.docs.map((d) => d.docId)).size) throw new AppError(404, "NOT_FOUND", "A document was not found in this company");
@@ -354,10 +391,42 @@ export async function resolveByHand(body: TallyResolveInput, actorId: string) {
       }),
     });
     await markSynced(tx, run, actorId);
+    if (source) await settleSource(tx, source, body.docs.map((d) => d.docId), run.runNo, actorId);
     await logSalesEvent(tx, { entityType: "tally_run", entityId: run.id, actorId, action: "resolved_by_hand", toStatus: "confirmed", note: `${docs.length} document${docs.length === 1 ? "" : "s"} · ${body.note}` });
     return run.id;
   }, { timeout: 30_000 });
   return getTallyRun(runId);
+}
+
+/** Items of an open run that can be marked as done by hand: anything a push left unsent, or held back. */
+const RESOLVABLE: Record<string, string[]> = { partial: ["failed", "blocked", "pending", "unknown"], open: ["blocked"] };
+
+async function sourceRun(tx: Tx, company: CompanyKey, runId: string, refs: Array<{ docType: string; docId: string }>) {
+  await tx.$queryRaw`SELECT id FROM sales_tally_runs WHERE id = ${runId} FOR UPDATE`;
+  const run = await tx.salesTallyRun.findUnique({ where: { id: runId } });
+  if (!run || run.companyKey !== company) throw new AppError(404, "NOT_FOUND", "Export not found");
+  const allowed = RESOLVABLE[run.status];
+  if (!allowed) return null; // not open: nothing to exclude, the usual open-run check applies
+  const items = await tx.salesTallyItem.findMany({ where: { runId, docId: { in: refs.map((r) => r.docId) }, outcome: { in: allowed } }, select: { docId: true, docType: true } });
+  const have = new Set(items.map((i) => `${i.docType}:${i.docId}`));
+  const missing = refs.find((r) => !have.has(`${r.docType}:${r.docId}`));
+  if (missing) throw new AppError(409, "TALLY_RUN_STATE", `Export #${run.runNo} has no ${run.status === "open" ? "held-back" : "unsent"} item for one of these documents — only those can be marked as done from it.`);
+  return run;
+}
+
+/**
+ * Take the resolved documents out of their source run (superseded, so a Retry never resends them).
+ * A push with nothing left to send is then finished: closed, and its synced items recorded.
+ */
+async function settleSource(tx: Tx, run: RunRow, docIds: string[], manualRunNo: number, actorId: string) {
+  await tx.salesTallyItem.updateMany({ where: { runId: run.id, docId: { in: docIds }, outcome: { in: RESOLVABLE[run.status] } }, data: { outcome: "superseded", error: `Marked as done by hand (export #${manualRunNo})` } });
+  if (run.status !== "partial") return;
+  const left = await tx.salesTallyItem.count({ where: { runId: run.id, outcome: { in: ["pending", "sending", "failed", "unknown"] } } });
+  if (left) return;
+  const note = `Every unsent document was marked as done by hand (export #${manualRunNo})`;
+  const closed = await tx.salesTallyRun.update({ where: { id: run.id }, data: { status: "closed", statusNote: note, closedAt: new Date(), closedById: actorId } });
+  await markSynced(tx, closed, actorId);
+  await logSalesEvent(tx, { entityType: "tally_run", entityId: run.id, actorId, action: "closed", fromStatus: "partial", toStatus: "closed", note });
 }
 
 // ── One document's state in Tally (route 18) ──────────────────────────────────────
@@ -390,7 +459,8 @@ export async function tallyDocStatus(docType: TallyDocType, docId: string) {
       });
       const row = plan.rows[0];
       const changed = row && (row.action === "alter" || row.action === "cancel");
-      return { state: changed ? ("changed" as const) : ("synced" as const), runId: last.runId, runNo: last.runNo, at: last.at, error: null };
+      const state = changed ? ("changed" as const) : row?.voucher?.cancelled ? ("cancelled_in_tally" as const) : ("synced" as const);
+      return { state, runId: last.runId, runNo: last.runNo, at: last.at, error: null };
     }
     if (newest.outcome === "failed" || newest.outcome === "unknown") {
       return { state: "failed" as const, runId: newest.runId, runNo: newest.run.runNo, at: newest.updatedAt.toISOString(), error: newest.error };

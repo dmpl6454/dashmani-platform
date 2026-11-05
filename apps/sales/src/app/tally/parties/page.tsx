@@ -36,7 +36,8 @@ export default function TallyPartiesPage() {
   const save = async (row: TallyPartyRow, extra: Record<string, unknown> = {}) => {
     try {
       await apiFetch(`/sales/tally/parties/${row.clientId}?company=${company}`, { method: "PUT", body: JSON.stringify({ ledgerName: edits[row.clientId] ?? row.ledgerName, existsInTally: row.existsInTally, ...extra }) });
-      setEdits((e) => { const n = { ...e }; delete n[row.clientId]; return n; });
+      // a tick of "Already in Tally" saves the stored name and keeps any unsaved edit in the row
+      if (extra.ledgerName === undefined) setEdits((e) => { const n = { ...e }; delete n[row.clientId]; return n; });
       await Promise.all([mutate(), refreshTally()]);
       setToast({ message: "Saved.", tone: "ok" });
     } catch (err) { setToast({ message: errorSentence(err), tone: "err" }); }
@@ -60,7 +61,7 @@ export default function TallyPartiesPage() {
               <td className="min-w-[220px]">{r.lockedAt && !admin
                 ? <span className="inline-flex items-center gap-1 break-words"><Lock size={12} aria-label="Locked" /> {r.ledgerName}</span>
                 : <span className="flex items-center gap-1">{r.lockedAt && <Lock size={12} aria-label="Locked" />}<input className="input w-full" value={edits[r.clientId] ?? r.ledgerName} onChange={(e) => setEdits({ ...edits, [r.clientId]: e.target.value })} />{r.proposed && <span className="text-[10px] text-ink-4 uppercase">proposed</span>}</span>}</td>
-              <td><input type="checkbox" checked={r.existsInTally} disabled={!!r.lockedAt && !admin} onChange={(e) => save({ ...r, existsInTally: e.target.checked })} aria-label="Already in Tally" /></td>
+              <td><input type="checkbox" checked={r.existsInTally} disabled={!!r.lockedAt && !admin} onChange={(e) => save({ ...r, existsInTally: e.target.checked }, { ledgerName: r.ledgerName })} aria-label="Already in Tally" /></td>
               <td>{r.lastRunNo ? `#${r.lastRunNo}` : "—"}</td>
               <td>{(dirty || (r.proposed && !r.lockedAt)) && <button type="button" className="btn btn-sm" onClick={() => (r.lockedAt ? setRenaming(r) : save(r))}>Save</button>}</td>
             </tr>); })}</tbody></table></div>
@@ -70,13 +71,13 @@ export default function TallyPartiesPage() {
           onConfirm={async () => { await save(renaming, { confirmRenamedInTally: true }); setRenaming(null); }}
           body="Change it here only after renaming the ledger in Tally to exactly this name." />
       )}
-      {matchOpen && <MatchDialog company={company} pushReady={!!setup?.pushEnabled && !!setup.settings.pushUrl} onClose={() => setMatchOpen(false)} onApplied={async (n) => { setMatchOpen(false); await Promise.all([mutate(), refreshTally()]); setToast({ message: `${n} ledger${n === 1 ? "" : "s"} matched.`, tone: "ok" }); }} />}
+      {matchOpen && <MatchDialog company={company} pushReady={!!setup?.pushEnabled && !!setup.settings.pushUrl} onClose={() => setMatchOpen(false)} onApplied={async (n, close = true) => { if (close) setMatchOpen(false); await Promise.all([mutate(), refreshTally()]); setToast({ message: `${n} ledger${n === 1 ? "" : "s"} matched.`, tone: "ok" }); }} />}
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>
   );
 }
 
-function MatchDialog({ company, pushReady, onClose, onApplied }: { company: string; pushReady: boolean; onClose: () => void; onApplied: (n: number) => void }) {
+function MatchDialog({ company, pushReady, onClose, onApplied }: { company: string; pushReady: boolean; onClose: () => void; onApplied: (n: number, close?: boolean) => void }) {
   const [result, setResult] = useState<{ suggestions: Suggestion[]; unmatched: number; conflicts: Array<{ tallyName: string; gstins: string[] }> } | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [err, setErr] = useState<string | null>(null);
@@ -89,6 +90,8 @@ function MatchDialog({ company, pushReady, onClose, onApplied }: { company: stri
     } catch (e) { setErr(errorSentence(e)); } finally { setBusy(false); }
   };
   const readFile = (f: File) => {
+    if (!/\.xml$/i.test(f.name) && !/xml/.test(f.type)) { setErr("Choose Tally's XML ledger export (a .xml file)."); return; }
+    if (f.size > 5_000_000) { setErr("That file is over 5 MB — export only the ledgers (Export → Masters → Ledgers)."); return; }
     const reader = new FileReader();
     reader.onload = () => run({ source: "xml", xml: String(reader.result ?? "") });
     reader.onerror = () => setErr("Couldn't read that file.");
@@ -99,7 +102,13 @@ function MatchDialog({ company, pushReady, onClose, onApplied }: { company: stri
     setBusy(true);
     try {
       const mappings = result.suggestions.filter((s) => chosen.has(s.clientId)).map((s) => ({ clientId: s.clientId, ledgerName: s.tallyName, existsInTally: true }));
-      const r = (await apiFetch<{ saved: number }>("/sales/tally/parties/apply", { method: "POST", body: JSON.stringify({ companyKey: company, mappings }) })).data;
+      const r = (await apiFetch<{ saved: number; skipped: Array<{ clientId: string; ledgerName: string; reason: string }> }>("/sales/tally/parties/apply", { method: "POST", body: JSON.stringify({ companyKey: company, mappings }) })).data;
+      if (r.skipped.length) {
+        const name = (id: string) => result.suggestions.find((s) => s.clientId === id)?.client ?? "A client";
+        setErr(`${r.saved} saved. Not applied: ${r.skipped.map((x) => `${name(x.clientId)} → ${x.ledgerName} (${x.reason})`).join("; ")}.`);
+        if (r.saved) onApplied(r.saved, false);
+        return;
+      }
       onApplied(r.saved);
     } catch (e) { setErr(errorSentence(e)); } finally { setBusy(false); }
   };

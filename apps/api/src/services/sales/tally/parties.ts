@@ -1,9 +1,9 @@
 import { prisma } from "@dashmani/db";
-import { SALES_COMPANIES, type CompanyKey, type TallyPartyApplyInput, type TallyPartyMatchInput, type TallyPartyUpdateInput } from "@dashmani/shared";
+import { type CompanyKey, type TallyPartyApplyInput, type TallyPartyMatchInput, type TallyPartyUpdateInput } from "@dashmani/shared";
 import { AppError } from "../../../middleware/error-handler";
 import { logSalesEvent, type Tx } from "../common";
 import { accountLedgerKeys, ledgerKey, proposeLedgerName } from "./plan";
-import { getTallySettings, lockTallySettings, tallyDefaults } from "./settings";
+import { getTallySettings, getTallySettingsRow, lockTallySettings, tallyDefaults } from "./settings";
 import { getSellerOrDefaults } from "../settings.service";
 import { parseCollection, type TallyLedgerRow } from "./xml-read";
 
@@ -87,6 +87,14 @@ async function assertNameFree(tx: Tx, company: CompanyKey, clientId: string, gst
   if (clash) throw new AppError(409, "TALLY_LEDGER_NAME_TAKEN", `${name} is already the Tally ledger of ${clash.client.companyName}${clash.gstin ? ` (GSTIN ${clash.gstin})` : ""}. Only clients with the same GSTIN can share a ledger.`);
 }
 
+/** The account-ledger names in this company's Tally settings (a client's receivable must never post into one). */
+async function accountNames(tx: Tx, company: CompanyKey): Promise<Set<string>> {
+  const row = await getTallySettingsRow(company, tx);
+  return row ? accountLedgerKeys(row.settings) : new Set();
+}
+const accountLedgerError = (name: string) =>
+  new AppError(409, "TALLY_LEDGER_NAME_TAKEN", `${name} is one of your account ledgers in Tally settings — a client needs its own ledger.`);
+
 export async function setTallyParty(company: CompanyKey, clientId: string, body: TallyPartyUpdateInput, actor: { id: string; canApprove: boolean }): Promise<TallyPartyRow> {
   await prisma.$transaction(async (tx) => {
     await lockTallySettings(tx, company, false);
@@ -98,7 +106,10 @@ export async function setTallyParty(company: CompanyKey, clientId: string, body:
       throw new AppError(409, "TALLY_LEDGER_LOCKED", `${m.ledgerName} is already used in Tally (since ${m.lockedAt.toISOString().slice(0, 10)}). Rename it in Tally first; then an admin changes it here with 'Renamed in Tally' ticked.`);
     }
     const gstin = client.billingProfile?.gstin ?? null;
-    if (renaming) await assertNameFree(tx, company, clientId, gstin, body.ledgerName);
+    if (renaming) {
+      if ((await accountNames(tx, company)).has(ledgerKey(body.ledgerName))) throw accountLedgerError(body.ledgerName);
+      await assertNameFree(tx, company, clientId, gstin, body.ledgerName);
+    }
     const data = { ledgerName: body.ledgerName, ledgerKey: ledgerKey(body.ledgerName), ...(body.existsInTally !== undefined ? { existsInTally: body.existsInTally } : {}) };
     await tx.salesTallyParty.upsert({
       where: { companyKey_clientId: { companyKey: company, clientId } },
@@ -153,20 +164,32 @@ export async function matchTallyParties(body: TallyPartyMatchInput, readLive: (c
   return { suggestions, unmatched, conflicts };
 }
 
-export async function applyTallyParties(body: TallyPartyApplyInput, actorId: string): Promise<{ saved: number }> {
+/**
+ * Save matched mappings. Each saved one is a client/tally_ledger_set event (the client's history);
+ * a match that can't be applied (locked, a name another client holds, an account ledger) is skipped
+ * and returned so the dialog can say which.
+ */
+export async function applyTallyParties(body: TallyPartyApplyInput, actorId: string): Promise<{ saved: number; skipped: Array<{ clientId: string; ledgerName: string; reason: string }> }> {
   const company = body.companyKey;
   let saved = 0;
+  const skipped: Array<{ clientId: string; ledgerName: string; reason: string }> = [];
   await prisma.$transaction(async (tx) => {
     await lockTallySettings(tx, company, false);
+    const accounts = await accountNames(tx, company);
+    const events: Array<{ entityType: "client"; entityId: string; actorId: string; action: string; note: string }> = [];
     for (const m of body.mappings) {
+      const skip = (reason: string) => skipped.push({ clientId: m.clientId, ledgerName: m.ledgerName, reason });
       const client = await tx.client.findUnique({ where: { id: m.clientId }, select: clientSelect });
-      if (!client) continue;
+      if (!client) { skip("client not found"); continue; }
       const cur = await tx.salesTallyParty.findUnique({ where: { companyKey_clientId: { companyKey: company, clientId: m.clientId } } });
-      if (cur?.lockedAt && cur.ledgerName !== m.ledgerName) continue;
+      if (cur?.lockedAt && cur.ledgerName !== m.ledgerName) { skip(`${cur.ledgerName} is already used in Tally`); continue; }
       const gstin = client.billingProfile?.gstin ?? null;
+      const renaming = !cur || cur.ledgerName !== m.ledgerName;
+      if (renaming && accounts.has(ledgerKey(m.ledgerName))) { skip("it is one of your account ledgers"); continue; }
       try {
-        if (!cur || cur.ledgerName !== m.ledgerName) await assertNameFree(tx, company, m.clientId, gstin, m.ledgerName);
+        if (renaming) await assertNameFree(tx, company, m.clientId, gstin, m.ledgerName);
       } catch {
+        skip("another client already has this ledger");
         continue;
       }
       const data = { ledgerName: m.ledgerName, ledgerKey: ledgerKey(m.ledgerName), existsInTally: m.existsInTally };
@@ -176,11 +199,10 @@ export async function applyTallyParties(body: TallyPartyApplyInput, actorId: str
         update: data,
       });
       saved += 1;
+      events.push({ entityType: "client", entityId: m.clientId, actorId, action: "tally_ledger_set", note: `${company}: ${m.ledgerName} (matched from Tally)` });
     }
-    if (saved) {
-      await logSalesEvent(tx, { entityType: "settings", entityId: SALES_COMPANIES[company].tallySettingsKey, actorId, action: "tally_settings_saved", note: `${saved} party ledger${saved === 1 ? "" : "s"} matched from Tally` });
-    }
+    for (let k = 0; k < events.length; k += 500) await tx.salesEvent.createMany({ data: events.slice(k, k + 500) });
   }, { timeout: 30_000 });
-  return { saved };
+  return { saved, skipped };
 }
 

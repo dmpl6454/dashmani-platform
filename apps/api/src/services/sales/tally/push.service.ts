@@ -128,13 +128,30 @@ let transport: TallyTransport = realTransport;
 /** Tests swap in a fake Tally (mirrors setIrpProviderForTests). undefined restores the real one. */
 export function setTallyTransportForTests(t: TallyTransport | undefined) { transport = t ?? realTransport; }
 
-function transportError(r: Extract<TransportResult, { ok: false }>, t: TallyTarget): AppError {
-  if (r.kind === "NOT_SENT") return new AppError(502, "TALLY_UNREACHABLE", `Couldn't reach Tally at ${t.host}:${t.port} (${r.message}). Is Tally open with the company loaded, and is that computer online?`);
-  if (r.kind === "NO_ANSWER" && r.message === "timed out") return new AppError(504, "TALLY_TIMEOUT", `Tally didn't answer within ${Math.round(tallyTimeoutMs() / 1000)} seconds.`);
-  if (r.kind === "NO_ANSWER") return new AppError(502, "TALLY_UNREACHABLE", `Couldn't reach Tally at ${t.host}:${t.port} (${r.message}). Is Tally open with the company loaded, and is that computer online?`);
-  return new AppError(502, "TALLY_BAD_RESPONSE", `Tally answered with something that isn't a Tally reply ("${r.message.slice(0, 120)}"). Check the address points at Tally's port.`);
+/** A socket error code in plain words; unknown codes are logged, never shown (the sentence is the message). */
+function whyUnreachable(message: string): string {
+  if (message === "ECONNREFUSED") return "Tally isn't listening on that port";
+  if (["EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT", "EHOSTDOWN", "ENOTFOUND", "EAI_AGAIN"].includes(message) || message === "timed out") return "that computer is offline or not on Tailscale";
+  if (message === "ECONNRESET" || message === "EPIPE" || message === "the connection dropped") return "the connection dropped";
+  console.warn(`[tally] transport error: ${message}`);
+  return "";
 }
-const badReply = (body: string) => new AppError(502, "TALLY_BAD_RESPONSE", `Tally answered with something that isn't a Tally reply ("${body.slice(0, 120)}"). Check the address points at Tally's port.`);
+function transportError(r: Extract<TransportResult, { ok: false }>, t: TallyTarget): AppError {
+  if (r.kind === "NO_ANSWER" && r.message === "timed out") return new AppError(504, "TALLY_TIMEOUT", `Tally didn't answer within ${Math.round(tallyTimeoutMs() / 1000)} seconds.`);
+  if (r.kind === "NOT_SENT" || r.kind === "NO_ANSWER") {
+    const why = whyUnreachable(r.message);
+    return new AppError(502, "TALLY_UNREACHABLE", `Couldn't reach Tally at ${t.host}:${t.port}${why ? ` — ${why}` : ""}. Is Tally open with the company loaded, and is that computer online?`);
+  }
+  if (r.kind === "TOO_LARGE") return new AppError(502, "TALLY_BAD_RESPONSE", "Tally's reply was too large to read. Check the address points at Tally's port.");
+  return badReply();
+}
+// Never echo the body: the address may point at some other service on the network (R6).
+const badReply = () => new AppError(502, "TALLY_BAD_RESPONSE", "Something answered at that address, but not like Tally. Check the address points at Tally's port.");
+/** Tally's own banner on GET / ("TallyPrime Server is Running" / "Tally.ERP 9 Server is Running"). */
+const tallyBanner = (body: string) => {
+  const m = body.match(/(TallyPrime|Tally\.ERP 9|Tally)[^<>]{0,40}Server is Running/i);
+  return m ? m[0].trim() : null;
+};
 
 async function collection<T extends "companies" | "ledgers" | "vouchers">(t: TallyTarget, kind: T, company: string | null, range?: { from: string; to: string }) {
   const req = kind === "companies" ? collectionRequest({ id: "DshCompanies", type: "Company", fetch: "Name" })
@@ -148,7 +165,7 @@ async function collection<T extends "companies" | "ledgers" | "vouchers">(t: Tal
   try {
     return parseCollection(r.body, kind as never) as T extends "companies" ? string[] : T extends "ledgers" ? TallyLedgerRow[] : TallyVoucherRow[];
   } catch {
-    throw badReply(r.body);
+    throw badReply();
   }
 }
 
@@ -191,7 +208,7 @@ export async function testTallyConnection(company: CompanyKey) {
     const names = new Set((await collection(target, "ledgers", c)).map((l) => l.name.toLowerCase()));
     for (const l of accountLedgerNames(settings, new Date().toISOString().slice(0, 10))) ledgers.push({ ...l, found: names.has(l.name.toLowerCase()) });
   }
-  return { reachable: true as const, latencyMs, server: hello.body.trim().slice(0, 200), openCompanies: open, missingCompanies, ledgers };
+  return { reachable: true as const, latencyMs, server: tallyBanner(hello.body), openCompanies: open, missingCompanies, ledgers };
 }
 
 /** Tally's ledger list for "Match from Tally → Read from Tally now". */
@@ -250,6 +267,11 @@ export async function closeTallyRun(id: string, reason: string, actorId: string)
 
 // ── The worker ────────────────────────────────────────────────────────────────────
 
+/** The frozen Alter block re-sent as a Create (Tally lost the voucher); only the VOUCHER tag's ACTION changes. */
+export function asCreate(raw: string): string {
+  return raw.replace(/(<VOUCHER\b[^>]*?\bACTION=")Alter(")/, "$1Create$2");
+}
+
 type PushPlan = { items: Record<string, { party: string; ledgers: string[]; dependsOn: string[]; altCreate?: string }> };
 const absPaise = (n: number | null) => (n === null ? null : Math.abs(n));
 
@@ -262,9 +284,15 @@ async function setPartial(id: string, patch: Record<string, unknown>, note: stri
 
 /** One pass over a push run (spec §4.13 steps 1–6). Runs in the background; never throws. */
 export async function runTallyPush(id: string): Promise<void> {
-  const claimed = await prisma.salesTallyRun.updateMany({ where: { id, status: { in: ["queued", "partial"] } }, data: { status: "pushing" } });
+  // A first send is claimed from "queued" and logged here; a retry / resume (from "partial") was
+  // logged by retryTallyPush.
+  const first = await prisma.salesTallyRun.updateMany({ where: { id, status: "queued" }, data: { status: "pushing" } });
+  const claimed = first.count ? first : await prisma.salesTallyRun.updateMany({ where: { id, status: "partial" }, data: { status: "pushing" } });
   if (!claimed.count) return;
   pushRegistry.add(id);
+  if (first.count) {
+    await logSalesEvent(prisma, { entityType: "tally_run", entityId: id, actorId: "system", action: "push_started", fromStatus: "queued", toStatus: "pushing" }).catch((e) => console.error(`[tally] push ${id}: event`, e));
+  }
   try {
     const run = (await prisma.salesTallyRun.findUnique({ where: { id } }))!;
     const company = run.companyKey as CompanyKey;
@@ -294,11 +322,19 @@ export async function runTallyPush(id: string): Promise<void> {
     const keyOf = (i: { action: string; voucherType: string; docNumber: string; remoteId: string }) => (i.action === "cancel" ? `cancel:${i.voucherType}:${i.docNumber}` : i.remoteId);
     const rawOf = new Map(order.map((b) => [b.key, b.raw]));
     pending.sort((a, b) => (position.get(keyOf(a)) ?? 0) - (position.get(keyOf(b)) ?? 0));
+    // Last good party amount and date per document from EARLIER runs (alter / cancel guard, I5). An
+    // alter or cancel may hold a date edited since it was sent; Tally still has it on the old one.
+    const ids = pending.map((p) => p.docId);
+    const lastRows = ids.length ? await prisma.$queryRaw<Array<{ doc_id: string; party_amount_paise: bigint; doc_date: Date }>>`
+      SELECT DISTINCT ON (doc_id) doc_id, party_amount_paise, doc_date FROM sales_tally_items
+      WHERE company_key = ${company} AND doc_id = ANY(${ids}::text[]) AND run_id <> ${id} AND outcome IN ('synced', 'adopted')
+      ORDER BY doc_id, resolved_at DESC NULLS LAST` : [];
+    const lastAmount = new Map(lastRows.map((r) => [r.doc_id, toSafeNumber(r.party_amount_paise)]));
     let tallyVouchers: TallyVoucherRow[] = [];
     let tallyLedgers: TallyLedgerRow[] = [];
     try {
       if (pending.length) {
-        const days = pending.map((p) => p.docDate.toISOString().slice(0, 10)).sort();
+        const days = [...pending.map((p) => p.docDate), ...lastRows.map((r) => r.doc_date)].map((d) => d.toISOString().slice(0, 10)).sort();
         tallyVouchers = await collection(target, "vouchers", run.tallyCompany, { from: days[0], to: days[days.length - 1] });
       }
       tallyLedgers = await collection(target, "ledgers", run.tallyCompany);
@@ -308,14 +344,6 @@ export async function runTallyPush(id: string): Promise<void> {
     const byRemote = new Map(tallyVouchers.filter((v) => v.remoteId).map((v) => [v.remoteId!, v]));
     const byNumber = new Map(tallyVouchers.map((v) => [`${v.type.toLowerCase()}|${v.number.toLowerCase()}`, v]));
     const ledgerByName = new Map(tallyLedgers.map((l) => [l.name.toLowerCase(), l]));
-
-    // Last good party amount per document from EARLIER runs (alter / cancel guard, I5).
-    const ids = pending.map((p) => p.docId);
-    const lastRows = ids.length ? await prisma.$queryRaw<Array<{ doc_id: string; party_amount_paise: bigint }>>`
-      SELECT DISTINCT ON (doc_id) doc_id, party_amount_paise FROM sales_tally_items
-      WHERE company_key = ${company} AND doc_id = ANY(${ids}::text[]) AND run_id <> ${id} AND outcome IN ('synced', 'adopted')
-      ORDER BY doc_id, resolved_at DESC NULLS LAST` : [];
-    const lastAmount = new Map(lastRows.map((r) => [r.doc_id, toSafeNumber(r.party_amount_paise)]));
 
     // Party ledgers: adopt existing ones, refuse one that carries another GSTIN.
     const mappings = await prisma.salesTallyParty.findMany({ where: { companyKey: company } });
@@ -383,7 +411,7 @@ export async function runTallyPush(id: string): Promise<void> {
           await record("failed", { issueCode: "EDITED_IN_TALLY", error: `${item.docNumber} was changed in Tally — update it there by hand, then mark it as done` });
           continue;
         }
-        if (!found && raw) raw = raw.replace(' ACTION="Alter" ', ' ACTION="Create" '); // Tally lost it: send as Create
+        if (!found && raw) raw = asCreate(raw); // Tally lost it: send as Create
       }
       if (item.action === "cancel") {
         if (found?.cancelled) { await record("adopted", { tallyVchId: found.masterId }); continue; }
@@ -406,7 +434,7 @@ export async function runTallyPush(id: string): Promise<void> {
       consecutive = 0;
       let res: ReturnType<typeof parseImportResponse>;
       try { res = parseImportResponse(r.body); } catch (e) {
-        await record("failed", { issueCode: e instanceof TallyReadError ? `TALLY_${e.kind}` : "TALLY_BAD_RESPONSE", error: e instanceof TallyReadError && e.kind === "COMPANY_NOT_OPEN" ? `"${run.tallyCompany}" isn't open in Tally` : badReply(r.body).message });
+        await record("failed", { issueCode: e instanceof TallyReadError ? `TALLY_${e.kind}` : "TALLY_BAD_RESPONSE", error: e instanceof TallyReadError && e.kind === "COMPANY_NOT_OPEN" ? `"${run.tallyCompany}" isn't open in Tally` : badReply().message });
         continue;
       }
       if (res.errors > 0 || res.lineErrors.length) await record("failed", { error: (res.lineErrors.join(" · ") || `Tally reported ${res.errors} error(s)`).slice(0, 1000) });
@@ -418,7 +446,8 @@ export async function runTallyPush(id: string): Promise<void> {
     // 6. Finish.
     const final = await prisma.salesTallyItem.groupBy({ by: ["outcome"], where: { runId: id }, _count: { _all: true } });
     const c = (o: string) => final.find((f) => f.outcome === o)?._count._all ?? 0;
-    const bad = final.filter((f) => !["synced", "adopted", "blocked"].includes(f.outcome)).reduce((s, f) => s + f._count._all, 0);
+    // superseded in a run still being pushed = marked as done by hand (resolveByHand), not a failure
+    const bad = final.filter((f) => !["synced", "adopted", "blocked", "superseded"].includes(f.outcome)).reduce((s, f) => s + f._count._all, 0);
     const result = { synced: c("synced"), adopted: c("adopted"), failed: c("failed"), unknown: c("unknown") + c("pending"), finishedAt: new Date().toISOString() };
     const latest = ((await prisma.salesTallyRun.findUnique({ where: { id }, select: { pushResult: true } }))?.pushResult ?? {}) as Record<string, unknown>;
     if (!bad) {

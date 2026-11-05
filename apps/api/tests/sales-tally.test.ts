@@ -269,6 +269,11 @@ describe("selection, routing, blocking, staleness (T5–T9, T30)", () => {
     expect(codes).toEqual(expect.arrayContaining(["NO_SALES_LEDGER", "ZERO_RATED_UNSUPPORTED", "LEDGER_MISSING"]));
     expect(byNumber[sez.number]).toBe("blocked");
     expect(p.issues.find((i: { number: string }) => i.number === sez.number).message).toMatch(/export\/SEZ/);
+    // Review fix: the held-back SEZ invoice is SEZWOP in GSTR-1, never counted in B2B / B2C.
+    const mh = p.tallyShouldShow.gst.find((x: { gstin: string }) => x.gstin === "27AAKCD3352K1ZF");
+    expect(mh.sezwop).toMatchObject({ count: 1, taxablePaise: sez.taxablePaise });
+    expect(mh.b2b.count).toBe(2); // good + odd, not the SEZ one
+    expect(p.tallyShouldShow.zeroRatedByHand).toBe(true);
     if (byNumber[nopos.number] === "blocked") expect(codes).toContain("PLACE_OF_SUPPLY_MISSING");
     const refused = await exportRun();
     expect(refused.body.error.code).toBe("TALLY_BLOCKED");
@@ -283,6 +288,19 @@ describe("selection, routing, blocking, staleness (T5–T9, T30)", () => {
     await pay("ka", { amount: odd.totalPaise, allocs: [{ invoiceId: odd.id, amountPaise: odd.totalPaise }] });
     const p = (await preview()).body.data;
     expect(p.issues.map((i: { code: string }) => i.code)).toContain("DEPENDS_ON_UNSENT");
+  });
+
+  it("review: a ₹0 invoice is held back (ZERO_VALUE_INVOICE), never a 500 for the whole month", async () => {
+    const good = await invoice("mh");
+    const free = await invoice("mh", { amount: 0 });
+    const r = await preview();
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const byNumber = Object.fromEntries(r.body.data.documents.map((d: { number: string; action: string }) => [d.number, d.action]));
+    expect(byNumber[free.number]).toBe("blocked");
+    expect(byNumber[good.number]).toBe("create");
+    expect(r.body.data.issues.find((i: { number: string }) => i.number === free.number).code).toBe("ZERO_VALUE_INVOICE");
+    expect((await request(app).get(`/v1/sales/tally/documents/invoice/${free.id}`).set(auth(sales))).status).toBe(200);
+    expect((await exportRun({ allowPartial: true })).status).toBe(201);
   });
 
   it("T8 (R/G, I6): a stale preview is refused and no run row is written", async () => {
@@ -427,6 +445,35 @@ describe("file runs: confirm, only-new, cancellations, parties, money (T10–T20
     expect(byId[a.id]).toBe("cancel:cancelled");
     expect(byId[c.id]).toBe("create:cancelled");
     expect(byId[b.id]).toBe("unchanged:null");
+    // Review fix: once confirmed, the cancelled create is in Tally as cancelled — no second Cancel.
+    const two = (await exportRun()).body.data;
+    expect(two.voucherCount).toBe(2);
+    expect((await confirm(two.id, 1, { cancelled: 1 })).status).toBe(200);
+    const again = (await preview()).body.data;
+    expect(again.counts.vouchers).toBe(0);
+    expect(again.documents.find((d: { docId: string }) => d.docId === c.id).action).toBe("unchanged");
+    expect((await request(app).get(`/v1/sales/tally/documents/invoice/${c.id}`).set(auth(sales))).body.data.state).toBe("cancelled_in_tally");
+    expect((await exportRun()).body.error.code).toBe("TALLY_NOTHING_TO_EXPORT");
+  });
+
+  it("T14: proforma converted after its receipt went to Tally — the receipt is altered to the tax invoice", async () => {
+    const pf = await request(app).post("/v1/sales/invoices").set(auth(sales)).send({ clientId: clients.ka, kind: "proforma", items: [{ description: "Advance", unitPricePaise: 1_000_000 }] });
+    const pfi = (await request(app).post(`/v1/sales/invoices/${pf.body.data.id}/issue`).set(auth(sales)).send({ issueDate: "2026-10-08" })).body.data;
+    const rc = await pay("ka", { amount: pfi.totalPaise, paidOn: "2026-10-09", allocs: [{ invoiceId: pfi.id, amountPaise: pfi.totalPaise }] });
+    const one = (await exportRun()).body.data;
+    expect((await confirm(one.id, one.voucherCount)).status).toBe(200);
+    const conv = await request(app).post(`/v1/sales/invoices/${pfi.id}/convert`).set(auth(sales));
+    expect(conv.status, JSON.stringify(conv.body)).toBe(201);
+    const tax = await request(app).post(`/v1/sales/invoices/${conv.body.data.id}/issue`).set(auth(sales)).send({ issueDate: "2026-11-05" });
+    expect(tax.status, JSON.stringify(tax.body)).toBe(200);
+    const nov = (await preview({ from: "2026-11-01", to: "2026-11-30" })).body.data;
+    const rows = Object.fromEntries(nov.documents.map((d: { docId: string; action: string; reason: string }) => [d.docId, `${d.action}:${d.reason}`]));
+    expect(rows[conv.body.data.id]).toBe("create:new");
+    expect(rows[rc.id]).toBe("alter:earlier_change");
+    const run = (await exportRun({ from: "2026-11-01", to: "2026-11-30" })).body.data;
+    const xml = await vouchersXml(run.id);
+    expect(xml).toContain(`REMOTEID="dsh-rcpt-${rc.id}" VCHTYPE="Receipt" ACTION="Alter"`);
+    expect(xml).toContain(`<NAME>${tax.body.data.number}</NAME>`);
   });
 
   it("T17: party ledgers — locked names, admin rename, taken names, the same GSTIN", async () => {
@@ -440,6 +487,9 @@ describe("file runs: confirm, only-new, cancellations, parties, money (T10–T20
     expect(renamed.status, JSON.stringify(renamed.body)).toBe(200);
     expect(renamed.body.data.ledgerName).toBe("Filmy Brands Pvt Ltd");
     expect((await put(sales, { ledgerName: "filmy brands pvt ltd" }, clients.ka)).body.error.code).toBe("TALLY_LEDGER_NAME_TAKEN");
+    const acct = await put(sales, { ledgerName: "output cgst" }, clients.ka);
+    expect(acct.body.error.code).toBe("TALLY_LEDGER_NAME_TAKEN");
+    expect(acct.body.error.message).toMatch(/account ledgers/);
     const twin = await prisma.client.create({ data: { companyName: "Filmy Twin", contactName: "X", email: `twin-${Date.now()}@c.test`, passwordHash: "x" } });
     await prisma.clientBillingProfile.create({ data: { clientId: twin.id, legalName: "Filmy Brands Private Limited", gstin: "27AABCU9603R1ZX", stateCode: "27" } });
     expect((await put(sales, { ledgerName: "Filmy Brands Pvt Ltd" }, twin.id)).status).toBe(200);
@@ -541,7 +591,10 @@ describe("file runs: confirm, only-new, cancellations, parties, money (T10–T20
     expect(m.body.data.suggestions.map((s: { by: string; tallyName: string }) => `${s.by}:${s.tallyName}`)).toEqual(["gstin:Filmy Brands (Tally)", "name:Bengaluru Beats Private Limited"]);
     expect(m.body.data.conflicts).toEqual([{ tallyName: "Gurgaon Grooves Private Limited", gstins: ["07AAAAA0000A1Z5", "06AABCH1234A1Z5"] }]);
     const apply = await request(app).post("/v1/sales/tally/parties/apply").set(auth(adminT)).send({ companyKey: "dspl", mappings: m.body.data.suggestions.map((s: { clientId: string; tallyName: string }) => ({ clientId: s.clientId, ledgerName: s.tallyName, existsInTally: true })) });
-    expect(apply.body.data).toEqual({ saved: 2 });
+    expect(apply.body.data).toEqual({ saved: 2, skipped: [] });
+    expect(await prisma.salesEvent.count({ where: { entityType: "client", action: "tally_ledger_set" } })).toBe(2);
+    const bad = await request(app).post("/v1/sales/tally/parties/apply").set(auth(adminT)).send({ companyKey: "dspl", mappings: [{ clientId: clients.hr, ledgerName: "Round Off", existsInTally: true }] });
+    expect(bad.body.data).toMatchObject({ saved: 0, skipped: [{ clientId: clients.hr, reason: expect.stringMatching(/account ledger/) }] });
     const run = (await exportRun({ allowPartial: true })).body.data;
     expect(run.masterCount).toBe(1); // only the Haryana client's ledger is new
   });
@@ -631,7 +684,7 @@ describe("Send to Tally (T21–T27)", () => {
     expect(f.state.posts[1]).toContain('VCHTYPE="Sales"');
     expect(f.state.posts[2]).toContain('VCHTYPE="Receipt"');
     const ev = await prisma.salesEvent.findMany({ where: { entityType: "tally_run", entityId: run.id } });
-    expect(ev.map((e) => e.action)).toEqual(expect.arrayContaining(["built", "pushed"]));
+    expect(ev.map((e) => e.action)).toEqual(expect.arrayContaining(["built", "push_started", "pushed"]));
     expect(await prisma.salesEvent.count({ where: { action: "tally_synced" } })).toBe(2);
   });
 
@@ -809,6 +862,90 @@ describe("Send to Tally (T21–T27)", () => {
     expect(["synced", "adopted"]).toContain(run.items[0].outcome);
   });
 
+  it("review: a send that stopped before anything reached Tally leaves its new parties unlocked", async () => {
+    const g = fakeTally({ companies: ["Some Other Co"] });
+    setTallyTransportForTests(g.transport);
+    await invoice("mh");
+    const r = await push();
+    const run = await runOf(r.body.data.id);
+    expect(run.status).toBe("partial");
+    await request(app).post(`/v1/sales/tally/runs/${run.id}/close`).set(auth(adminT)).send({ reason: "Tally was closed" });
+    expect((await prisma.salesTallyParty.findFirstOrThrow({ where: { clientId: clients.mh } })).lockedAt).toBeNull();
+    expect((await preview()).body.data.counts.masters.partiesNew).toBe(1);
+  });
+
+  it("review: a queued run nobody claimed is stale and can be retried", async () => {
+    const f = fakeTally();
+    setTallyTransportForTests(f.transport);
+    await invoice("mh");
+    const r = await exportRun({ token: adminT, path: "pushes" });
+    await flushSalesBackground();
+    const id = r.body.data.id;
+    await prisma.salesTallyItem.updateMany({ where: { runId: id }, data: { outcome: "pending" } });
+    await prisma.$executeRaw`UPDATE sales_tally_runs SET status = 'queued', updated_at = ${new Date(Date.now() - 10 * 60_000).toISOString()}::timestamp WHERE id = ${id}`;
+    pushRegistry.delete(id);
+    expect((await runOf(id)).stale).toBe(true);
+    expect((await request(app).post(`/v1/sales/tally/runs/${id}/retry`).set(auth(adminT))).status).toBe(202);
+    await flushSalesBackground();
+    expect((await runOf(id)).status).toBe("pushed");
+  });
+
+  it("review: EDITED_IN_TALLY is marked as done by hand from its own (open) run; the next preview shows it unchanged", async () => {
+    const f = fakeTally();
+    setTallyTransportForTests(f.transport);
+    const a = await invoice("mh");
+    await push();
+    await request(app).put(`/v1/sales/invoices/${a.id}`).set(auth(sales)).send({ clientId: clients.mh, poNumber: "PO-1", items: [{ description: "Instagram reel", unitPricePaise: 10_000_000 }] });
+    f.state.vouchers.get(`dsh-inv-${a.id}`)!.amountPaise = 123;
+    const run = await runOf((await push()).body.data.id);
+    expect(run.items[0]).toMatchObject({ outcome: "failed", issueCode: "EDITED_IN_TALLY" });
+    const resolve = (fromRunId?: string) => request(app).post("/v1/sales/tally/resolve").set(auth(adminT)).send({ companyKey: "dspl", docs: [{ docType: "invoice", docId: a.id }], note: "Fixed in Tally by Priya", ...(fromRunId ? { fromRunId } : {}) });
+    expect((await resolve()).body.error.code).toBe("TALLY_RUN_OPEN");
+    const ok = await resolve(run.id);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    const src = await runOf(run.id);
+    expect(src.status).toBe("closed");
+    expect(src.items[0].outcome).toBe("superseded");
+    const p = (await preview()).body.data;
+    expect(p.documents.find((d: { docId: string }) => d.docId === a.id).action).toBe("unchanged");
+    expect(p.openRun).toBeNull();
+  });
+
+  it("review: an alter whose voucher Tally lost is sent as a Create with the same REMOTEID", async () => {
+    const f = fakeTally();
+    setTallyTransportForTests(f.transport);
+    const a = await invoice("mh");
+    await push();
+    await request(app).put(`/v1/sales/invoices/${a.id}`).set(auth(sales)).send({ clientId: clients.mh, poNumber: "PO-1", items: [{ description: "Instagram reel", unitPricePaise: 10_000_000 }] });
+    f.state.vouchers.delete(`dsh-inv-${a.id}`);
+    f.state.posts.length = 0;
+    const run = await runOf((await push()).body.data.id);
+    expect(run.items[0]).toMatchObject({ action: "alter", outcome: "synced" });
+    const sent = f.state.posts.find((x) => x.includes("<VOUCHER"))!;
+    expect(sent).toContain(`REMOTEID="dsh-inv-${a.id}"`);
+    expect(sent).toContain('ACTION="Create"');
+    expect(sent).not.toContain('ACTION="Alter"');
+    expect(f.state.creates.get(`dsh-inv-${a.id}`)).toBe(2);
+  });
+
+  it("review: PARTY_LEDGER_CONFLICT and LEDGER_MISSING fail before anything is sent", async () => {
+    const base = ["Sales - Advertising Services", "Output CGST", "Output SGST", "Output IGST", "Round Off", "TDS Receivable", "IDFC First Bank A/c 8788", "Cash"];
+    const f = fakeTally({ ledgers: [...base.map((name) => ({ name })), { name: "Filmy Brands Private Limited", gstin: "27AAAAA0000A1Z5" }] });
+    setTallyTransportForTests(f.transport);
+    await invoice("mh");
+    const run = await runOf((await push()).body.data.id);
+    expect(run.items[0]).toMatchObject({ outcome: "failed", issueCode: "PARTY_LEDGER_CONFLICT" });
+    expect(f.state.posts.filter((x) => x.includes("<VOUCHER")).length).toBe(0);
+    await request(app).post(`/v1/sales/tally/runs/${run.id}/close`).set(auth(adminT)).send({ reason: "Rename in Tally" });
+
+    const g = fakeTally({ ledgers: base.filter((n) => n !== "Output CGST").map((name) => ({ name })) });
+    setTallyTransportForTests(g.transport);
+    const run2 = await runOf((await push()).body.data.id);
+    expect(run2.items[0]).toMatchObject({ outcome: "failed", issueCode: "LEDGER_MISSING" });
+    expect(run2.items[0].error).toMatch(/Output CGST/);
+    expect(g.state.posts.filter((x) => x.includes("<VOUCHER")).length).toBe(0);
+  });
+
   it("test connection reports open companies and ledgers", async () => {
     const f = fakeTally({ companies: ["Digital Sukoon Private Limited"] });
     setTallyTransportForTests(f.transport);
@@ -816,5 +953,11 @@ describe("Send to Tally (T21–T27)", () => {
     expect(t.status, JSON.stringify(t.body)).toBe(200);
     expect(t.body.data).toMatchObject({ reachable: true, missingCompanies: [], openCompanies: ["Digital Sukoon Private Limited"] });
     expect(t.body.data.ledgers.find((l: { name: string }) => l.name === "Output CGST").found).toBe(true);
+    expect(t.body.data.server).toBe("TallyPrime Server is Running");
+    // Something else at that address: nothing of its reply is echoed (R6).
+    setTallyTransportForTests({ async send() { return { ok: true, status: 200, body: "<html>MinIO Console secret-bucket-list</html>" }; } });
+    const other = await request(app).post("/v1/sales/tally/test").set(auth(adminT));
+    expect(other.body.error.code).toBe("TALLY_BAD_RESPONSE");
+    expect(JSON.stringify(other.body)).not.toMatch(/MinIO|secret/);
   });
 });

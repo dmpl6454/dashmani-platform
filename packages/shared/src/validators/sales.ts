@@ -629,6 +629,8 @@ export const tallyResolveSchema = z.object({
   companyKey: companyKeySchema,
   docs: z.array(z.object({ docType: z.enum(TALLY_DOC_TYPES), docId: z.string().uuid() })).min(1).max(200),
   note: safeString.pipe(z.string().min(3).max(500)),
+  /** the export the documents were picked from — it may be the open one (its unsent items) */
+  fromRunId: z.string().uuid().optional(),
 });
 export type TallyResolveInput = z.infer<typeof tallyResolveSchema>;
 

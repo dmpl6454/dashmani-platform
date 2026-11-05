@@ -8,7 +8,7 @@ import { useEvents, useTallyRun } from "@/lib/hooks";
 import { apiFetch, apiFetchBlob, downloadBlob } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
-import { refreshTally } from "@/lib/tally";
+import { docHref, refreshTally } from "@/lib/tally";
 import { Confirm, Empty, Field, LoadError, Loading, Money, PageHead, StatusPill, Toast } from "@/components/sales-ui";
 import { EventList } from "@/components/document-view";
 import type { TallyRunView } from "@/lib/sales-types";
@@ -46,8 +46,15 @@ function RunView() {
   const download = async (part: "masters" | "vouchers") => {
     try { const f = await apiFetchBlob(`/sales/tally/runs/${r.id}/file?part=${part}`); downloadBlob(f.blob, f.filename ?? `tally-export${r.runNo}-${part}.xml`); } catch (err) { fail(err); }
   };
+  /** Both files, masters first — a voucher for a new client fails in Tally without its ledger. */
+  const downloadAll = async () => { if (r.files.masters) await download("masters"); await download("vouchers"); };
   const items = r.items.filter((i) => tab === "all" || (tab === "problems" ? ["failed", "blocked", "unknown"].includes(i.outcome) : i.action === "alter" || i.action === "cancel"));
-  const docLink = (i: TallyRunView["items"][number]) => (i.docType === "invoice" ? `/invoices/view?id=${i.docId}` : i.docType === "receipt" ? `/payments/view?id=${i.docId}` : null);
+  const docLink = (i: TallyRunView["items"][number]) => docHref(i);
+  // What can be marked as done by hand: what a push left unsent (its own open run is allowed), what
+  // an export held back, and what a closed push gave up on. Never a file run's pending vouchers.
+  const pickableOutcomes = r.status === "partial" ? ["failed", "blocked", "pending", "unknown"] : r.status === "open" ? ["blocked"]
+    : r.status === "pushing" || r.status === "queued" || r.channel === "manual" ? [] : ["failed", "blocked", "superseded"];
+  const fromRunId = r.status === "partial" || r.status === "open" ? r.id : undefined;
   const should = r.summary?.tallyShouldShow;
 
   return (
@@ -114,7 +121,12 @@ function RunView() {
               {r.stale && <div className="card border-attention p-3 text-sm">This send stopped (the server restarted). Resume it — Tally is checked first, so nothing is sent twice. {admin && <button type="button" className="btn btn-sm ml-2" onClick={async () => { try { await post(`/sales/tally/runs/${r.id}/retry`); } catch (err) { fail(err); } }}>Resume</button>}</div>}
               {r.pushResult?.error && (
                 <div className="card border-danger p-3 text-sm break-words">{r.pushResult.error}
-                  <button type="button" className="btn btn-light btn-sm ml-2" onClick={() => download("vouchers")}>Download the file instead</button></div>
+                  <button type="button" className="btn btn-light btn-sm ml-2" onClick={downloadAll}>Download the file{r.files.masters ? "s" : ""} instead</button>
+                  <ol className="list-decimal ml-5 mt-2 grid gap-1 text-ink-3">
+                    {r.files.masters && <li>In Tally: Import → Masters → the masters file → <em>Ignore Duplicates</em>.</li>}
+                    <li>Import → Transactions → the vouchers file.</li>
+                    {admin && <li>Back here, tick the documents Tally now has and mark them as done.</li>}
+                  </ol></div>
               )}
               {r.status === "partial" && admin && (
                 <div className="flex flex-col sm:flex-row gap-2">
@@ -131,7 +143,7 @@ function RunView() {
               {admin && picked.size > 0 && <button type="button" className="btn btn-sm" onClick={() => setModal("resolve")}>Mark selected as done in Tally</button>}
             </div>
             <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm [&_td]:px-2 [&_th]:px-2"><thead><tr className="text-left text-ink-3 text-xs"><th />{["Type", "Number", "Date", "Action", "Result", "Tally id", "Message"].map((h) => <th key={h} className="py-1">{h}</th>)}</tr></thead>
-              <tbody>{items.map((i) => { const href = docLink(i); const pickable = admin && ["failed", "blocked"].includes(i.outcome); return (
+              <tbody>{items.map((i) => { const href = docLink(i); const pickable = admin && pickableOutcomes.includes(i.outcome); return (
                 <tr key={i.id} className="border-t border-border align-top"><td className="py-1 pr-1">{pickable && <input type="checkbox" checked={picked.has(i.id)} onChange={(e) => setPicked((s) => { const x = new Set(s); if (e.target.checked) x.add(i.id); else x.delete(i.id); return x; })} aria-label={`Select ${i.docNumber}`} />}</td>
                   <td>{DOC_LABEL[i.docType]}</td><td className="font-mono break-all">{href ? <Link className="underline hover:text-white" href={href}>{i.docNumber}</Link> : i.docNumber}</td>
                   <td>{fmtDate(i.docDate)}</td><td>{i.action}</td><td><StatusPill status={i.outcome} /></td><td className="font-mono text-xs">{i.tallyVchId ?? "—"}</td>
@@ -169,7 +181,7 @@ function RunView() {
           onConfirm={async () => {
             try {
               const docs = r.items.filter((i) => picked.has(i.id)).map((i) => ({ docType: i.docType, docId: i.docId }));
-              await apiFetch("/sales/tally/resolve", { method: "POST", body: JSON.stringify({ companyKey: r.companyKey, docs, note: reason }) });
+              await apiFetch("/sales/tally/resolve", { method: "POST", body: JSON.stringify({ companyKey: r.companyKey, docs, note: reason, ...(fromRunId ? { fromRunId } : {}) }) });
               setPicked(new Set()); setModal(null); await refresh(); setToast({ message: "Recorded as done in Tally.", tone: "ok" });
             } catch (err) { fail(err); }
           }}

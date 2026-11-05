@@ -13,14 +13,16 @@ export interface SalesCompany {
   short: string;
   /** system_settings key of its seller profile (Digital Sukoon keeps the original key). */
   settingsKey: string;
+  /** system_settings key of its Tally settings (spec-tally §2.4) — never inside the seller profile. */
+  tallySettingsKey: string;
   /** Fixed prefixes of its non-configurable series. */
   proformaPrefix: string;
   refundPrefix: string;
 }
 
 export const SALES_COMPANIES: Record<CompanyKey, SalesCompany> = {
-  dspl: { key: "dspl", name: "Digital Sukoon Private Limited", short: "Digital Sukoon", settingsKey: "sales.seller", proformaPrefix: "PI", refundPrefix: "RF" },
-  dmpl: { key: "dmpl", name: "Dashmani Media Private Limited", short: "Dashmani Media", settingsKey: "sales.seller.dmpl", proformaPrefix: "DMPI", refundPrefix: "DMRF" },
+  dspl: { key: "dspl", name: "Digital Sukoon Private Limited", short: "Digital Sukoon", settingsKey: "sales.seller", tallySettingsKey: "sales.tally", proformaPrefix: "PI", refundPrefix: "RF" },
+  dmpl: { key: "dmpl", name: "Dashmani Media Private Limited", short: "Dashmani Media", settingsKey: "sales.seller.dmpl", tallySettingsKey: "sales.tally.dmpl", proformaPrefix: "DMPI", refundPrefix: "DMRF" },
 };
 
 export const isCompanyKey = (v: unknown): v is CompanyKey => typeof v === "string" && (COMPANY_KEYS as readonly string[]).includes(v);

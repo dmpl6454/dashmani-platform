@@ -268,6 +268,71 @@ export type ReconEmailResult = { sent: boolean; to: string[]; cc: string[] };
 // ─── smart-invoicing: reconcile BRS (PR 6) ───
 
 // ─── smart-invoicing: tally (PR 2) ───
+// Tally export / Send to Tally (spec-tally §3.4).
+export type TallyDocType = "invoice" | "credit_note" | "receipt" | "refund";
+export type TallyAction = "create" | "alter" | "cancel" | "unchanged" | "skip" | "blocked";
+export interface TallyIssue {
+  id: string; code: string; severity: "block" | "ack" | "info";
+  docType?: TallyDocType; docId?: string; number?: string; message: string; fix?: { href: string; label: string };
+}
+export interface TallyRegistration { gstin: string; tallyCompany: string; registrationName: string | null; salesVoucherType: string | null; creditNoteVoucherType: string | null }
+export interface TallySettings {
+  release: "prime3" | "legacy"; booksFrom: string | null; registrations: TallyRegistration[]; gstr1Filing: "monthly" | "quarterly"; partyGroup: string;
+  salesLedgers: Array<{ name: string; sac: string; gstRateBp: number }>;
+  ledgers: { outputCgst: string; outputSgst: string; outputIgst: string; roundOff: string; tdsReceivable: string; bank: string | null; cash: string; gateway: string | null; other: string | null; zeroRatedSales: string | null };
+  voucherTypes: { sales: string; creditNote: string; receipt: string; payment: string };
+  createAccountLedgers: boolean; bankAllocations: boolean; ledgersConfirmed: boolean; pushUrl: string | null;
+}
+export interface TallySettingsView {
+  company: "dspl" | "dmpl"; settings: TallySettings; saved: boolean; missing: string[];
+  registrations: Array<{ gstin: string; label: string; state: string }>; pushEnabled: boolean;
+}
+export interface TallyDocRow {
+  docType: TallyDocType; docId: string; number: string; date: string; party: string; partyAmountPaise: number; action: TallyAction;
+  reason: "new" | "changed" | "resend" | "cancelled" | "needed" | "earlier_change" | null; issueIds: string[];
+  lastSent: { runNo: number; at: string; action: string } | null;
+  /** a credit note's invoice, a refund's receipt */
+  parentId: string | null;
+}
+export type TallyGst = { count: number; taxablePaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number };
+export type TallyActionCounts = { create: number; alter: number; cancel: number };
+export interface TallyShouldShow {
+  gst: Array<{ gstin: string; label: string; month: string; b2b: TallyGst; b2c: TallyGst; sezwop?: TallyGst; expwop?: TallyGst; creditNotes: TallyGst; zeroRatedCreditNotes?: TallyGst; documents: { issued: number; cancelled: number; fromNo: string | null; toNo: string | null } }>;
+  /** export / SEZ invoices are not in the file yet: they are entered in Tally by hand */
+  zeroRatedByHand?: boolean;
+  tds: Array<{ fy: string; ledger: string; paise: number; receipts: number }>;
+}
+export interface TallyPreview {
+  company: "dspl" | "dmpl"; tallyCompany: string; scopeGstin: string | null; release: "prime3" | "legacy";
+  period: { from: string; to: string; effectiveFrom: string; booksFrom: string };
+  mode: "new_only" | "everything"; openRun: { id: string; runNo: number; status: string } | null;
+  counts: {
+    sales: TallyActionCounts; creditNotes: TallyActionCounts; receipts: TallyActionCounts; refunds: TallyActionCounts;
+    vouchers: number; unchanged: number; skipped: number; blocked: number; beforeBooks: number; earlierChanges: number; pulledIn: number;
+    masters: { partiesNew: number; accountLedgers: number };
+  };
+  totals: Record<"salesTaxablePaise" | "cgstPaise" | "sgstPaise" | "igstPaise" | "roundOffPaise" | "salesTotalPaise" | "creditTotalPaise" | "receiptCashPaise" | "tdsPaise" | "refundPaise" | "controlTotalPaise", number>;
+  tallyShouldShow: TallyShouldShow;
+  ledgers: Array<{ role: string; name: string; group: string | null; createdByExport: boolean; debitPaise: number; creditPaise: number }>;
+  issues: TallyIssue[]; documents: TallyDocRow[]; documentsTruncated: boolean; previewHash: string; canExport: boolean;
+}
+export interface TallyRunRow {
+  id: string; companyKey: "dspl" | "dmpl"; runNo: number; tallyCompany: string; scopeGstin: string | null; periodFrom: string; periodTo: string;
+  mode: string; channel: "file" | "push" | "manual"; status: string; voucherCount: number; masterCount: number; blockedCount: number;
+  controlTotalPaise: number; createdBy: { id: string; name: string } | null; createdAt: string; closedAt: string | null;
+}
+export interface TallyRunView extends TallyRunRow {
+  summary: Partial<TallyPreview>; acknowledged: Array<{ id: string; byId: string; at: string }>;
+  pushTarget: string | null; pushResult: { error?: string | null; synced?: number; adopted?: number; failed?: number; unknown?: number } | null;
+  tallyReported: { created: number; altered: number; cancelled: number; errors: number } | null; statusNote: string | null; previewHash: string;
+  items: Array<{ id: string; docType: TallyDocType; docId: string; docNumber: string; docDate: string; voucherType: string; action: string; outcome: string;
+    partyAmountPaise: number; issueCode: string | null; error: string | null; tallyVchId: string | null; attempts: number; parentId: string | null }>;
+  itemsTruncated: boolean; progress: { done: number; failed: number; waiting: number; total: number } | null; stale: boolean;
+  files: { masters: boolean; vouchers: boolean };
+}
+export interface TallyPartyRow { clientId: string; client: string; gstin: string | null; ledgerName: string; proposed: boolean; existsInTally: boolean; lockedAt: string | null; lastRunNo: number | null }
+export interface TallyDocStatus { state: "not_set_up" | "never" | "before_books" | "pending" | "synced" | "changed" | "failed" | "cancelled_in_tally"; runId: string | null; runNo: number | null; at: string | null; error: string | null }
+export interface TallyTestResult { reachable: true; latencyMs: number; server: string | null; openCompanies: string[]; missingCompanies: string[]; ledgers: Array<{ role: string; name: string; found: boolean }> }
 
 // ─── smart-invoicing: import (PR 3) ───
 

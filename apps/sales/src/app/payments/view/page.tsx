@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, todayIST } from "@/lib/format";
 import { Confirm, Empty, Field, LoadError, Loading, Money, MoneyInput, PageHead, StatusPill, Toast, titleCase } from "@/components/sales-ui";
+import { TallyBadge } from "@/components/tally-badge"; // smart-invoicing: tally (PR 2)
 import { EventList } from "@/components/document-view";
 import type { Payment } from "@/lib/sales-types";
 
@@ -46,7 +47,7 @@ function PaymentView() {
 
   return (
     <>
-      <PageHead kicker={<><Link href="/payments" className="hover:text-white">Payments</Link> · {companyName(p.companyKey)} · <Link href={`/clients/view?id=${p.client.id}`} className="hover:text-white">{p.client.companyName}</Link></> as unknown as string} title={<><span className="font-mono">{p.number}</span> <StatusPill status={p.status} />{/* smart-invoicing: tally badge (PR 2) */}</>}>
+      <PageHead kicker={<><Link href="/payments" className="hover:text-white">Payments</Link> · {companyName(p.companyKey)} · <Link href={`/clients/view?id=${p.client.id}`} className="hover:text-white">{p.client.companyName}</Link></> as unknown as string} title={<><span className="font-mono">{p.number}</span> <StatusPill status={p.status} />{/* smart-invoicing: tally badge (PR 2) */}<TallyBadge docType="receipt" docId={p.id} /></>}>
         {live && p.unallocatedPaise > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("refund")}>Refund</button>}
         {live && liveRefunds.length === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("void")}>Void receipt</button>}
       </PageHead>

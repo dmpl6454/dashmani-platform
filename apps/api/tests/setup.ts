@@ -7,7 +7,7 @@ import { flushSalesBackground } from "../src/services/sales/common";
 // are SQL comments Postgres ignores.
 const TRUNCATE_SQL = `
     TRUNCATE TABLE youtube_connections,
-      -- smart-invoicing/tally (PR 2): sales_tally_items, sales_tally_runs, sales_tally_parties,
+      sales_tally_items, sales_tally_runs, sales_tally_parties,
       sales_einvoices, sales_recurring_invoices, sales_refunds, sales_events, sales_credit_notes,
       finance_filed_files, finance_filed_years,
       sales_confirmation_files, sales_balance_confirmations, sales_gstr1_docs, sales_gstr1_uploads, sales_tds_entries, sales_tds_uploads, sales_tds_deductors,

@@ -526,6 +526,13 @@ await journey("accounts-page", async () => {
 });
 
 // smart-invoicing: tally steps
+await journey("tally-pages", async () => {
+  for (const p of ["/tally", "/tally/settings", "/tally/parties"]) {
+    await go(p); await ready(); await page.waitForTimeout(400);
+    const body = await page.locator("main").innerText().catch(() => "");
+    check(`${p} renders`, /Tally|Party ledgers/.test(body), body.slice(0, 120));
+  }
+});
 
 // smart-invoicing: import steps
 
@@ -545,7 +552,7 @@ await journey("phone-pass", async () => {
   pages.push(/* reconcile (PR 5) */ "/reconcile", "/reconcile?tab=gst", "/reconcile?tab=balances", `/reconcile/ledger?clientId=${ids.client}`);
   pages.push(/* reconcile BRS (PR 6) */);
 
-  pages.push(/* tally (PR 2) */);
+  pages.push(/* tally (PR 2) */ "/tally", "/tally/view", "/tally/settings", "/tally/parties");
 
   pages.push(/* import (PR 3) */);
 

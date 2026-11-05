@@ -1,0 +1,19 @@
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+     <VOUCHER DATE="20261106" TAGNAME="Voucher Number" TAGVALUE="INV/26-27/0017" VCHTYPE="Sales" ACTION="Cancel">
+      <NARRATION>Cancelled in the portal on 07-11-2026: wrong client selected</NARRATION>
+     </VOUCHER>
+    </TALLYMESSAGE>
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+     <VOUCHER REMOTEID="dsh-inv-11111111-2222-4333-8444-555555555555" VCHTYPE="Sales" ACTION="Create" OBJVIEW="Invoice Voucher View">
+      <DATE>20261106</DATE>
+      <EFFECTIVEDATE>20261106</EFFECTIVEDATE>
+      <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+      <VOUCHERNUMBER>INV/26-27/0017</VOUCHERNUMBER>
+      <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
+      <VCHENTRYMODE>Accounting Invoice</VCHENTRYMODE>
+      <ISINVOICE>Yes</ISINVOICE>
+      <PARTYLEDGERNAME>Filmy Brands Private Limited</PARTYLEDGERNAME>
+      <ISCANCELLED>Yes</ISCANCELLED>
+      <NARRATION>Cancelled in the portal on 07-11-2026: wrong client selected</NARRATION>
+     </VOUCHER>
+    </TALLYMESSAGE>

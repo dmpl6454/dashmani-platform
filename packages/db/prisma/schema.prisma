@@ -488,6 +488,7 @@ model Client {
   salesBalanceConfirmations SalesBalanceConfirmation[]
 
   // smart-invoicing: tally (PR 2)
+  salesTallyParties SalesTallyParty[]
 
   @@map("clients")
 }
@@ -3783,6 +3784,136 @@ model SalesConfirmationFile {
 // ─── smart-invoicing: reconcile BRS (PR 6) ───
 
 // ─── smart-invoicing: tally (PR 2) ───
+
+/// One Tally export (2026-11-05) for one billing company and one Tally company.
+/// channel: file (downloaded, imported by the accountant, then confirmed) | push (sent to Tally's HTTP port)
+///          | manual (an admin's statement that Tally already matches; no XML).
+/// status:  file:   open → confirmed | discarded
+///          push:   queued → pushing → pushed | partial ; partial → pushing (retry) | closed
+///          manual: confirmed
+/// "Open" = open | queued | pushing | partial — at most ONE open run per (companyKey, tallyCompany).
+/// Service: apps/api/src/services/sales/tally/. DDL: scripts/sales-tally-ddl.sql.
+model SalesTallyRun {
+  id                String    @id @default(uuid())
+  companyKey        String    @map("company_key") @db.VarChar(8)
+  /// 1, 2, 3 … per company — "Export #12"
+  runNo             Int       @map("run_no")
+  /// SVCURRENTCOMPANY written into the XML
+  tallyCompany      String    @map("tally_company") @db.VarChar(120)
+  /// the registration filter used, null = every registration that maps to tallyCompany
+  scopeGstin        String?   @map("scope_gstin") @db.VarChar(15)
+  periodFrom        DateTime  @map("period_from") @db.Date
+  periodTo          DateTime  @map("period_to") @db.Date
+  /// new_only | everything
+  mode              String    @db.VarChar(12)
+  channel           String    @db.VarChar(8)
+  status            String    @db.VarChar(16)
+  /// prime3 | legacy — the XML dialect written
+  tallyRelease      String    @map("tally_release") @db.VarChar(8)
+  previewHash       String    @map("preview_hash") @db.VarChar(64)
+  voucherCount      Int       @map("voucher_count")
+  masterCount       Int       @map("master_count")
+  blockedCount      Int       @default(0) @map("blocked_count")
+  /// Σ debits over every voucher in the run (= Σ credits). BIGINT: a year exceeds INT.
+  controlTotalPaise BigInt    @map("control_total_paise")
+  /// the preview without its document list (counts, totals, GST by registration/month, TDS, ledgers, issues)
+  summary           Json
+  /// role → ledger / voucher-type name actually written
+  ledgerMap         Json      @map("ledger_map")
+  /// [{ id, byId, at }] — ack issues a person ticked
+  acknowledged      Json      @default("[]")
+  mastersXmlGz      Bytes?    @map("masters_xml_gz")
+  vouchersXmlGz     Bytes?    @map("vouchers_xml_gz")
+  mastersSha256     String?   @map("masters_sha256") @db.VarChar(64)
+  vouchersSha256    String?   @map("vouchers_sha256") @db.VarChar(64)
+  /// host:port pushed to
+  pushTarget        String?   @map("push_target") @db.VarChar(200)
+  /// { masters: TallyImportResult | null, error: string | null, startedAt, finishedAt, synced, failed, unknown }
+  pushResult        Json?     @map("push_result")
+  /// a file import as typed from Tally's summary: { created, altered, cancelled, errors }
+  tallyReported     Json?     @map("tally_reported")
+  /// confirm note / discard reason / close reason / manual-resolution note
+  statusNote        String?   @map("status_note") @db.VarChar(500)
+  createdById       String    @map("created_by_id")
+  closedAt          DateTime? @map("closed_at")
+  closedById        String?   @map("closed_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  items SalesTallyItem[]
+
+  @@unique([companyKey, runNo])
+  @@index([companyKey, status])
+  @@map("sales_tally_runs")
+}
+
+/// One document inside one Tally run — the per-document "sent to Tally" record (append-only per run).
+/// A document's state in Tally = its newest item with outcome synced | adopted.
+/// docType: invoice | credit_note | receipt | refund
+/// action:  create | alter | cancel | none (blocked)
+/// outcome: pending | sending | synced | adopted | failed | unknown | blocked | superseded
+model SalesTallyItem {
+  id               String    @id @default(uuid())
+  runId            String    @map("run_id")
+  companyKey       String    @map("company_key") @db.VarChar(8)
+  docType          String    @map("doc_type") @db.VarChar(16)
+  /// sales_invoices / sales_credit_notes / sales_payments / sales_refunds id — no FK (like sales_events)
+  docId            String    @map("doc_id")
+  docNumber        String    @map("doc_number") @db.VarChar(32)
+  docDate          DateTime  @map("doc_date") @db.Date
+  voucherType      String    @map("voucher_type") @db.VarChar(100)
+  /// "dsh-<inv|cn|rcpt|rf>-<docId>" — identical in every run of the document
+  remoteId         String    @map("remote_id") @db.VarChar(64)
+  action           String    @db.VarChar(8)
+  /// sha256 of the voucher's accounting substance (§4.10); null only when blocked before a voucher existed
+  contentHash      String?   @map("content_hash") @db.VarChar(64)
+  /// the party ledger amount (a receipt's is cash + TDS — can exceed INT)
+  partyAmountPaise BigInt    @default(0) @map("party_amount_paise")
+  outcome          String    @default("pending") @db.VarChar(16)
+  /// TallyIssue / push failure code, e.g. NO_SALES_LEDGER, EDITED_IN_TALLY
+  issueCode        String?   @map("issue_code") @db.VarChar(40)
+  error            String?   @db.Text
+  /// Tally's LASTVCHID / MASTERID for a pushed or adopted voucher
+  tallyVchId       String?   @map("tally_vch_id") @db.VarChar(32)
+  attempts         Int       @default(0)
+  resolvedAt       DateTime? @map("resolved_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  run SalesTallyRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, docId])
+  @@index([docId, createdAt])
+  @@index([companyKey, outcome])
+  @@map("sales_tally_items")
+}
+
+/// The Tally ledger a client is posted to, per billing company. Two clients may share a ledger only when
+/// they have the same GSTIN (duplicates from the Swipe contact import). lockedAt is set once a confirmed
+/// file or a successful push used the name; a locked name changes only by an admin, after renaming in Tally.
+model SalesTallyParty {
+  id            String    @id @default(uuid())
+  companyKey    String    @map("company_key") @db.VarChar(8)
+  clientId      String    @map("client_id")
+  ledgerName    String    @map("ledger_name") @db.VarChar(100)
+  /// lower-cased, whitespace-collapsed ledgerName (Tally names are case-insensitive)
+  ledgerKey     String    @map("ledger_key") @db.VarChar(100)
+  /// the client's GSTIN when the mapping was made (a later change raises PARTY_DETAILS_CHANGED, never follows)
+  gstin         String?   @db.VarChar(15)
+  /// true = the ledger already exists in Tally (matched from Tally or ticked by hand): never written as a master
+  existsInTally Boolean   @default(false) @map("exists_in_tally")
+  lockedAt      DateTime? @map("locked_at")
+  createdById   String    @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([companyKey, clientId])
+  @@index([companyKey, ledgerKey])
+  @@index([clientId])
+  @@map("sales_tally_parties")
+}
 
 // ─── smart-invoicing: import (PR 3) ───
 

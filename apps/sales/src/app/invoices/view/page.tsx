@@ -11,6 +11,7 @@ import { ApiError, apiFetch, apiFetchBlob, downloadBlob } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, todayIST } from "@/lib/format";
 import { Confirm, Empty, Field, LoadError, Loading, Money, MoneyInput, PageHead, StatusPill, Toast, titleCase } from "@/components/sales-ui";
+import { TallyBadge } from "@/components/tally-badge"; // smart-invoicing: tally (PR 2)
 import { EventList } from "@/components/document-view";
 import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 
@@ -137,7 +138,7 @@ function InvoiceView() {
   const pct = (bp: number) => `${bp / 100}%`;
   return (
     <>
-      <PageHead kicker={<><Link href="/invoices" className="hover:text-white">Invoices</Link> · {companyName(inv.companyKey)}{inv.order && <> · <Link href={`/orders/view?id=${inv.order.id}`} className="hover:text-white">{inv.order.number}</Link></>}</> as unknown as string} title={<><span className="font-mono">{inv.number ?? "Draft invoice"}</span> <StatusPill status={ds} />{/* smart-invoicing: tally badge (PR 2) */}{inv.kind === "proforma" && <span className="text-sm text-ink-3 ml-2">proforma</span>}</>}>
+      <PageHead kicker={<><Link href="/invoices" className="hover:text-white">Invoices</Link> · {companyName(inv.companyKey)}{inv.order && <> · <Link href={`/orders/view?id=${inv.order.id}`} className="hover:text-white">{inv.order.number}</Link></>}</> as unknown as string} title={<><span className="font-mono">{inv.number ?? "Draft invoice"}</span> <StatusPill status={ds} />{/* smart-invoicing: tally badge (PR 2) */}{inv.kind === "tax_invoice" && inv.number && <TallyBadge docType="invoice" docId={inv.id} />}{inv.kind === "proforma" && <span className="text-sm text-ink-3 ml-2">proforma</span>}</>}>
         {ds === "draft" && <Link href={`/invoices/edit?id=${inv.id}`} className="btn btn-light">Edit</Link>}
         {ds === "draft" && <button type="button" className="btn btn-light" onClick={preview}><Eye size={14} /> Preview</button>}
         {ds === "draft" && <button type="button" className="btn" onClick={() => { setIssueDate(inv.issueDate ?? todayIST()); setDueDate(inv.dueDate ?? ""); setManualNumber(""); setModal("issue"); }}>Issue</button>}

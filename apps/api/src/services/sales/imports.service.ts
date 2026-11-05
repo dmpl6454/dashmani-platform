@@ -18,6 +18,8 @@ import { buildPlan, extractKeys, PlanLimitError, rowsLabel, type ExistingInvoice
 import { ImportReadError } from "./import/read";
 import { readSourceOffThread } from "./import/read-offthread";
 import { rs, UNKNOWN_COUNTRY } from "./import/values";
+import { shortDay } from "./bank-match";
+import { scheduleBankRematch } from "./bank.service";
 
 // Old-invoice import from Swipe (spec-import). Upload → check (in the same request) → an Admin
 // applies → (maybe) undo. The file is parsed in memory and only its text cells are kept, in
@@ -578,10 +580,12 @@ function perInvoiceFailure(e: unknown): string | null {
 export async function runApply(id: string, actorId: string): Promise<void> {
   if (running.has(id)) return;
   running.add(id);
+  let wrote: CompanyKey | null = null;
   try {
     const imp = await prisma.salesImport.findUnique({ where: { id }, select: { companyKey: true, fileName: true, options: true, status: true } });
     if (!imp || imp.status !== "applying") return;
     const company = imp.companyKey as CompanyKey;
+    wrote = company;
     const seller = await getSellerProfile(company);
     if (!seller || sellerMissingFields(seller).length) throw new AppError(422, "SELLER_PROFILE_INCOMPLETE", `${companyName(company, seller)}'s GST profile is incomplete — complete it in Settings, then resume`);
     await applyClients(id, actorId, imp.fileName, importOptionsSchema.parse(imp.options ?? {}));
@@ -611,6 +615,9 @@ export async function runApply(id: string, actorId: string): Promise<void> {
     await logSalesEvent(prisma, { entityType: "import", entityId: id, actorId, action: "apply_failed", note: msg }).catch(() => undefined);
   } finally {
     running.delete(id);
+    // New SW- receipts and invoices (from a finished, stopped or failed run): refresh the stored
+    // bank suggestions, so a credit they may already record names them and stops being "sure" (§6.3).
+    if (wrote) scheduleBankRematch(wrote, actorId);
   }
 }
 
@@ -711,7 +718,14 @@ async function undoBlockers(db: Db, importId: string): Promise<{ messages: strin
       ORDER BY ti.doc_number LIMIT 5`;
     await take(e, e[0]?.n ?? 0, (r) => `${r.doc} is already in Tally — cancel it there before undoing`);
   }
-  // (f) a receipt matched to a bank line — added by the bank PR (spec-00 §6.3).
+  // (f) spec-00 §6.3: a receipt of the import matched to a bank credit. A voided one keeps its line as
+  // history and can never be unlinked (bank PAYMENT_VOIDED), so it blocks undo for good — said so.
+  const f = await db.$queryRaw<Array<{ pay: string; status: string; txn_date: Date; n: number }>>`
+    SELECT p."number" AS pay, p.status, l.txn_date, count(*) OVER ()::int AS n FROM sales_payments p JOIN sales_bank_lines l ON l.id = p.bank_line_id
+    WHERE p.import_id = ${importId} ORDER BY p."number" LIMIT 5`;
+  await take(f, f[0]?.n ?? 0, (r) => r.status === "voided"
+    ? `${r.pay} was voided on a bank credit of ${shortDay(dateToDay(r.txn_date)!)} and stays there as history — this import can no longer be undone`
+    : `${r.pay} is matched to a bank credit of ${shortDay(dateToDay(r.txn_date)!)} — unlink it on the Bank page first`);
   return { messages: out, more: Math.max(0, total - out.length) };
 }
 
@@ -725,8 +739,8 @@ export async function undoState(importId: string): Promise<{ allowed: boolean; b
 }
 
 export async function undoImport(id: string, reason: string, actorId: string) {
-  await prisma.$transaction(async (tx) => {
-    const [imp] = await tx.$queryRaw<Array<{ status: string; clients_created: number }>>`SELECT status, clients_created FROM sales_imports WHERE id = ${id} FOR UPDATE`;
+  const company = await prisma.$transaction(async (tx) => {
+    const [imp] = await tx.$queryRaw<Array<{ status: string; clients_created: number; company_key: string }>>`SELECT status, clients_created, company_key FROM sales_imports WHERE id = ${id} FOR UPDATE`;
     if (!imp) throw new AppError(404, "NOT_FOUND", "Import not found");
     if (imp.status !== "applied" && imp.status !== "failed") throw new AppError(409, "IMPORT_NOT_APPLIED", "Only an applied import can be undone");
     const pays = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM sales_payments WHERE import_id = ${id} ORDER BY id FOR UPDATE`;
@@ -744,7 +758,10 @@ export async function undoImport(id: string, reason: string, actorId: string) {
     ];
     for (let i = 0; i < events.length; i += 1000) await tx.salesEvent.createMany({ data: events.slice(i, i + 1000) });
     await logSalesEvent(tx, { entityType: "import", entityId: id, actorId, action: "undone", note: `${invs.length} invoices and ${pays.length} receipts removed; ${imp.clients_created} clients it created are kept; invoice series unchanged — ${reason}`.slice(0, 1000) });
+    return imp.company_key as CompanyKey;
   }, { timeout: 60_000, maxWait: 10_000 });
+  // The deleted receipts and invoices may still be named in stored bank suggestions (spec-00 §6.3).
+  scheduleBankRematch(company, actorId);
   return getImport(id);
 }
 

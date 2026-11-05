@@ -3305,6 +3305,19 @@ model SalesPayment {
   @@index([importId])
 
   // smart-invoicing: bank (PR 4)
+  /// The bank statement line this receipt is matched to (null = not reconciled). A voided receipt
+  /// KEEPS it (history) but stops counting toward the line, like its allocations.
+  bankLineId   String?   @map("bank_line_id")
+  /// Rate the client deducted at, basis points (100 = 1%). Null when tdsPaise = 0 or unknown.
+  tdsRateBp    Int?      @map("tds_rate_bp")
+  /// 194C | 194J | 194H | other — null when tdsPaise = 0 or unknown.
+  tdsSection   String?   @map("tds_section") @db.VarChar(8)
+
+  bankLine     SalesBankLine? @relation(fields: [bankLineId], references: [id], onDelete: Restrict)
+
+  @@index([bankLineId])
+  /// Bank matching reads a company's receipts by date (receipt candidates, the double-receipt guard).
+  @@index([companyKey, paidOn])
   @@map("sales_payments")
 }
 
@@ -4045,3 +4058,116 @@ model SalesImportInvoice {
 }
 
 // ─── smart-invoicing: bank (PR 4) ───
+// Bank statements, matching and TDS (2026-11) — spec-bank.md. Bank money is BIGINT paise.
+
+/// A bank account of one billing company. Statements are uploaded against it.
+/// bank: idfc | icici | hdfc | sbi | axis | kotak | yes | other  (a parsing hint only)
+/// status: active | archived — archived takes no new statements; accounts are never deleted.
+model SalesBankAccount {
+  id            String    @id @default(uuid())
+  /// dspl | dmpl — no default on purpose; never changes (company and number are not in the update schema).
+  companyKey    String    @map("company_key") @db.VarChar(8)
+  label         String    @db.VarChar(60)
+  bank          String    @db.VarChar(16)
+  /// Digits only; unique platform-wide (one account cannot belong to both companies).
+  accountNumber String    @unique @map("account_number") @db.VarChar(30)
+  ifsc          String?   @db.VarChar(11)
+  /// Cut-over: credits dated before this day import as ignored (before_cutover) and are never matched.
+  /// New accounts default to 2023-04-01 in the service (owner, 2026-11-05); null = match everything.
+  matchFrom     DateTime? @map("match_from") @db.Date
+  status        String    @default("active") @db.VarChar(8)
+  createdById   String    @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  statements SalesBankStatement[]
+  lines      SalesBankLine[]
+
+  @@index([companyKey])
+  @@map("sales_bank_accounts")
+}
+
+/// One uploaded statement file (parsed in memory, never stored). format: csv | tsv | xlsx | xls | html.
+model SalesBankStatement {
+  id                  String   @id @default(uuid())
+  companyKey          String   @map("company_key") @db.VarChar(8)
+  bankAccountId       String   @map("bank_account_id")
+  fileName            String   @map("file_name") @db.VarChar(200)
+  fileSha256          String   @map("file_sha256") @db.VarChar(64)
+  fileBytes           Int      @map("file_bytes")
+  format              String   @db.VarChar(8)
+  preset              String?  @db.VarChar(16)
+  /// bankMappingSchema + headerSignature: exactly how every line was read.
+  mapping             Json
+  periodFrom          DateTime @map("period_from") @db.Date
+  periodTo            DateTime @map("period_to") @db.Date
+  openingBalancePaise BigInt?  @map("opening_balance_paise")
+  closingBalancePaise BigInt?  @map("closing_balance_paise")
+  /// Transactions read / stored as new / already imported earlier / non-transaction rows skipped.
+  rowCount            Int      @map("row_count")
+  newLineCount        Int      @map("new_line_count")
+  duplicateCount      Int      @default(0) @map("duplicate_count")
+  skippedCount        Int      @default(0) @map("skipped_count")
+  /// Σ of the NEW credit / debit lines stored from this file.
+  creditTotalPaise    BigInt   @default(0) @map("credit_total_paise")
+  debitTotalPaise     BigInt   @default(0) @map("debit_total_paise")
+  /// Warnings accepted at import, as sentences (row errors not imported, balance breaks, gaps…).
+  warnings            Json?
+  uploadedById        String   @map("uploaded_by_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  bankAccount SalesBankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  lines       SalesBankLine[]
+
+  @@unique([bankAccountId, fileSha256])
+  @@index([companyKey, periodTo])
+  @@map("sales_bank_statements")
+}
+
+/// One transaction row. status (written ONLY by refreshBankLine, and by the bulk ignore):
+///   unmatched | suggested | partly_matched | matched | ignored
+/// ignoreReason (staff): own_transfer | gst_refund | tax_refund | interest | loan_capital | gateway |
+///   salary | vendor_refund | reversal | duplicate | other   (system, at import): debit | before_cutover
+/// matchedPaise = Σ amountPaise of RECORDED receipts whose bankLineId is this line (cache; ≤ credit + ₹1).
+model SalesBankLine {
+  id                String    @id @default(uuid())
+  statementId       String    @map("statement_id")
+  bankAccountId     String    @map("bank_account_id")
+  companyKey        String    @map("company_key") @db.VarChar(8)
+  /// 1-based row in the file, for "row 57 of oct.csv".
+  rowNo             Int       @map("row_no")
+  txnDate           DateTime  @map("txn_date") @db.Date
+  valueDate         DateTime? @map("value_date") @db.Date
+  narration         String    @db.VarChar(500)
+  reference         String?   @db.VarChar(120)
+  utr               String?   @db.VarChar(40)
+  creditPaise       BigInt    @default(0) @map("credit_paise")
+  debitPaise        BigInt    @default(0) @map("debit_paise")
+  balancePaise      BigInt?   @map("balance_paise")
+  dedupeHash        String    @map("dedupe_hash") @db.VarChar(64)
+  possibleDuplicate Boolean   @default(false) @map("possible_duplicate")
+  status            String    @default("unmatched") @db.VarChar(16)
+  matchedPaise      BigInt    @default(0) @map("matched_paise")
+  /// Matcher output (§4.4), numbers only. Debit lines hold their refund/reversal hint here.
+  suggestion        Json?
+  bestScore         Int?      @map("best_score")
+  /// high | medium | low — of the top candidate
+  confidence        String?   @db.VarChar(8)
+  suggestedAt       DateTime? @map("suggested_at")
+  ignoreReason      String?   @map("ignore_reason") @db.VarChar(24)
+  ignoreNote        String?   @map("ignore_note") @db.VarChar(300)
+  ignoredAt         DateTime? @map("ignored_at")
+  ignoredById       String?   @map("ignored_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  statement   SalesBankStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  bankAccount SalesBankAccount   @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  payments    SalesPayment[]
+
+  @@unique([bankAccountId, dedupeHash])
+  @@index([companyKey, status, txnDate])
+  @@index([bankAccountId, txnDate])
+  @@index([statementId, rowNo])
+  @@map("sales_bank_lines")
+}

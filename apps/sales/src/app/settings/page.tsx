@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useSeller } from "@/lib/hooks";
 import { useCompany } from "@/lib/company";
 import { useAuth } from "@/lib/auth";
+import { BankAccountsCard } from "@/components/bank/bank-accounts-card";
 import { isAdminUser } from "@/lib/access";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
@@ -168,6 +169,7 @@ export default function SettingsPage() {
        </fieldset>
       </form>
       {/* smart-invoicing: bank accounts card (PR 4) */}
+      <BankAccountsCard />
 
       {/* smart-invoicing: tally link card (PR 2) */}
       <a href="/tally/settings" className="card p-4 mt-4 block hover:border-indigo">Tally — company, ledger names, books-from date →</a>

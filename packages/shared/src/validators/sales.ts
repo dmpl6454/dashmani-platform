@@ -3,6 +3,7 @@ import { safeString, normalizedEmail, isHttpUrl, HTTP_URL_MESSAGE } from "../uti
 import { DEFAULT_GST_RATE_BP, DEFAULT_SAC, GST_STATE_CODES, TAX_MODES } from "../sales/gst";
 import { COMPANY_KEYS } from "../sales/companies";
 import { FILED_FIGURE_KEYS } from "../sales/accounts";
+import { TDS_SECTIONS } from "../sales/tds";
 
 // sales.digitalsukoon.com — shared by the API (input validation) and the portal (forms).
 // Import BY PATH from the frontend ("@dashmani/shared/src/validators/sales"), never via the barrel.
@@ -45,6 +46,8 @@ const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 const upper = (s: string) => s.trim().toUpperCase();
+/** An Indian bank branch code (seller profile and bank accounts). */
+export const ifscSchema = z.string().trim().transform(upper).pipe(z.string().regex(IFSC_RE, "That is not a valid IFSC"));
 
 export const gstinSchema = z.string().trim().transform(upper).pipe(z.string().regex(GSTIN_RE, "That is not a valid GSTIN (15 characters, e.g. 27AAACD1234E1Z5)"));
 export const panSchema = z.string().trim().transform(upper).pipe(z.string().regex(PAN_RE, "That is not a valid PAN (e.g. AAACD1234E)"));
@@ -98,7 +101,7 @@ export const sellerProfileSchema = z.object({
   bankName: optionalText(120),
   accountName: optionalText(200),
   accountNumber: optionalText(40),
-  ifsc: z.string().trim().transform(upper).pipe(z.string().regex(IFSC_RE, "That is not a valid IFSC")).optional().nullable(),
+  ifsc: ifscSchema.optional().nullable(),
   upiId: optionalText(80),
   invoicePrefix: gstPrefix("DS"),
   serialDigits: serialDigits,
@@ -350,11 +353,15 @@ export const paymentCreateSchema = z
       .array(z.object({ invoiceId: z.string().uuid(), amountPaise: paise.default(0), tdsPaise: paise.default(0) }))
       .max(50)
       .default([]),
+    /** Rate the client deducted at, basis points (100 = 1%) — kept on the receipt for 26AS work. */
+    tdsRateBp: z.number().int().min(1).max(3000).nullable().optional(),
+    tdsSection: z.enum(TDS_SECTIONS).nullable().optional(),
   })
   .refine((p) => p.amountPaise + p.tdsPaise > 0, { message: "Enter an amount received or TDS withheld", path: ["amountPaise"] })
   .refine((p) => p.allocations.reduce((s, a) => s + a.amountPaise, 0) <= p.amountPaise, { message: "Allocated more than was received", path: ["allocations"] })
   .refine((p) => p.allocations.reduce((s, a) => s + a.tdsPaise, 0) <= p.tdsPaise, { message: "Allocated more TDS than was withheld", path: ["allocations"] })
-  .refine((p) => new Set(p.allocations.map((a) => a.invoiceId)).size === p.allocations.length, { message: "List each invoice once in a payment", path: ["allocations"] });
+  .refine((p) => new Set(p.allocations.map((a) => a.invoiceId)).size === p.allocations.length, { message: "List each invoice once in a payment", path: ["allocations"] })
+  .refine((p) => p.tdsPaise > 0 || (p.tdsRateBp == null && p.tdsSection == null), { message: "TDS section and rate apply only when TDS was withheld", path: ["tdsSection"] });
 export type PaymentCreateInput = z.infer<typeof paymentCreateSchema>;
 
 /** Apply the unallocated part of a recorded receipt (an advance) to invoices later. */
@@ -695,3 +702,134 @@ export type ImportApplyInput = z.infer<typeof importApplySchema>;
 export const importUndoSchema = z.object({ reason: safeString.pipe(z.string().min(3, "Say why in a few words").max(300)) });
 
 // ─── smart-invoicing: bank (PR 4) ───
+// Bank statement upload, matching and TDS (spec-bank §3.3). TDS_SECTIONS lives in ../sales/tds
+// (imported above, never re-exported here — one exporter per name).
+
+export const BANK_PRESETS = ["idfc", "icici", "hdfc", "sbi", "axis", "kotak", "yes", "other"] as const;
+export type BankPreset = (typeof BANK_PRESETS)[number];
+export const BANK_LINE_STATUSES = ["unmatched", "suggested", "partly_matched", "matched", "ignored"] as const;
+export type BankLineStatus = (typeof BANK_LINE_STATUSES)[number];
+export const BANK_IGNORE_REASONS = ["own_transfer", "gst_refund", "tax_refund", "interest", "loan_capital", "gateway", "salary", "vendor_refund", "reversal", "duplicate", "other"] as const;
+export type BankIgnoreReason = (typeof BANK_IGNORE_REASONS)[number];
+export const BANK_SYSTEM_IGNORE_REASONS = ["debit", "before_cutover"] as const;
+export const BANK_DATE_ORDERS = ["dmy", "mdy", "ymd"] as const;
+export type BankDateOrder = (typeof BANK_DATE_ORDERS)[number];
+export const BANK_AMOUNT_STYLES = ["split", "drcr_column", "suffix", "signed_credit_positive", "signed_debit_positive"] as const;
+export type BankAmountStyle = (typeof BANK_AMOUNT_STYLES)[number];
+/** Owner (2026-11-05): credits are matched from FY 2023-24 — the default "match from" of a new bank account. */
+export const BANK_DEFAULT_MATCH_FROM = "2023-04-01";
+
+const bankAccountNumber = z.string().trim().regex(/^\d{9,18}$/, "The account number is 9–18 digits");
+export const bankAccountCreateSchema = z.object({
+  companyKey: z.enum(COMPANY_KEYS), // NOT companyKeySchema: no default company
+  label: safeString.pipe(z.string().min(2).max(60)),
+  bank: z.enum(BANK_PRESETS),
+  accountNumber: bankAccountNumber,
+  ifsc: ifscSchema.optional().nullable(),
+  /** Omitted → BANK_DEFAULT_MATCH_FROM; null → every credit is matched. */
+  matchFrom: day.optional().nullable(),
+});
+export type BankAccountCreateInput = z.infer<typeof bankAccountCreateSchema>;
+export const bankAccountUpdateSchema = z
+  .object({
+    label: safeString.pipe(z.string().min(2).max(60)).optional(),
+    ifsc: ifscSchema.optional().nullable(),
+    matchFrom: day.optional().nullable(),
+    status: z.enum(["active", "archived"]).optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update");
+export type BankAccountUpdateInput = z.infer<typeof bankAccountUpdateSchema>;
+
+const bankCol = z.number().int().min(0).max(99);
+export const bankMappingSchema = z
+  .object({
+    sheet: z.string().max(100).nullable().optional(),
+    /** 1-based row of the column headings. */
+    headerRow: z.number().int().min(1).max(200),
+    columns: z.object({
+      date: bankCol,
+      valueDate: bankCol.nullable().optional(),
+      narration: bankCol,
+      reference: bankCol.nullable().optional(),
+      debit: bankCol.nullable().optional(),
+      credit: bankCol.nullable().optional(),
+      amount: bankCol.nullable().optional(),
+      drCr: bankCol.nullable().optional(),
+      balance: bankCol.nullable().optional(),
+    }),
+    dateOrder: z.enum(BANK_DATE_ORDERS).default("dmy"),
+    amountStyle: z.enum(BANK_AMOUNT_STYLES),
+  })
+  .superRefine((m, ctx) => {
+    const c = m.columns;
+    const issue = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ["columns"] });
+    if (m.amountStyle === "split" && c.credit == null && c.debit == null) issue("Choose the Deposit (credit) column, the Withdrawal (debit) column, or both.");
+    if (m.amountStyle === "drcr_column" && (c.amount == null || c.drCr == null)) issue("Choose both the Amount column and the Dr/Cr column.");
+    if ((m.amountStyle === "suffix" || m.amountStyle === "signed_credit_positive" || m.amountStyle === "signed_debit_positive") && c.amount == null) issue("Choose the Amount column.");
+    const used = Object.values(c).filter((v): v is number => typeof v === "number");
+    if (new Set(used).size !== used.length) issue("Each column can be used for one thing only — two choices point at the same column.");
+  });
+export type BankMapping = z.infer<typeof bankMappingSchema>;
+
+/** Multipart text fields of a statement preview. */
+export const bankStatementUploadSchema = z.object({
+  bankAccountId: z.string().uuid(),
+  /** JSON of bankMappingSchema (parsed in the service). */
+  mapping: z.string().max(4000).optional(),
+  expectedSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  acceptWarnings: z.enum(["true", "false"]).optional().transform((v) => v === "true"),
+});
+export const bankStatementImportSchema = bankStatementUploadSchema.extend({
+  mapping: z.string().min(2).max(4000),
+  expectedSha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type BankStatementUploadInput = z.infer<typeof bankStatementUploadSchema>;
+export type BankStatementImportInput = z.infer<typeof bankStatementImportSchema>;
+
+const bankAllocation = z.object({ invoiceId: z.string().uuid(), amountPaise: paise.default(0), tdsPaise: paise.default(0) });
+export const bankLineConfirmSchema = z
+  .object({
+    clientId: z.string().uuid(),
+    amountPaise: paise.refine((v) => v > 0, "Enter the cash received from this credit"),
+    tdsPaise: paise.default(0),
+    tdsRateBp: z.number().int().min(1).max(3000).nullable().optional(),
+    tdsSection: z.enum(TDS_SECTIONS).nullable().optional(),
+    /** [] = record as advance. */
+    allocations: z.array(bankAllocation).max(50).default([]),
+    notes: optionalText(1500),
+    ackDuplicateLine: z.boolean().default(false),
+    ackExistingReceipt: z.boolean().default(false),
+    ackHighTds: z.boolean().default(false),
+  })
+  .refine((p) => p.allocations.reduce((s, a) => s + a.amountPaise, 0) <= p.amountPaise, { message: "Allocated more than was received", path: ["allocations"] })
+  .refine((p) => p.allocations.reduce((s, a) => s + a.tdsPaise, 0) <= p.tdsPaise, { message: "Allocated more TDS than was withheld", path: ["allocations"] })
+  .refine((p) => new Set(p.allocations.map((a) => a.invoiceId)).size === p.allocations.length, { message: "List each invoice once in a payment", path: ["allocations"] })
+  .refine((p) => p.tdsPaise > 0 || (p.tdsRateBp == null && p.tdsSection == null), { message: "TDS section and rate apply only when TDS was withheld", path: ["tdsSection"] });
+export type BankLineConfirmInput = z.infer<typeof bankLineConfirmSchema>;
+export const bankConfirmSureSchema = z.object({ lineIds: z.array(z.string().uuid()).min(1).max(25) });
+export const bankLineLinkSchema = z.object({ paymentId: z.string().uuid() });
+export const bankLineUnlinkSchema = z.object({
+  paymentId: z.string().uuid(),
+  action: z.enum(["detach", "void"]),
+  reason: safeString.pipe(z.string().min(3, "Say why").max(300)),
+});
+export type BankLineUnlinkInput = z.infer<typeof bankLineUnlinkSchema>;
+export const bankLineIgnoreSchema = z
+  .object({ reason: z.enum(BANK_IGNORE_REASONS), note: optionalText(300) })
+  .refine((v) => v.reason !== "other" || (v.note ?? "").length >= 3, { message: "Say what this credit is", path: ["note"] });
+export type BankLineIgnoreInput = z.infer<typeof bankLineIgnoreSchema>;
+/** Owner (2026-11-05): ignore every still-open credit dated before a day in one go (old credits whose invoices never reached the portal). */
+export const bankIgnoreBeforeSchema = z
+  .object({
+    before: day,
+    accountId: z.string().uuid().optional().nullable(),
+    reason: z.enum(BANK_IGNORE_REASONS),
+    note: optionalText(300),
+    /** Also ignore credits that carry a suggestion (default: only those with nothing suggested). */
+    includeSuggested: z.boolean().default(false),
+    /** Count what would be ignored; change nothing. The portal asks with the count first. */
+    dryRun: z.boolean().default(false),
+  })
+  .refine((v) => v.reason !== "other" || (v.note ?? "").length >= 3, { message: "Say what these credits are", path: ["note"] });
+export type BankIgnoreBeforeInput = z.infer<typeof bankIgnoreBeforeSchema>;
+export const bankStatementDeleteSchema = z.object({ reason: safeString.pipe(z.string().min(3).max(300)) });

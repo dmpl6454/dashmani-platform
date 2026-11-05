@@ -21,6 +21,7 @@ const NAV = [
   { href: "/recurring", label: "Recurring" },
   { href: "/payments", label: "Payments" },
   // smart-invoicing: bank (PR 4)
+  { href: "/bank", label: "Bank" },
 
   // smart-invoicing: accounts (PR 1)
   { href: "/accounts", label: "Accounts" },

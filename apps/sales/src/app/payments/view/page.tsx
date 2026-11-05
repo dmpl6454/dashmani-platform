@@ -67,6 +67,8 @@ function PaymentView() {
             {p.reference && <><dt className="text-ink-3">Reference</dt><dd className="text-right font-mono text-xs">{p.reference}</dd></>}
             {p.bankName && <><dt className="text-ink-3">Bank</dt><dd className="text-right">{p.bankName}</dd></>}
             {/* smart-invoicing: bank row (PR 4) */}
+            {p.bankLine && <><dt className="text-ink-3">Bank credit</dt><dd className="text-right"><Link href={`/bank/line?id=${p.bankLine.id}`} className="hover:text-indigo-light">{p.bankLine.bankAccount.label} ••{p.bankLine.bankAccount.last4} · credit of {fmtDate(p.bankLine.txnDate)} · row {p.bankLine.rowNo} of {p.bankLine.statement.fileName}</Link></dd></>}
+            {p.tdsSection && <><dt className="text-ink-3">TDS section</dt><dd className="text-right">{p.tdsSection}{p.tdsRateBp ? ` · ${p.tdsRateBp % 100 === 0 ? p.tdsRateBp / 100 : (p.tdsRateBp / 100).toFixed(2)}%` : ""}</dd></>}
           </dl>
           {p.notes && <p className="text-sm text-ink-3 mt-3">{p.notes}</p>}
         </section>

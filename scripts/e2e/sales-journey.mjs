@@ -569,7 +569,7 @@ await journey("phone-pass", async () => {
 
   pages.push(/* import (PR 3) */ "/invoices/import", ...(ids.swipeImport ? [`/invoices/import/view?id=${ids.swipeImport}`] : []));
 
-  pages.push(/* bank (PR 4) */);
+  pages.push(/* bank (PR 4) */ "/bank", "/bank/upload", ...(ids.bankLine ? [`/bank/line?id=${ids.bankLine}`] : []), ...(ids.bankStatement ? [`/bank/statement?id=${ids.bankStatement}`] : []));
   for (const p of pages) { await go(p); await ready(); await page.waitForTimeout(300); await overflowCheck(p); await shot(`phone-${p.replace(/[^a-z]+/g, "-")}`); }
   check("no page scrolls sideways at 390 px", out.overflow.length === 0, JSON.stringify(out.overflow));
   await shot("phone-dashboard");

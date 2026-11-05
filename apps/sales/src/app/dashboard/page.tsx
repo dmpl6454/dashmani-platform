@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useDashboard } from "@/lib/hooks";
 import { useCreators } from "@/lib/creators";
-import { fmtInr, fmtDate } from "@/lib/format";
+import { daysBetween, fmtInr, fmtDate, todayIST } from "@/lib/format";
 import { Empty, LoadError, Loading, Money, PageHead, Stat, StatusPill, platformLabel } from "@/components/sales-ui";
 
 export default function DashboardPage() {
@@ -35,6 +35,17 @@ export default function DashboardPage() {
         <Stat label="Outstanding" value={fmtInr(d.outstandingPaise, { whole: true })} sub={`${d.outstandingCount} open invoice${d.outstandingCount === 1 ? "" : "s"}`} tone={d.outstandingPaise ? "attention" : undefined} />
         <Stat label="Overdue" value={fmtInr(d.overduePaise, { whole: true })} sub={`${d.overdueCount} past due date`} tone={d.overdueCount ? "danger" : undefined} />
       </div>
+      {d.bank && (() => {
+        const bank = d.bank;
+        const newest = bank.accounts.map((a) => a.lastStatementTo).filter((x): x is string => !!x).sort().pop() ?? null;
+        const stale = newest ? daysBetween(newest, todayIST()) : null;
+        const month = new Date(`${d.today}T00:00:00Z`).toLocaleString("en-IN", { month: "short", timeZone: "UTC" });
+        return (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            <Link href="/bank" className="min-w-0"><Stat label={`Unmatched credits · ${month}`} value={fmtInr(bank.unmatchedMonthPaise, { whole: true })} sub={stale != null && stale > 10 ? `No statement for ${stale} days` : `${bank.unmatchedMonthCount} credits · ${bank.sureCount} sure`} tone={bank.unmatchedMonthCount ? "attention" : "success"} /></Link>
+          </div>
+        );
+      })()}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
         <Stat label="Open quotes" value={d.openQuotes.count} sub={fmtInr(d.openQuotes.totalPaise, { whole: true })} />
         <Stat label="Accepted, not ordered" value={d.acceptedQuotes.count} sub={fmtInr(d.acceptedQuotes.totalPaise, { whole: true })} />

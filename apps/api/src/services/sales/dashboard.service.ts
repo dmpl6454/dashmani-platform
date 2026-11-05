@@ -3,6 +3,7 @@ import { DEFAULT_COMPANY, financialYear, SALES_COMPANIES, todayIST, type Company
 import { dateToDay, dayToDate, istDayOf, istMidnight } from "./common";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
 import { bookingsSummary } from "./bookings.service";
+import { bankSummaryOrNullForDashboard } from "./bank.service";
 
 // The sales dashboard: this financial year and this month, from the sales tables only. Every
 // figure is a sum over documents that exist — nothing projected, nothing estimated.
@@ -54,6 +55,9 @@ export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
   const monthEnd = dayToDate(month.to);
 
   const bookingsPromise = bookingsSummary();
+  // Bank (PR 4): unmatched credits this month — null when the company has no bank account.
+  const bankPromise = bankSummaryOrNullForDashboard(company);
+  bankPromise.catch(() => undefined); // awaited below; never an unhandled rejection if another read fails first
   const [issuedFy, openInvoices, paymentsFy, paymentsMonth, quotes, orders, topClientRows, platformRows, recent, allOrders, refundsFy, refundsMonth] = await Promise.all([
     prisma.salesInvoice.findMany({
       where: { ...c, kind: "tax_invoice", status: { in: ["issued", "paid"] }, issueDate: { gte: fyStart, lt: fyEndExclusive } },
@@ -174,6 +178,7 @@ export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
     company,
     /** Client campaign bookings — the same for both companies (a booking has no billing company). */
     bookings: await bookingsPromise,
+    bank: await bankPromise,
     recent: feed.map((e) => ({ ...e, label: label.get(`${e.entityType}:${e.entityId}`) ?? null })),
   };
 }

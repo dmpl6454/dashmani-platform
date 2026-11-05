@@ -84,6 +84,7 @@ export * from "./sales/accounts";
 export * from "./sales/recon";
 
 // smart-invoicing: bank (PR 4)
+export * from "./sales/bank";
 export * as contentValidators from "./validators/content";
 export * as offerLetterValidators from "./validators/offer-letter";
 export { generateOfferLetterSchema } from "./validators/offer-letter";

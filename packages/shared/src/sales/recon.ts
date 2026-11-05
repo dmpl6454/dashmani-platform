@@ -141,6 +141,15 @@ export function dayAdd(day: string, n: number): string {
   return new Date(Date.UTC(+day.slice(0, 4), +day.slice(5, 7) - 1, +day.slice(8, 10)) + n * 86_400_000).toISOString().slice(0, 10);
 }
 
+/**
+ * A balance typed from a BANK statement with its side. Banks print an in-funds balance as "… Cr"
+ * and an overdraft as "… Dr", so Cr → positive, Dr → negative (the opposite of a client ledger).
+ */
+export function bankBalanceFromSide(amountPaise: number, side: "Cr" | "Dr"): number {
+  const a = Math.abs(amountPaise);
+  return side === "Dr" ? -a : a;
+}
+
 /** "₹1,23,456.78" — exact, Indian grouping; negatives "−₹…". */
 export function reconInr(paise: number): string {
   const neg = paise < 0;

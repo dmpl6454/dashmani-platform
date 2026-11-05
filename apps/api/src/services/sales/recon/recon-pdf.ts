@@ -1,7 +1,8 @@
 import PDFDocument from "pdfkit";
 import { CONFIRMATION_REQUEST_TEXT, SALES_COMPANIES, type CompanyKey } from "@dashmani/shared";
-import { INK, MUTED, PAGE, RULE, fmtDay, sellerColumn } from "../pdf.service";
+import { INK, MUTED, PAGE, RULE, drawDraftMark, fmtDay, sellerColumn } from "../pdf.service";
 import type { LedgerView } from "./ledger";
+import type { BrsCore, BrsGroup } from "./brs";
 
 // The statement of account / balance-confirmation PDF (spec-reconcile §8.1). pdfkit + Helvetica
 // (no ₹ glyph → "Rs."; negatives in parentheses), drawn from a LedgerView — for a confirmation,
@@ -134,6 +135,176 @@ export async function renderLedgerPdf(l: LedgerView, opts: { request: boolean; c
     doc.page.margins.bottom = 0;
     doc.font("Helvetica").fontSize(7).fillColor(MUTED).text(
       `${l.seller.legalName} · Statement of account · ${l.client.name} · Generated ${fmtDay(l.generatedAt.slice(0, 10))} — documents as they stand on that day · Page ${i - range.start + 1} of ${range.count}`,
+      left, PAGE.height - PAGE.margin + 10, { width, align: "center", lineBreak: false },
+    );
+    doc.page.margins.bottom = bottom;
+  }
+  doc.end();
+  return done;
+}
+
+// ─── BRS (spec-reconcile §8.3, PR 6) ─────────────────────────────────────────────────────────
+
+const BRS_GROUP_TITLE: Record<BrsGroup, string> = {
+  not_credited: "Recorded in the month, not credited in the month",
+  credited_other_month: "Credited in the month for receipts dated in other months",
+  unmatched: "Credits not yet matched to a receipt",
+  ignored: "Credits ignored on Bank",
+  rounding: "Rounding on matched credits",
+  over_matched: "Credits carrying more receipts than their amount",
+  duplicate: "Stored twice — not counted",
+};
+const signed = (p: number) => (p < 0 ? `(${rupees(p)})` : rupees(p));
+const istStamp = (iso: string) => {
+  const d = new Date(new Date(iso).getTime() + 330 * 60_000).toISOString();
+  return `${dmy(d.slice(0, 10))} ${d.slice(11, 16)} IST`;
+};
+
+/** A BRS from a view: live (watermarked NOT RECONCILED) or a version's frozen snapshot. Helvetica only — "Rs.", no glyphs. */
+export async function renderBrsPdf(v: BrsCore, opts: {
+  frozen: boolean; redactDebits: boolean;
+  seller: { legalName: string; gstins: string[]; address: string };
+  signoff: null | {
+    version: number; byName: string; at: string; note: string | null; accepted: string[]; fingerprint: string;
+    /** Set when this version was reopened or replaced: printed in the status box and as a mark on every page. */
+    superseded?: { kind: string; at: string; byName: string; reason: string | null } | null;
+  };
+}): Promise<Buffer> {
+  // Helvetica (WinAnsi) has neither ₹ nor U+2212: every string the core wrote goes through this.
+  const pt = (t: string) => t.replace(/₹/g, "Rs. ").replace(/\u2212/g, "-");
+  const sup = opts.frozen ? opts.signoff?.superseded ?? null : null;
+  const company = (v.company in SALES_COMPANIES ? v.company : "dspl") as CompanyKey;
+  const created = opts.signoff ? new Date(opts.signoff.at) : new Date();
+  const doc = new PDFDocument({ size: "A4", margin: PAGE.margin, bufferPages: true, info: { Title: `Bank reconciliation statement — ${v.account.label} ${v.month.label}`, Author: opts.seller.legalName, CreationDate: created } });
+  const chunks: Buffer[] = [];
+  doc.on("data", (c: Buffer) => chunks.push(c));
+  const done = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+  const left = PAGE.margin;
+  const width = PAGE.width - PAGE.margin * 2;
+  const ensure = (h: number) => { if (doc.y + h > PAGE.height - PAGE.margin - 30) { doc.addPage(); doc.y = PAGE.margin; } };
+  const heading = (t: string) => { ensure(40); doc.y += 8; doc.font("Helvetica-Bold").fontSize(10).fillColor(INK).text(t, left, doc.y, { width }); doc.y += 3; };
+  const pair = (label: string, value: string, bold = false) => {
+    ensure(14);
+    const y = doc.y;
+    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(8.5).fillColor(INK).text(label, left, y, { width: width - 120 });
+    const h = doc.y - y;
+    doc.text(value, left + width - 120, y, { width: 120, align: "right" });
+    doc.y = y + Math.max(h, 11) + 1;
+  };
+
+  // 1. Header
+  const col = sellerColumn(doc, company, left, width);
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(12).text(opts.seller.legalName, col.x, PAGE.margin, { width: col.w });
+  doc.font("Helvetica").fontSize(8).fillColor(MUTED);
+  if (opts.seller.gstins.length) doc.text(`GSTIN: ${opts.seller.gstins.join(", ")}`, col.x, doc.y, { width: col.w });
+  if (opts.seller.address) doc.text(opts.seller.address, col.x, doc.y, { width: col.w });
+  const leftBottom = Math.max(doc.y, col.logoBottom);
+  const rx = left + width * 0.55;
+  const rw = width * 0.45;
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(12).text("BANK RECONCILIATION STATEMENT", rx, PAGE.margin, { width: rw, align: "right" });
+  doc.font("Helvetica").fontSize(8.5).fillColor(MUTED);
+  doc.text("Receipts side — prepared from sales.digitalsukoon.com", rx, doc.y, { width: rw, align: "right" });
+  doc.text(`${v.account.label} ••${v.account.last4}${v.account.ifsc ? ` · IFSC ${v.account.ifsc}` : ""}`, rx, doc.y, { width: rw, align: "right" });
+  doc.text(`${v.month.label} (${dmy(v.month.from)} to ${dmy(v.month.to)})`, rx, doc.y, { width: rw, align: "right" });
+  doc.y = Math.max(doc.y, leftBottom) + 12;
+
+  // 2. Status box
+  const top = doc.y;
+  const status = opts.frozen && opts.signoff
+    ? [
+      ...(sup ? [`SUPERSEDED — ${sup.kind === "re_reconciled" ? "replaced by a later version" : "reopened"} on ${istStamp(sup.at)} by ${sup.byName}${sup.reason ? `: ${sup.reason}` : ""}`] : []),
+      `RECONCILED · version ${opts.signoff.version} · ${opts.signoff.byName} · ${istStamp(opts.signoff.at)}`, opts.signoff.note ?? "", opts.signoff.accepted.length ? `Acknowledged: ${opts.signoff.accepted.join(", ").replace(/_/g, " ")}` : "",
+    ].filter(Boolean).map(pt)
+    : [`NOT RECONCILED — figures as on ${istStamp(new Date().toISOString())}`];
+  doc.font("Helvetica-Bold").fontSize(8.5).fillColor(INK);
+  const h = status.reduce((s, t) => s + doc.heightOfString(t, { width: width - 16 }) + 2, 0);
+  doc.rect(left, top, width, h + 12).strokeColor(RULE).stroke();
+  let yy = top + 6;
+  status.forEach((t, i) => { doc.font(i === 0 ? "Helvetica-Bold" : "Helvetica").text(t, left + 8, yy, { width: width - 16 }); yy = doc.y + 2; });
+  doc.y = top + h + 18;
+
+  // 3. A — balance as per bank
+  const b = v.balances;
+  heading("A — Balance as per bank statement");
+  pair(`Opening balance${b.source === "typed" ? " (worked back from the typed closing)" : ""}`, b.openingPaise === null ? "unknown" : signed(b.openingPaise));
+  pair(`+ Credits (${b.creditCount})`, rupees(b.creditsPaise));
+  pair(`- Withdrawals (${b.debitCount})`, rupees(b.debitsPaise));
+  pair(`= Closing balance${b.source === "typed" ? " (typed from the bank's statement)" : ""}`, b.closingPaise === null ? "unknown" : signed(b.closingPaise), true);
+  doc.font("Helvetica").fontSize(8).fillColor(MUTED);
+  if (b.agreesWith) doc.text(`Agrees with ${b.agreesWith}`, left, doc.y, { width });
+  for (const br of b.breaks) doc.fillColor("#b00020").text(pt(br.text), left, doc.y, { width });
+  doc.fillColor(MUTED).text(`Statements: ${v.coverage.statements.map((s) => `${s.fileName} (${dmy(s.periodFrom)} to ${dmy(s.periodTo)})`).join("; ") || "none"}`, left, doc.y, { width });
+
+  // 4. B — reconciliation of receipts
+  heading("B — Reconciliation of receipts");
+  for (const f of v.formula) {
+    const sign = f.key === "not_credited" ? "- " : f.key === "books" || f.key === "credits" ? "" : "+ ";
+    pair(`${f.key === "credits" ? "= " : sign}${pt(f.label)}${f.count ? ` (${f.count})` : ""}`, signed(f.paise), f.key === "credits" || f.key === "books");
+  }
+  doc.font("Helvetica-Bold").fontSize(8.5).fillColor(v.ties ? INK : "#b00020").text(v.ties ? "AGREES with credits as per bank" : "DOES NOT AGREE — do not rely on this statement", left, doc.y, { width });
+
+  // 5. C — items per group
+  const cols = [{ t: "Date", w: 58 }, { t: "Reference", w: 110 }, { t: "Description", w: width - 58 - 110 - 140 - 70 }, { t: "Reason", w: 140 }, { t: "Amount", w: 70 }];
+  const row = (cells: string[], bold = false) => {
+    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(7.5).fillColor(INK);
+    const hh = Math.max(...cells.map((c, i) => doc.heightOfString(c, { width: cols[i].w - 4 })));
+    ensure(hh + 4);
+    const y = doc.y;
+    let x = left;
+    cells.forEach((c, i) => { doc.text(c, x + 2, y, { width: cols[i].w - 4, align: i === 4 ? "right" : "left" }); x += cols[i].w; });
+    doc.y = y + hh + 3;
+  };
+  const groups = [...new Set(v.items.map((i) => i.group))];
+  if (groups.length) heading("C — Items");
+  for (const g of groups) {
+    const items = v.items.filter((i) => i.group === g);
+    ensure(30);
+    doc.y += 4;
+    doc.font("Helvetica-Bold").fontSize(8.5).fillColor(INK).text(BRS_GROUP_TITLE[g], left, doc.y, { width });
+    row(cols.map((c) => c.t), true);
+    for (const it of items) {
+      const ref = it.receipt ? it.receipt.number : it.line ? `row ${it.line.rowNo} of ${it.line.fileName}` : "";
+      const desc = it.line ? it.line.narration.slice(0, 60) : it.receipt ? `${it.receipt.clientName} · ${it.receipt.mode.replace(/_/g, " ")}` : "";
+      row([dmy(it.day), pt(ref), pt(desc), pt(it.reason.text), signed(it.amountPaise)]);
+    }
+    row(["", "", "", "Total", signed(items.reduce((s, i) => s + i.amountPaise, 0))], true);
+  }
+
+  // 6. D — withdrawals
+  heading("D — Withdrawals");
+  pair(`Total (${v.debits.lines.length})`, rupees(v.debits.totalPaise), true);
+  const refunds = v.debits.lines.filter((l) => l.refund);
+  const reversals = v.debits.lines.filter((l) => !l.refund && l.reversalOf);
+  const others = v.debits.lines.filter((l) => !l.refund && !l.reversalOf);
+  for (const l of refunds) pair(`${dmy(l.day)} · refund ${l.refund!.number}`, rupees(l.amountPaise));
+  for (const l of reversals) pair(`${dmy(l.day)} · ${l.reversalOf}`, rupees(l.amountPaise));
+  if (opts.redactDebits) pair(`Other withdrawals (${others.length}) — details are visible to admins`, rupees(others.reduce((s, l) => s + l.amountPaise, 0)));
+  else for (const l of others) pair(`${dmy(l.day)} · ${pt(l.narration.slice(0, 70))}`, rupees(l.amountPaise));
+
+  // 7. E — not included
+  const ex = v.books.excluded;
+  heading("E — Not included in this statement");
+  pair(`Razorpay receipts (${ex.razorpayCount}) — settled by Razorpay in batches net of fees`, rupees(ex.razorpayPaise));
+  pair(`Cash receipts (${ex.cashCount})`, rupees(ex.cashPaise));
+  pair(`Receipts on other accounts (${ex.otherAccountsCount})`, rupees(ex.otherAccountsPaise));
+
+  // 8. Sign block
+  ensure(50);
+  doc.y += 16;
+  doc.font("Helvetica").fontSize(8.5).fillColor(INK).text(`Prepared by ${opts.signoff?.byName ?? "—"}`, left, doc.y, { width: width / 2 });
+  doc.text("Reviewed by: ____________________   Date: __________", left + width / 2, doc.y - 11, { width: width / 2, align: "right" });
+
+  const range = doc.bufferedPageRange();
+  const ref = opts.signoff ? ` · v${opts.signoff.version} · ref ${opts.signoff.fingerprint.slice(0, 8)}` : "";
+  const mon = `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(v.month.key.slice(5, 7)) - 1]} ${v.month.key.slice(0, 4)}`;
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    if (!opts.frozen) drawDraftMark(doc, "NOT RECONCILED");
+    else if (sup) drawDraftMark(doc, "SUPERSEDED");
+    const bottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    doc.font("Helvetica").fontSize(7).fillColor(MUTED).text(
+      `${opts.seller.legalName} · BRS ••${v.account.last4} · ${mon}${ref} · Page ${i - range.start + 1} of ${range.count}`,
       left, PAGE.height - PAGE.margin + 10, { width, align: "center", lineBreak: false },
     );
     doc.page.margins.bottom = bottom;

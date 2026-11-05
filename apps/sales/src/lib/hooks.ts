@@ -2,7 +2,7 @@
 import useSWR, { type SWRConfiguration } from "swr";
 import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
-import type { ConfirmationsView, GstReconView, LedgerResponse, TdsReconView } from "./sales-types";
+import type { BrsMonthsView, BrsView, ConfirmationsView, GstReconView, LedgerResponse, TdsReconView } from "./sales-types";
 import type { BankAccount, BankLinesResponse, BankLineView, BankStatementRow, LineReceipt } from "./sales-types";
 import type { AccountsView, FiledYearView, BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, ImportInvoiceRow, ImportListRow, ImportView, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
@@ -111,6 +111,16 @@ export const useLedger = (clientId: string | null, from?: string, to?: string) =
 };
 
 // ─── smart-invoicing: reconcile BRS (PR 6) ───
+/** Reconcile → Bank: the months of an account (default = the default receiving account). */
+export const useBrsMonths = (accountId?: string) => {
+  const { company } = useCompany();
+  return useSWR<BrsMonthsView>(`/sales/reconcile/bank/months${qs({ company, accountId })}`, fetcher, opts);
+};
+/** One account × month bank reconciliation statement (live, with its sign-off state). */
+export const useBrs = (accountId: string | null, month: string | null) => {
+  const { company } = useCompany();
+  return useSWR<BrsView>(accountId && month ? `/sales/reconcile/bank${qs({ company, accountId, month })}` : null, fetcher, opts);
+};
 
 // ─── smart-invoicing: tally (PR 2) ───
 import type { TallyDocStatus, TallyDocType, TallyPartyRow, TallyPreview, TallyRunRow, TallyRunView, TallySettingsView } from "./sales-types";

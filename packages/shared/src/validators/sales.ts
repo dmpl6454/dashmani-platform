@@ -466,6 +466,22 @@ export const confirmationResponseSchema = z.object({
 export type ConfirmationResponseInput = z.infer<typeof confirmationResponseSchema>;
 
 // smart-invoicing: reconcile BRS (PR 6)
+const reconMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Pick a month like 2026-10");
+export const brsReconcileSchema = z.object({
+  accountId: z.string().uuid(),
+  month: reconMonth,
+  fingerprint: z.string().regex(/^[a-f0-9]{32}$/),
+  acceptOpenItems: z.boolean().default(false),
+  acceptCoverageGaps: z.boolean().default(false),
+  acceptBreaks: z.boolean().default(false),
+  typedClosingPaise: reconSignedPaise.nullable().optional(),
+  note: optionalText(1000),
+}).superRefine((v, ctx) => {
+  if ((v.acceptCoverageGaps || v.acceptBreaks) && (v.note ?? "").length < 10) ctx.addIssue({ code: "custom", path: ["note"], message: "Explain the gap or the break in a sentence" });
+});
+export type BrsReconcileInput = z.infer<typeof brsReconcileSchema>;
+export const brsReopenSchema = z.object({ accountId: z.string().uuid(), month: reconMonth, reason: safeString.pipe(z.string().min(3, "Say why").max(500)) });
+export type BrsReopenInput = z.infer<typeof brsReopenSchema>;
 
 // ─── smart-invoicing: tally (PR 2) ───
 // Tally XML export and Send to Tally (spec-tally.md §3.2). Settings live under their own

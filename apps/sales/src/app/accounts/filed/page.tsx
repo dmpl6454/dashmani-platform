@@ -53,6 +53,12 @@ function FiledEditor() {
   const [notes, setNotes] = useState("");
   const [figures, setFigures] = useState<Record<FiledFigureKey, number | null>>(blankFigures);
   const [loadedFrom, setLoadedFrom] = useState<string | null | undefined>(undefined);
+  // Edits typed since the form last loaded. A first PDF attach creates an EMPTY year row; that
+  // must not wipe them (see the load effect).
+  const [dirty, setDirty] = useState(false);
+  // Boxes whose text doesn't parse: Save is refused while any is red, or the last value that did
+  // parse would be saved behind the red text.
+  const [invalidKeys, setInvalidKeys] = useState<ReadonlySet<FiledFigureKey>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   const [kind, setKind] = useState("accounts");
@@ -61,15 +67,21 @@ function FiledEditor() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Load the form from the saved row once per version (a save or another admin's save re-loads it).
+  // One exception: the year row appearing from nothing with no figures and no notes is our own
+  // first PDF attach (addFiledFile creates it). Then only the version moves — it becomes the
+  // save's baseUpdatedAt — and the figures, unit and notes being typed stay.
   useEffect(() => {
     if (!years) return;
     const stamp = filed?.updatedAt ?? null;
     if (stamp === loadedFrom) return;
+    const emptyRow = !!filed && !filed.notes && FILED_FIGURE_KEYS.every((k) => filed.figures[k] == null);
     setLoadedFrom(stamp);
+    if (dirty && loadedFrom === null && emptyRow) return;
+    setDirty(false);
     setUnit(filed?.enteredIn ?? "rupees");
     setNotes(filed?.notes ?? "");
     setFigures(filed ? { ...blankFigures(), ...filed.figures } : blankFigures());
-  }, [years, filed, loadedFrom]);
+  }, [years, filed, loadedFrom, dirty]);
 
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (!years) return <Loading />;
@@ -82,13 +94,16 @@ function FiledEditor() {
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
+    if (invalidKeys.size > 0) { setToast({ message: "Fix the figures marked in red first.", tone: "err" }); return; }
+    if (uploading) return;
     setSaving(true);
     try {
-      const body = { ...figures, enteredIn: unit, notes: notes.trim() || null, baseUpdatedAt: filed?.updatedAt ?? null };
+      // The version the form shows (moved on by our own first attach, see the load effect).
+      const body = { ...figures, enteredIn: unit, notes: notes.trim() || null, baseUpdatedAt: loadedFrom ?? null };
       const r = await apiFetch<{ filed: FiledYearView; changed: boolean }>(`/sales/accounts/filed/${fy}?company=${company}`, { method: "PUT", body: JSON.stringify(body) });
       await refresh();
-      setToast({ message: r.data.changed ? `Filed figures for ${fy} saved.` : "Nothing changed.", tone: "ok" });
-      router.replace(`/accounts?fy=${fy}`);
+      // This page unmounts on the way out, so /accounts shows the confirmation (?saved=1|0).
+      router.replace(`/accounts?fy=${fy}&saved=${r.data.changed ? 1 : 0}`);
     } catch (err) {
       setToast({ message: errorSentence(err), tone: "err" });
       if (err instanceof ApiError && err.code === "FILED_CHANGED") await mutate();
@@ -119,7 +134,8 @@ function FiledEditor() {
   const group = (g: "pl" | "bs") => FILED_FIGURES.filter((f) => f.group === g).map((f) => (
     <Field key={f.key} label={f.label}>
       <SignedAmountInput label={f.label} unit={unit} paise={figures[f.key]} signLabels={f.signLabels} disabled={!canEdit}
-        onChange={(p) => setFigures((prev) => ({ ...prev, [f.key]: p }))} />
+        onChange={(p) => { setDirty(true); setFigures((prev) => ({ ...prev, [f.key]: p })); }}
+        onInvalid={(bad) => { if (bad) setDirty(true); setInvalidKeys((prev) => { if (prev.has(f.key) === bad) return prev; const next = new Set(prev); if (bad) next.add(f.key); else next.delete(f.key); return next; }); }} />
     </Field>
   ));
 
@@ -133,11 +149,11 @@ function FiledEditor() {
             <fieldset disabled={!canEdit} className="grid grid-cols-[minmax(0,1fr)] gap-6 min-w-0 border-0 p-0 m-0">
               <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Typing figures in" hint="Match the unit printed at the top of the signed statements">
-                  <select className="input" value={unit} onChange={(e) => setUnit(e.target.value as EntryUnit)}>
+                  <select className="input" value={unit} onChange={(e) => { setDirty(true); setUnit(e.target.value as EntryUnit); }}>
                     {UNITS.map((u) => <option key={u} value={u}>{ENTRY_UNIT_LABELS[u]}</option>)}
                   </select>
                 </Field>
-                <Field label="Notes"><textarea className="input min-h-[42px]" rows={2} maxLength={4000} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+                <Field label="Notes"><textarea className="input min-h-[42px]" rows={2} maxLength={4000} value={notes} onChange={(e) => { setDirty(true); setNotes(e.target.value); }} /></Field>
               </section>
               <section className="card p-4">
                 <h2 className="font-bold mb-3">Statement of profit and loss · {fy}</h2>
@@ -151,8 +167,12 @@ function FiledEditor() {
               {checks.length > 0 && <div className="card border-attention p-3 text-sm space-y-1">{checks.map((c) => <p key={c}>{c}</p>)}</div>}
               {canEdit && (
                 <div className="flex flex-wrap gap-2">
-                  <button type="submit" className="btn" disabled={saving}>{saving ? "Saving…" : "Save filed figures"}</button>
+                  <button type="submit" className="btn" disabled={saving || invalidKeys.size > 0 || !!uploading}
+                    title={invalidKeys.size > 0 ? "Fix the figures marked in red first" : uploading ? "Wait for the PDF to finish uploading" : undefined}>
+                    {saving ? "Saving…" : "Save filed figures"}
+                  </button>
                   <Link href={`/accounts?fy=${fy}`} className="btn btn-ghost">Cancel</Link>
+                  {invalidKeys.size > 0 && <p className="text-sm text-danger self-center">Fix the figures marked in red first.</p>}
                 </div>
               )}
             </fieldset>
@@ -166,7 +186,7 @@ function FiledEditor() {
                   <li key={f.id} className="py-2 flex flex-wrap items-center justify-between gap-2 min-w-0">
                     <span className="min-w-0 break-all">{KIND_LABELS[f.kind] ?? f.kind} · {f.fileName} <span className="text-ink-3">· {size(f.sizeBytes)} · {fmtDate(f.createdAt)}</span></span>
                     <span className="flex gap-2 shrink-0">
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => viewFiledPdf(f.id, (m) => setToast({ message: m, tone: "err" }))}>View</button>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => viewFiledPdf(f.id, f.fileName, (m) => setToast({ message: m, tone: "err" }))}>View</button>
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadFiledPdf(f.id, f.fileName, (m) => setToast({ message: m, tone: "err" }))}>Download</button>
                       {canEdit && <button type="button" className="btn btn-ghost btn-sm text-danger" onClick={() => setRemoving(f)}>Remove</button>}
                     </span>

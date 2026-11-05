@@ -485,7 +485,7 @@ await journey("client-statement-and-search", async () => {
 
 // smart-invoicing: accounts steps
 await journey("accounts-page", async () => {
-  await go("/accounts"); await ready(); await page.getByRole("heading", { name: "Accounts" }).waitFor();
+  await go("/accounts"); await ready(); await page.getByRole("heading", { name: "Accounts", exact: true, level: 1 }).waitFor();
   check("accounts page shows the live figures", /Invoiced/.test(await text()) && /GST output/.test(await text()), (await text()).slice(0, 200));
   const pills = page.getByRole("radiogroup", { name: "Financial year" }).getByRole("radio");
   const n = await pills.count();
@@ -504,14 +504,24 @@ await journey("accounts-page", async () => {
   const closed = (await pills.nth(1).innerText()).slice(0, 7);
   await go(`/accounts/filed?fy=${closed}&company=dspl`); await ready();
   await page.getByLabel("Typing figures in").selectOption("lakhs");
-  await page.getByLabel("Revenue from operations").fill("48.2153");
-  await page.getByLabel("Profit after tax").fill("12");
+  // exact: the sign toggle's group is labelled "Profit after tax: Profit or Loss".
+  const revenue = page.getByRole("textbox", { name: "Revenue from operations", exact: true });
+  const pat = page.getByRole("textbox", { name: "Profit after tax", exact: true });
+  await revenue.fill("48.2153");
+  await pat.fill("12");
   await page.getByRole("group", { name: /Profit after tax/ }).getByRole("button", { name: "Loss" }).click();
+  // A red box blocks Save; fixing it unblocks it.
+  await pat.fill("12.3.4");
+  await page.getByText("Fix the figures marked in red first.").waitFor({ timeout: 3_000 }).catch(() => {});
+  check("an invalid figure disables Save", await page.getByRole("button", { name: "Save filed figures" }).isDisabled(), "enabled");
+  await pat.fill("12");
   await page.locator("input[type=file]").setInputFiles({ name: "signed.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\n%e2e\n") });
   await page.waitForTimeout(1200);
   check("signed PDF attached", /signed\.pdf/.test(await text()), await toastText());
+  check("the first attach keeps the typed figures", (await revenue.inputValue()) === "48.2153" && (await page.getByLabel("Typing figures in").inputValue()) === "lakhs", await revenue.inputValue());
   await page.getByRole("button", { name: "Save filed figures" }).click();
   await page.waitForURL(/\/accounts\?fy=/); await settle(); await ready();
+  check("the save is confirmed on /accounts", /Filed figures for .* saved\.|Nothing changed\./.test(await toastText()), await toastText()); // a re-run saves the same figures
   check("filed row shows in Filed accounts vs the portal", /48,21,530/.test(await text()), (await text()).slice(-400));
 });
 

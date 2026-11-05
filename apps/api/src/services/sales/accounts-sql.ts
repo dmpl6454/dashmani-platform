@@ -31,6 +31,14 @@ export const SECTION_SQL = Prisma.raw(`CASE WHEN COALESCE(NULLIF(i.buyer_snapsho
        WHEN i.tax_mode = 'inter' AND i.total_paise > ${B2CL_THRESHOLD_SQL} THEN 'b2cl'
        ELSE 'b2cs' END`);
 
+/**
+ * A credit note dated after 30 November following the end of its invoice's FY (CGST s.34(2)):
+ * it stays in the register and the warning, but can't reduce output tax — left out of GSTR-3B 3.1
+ * and the CDNR file. FY of the invoice ends in (year + 1) when issued April–December, else (year).
+ * Aliases are the code constants "cn" and "i" — never user input.
+ */
+export const LATE_CN_SQL = Prisma.raw(`(cn.issue_date > make_date(EXTRACT(YEAR FROM i.issue_date)::int + CASE WHEN EXTRACT(MONTH FROM i.issue_date) >= 4 THEN 1 ELSE 0 END, 11, 30))`);
+
 /** Registration of a document = the GSTIN frozen in its seller snapshot ("" = none). */
 export const GSTIN_SQL = Prisma.raw(`COALESCE(i.seller_snapshot->>'gstin','')`);
 
@@ -44,15 +52,15 @@ WHERE i.company_key = ${c} AND i.kind = 'tax_invoice' AND i.status IN ('issued',
   AND i.issue_date >= ${b.from}::date AND i.issue_date < ${b.to}::date
 GROUP BY 1, 2, 3, 4`;
 
-export interface Q2Row { month: string; gstin: string; section: string; docs: number; earlier: number; taxable: bigint; cgst: bigint; sgst: bigint; igst: bigint; total: bigint }
+export interface Q2Row { month: string; gstin: string; section: string; late: boolean; docs: number; earlier: number; taxable: bigint; cgst: bigint; sgst: bigint; igst: bigint; total: bigint }
 export const Q2 = (c: CompanyKey, b: Bounds) => Prisma.sql`
-SELECT to_char(cn.issue_date,'YYYY-MM') AS month, ${GSTIN_SQL} AS gstin, ${SECTION_SQL} AS section,
+SELECT to_char(cn.issue_date,'YYYY-MM') AS month, ${GSTIN_SQL} AS gstin, ${SECTION_SQL} AS section, ${LATE_CN_SQL} AS late,
        count(*)::int AS docs, count(*) FILTER (WHERE i.issue_date < ${b.from}::date)::int AS earlier,
        sum(cn.taxable_paise)::bigint AS taxable, sum(cn.cgst_paise)::bigint AS cgst, sum(cn.sgst_paise)::bigint AS sgst,
        sum(cn.igst_paise)::bigint AS igst, sum(cn.total_paise)::bigint AS total
 FROM sales_credit_notes cn JOIN sales_invoices i ON i.id = cn.invoice_id
 WHERE i.company_key = ${c} AND cn.status = 'issued' AND cn.issue_date >= ${b.from}::date AND cn.issue_date < ${b.to}::date
-GROUP BY 1, 2, 3`;
+GROUP BY 1, 2, 3, 4`;
 
 export interface Q2bRow { count: number; total: bigint }
 export const Q2B = (c: CompanyKey, b: Bounds) => Prisma.sql`
@@ -194,8 +202,11 @@ WHERE i.company_key = ${c} AND i.kind = 'tax_invoice' AND i.number IS NOT NULL A
 ORDER BY i.issue_date, i.number COLLATE "C"
 LIMIT ${CSV_ROW_CAP + 1}`;
 
-/** Credit notes in the period (by their own issue_date), with their invoice's registration and section. */
-export const creditNoteCsvRows = (c: CompanyKey, from: string, to: string, statuses: string[], gstin: string | null, sections: string[] | null) => Prisma.sql`
+/**
+ * Credit notes in the period (by their own issue_date), with their invoice's registration and
+ * section. `excludeLate` drops notes past the s.34(2) deadline (the CDNR file only).
+ */
+export const creditNoteCsvRows = (c: CompanyKey, from: string, to: string, statuses: string[], gstin: string | null, sections: string[] | null, excludeLate = false) => Prisma.sql`
 SELECT cn.id, cn.number, cn.issue_date, cn.status, cn.tax_mode, cn.gst_rate_bp, ${GSTIN_SQL} AS gstin, ${SECTION_SQL} AS section,
   i.place_of_supply_code, NULLIF(i.buyer_snapshot->>'gstin','') AS buyer_gstin, i.buyer_snapshot->>'legalName' AS buyer_name,
   NULLIF(i.buyer_snapshot->>'stateCode','') AS buyer_state, NULLIF(i.buyer_snapshot->>'country','') AS buyer_country,
@@ -205,5 +216,6 @@ FROM sales_credit_notes cn JOIN sales_invoices i ON i.id = cn.invoice_id
 WHERE i.company_key = ${c} AND cn.status IN (${Prisma.join(statuses)}) AND cn.issue_date >= ${from}::date AND cn.issue_date < ${to}::date
   ${gstin === null ? Prisma.empty : Prisma.sql`AND ${GSTIN_SQL} = ${gstin}`}
   ${sections === null ? Prisma.empty : Prisma.sql`AND ${SECTION_SQL} IN (${Prisma.join(sections)})`}
+  ${excludeLate ? Prisma.sql`AND NOT ${LATE_CN_SQL}` : Prisma.empty}
 ORDER BY cn.issue_date, cn.number COLLATE "C"
 LIMIT ${CSV_ROW_CAP + 1}`;

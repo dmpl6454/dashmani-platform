@@ -62,8 +62,18 @@ function AccountsPage() {
   const admin = isAdminUser(user);
   const { data, error, isLoading, mutate } = useAccounts(requestedFy);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
+  // The filed-figures editor navigates here after a save with ?saved=1 (saved) or ?saved=0 (no
+  // change); its own toast would unmount with it, so the confirmation is shown on this page.
+  const saved = params.get("saved");
+  useEffect(() => {
+    if (saved !== "1" && saved !== "0") return;
+    setToast({ message: saved === "1" ? `Filed figures${requestedFy ? ` for ${requestedFy}` : ""} saved.` : "Nothing changed.", tone: "ok" });
+    router.replace(requestedFy ? `/accounts?fy=${requestedFy}` : "/accounts");
+  }, [saved]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (error && !data) return <LoadError error={error} retry={() => mutate()} />;
+  // keepPreviousData: after a company switch `data` is still the OTHER company's view, so a failed
+  // load must show its error here too — never an endless "Adding up the books…".
+  if (error && (!data || data.company !== company)) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading && !data) return <Loading label="Adding up the books…" />;
   if (!data || data.company !== company) return <Loading label="Adding up the books…" />;
   const stale = !!requestedFy && data.fy.label !== requestedFy;
@@ -210,6 +220,9 @@ function GstSection({ d, setToast }: { d: AccountsView; setToast: (t: { message:
   const nothingTitle = `Nothing to file for ${periodLabel} from ${regInfo?.label ?? "this registration"}.`;
   const canGstr1 = !!regInfo?.current;
   const q = (layout: string, withGstin: boolean) => `/sales/accounts/gst.csv?company=${d.company}&period=${encodeURIComponent(period)}&layout=${layout}${withGstin && reg?.gstin ? `&gstin=${reg.gstin}` : ""}`;
+  // The register follows the pill whenever pills are shown — a former registration included, and
+  // "none" for documents frozen with no seller GSTIN — so the file matches the table on screen.
+  const registerQ = `/sales/accounts/gst.csv?company=${d.company}&period=${encodeURIComponent(period)}&layout=register${regs.length >= 2 && reg ? `&gstin=${reg.gstin || "none"}` : ""}`;
   const totals = reg ? { inv: sum5(reg.months.map((m) => m.invoices)), cn: sum5(reg.months.map((m) => m.creditNotes)), net: sum5(reg.months.map((m) => m.net)) } : null;
 
   return (
@@ -233,7 +246,7 @@ function GstSection({ d, setToast }: { d: AccountsView; setToast: (t: { message:
         <button type="button" className="btn btn-light btn-sm inline-flex items-center gap-1" disabled={nothing || !canGstr1 || !!busy} title={nothing ? nothingTitle : !canGstr1 ? "GSTR-1 files are made for a current registration only" : undefined}
           onClick={() => run("cdnr", q("cdnr", true), `gstr1-cdnr-${period}.csv`)}><Download size={14} aria-hidden />{busy === "cdnr" ? "Preparing…" : "Credit notes CDNR CSV"}</button>
         <button type="button" className="btn btn-light btn-sm inline-flex items-center gap-1" disabled={nothing || !!busy} title={nothing ? nothingTitle : undefined}
-          onClick={() => run("register", q("register", regs.length >= 2 && canGstr1), `sales-register-${period}.csv`)}><Download size={14} aria-hidden />{busy === "register" ? "Preparing…" : "Sales register CSV"}</button>
+          onClick={() => run("register", registerQ, `sales-register-${period}.csv`)}><Download size={14} aria-hidden />{busy === "register" ? "Preparing…" : "Sales register CSV"}</button>
       </div>
       {nothing && <p className="text-sm text-ink-3 mb-3">{nothingTitle}</p>}
       {reg && totals && (
@@ -288,6 +301,7 @@ function GstSection({ d, setToast }: { d: AccountsView; setToast: (t: { message:
           )}
         </div>
       ))}
+      {d.gst.warnings.some((w) => w.code === "CREDIT_NOTE_LATE") && <p className="text-xs text-ink-4 mt-3">GSTR-3B 3.1 and the CDNR file leave out credit notes dated after the 30 November deadline (CGST s.34(2)); the table above and the sales register still show them.</p>}
       <p className="text-xs text-ink-4 mt-3">Working papers from invoices issued in this portal. Have your CA check the first file against the GST offline tool. SEZ supplies with IGST paid look like regular B2B here.</p>
     </section>
   );
@@ -391,7 +405,7 @@ function FiledTable({ d, admin, filedHref, setToast }: { d: AccountsView; admin:
     if (!f?.files.length) return <span className="text-ink-4">—</span>;
     return (
       <span className="whitespace-nowrap">
-        <button type="button" className="hover:text-indigo-light underline" onClick={() => viewFiledPdf(f.files[0].id, (m) => setToast({ message: m, tone: "err" }))}>View</button>
+        <button type="button" className="hover:text-indigo-light underline" onClick={() => viewFiledPdf(f.files[0].id, f.files[0].fileName, (m) => setToast({ message: m, tone: "err" }))}>View</button>
         {f.files.length > 1 && <Link href={filedHref(fy)} className="text-ink-3 ml-1 hover:text-white">+{f.files.length - 1}</Link>}
       </span>
     );

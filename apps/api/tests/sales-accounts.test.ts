@@ -438,6 +438,25 @@ describe("accounts — live figures", () => {
     const cw = n.gst.warnings.find((x: { code: string }) => x.code === "CREDIT_NOTE_LATE");
     expect(cw).toMatchObject({ count: 1, documents: [{ id: late.id, kind: "credit_note", number: late.number }] });
     expect(n.invoiced.creditNotes.onEarlierYearInvoices).toBe(2);
+
+    // s.34(2): the late note stays in the credit-note totals and the register, but never reduces
+    // GSTR-3B 3.1 or appears in the CDNR file. The note on the deadline day itself still does.
+    const mum = n.gst.byRegistration.find((r: { gstin: string }) => r.gstin === MUMBAI);
+    const nov = mum.months.find((m: { month: string }) => m.month === "2026-11");
+    const dec = mum.months.find((m: { month: string }) => m.month === "2026-12");
+    expect(nov.gstr3b.a).toEqual({ taxablePaise: -L(1_000), cgstPaise: 0, sgstPaise: 0, igstPaise: -L(180) });
+    expect(dec.creditNotes.count).toBe(1);
+    expect(dec.creditNotes.igstPaise).toBe(L(180));
+    expect(dec.gstr3b.a).toEqual({ taxablePaise: 0, cgstPaise: 0, sgstPaise: 0, igstPaise: 0 });
+    const file = async (layout: string) => {
+      const r = await request(app).get(`/v1/sales/accounts/gst.csv?company=dspl&period=2026-27&layout=${layout}${layout === "cdnr" ? `&gstin=${MUMBAI}` : ""}`).set(auth(world.sales));
+      expect(r.status, r.text).toBe(200);
+      return r.text;
+    };
+    const cdnr = await file("cdnr");
+    expect(cdnr).not.toContain(late.number);
+    expect(cdnr.trim().split("\r\n")).toHaveLength(2);
+    expect(await file("register")).toContain(late.number);
   });
 
   it("20. twelve months Apr→Mar, empty months 0, a credit-note-only month negative, future flagged", async () => {
@@ -619,6 +638,29 @@ describe("accounts — GST CSVs", () => {
     expect(sumTaxable).toBe(v.invoiced.net.taxablePaise);
     const sumTotal = reg.slice(1).reduce((s, l) => s + (l[16] ? Math.round(Number(l[16]) * 100) : 0), 0);
     expect(sumTotal).toBe(v.invoiced.net.totalPaise);
+  });
+
+  it("27b. the register for a former registration and for documents with no seller GSTIN", async () => {
+    const w = await workedExample();
+    const FORMER = "27AAKCD3352K2ZE";
+    await prisma.$executeRaw`UPDATE sales_invoices SET seller_snapshot = jsonb_set(seller_snapshot, '{gstin}', to_jsonb(${FORMER}::text)) WHERE id = ${w.filmy.id}`;
+    await prisma.$executeRaw`UPDATE sales_invoices SET seller_snapshot = seller_snapshot - 'gstin' WHERE id = ${w.hunch.id}`;
+    const numbers = (b: Buffer) => lines(b).slice(1).map((l) => l.split(",")[3]);
+    const former = await csv(`period=2025-10&layout=register&gstin=${FORMER}`);
+    expect(former.status).toBe(200);
+    expect(former.headers["content-disposition"]).toBe(`attachment; filename="sales-register-dspl-${FORMER}-2025-10.csv"`);
+    expect(numbers(former.body as Buffer)).toEqual([w.filmy.number]);
+    const none = await csv("period=2025-10&layout=register&gstin=none");
+    expect(none.headers["content-disposition"]).toBe('attachment; filename="sales-register-dspl-no-gstin-2025-10.csv"');
+    expect(numbers(none.body as Buffer)).toEqual([w.hunch.number]);
+    const all = numbers((await csv("period=2025-10&layout=register")).body as Buffer);
+    expect(all).toContain(w.filmy.number);
+    expect(all).toContain(w.hunch.number);
+    const bad = await request(app).get("/v1/sales/accounts/gst.csv?company=dspl&period=2025-10&layout=register&gstin=xyz").set(auth(world.sales));
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe("UNKNOWN_REGISTRATION");
+    // GSTR-1 files still take only a current registration.
+    expect((await request(app).get(`/v1/sales/accounts/gst.csv?company=dspl&period=2025-10&layout=b2b&gstin=${FORMER}`).set(auth(world.sales))).body.error.code).toBe("UNKNOWN_REGISTRATION");
   });
 
   it("27. CSV errors", async () => {

@@ -187,6 +187,9 @@ export function assemble(i: AssembleInput): AccountsView {
         for (const r of i.q1) if (r.gstin === reg.gstin && r.month === m) { add5(inv, r); inv.count += r.docs; add5(secOf(r.section), r); }
         for (const r of i.q2) if (r.gstin === reg.gstin && r.month === m) {
           add5(cn, r); cn.count += r.docs;
+          // A note past the s.34(2) deadline can't reduce output tax: it stays in the credit-note
+          // totals (and the register) but never in the GSTR-3B 3.1 sections.
+          if (r.late) continue;
           const s = secOf(r.section);
           s.taxablePaise -= n(r.taxable); s.cgstPaise -= n(r.cgst); s.sgstPaise -= n(r.sgst); s.igstPaise -= n(r.igst); s.totalPaise -= n(r.total);
         }
@@ -232,7 +235,7 @@ export function assemble(i: AssembleInput): AccountsView {
   if (late.length) {
     warnings.push({
       code: "CREDIT_NOTE_LATE", count: late.length,
-      message: `${late.length} credit note${late.length === 1 ? " is" : "s are"} dated after 30 November following their invoice's year — output tax can't be reduced by them (CGST s.34(2)).`,
+      message: `${late.length} credit note${late.length === 1 ? " is" : "s are"} dated after 30 November following their invoice's year — output tax can't be reduced by them (CGST s.34(2)). They stay in the sales register, but GSTR-3B 3.1 and the CDNR file leave them out.`,
       documents: late.slice(0, WARN_LIMIT).map((r) => ({ id: r.id, kind: "credit_note" as const, number: r.number })),
     });
   }

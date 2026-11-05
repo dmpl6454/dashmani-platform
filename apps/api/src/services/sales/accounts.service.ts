@@ -118,12 +118,25 @@ function pickRegistration(company: CompanyKey, seller: Parameters<typeof sellerR
   throw new AppError(400, "PICK_REGISTRATION", `${short} files GST from ${regs.length} registrations — pick ${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}.`);
 }
 
+/**
+ * The register's registration filter: null = every registration; "none" = documents frozen with no
+ * seller GSTIN (""); any other well-formed GSTIN — a current or a FORMER registration — as given.
+ * One the company never used just gives a header-only file.
+ */
+function registerGstin(gstinIn: string | null): string | null {
+  if (!gstinIn) return null;
+  const g = gstinIn.trim().toUpperCase();
+  if (g === "NONE") return "";
+  if (!/^[0-9A-Z]{15}$/.test(g)) throw new AppError(400, "UNKNOWN_REGISTRATION", `${gstinIn.trim().slice(0, 20)} is not a GSTIN.`);
+  return g;
+}
+
 export async function buildGstCsv(company: CompanyKey, period: string, layout: GstLayout, gstinIn: string | null): Promise<{ filename: string; body: Buffer }> {
   const p = periodBounds(period);
   if (!p) throw new AppError(400, "BAD_PERIOD", "Pick a month (2026-10), a quarter (2026-27-Q3) or a year (2026-27).");
   if (p.from > todayIST()) throw new AppError(400, "BAD_PERIOD", `${period} hasn't started yet.`);
   const seller = await getSellerOrDefaults(company);
-  const gstin = pickRegistration(company, seller, gstinIn, layout !== "register");
+  const gstin = layout === "register" ? registerGstin(gstinIn) : pickRegistration(company, seller, gstinIn, true);
 
   if (layout === "b2b") {
     const rows = await prisma.$queryRaw<InvoiceCsvRow[]>(invoiceCsvRows(company, p.from, p.toExclusive, ["issued", "paid"], gstin, ["b2b", "sez"]));
@@ -140,7 +153,7 @@ export async function buildGstCsv(company: CompanyKey, period: string, layout: G
   }
 
   if (layout === "cdnr") {
-    const rows = await prisma.$queryRaw<CreditNoteCsvRow[]>(creditNoteCsvRows(company, p.from, p.toExclusive, ["issued"], gstin, ["b2b", "sez"]));
+    const rows = await prisma.$queryRaw<CreditNoteCsvRow[]>(creditNoteCsvRows(company, p.from, p.toExclusive, ["issued"], gstin, ["b2b", "sez"], true));
     if (rows.length > CSV_ROW_CAP) throw tooMany();
     const out: unknown[][] = [[...GSTR1_CDNR_HEADERS]];
     for (const r of rows) {
@@ -153,7 +166,8 @@ export async function buildGstCsv(company: CompanyKey, period: string, layout: G
     return { filename: `gstr1-cdnr-${gstin}-${period}.csv`, body: csvDocument(out) };
   }
 
-  // register: every section, every registration unless one is named; cancelled documents listed
+  // register: every section, every registration unless one is named (a former GSTIN, or "none"
+  // for documents frozen without one); cancelled documents listed
   // with blank amounts (they are not part of the net), credit notes NEGATIVE, so each money
   // column sums to the net shown on the page for the period.
   const inv = await prisma.$queryRaw<InvoiceCsvRow[]>(invoiceCsvRows(company, p.from, p.toExclusive, ["issued", "paid", "cancelled"], gstin, null));
@@ -186,7 +200,7 @@ export async function buildGstCsv(company: CompanyKey, period: string, layout: G
   }
   lines.sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order || (a.number < b.number ? -1 : a.number > b.number ? 1 : 0));
   return {
-    filename: `sales-register-${company}${gstin ? `-${gstin}` : ""}-${period}.csv`,
+    filename: `sales-register-${company}${gstin === null ? "" : `-${gstin || "no-gstin"}`}-${period}.csv`,
     body: csvDocument([[...REGISTER_HEADERS], ...lines.map((l) => l.cells)]),
   };
 }

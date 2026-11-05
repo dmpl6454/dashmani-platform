@@ -32,10 +32,11 @@ export function BrsFormula({ v, onLink, busy }: { v: BrsView; onLink: (i: BrsIte
       <p className="text-xs text-ink-3 mt-2">As per books: receipts recorded in {v.month.label.split(" ")[0]} {fmtInr(v.books.receiptsPaise)} ({v.books.receiptCount}).</p>
       {(v.books.excluded.razorpayCount + v.books.excluded.cashCount + v.books.excluded.otherAccountsCount) > 0 && (
         <p className="text-xs text-ink-3">
-          Not in this statement:
-          {v.books.excluded.razorpayCount > 0 && <> Razorpay {fmtInr(v.books.excluded.razorpayPaise)} ({v.books.excluded.razorpayCount}) — settled by Razorpay in batches net of fees ·</>}
-          {v.books.excluded.cashCount > 0 && <> cash {fmtInr(v.books.excluded.cashPaise)} ({v.books.excluded.cashCount}) ·</>}
-          {v.books.excluded.otherAccountsCount > 0 && <> on other accounts {fmtInr(v.books.excluded.otherAccountsPaise)} ({v.books.excluded.otherAccountsCount})</>}
+          Not in this statement: {[
+            v.books.excluded.razorpayCount > 0 ? `Razorpay ${fmtInr(v.books.excluded.razorpayPaise)} (${v.books.excluded.razorpayCount}) — settled by Razorpay in batches net of fees` : null,
+            v.books.excluded.cashCount > 0 ? `cash ${fmtInr(v.books.excluded.cashPaise)} (${v.books.excluded.cashCount})` : null,
+            v.books.excluded.otherAccountsCount > 0 ? `on other accounts ${fmtInr(v.books.excluded.otherAccountsPaise)} (${v.books.excluded.otherAccountsCount})` : null,
+          ].filter(Boolean).join(" · ")}.
         </p>
       )}
     </section>

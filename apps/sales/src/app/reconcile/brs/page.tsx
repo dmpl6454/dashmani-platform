@@ -211,10 +211,7 @@ function Brs() {
               </ul>
             )}
           </section>
-          <section className="card p-4">
-            <h2 className="font-bold mb-2">History</h2>
-            <EventList events={events} />
-          </section>
+          <EventList events={events} />
         </aside>
       </div>
       {dialog && <BrsReconcileDialog v={v} onSubmit={submit} onClose={() => setDialog(false)} />}

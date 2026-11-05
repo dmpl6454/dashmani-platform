@@ -8,7 +8,7 @@ export interface ClientIndexRow {
   id: string;
   companyName: string;
   createdAt: Date | string;
-  billingProfile: { legalName: string; gstin: string | null; pan: string | null; stateCode: string | null; updatedAt: Date | string } | null;
+  billingProfile: { legalName: string; gstin: string | null; pan: string | null; stateCode: string | null; country?: string | null; updatedAt: Date | string } | null;
   _count: { salesInvoices: number };
 }
 

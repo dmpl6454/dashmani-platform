@@ -2,10 +2,11 @@
  * Swipe import (spec-import §8, T-01–T-13): the pure half — reading the file, finding the columns,
  * reading values, matching clients and building the check. No database, no HTTP.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as XLSX from "xlsx";
 import { importOptionsSchema, lineAmountPaise, sellerProfileSchema, type ImportOptions } from "@dashmani/shared";
 import { readSource } from "../src/services/sales/import/read";
+import { readSourceOffThread } from "../src/services/sales/import/read-offthread";
 import { amountLevels, autoMap, detectHeaderRow, normaliseHeader } from "../src/services/sales/import/fields";
 import { detectDateOrder, gstinChecksumOk, gstinShapeOk, invoiceKey, normaliseParty, parseAmount, parseDay, parseRateBp, parseStateCode, parseSwipeStatus } from "../src/services/sales/import/values";
 import { buildClientIndex, matchGroup, type ClientIndexRow } from "../src/services/sales/import/match";
@@ -382,5 +383,89 @@ describe("T-13 plan hash", () => {
     const src = readSource(Buffer.from(WORKED), "s.csv", null, 100);
     const m = autoMap(src.rows[2], src.rows.slice(3), OWN).mapping;
     expect(extractKeys({ grid: src.rows, headerRow: 3, mapping: m, options: importOptionsSchema.parse({}), clientChoices: {} }).sort()).toEqual(["INV/24-25/0102", "INV/26-27/0012", "INV/26-27/059"]);
+  });
+});
+
+describe("review fixes", () => {
+  const csv = (head: string[], ...rows: string[][]) => [head, ...rows].map((r) => r.map((c) => (c.includes(",") ? `"${c}"` : c)).join(",")).join("\n");
+  it("a blank-IGST SEZ row whose total is the taxable value is zero-rated (tax mode none), not inter at 0%", () => {
+    const head = ["Invoice Number", "Invoice Date", "Customer Name", "Customer GSTIN", "Place of Supply", "Taxable Value", "IGST", "Total"];
+    const r = plan(csv(head, ["INV/24-25/0009", "12/06/2024", "Saffron Media", "29AAGCS5678L1ZH", "29", "1000", "-", "1000"])).rows[0];
+    expect(r.plan.invoice).toMatchObject({ taxMode: "none", gstRateBp: 0 });
+    expect(r.plan.invoice!.totals).toMatchObject({ igstPaise: 0, totalPaise: 100_000 });
+    expect(codes(r)).toContain("ZERO_RATED");
+    expect(r.issues.filter((i) => i.level !== "info").map((i) => i.code)).toEqual(["OLD_RECEIVABLE"]); // 2024 and unpaid
+    // Total tax stated as 0 (no CGST/SGST/IGST columns) → zero-rated too.
+    const t = ["Invoice Number", "Invoice Date", "Customer Name", "Customer GSTIN", "Taxable Value", "Total Tax"];
+    expect(plan(csv(t, ["INV/24-25/0010", "12/06/2024", "Saffron Media", "29AAGCS5678L1ZH", "1000", "0"])).rows[0].plan.invoice).toMatchObject({ taxMode: "none", gstRateBp: 0 });
+    // A real 18% invoice is untouched.
+    expect(plan(csv(head, ["INV/24-25/0011", "12/06/2024", "Saffron Media", "29AAGCS5678L1ZH", "29", "1000", "-", "1180"])).rows[0].plan.invoice).toMatchObject({ taxMode: "inter", gstRateBp: 1800 });
+  });
+  it("an export row carries a non-India buyer country: from a Country column, the client's profile, or ZZ with a warning", () => {
+    const head = ["Invoice Number", "Invoice Date", "Customer Name", "Place of Supply", "Taxable Value", "CGST", "SGST", "IGST", "Total"];
+    const unknown = plan(csv(head, ["INV/24-25/0012", "12/06/2024", "Foreign Co", "Other Countries", "1000", "0", "0", "0", "1000"])).rows[0];
+    expect(unknown.plan.invoice).toMatchObject({ taxMode: "none", placeOfSupplyCode: "EXPORT" });
+    expect(unknown.plan.invoice!.customer.country).toBe("ZZ");
+    expect(codes(unknown)).toEqual(expect.arrayContaining(["ZERO_RATED", "EXPORT_COUNTRY_UNKNOWN"]));
+    expect(unknown.outcome).toBe("warning");
+    const named = plan(csv([...head, "Country"], ["INV/24-25/0013", "12/06/2024", "Foreign Co", "Other Countries", "1000", "0", "0", "0", "1000", "United Arab Emirates"])).rows[0];
+    expect(named.plan.invoice!.customer.country).toBe("AE");
+    expect(codes(named)).not.toContain("EXPORT_COUNTRY_UNKNOWN");
+    // No place of supply, but a foreign country → export.
+    const byCountry = plan(csv(["Invoice Number", "Invoice Date", "Customer Name", "Taxable Value", "Total", "Country"], ["INV/24-25/0014", "12/06/2024", "Foreign Co", "1000", "1000", "US"])).rows[0];
+    expect(byCountry.plan.invoice).toMatchObject({ placeOfSupplyCode: "EXPORT", taxMode: "none" });
+    expect(byCountry.plan.invoice!.customer.country).toBe("US");
+    const fromProfile = plan(csv(head, ["INV/24-25/0015", "12/06/2024", "Foreign Co", "Other Countries", "1000", "0", "0", "0", "1000"]),
+      { ctx: { clients: [...CLIENTS, client("c-foreign", "Foreign Co", null, { billingProfile: { legalName: "Foreign Co", gstin: null, pan: null, stateCode: null, country: "SG", updatedAt: new Date() } })] } }).rows[0];
+    expect(fromProfile.plan.invoice!.customer.country).toBe("SG");
+    expect(codes(fromProfile)).not.toContain("EXPORT_COUNTRY_UNKNOWN");
+  });
+  it("an oversized Amount Paid is a listed error with paid stored as 0, never an INT overflow", () => {
+    const r = plan(rowsCsv([row({ no: "INV/24-25/0001", taxable: "100000", cgst: "9000", sgst: "9000", total: "118000", paid: "300000000" })])).rows[0];
+    expect(r.outcome).toBe("error");
+    expect(codes(r)).toEqual(expect.arrayContaining(["OVER_SETTLED", "AMOUNT_TOO_LARGE"]));
+    expect(r.paidPaise).toBe(0);
+    expect(r.plan.view.paidPaise).toBe(0);
+  });
+  it("a typo'd line rate too large for the item columns is AMOUNT_TOO_LARGE at the check", () => {
+    // Two item rows (taxable per item): the first one's Rate has extra zeros, so unit price × 1 − discount = its taxable.
+    const r = plan(rowsCsv([
+      row({ no: "INV/24-25/0001", rate: "30,00,00,000.00", taxable: "6000", cgst: "900", sgst: "900", total: "11800" }),
+      row({ no: "INV/24-25/0001", rate: "4000", taxable: "4000", cgst: "900", sgst: "900", total: "11800" }),
+    ])).rows[0];
+    expect(r.plan.view.taxablePaise ?? 1_000_000).toBe(1_000_000);
+    expect(codes(r)).toContain("AMOUNT_TOO_LARGE");
+    expect(r.outcome).toBe("error");
+  });
+  it("a cancelled invoice's balance is not read as money received when Amount Paid is not in the file", () => {
+    const head = ["Invoice Number", "Invoice Date", "Customer Name", "Customer GSTIN", "Taxable Value", "CGST", "SGST", "IGST", "Total", "Balance", "Status"];
+    const r = plan(csv(head, ["INV/24-25/0104", "12/06/2024", "Filmy Brands", "27AAPFU0939F1ZV", "1000", "90", "90", "0", "1180", "0.00", "Cancelled"])).rows[0];
+    expect(codes(r)).not.toContain("PAID_ON_CANCELLED");
+    expect(r.issues.filter((i) => i.level === "error")).toEqual([]);
+    expect(r.plan.invoice).toMatchObject({ docStatus: "cancelled", payment: null });
+    // An explicit Amount Paid on a cancelled invoice is still an error.
+    const paid = plan(csv([...head, "Amount Paid"], ["INV/24-25/0105", "12/06/2024", "Filmy Brands", "27AAPFU0939F1ZV", "1000", "90", "90", "0", "1180", "0.00", "Cancelled", "1180"])).rows[0];
+    expect(codes(paid)).toContain("PAID_ON_CANCELLED");
+  });
+});
+
+describe("review: workbooks are read off the request thread", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const book = (rows: unknown[][]) => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "Sales");
+    return Buffer.from(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+  };
+  it("a workbook read in a worker gives the same grid as inline; CSV and small books stay inline", async () => {
+    const buf = book([["Invoice Number", "Invoice Date", "Customer Name"], ["INV/24-25/0001", "12/06/2024", "Filmy"]]);
+    const inline = readSource(buf, "s.xlsx", null, 100);
+    vi.stubEnv("SALES_IMPORT_INLINE_XLSX_BYTES", "1");
+    expect(await readSourceOffThread(buf, "s.xlsx", null, 100)).toEqual(inline);
+    await expect(readSourceOffThread(Buffer.from("x"), "s.xlsx", null, 100)).rejects.toThrow(/could not be read/);
+  });
+  it("a worker that runs out of time is a readable FILE_UNREADABLE, never a stalled API", async () => {
+    vi.stubEnv("SALES_IMPORT_INLINE_XLSX_BYTES", "1");
+    vi.stubEnv("SALES_IMPORT_WORKER_TIMEOUT_MS", "1");
+    await expect(readSourceOffThread(book([["a"], ["b"]]), "s.xlsx", null, 100)).rejects.toMatchObject({ code: "FILE_UNREADABLE", message: expect.stringMatching(/too large or too complex/) });
   });
 });

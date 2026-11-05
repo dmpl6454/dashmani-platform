@@ -15,8 +15,9 @@ import { recordReceiptTx } from "./payments.service";
 import { getSellerOrDefaults, getSellerProfile, sellerFallback, sellerMissingFields, type SellerProfile } from "./settings.service";
 import { autoMap, columnSamples, detectHeaderRow, headerSignature, type ImportMapping, type MappingHow } from "./import/fields";
 import { buildPlan, extractKeys, PlanLimitError, rowsLabel, type ExistingInvoice, type ImportSummary, type Plan, type PlanContext, type PlanInvoice, type StoredPlan } from "./import/plan";
-import { ImportReadError, readSource } from "./import/read";
-import { rs } from "./import/values";
+import { ImportReadError } from "./import/read";
+import { readSourceOffThread } from "./import/read-offthread";
+import { rs, UNKNOWN_COUNTRY } from "./import/values";
 
 // Old-invoice import from Swipe (spec-import). Upload → check (in the same request) → an Admin
 // applies → (maybe) undo. The file is parsed in memory and only its text cells are kept, in
@@ -57,6 +58,12 @@ export function setImportInvoiceHookForTests(fn: ((n: number) => void | Promise<
   invoiceHook = fn;
 }
 
+let claimHook: (() => void | Promise<void>) | null = null;
+/** Tests: called after startApply's first consent check and before its claim (a concurrent edit stand-in). */
+export function setImportClaimHookForTests(fn: (() => void | Promise<void>) | null) {
+  claimHook = fn;
+}
+
 // ── Context for a check (plain reads, no locks: the plan is advisory) ─────────────
 /** The company's saved seller profile, read through `db` (a transaction must not reach for another connection). */
 async function sellerVia(db: Db, company: CompanyKey): Promise<SellerProfile | null> {
@@ -78,7 +85,7 @@ async function loadContext(db: Db, company: CompanyKey, keys: string[], fileName
   const clients = await db.client.findMany({
     select: {
       id: true, companyName: true, createdAt: true,
-      billingProfile: { select: { legalName: true, gstin: true, pan: true, stateCode: true, updatedAt: true } },
+      billingProfile: { select: { legalName: true, gstin: true, pan: true, stateCode: true, country: true, updatedAt: true } },
       _count: { select: { salesInvoices: true } },
     },
   });
@@ -164,9 +171,9 @@ export async function createImport(file: UploadedFile | undefined, body: { compa
   const fileName = cleanFileName(file.originalname);
   const sha = sha256Hex(file.buffer);
   const limit = maxRows();
-  let src: ReturnType<typeof readSource>;
+  let src: Awaited<ReturnType<typeof readSourceOffThread>>;
   try {
-    src = readSource(file.buffer, fileName, body.sheet ?? null, limit);
+    src = await readSourceOffThread(file.buffer, fileName, body.sheet ?? null, limit);
   } catch (e) {
     if (e instanceof ImportReadError) throw new AppError(422, e.code, e.message);
     throw e;
@@ -313,8 +320,33 @@ export async function runCheck(id: string, actorId: string) {
 const isStale = (imp: { status: string; updatedAt: Date }) => imp.status === "applying" && Date.now() - imp.updatedAt.getTime() > staleMin() * 60_000;
 const running = new Set<string>();
 
+/**
+ * The Admin's consent to THIS plan (§3.6 step 2, §4.15): the hash they looked at, the warnings they
+ * ticked, the live-series move they confirmed — read through `db` (inside the claim, under the lock).
+ * Returns how many invoices are left to import.
+ */
+async function assertConsent(db: Db, id: string, body: ImportApplyInput, resume: boolean): Promise<number> {
+  const imp = await db.salesImport.findUniqueOrThrow({ where: { id }, select: { planHash: true, summary: true, invoicesReady: true } });
+  const summary = imp.summary as unknown as StoredSummary | null;
+  if (!resume && summary?.blockers?.length) throw new AppError(409, "IMPORT_BLOCKED", summary.blockers[0].message);
+  const remaining = await db.salesImportInvoice.count({ where: { importId: id, outcome: { in: ["ready", "warning"] } } });
+  if (!remaining) throw new AppError(409, "NOTHING_TO_IMPORT", "No invoices are ready to import — every invoice is already in the portal, left out or has an error");
+  if (body.planHash !== imp.planHash) {
+    const total = summary?.toImport?.totalPaise ?? 0;
+    throw new AppError(409, "PLAN_CHANGED", `Something changed since you looked at this check — it now finds ${imp.invoicesReady.toLocaleString("en-IN")} invoices worth ${rs(total)}. Look at it again, then import`);
+  }
+  const warnings = summary?.outcomes?.warning ?? 0;
+  if (warnings > 0 && !body.acceptWarnings) throw new AppError(409, "WARNINGS_NOT_ACCEPTED", `Tick “I have read the ${warnings.toLocaleString("en-IN")} warning${warnings === 1 ? "" : "s"}” before importing`);
+  const live = summary?.liveSeriesMoves ?? [];
+  if (live.length && !body.confirmLiveSeries) {
+    const m = live[0];
+    throw new AppError(409, "LIVE_SERIES_NOT_CONFIRMED", `This import moves the live series ${m.label} from ${m.from} to ${m.to} — confirm it before importing`);
+  }
+  return remaining;
+}
+
 export async function startApply(id: string, body: ImportApplyInput, actorId: string) {
-  let imp = await prisma.salesImport.findUnique({ where: { id }, select: importSelect });
+  const imp = await prisma.salesImport.findUnique({ where: { id }, select: importSelect });
   if (!imp) throw new AppError(404, "NOT_FOUND", "Import not found");
   const company = imp.companyKey as CompanyKey;
   if (imp.status === "applied" || imp.status === "undone") throw new AppError(409, "IMPORT_NOT_DRAFT", "This import has already run — upload the file again to check it with other columns");
@@ -328,30 +360,19 @@ export async function startApply(id: string, body: ImportApplyInput, actorId: st
       if (e instanceof AppError && e.code === "IMPORT_NOT_DRAFT") throw new AppError(409, "IMPORT_BUSY", "This import is running — wait for it to finish");
       throw e;
     }
-    imp = (await prisma.salesImport.findUnique({ where: { id }, select: importSelect }))!;
   }
   const seller = await getSellerProfile(company);
   if (sellerMissingFields(seller).length) throw new AppError(422, "SELLER_PROFILE_INCOMPLETE", `Complete ${companyName(company, seller)}'s GST profile in Settings before importing invoices`);
-  const summary = imp.summary as unknown as StoredSummary | null;
-  if (!resume && summary?.blockers?.length) throw new AppError(409, "IMPORT_BLOCKED", summary.blockers[0].message);
-  const remaining = await prisma.salesImportInvoice.count({ where: { importId: id, outcome: { in: ["ready", "warning"] } } });
-  if (!remaining) throw new AppError(409, "NOTHING_TO_IMPORT", "No invoices are ready to import — every invoice is already in the portal, left out or has an error");
-  if (body.planHash !== imp.planHash) {
-    const total = summary?.toImport?.totalPaise ?? 0;
-    throw new AppError(409, "PLAN_CHANGED", `Something changed since you looked at this check — it now finds ${imp.invoicesReady.toLocaleString("en-IN")} invoices worth ${rs(total)}. Look at it again, then import`);
-  }
-  const warnings = summary?.outcomes?.warning ?? 0;
-  if (warnings > 0 && !body.acceptWarnings) throw new AppError(409, "WARNINGS_NOT_ACCEPTED", `Tick “I have read the ${warnings.toLocaleString("en-IN")} warning${warnings === 1 ? "" : "s"}” before importing`);
-  const live = summary?.liveSeriesMoves ?? [];
-  if (live.length && !body.confirmLiveSeries) {
-    const m = live[0];
-    throw new AppError(409, "LIVE_SERIES_NOT_CONFIRMED", `This import moves the live series ${m.label} from ${m.from} to ${m.to} — confirm it before importing`);
-  }
+  const remaining = await assertConsent(prisma, id, body, resume);
+  if (claimHook) await claimHook();
 
-  // Claim: one import per company at a time.
+  // Claim: one import per company at a time. The consent is checked again under the row lock: a
+  // mapping / clients / "check again" request that committed since the check above rewrote the plan
+  // rows and plan_hash, and the run must never import a plan the Admin did not see (§4.15).
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"sales-import:" + company}))`;
     await tx.$queryRaw`SELECT id FROM sales_imports WHERE id = ${id} FOR UPDATE`;
+    await assertConsent(tx, id, body, resume);
     const stale = staleMin();
     const busy = await tx.$queryRaw<Array<{ id: string }>>`
       SELECT id FROM sales_imports WHERE company_key = ${company} AND status = 'applying' AND id <> ${id}
@@ -359,7 +380,8 @@ export async function startApply(id: string, body: ImportApplyInput, actorId: st
     if (busy.length) throw new AppError(409, "IMPORT_BUSY", `Another import into ${companyName(company, seller)} is running — wait for it to finish`);
     const n = await tx.$executeRaw`
       UPDATE sales_imports SET status = 'applying', apply_started_at = (now() AT TIME ZONE 'UTC'), applied_by_id = ${actorId}, last_error = NULL, updated_at = (now() AT TIME ZONE 'UTC')
-      WHERE id = ${id} AND (status IN ('draft', 'failed') OR (status = 'applying' AND updated_at < (now() AT TIME ZONE 'UTC') - make_interval(mins => ${stale}::int)))`;
+      WHERE id = ${id} AND plan_hash = ${body.planHash}
+        AND (status IN ('draft', 'failed') OR (status = 'applying' AND updated_at < (now() AT TIME ZONE 'UTC') - make_interval(mins => ${stale}::int)))`;
     if (n === 0) throw new AppError(409, "IMPORT_BUSY", "This import is running — wait for it to finish");
     await logSalesEvent(tx, { entityType: "import", entityId: id, actorId, action: "apply_started", note: resume ? "resumed" : `${remaining} invoices` });
   });
@@ -379,14 +401,15 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 /** A billing profile from the file's customer details, or null when it would not validate. */
 function profileFromFile(inv: PlanInvoice, fileName: string, importId: string) {
   const g = inv.client.gstin;
-  const stateCode = g ? g.slice(0, 2) : inv.customer.stateCode;
+  const abroad = inv.placeOfSupplyCode === "EXPORT";
+  const stateCode = abroad ? null : g ? g.slice(0, 2) : inv.customer.stateCode;
   if (!g && !inv.customer.address) return { ok: false as const, reason: "nothing" };
   const email = inv.customer.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inv.customer.email) ? inv.customer.email : null;
   const parsed = clientBillingProfileSchema.safeParse({
     legalName: inv.client.name.slice(0, 200), gstin: g, pan: g ? g.slice(2, 12) : null,
     stateCode, state: stateCode ? GST_STATE_CODES[stateCode] ?? null : null,
     addressLine1: inv.customer.address?.slice(0, 200) ?? null, city: inv.customer.city?.slice(0, 100) ?? null, pincode: inv.customer.pincode?.slice(0, 10) ?? null,
-    billingEmail: email, country: "IN", notes: `Created by Swipe import ${fileName} (${importId.slice(0, 8)})`,
+    billingEmail: email, country: abroad ? inv.customer.country ?? UNKNOWN_COUNTRY : "IN", notes: `Created by Swipe import ${fileName} (${importId.slice(0, 8)})`,
   });
   return parsed.success ? { ok: true as const, data: parsed.data } : { ok: false as const, reason: "invalid" };
 }
@@ -418,23 +441,23 @@ async function applyClients(importId: string, actorId: string, fileName: string,
       if (created[groupKey]) continue; // resume never creates twice
       passwordHash ??= await bcryptHash(randomBytes(32).toString("hex"), 12);
       const name = inv.client.name.slice(0, 200) || "Swipe customer";
-      let clientId: string | null = null;
-      for (let attempt = 0; attempt < 4 && !clientId; attempt++) {
-        try {
-          const c = await tx.client.create({
-            data: { companyName: name, contactName: name.slice(0, 120), email: `${slug(name)}-${randomBytes(2).toString("hex")}@imported.invalid`, passwordHash, status: "ACTIVE" },
-            select: { id: true },
-          });
-          clientId = c.id;
-        } catch (e) {
-          if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") || attempt === 3) throw e;
-        }
+      // A failed INSERT aborts the whole interactive transaction in Postgres, so a P2002 can't be retried
+      // here: pick an address that is free first (12 random hex digits — a clash is all but impossible).
+      let email = "";
+      for (let attempt = 0; attempt < 5 && !email; attempt++) {
+        const candidate = `${slug(name)}-${randomBytes(6).toString("hex")}@imported.invalid`;
+        if (!(await tx.client.findFirst({ where: { email: { equals: candidate, mode: "insensitive" } }, select: { id: true } }))) email = candidate;
       }
+      if (!email) throw new AppError(409, "CLIENT_EMAIL_TAKEN", `Couldn't create a client for ${name} — resume the import`);
+      const { id: clientId } = await tx.client.create({
+        data: { companyName: name, contactName: name.slice(0, 120), email, passwordHash, status: "ACTIVE" },
+        select: { id: true },
+      });
       const p = profileFromFile(inv, fileName, importId);
-      if (p.ok) await tx.clientBillingProfile.create({ data: { ...p.data, clientId: clientId! } });
-      created[groupKey] = clientId!;
+      if (p.ok) await tx.clientBillingProfile.create({ data: { ...p.data, clientId } });
+      created[groupKey] = clientId;
       newClients++;
-      await logSalesEvent(tx, { entityType: "client", entityId: clientId!, actorId, action: "client_imported", note: `Swipe import ${fileName}${p.ok ? "" : " (no billing profile — the file's details did not validate)"}` });
+      await logSalesEvent(tx, { entityType: "client", entityId: clientId, actorId, action: "client_imported", note: `Swipe import ${fileName}${p.ok ? "" : " (no billing profile — the file's details did not validate)"}` });
     }
     await tx.salesImport.update({ where: { id: importId }, data: { createdClients: created, clientsCreated: imp.clientsCreated + newClients } });
   }, { timeout: 60_000, maxWait: 10_000 });
@@ -476,6 +499,9 @@ async function applyOne(importId: string, planRowId: string, company: CompanyKey
     } else {
       Object.assign(buyer, { gstin: null });
     }
+    // A buyer abroad (place of supply "Other countries"): Accounts files it under exports only when the
+    // snapshot's country is not India — the plan decided which (UNKNOWN_COUNTRY when nothing names it).
+    if (p.placeOfSupplyCode === "EXPORT") Object.assign(buyer, { country: p.customer.country ?? UNKNOWN_COUNTRY, stateCode: null, state: null });
     const t = p.totals;
     assertMoneyFits({ subtotalPaise: t.subtotalPaise, taxablePaise: t.taxablePaise, cgstPaise: t.cgstPaise, sgstPaise: t.sgstPaise, igstPaise: t.igstPaise, totalPaise: t.totalPaise });
     const cancelled = p.docStatus === "cancelled";
@@ -519,6 +545,35 @@ async function applyOne(importId: string, planRowId: string, company: CompanyKey
   }, { timeout: 15_000, maxWait: 10_000 });
 }
 
+const RUN_STOPPED = "The import stopped because of a server error — resume it to finish (nothing is created twice)";
+/** Connection-level Prisma failures: the database, not this invoice — stop the run, Resume retries. */
+const INFRA_CODES = new Set(["P2024", "P2028", "P2034"]);
+
+/** A short tag for the server log: the error's class and code, never its message. */
+function errorTag(e: unknown): string {
+  if (e instanceof Prisma.PrismaClientKnownRequestError) return `${e.name} ${e.code}`;
+  if (e instanceof Error) return e.name;
+  return typeof e;
+}
+
+/**
+ * The sentence stored on a plan row when ONE invoice could not be created, or null when the error is
+ * not about that invoice (the whole run stops; Resume carries on). A bad value in one row — an
+ * overflowing figure, a broken reference — must fail that row, not every Resume after it.
+ */
+function perInvoiceFailure(e: unknown): string | null {
+  if (e instanceof AppError) return `${e.code}: ${e.message}`.slice(0, 500);
+  if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    if (e.code.startsWith("P1") || INFRA_CODES.has(e.code)) return null;
+    if (e.code === "P2002") return "NUMBER_TAKEN: the number was used in the portal meanwhile";
+    return `SERVER_ERROR: this invoice could not be saved (${e.code}) — check its figures in the file`;
+  }
+  if (e instanceof Prisma.PrismaClientValidationError || e instanceof Prisma.PrismaClientUnknownRequestError) {
+    return "SERVER_ERROR: this invoice could not be saved — check its figures in the file";
+  }
+  return null;
+}
+
 /** The background run (never call directly from a route — startApply claims the row first). */
 export async function runApply(id: string, actorId: string): Promise<void> {
   if (running.has(id)) return;
@@ -528,7 +583,7 @@ export async function runApply(id: string, actorId: string): Promise<void> {
     if (!imp || imp.status !== "applying") return;
     const company = imp.companyKey as CompanyKey;
     const seller = await getSellerProfile(company);
-    if (!seller || sellerMissingFields(seller).length) throw new Error(`${companyName(company, seller)}'s GST profile is incomplete`);
+    if (!seller || sellerMissingFields(seller).length) throw new AppError(422, "SELLER_PROFILE_INCOMPLETE", `${companyName(company, seller)}'s GST profile is incomplete — complete it in Settings, then resume`);
     await applyClients(id, actorId, imp.fileName, importOptionsSchema.parse(imp.options ?? {}));
     const todo = await prisma.salesImportInvoice.findMany({ where: { importId: id, outcome: { in: ["ready", "warning"] } }, orderBy: [{ issueDate: "asc" }, { number: "asc" }], select: { id: true } });
     let n = 0;
@@ -539,17 +594,19 @@ export async function runApply(id: string, actorId: string): Promise<void> {
         await applyOne(id, r.id, company, seller, imp.fileName, actorId);
       } catch (e) {
         if (e instanceof StopRun) return;
-        const perInvoice = e instanceof AppError || (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002");
-        if (!perInvoice) throw e;
-        const msg = (e instanceof AppError ? `${e.code}: ${e.message}` : "NUMBER_TAKEN: the number was used in the portal meanwhile").slice(0, 500);
+        const msg = perInvoiceFailure(e);
+        if (msg === null) throw e;
+        if (!(e instanceof AppError)) console.error(`[sales-import] run ${id}: invoice row ${r.id} failed (${errorTag(e)})`);
         await prisma.salesImportInvoice.update({ where: { id: r.id }, data: { outcome: "failed", error: msg } });
         await prisma.$executeRaw`UPDATE sales_imports SET invoices_failed = invoices_failed + 1, updated_at = (now() AT TIME ZONE 'UTC') WHERE id = ${id}`;
       }
     }
     await finishApply(id, actorId);
   } catch (e) {
-    const msg = (e instanceof Error ? e.message : String(e)).slice(0, 500);
-    console.error(`[sales-import] run ${id} failed`, e);
+    // Only our own sentences reach the portal and the event feed; a Prisma message carries server
+    // paths and the create() arguments (buyer GSTIN, address), so it stays a code in the log.
+    const msg = (e instanceof AppError ? e.message : RUN_STOPPED).slice(0, 500);
+    console.error(`[sales-import] run ${id} failed (${errorTag(e)})`);
     await prisma.salesImport.updateMany({ where: { id, status: "applying" }, data: { status: "failed", lastError: msg } }).catch(() => undefined);
     await logSalesEvent(prisma, { entityType: "import", entityId: id, actorId, action: "apply_failed", note: msg }).catch(() => undefined);
   } finally {

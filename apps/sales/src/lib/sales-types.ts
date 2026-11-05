@@ -349,7 +349,7 @@ export type IssueLevel = "error" | "warning" | "info";
 export interface ImportIssue { code: string; level: IssueLevel; message: string }
 export type ImportFieldKey =
   | "number" | "issueDate" | "dueDate" | "docType" | "status" | "sellerGstin" | "placeOfSupply" | "poNumber" | "poDate" | "notes" | "irn"
-  | "customerName" | "customerGstin" | "customerAddress" | "customerCity" | "customerState" | "customerPincode" | "customerEmail"
+  | "customerName" | "customerGstin" | "customerAddress" | "customerCity" | "customerState" | "customerPincode" | "customerCountry" | "customerEmail"
   | "itemName" | "itemDescription" | "hsnSac" | "quantity" | "rate" | "lineDiscount" | "gstRate"
   | "taxable" | "discount" | "cgst" | "sgst" | "igst" | "totalTax" | "cess" | "tcs" | "roundOff" | "total"
   | "amountPaid" | "tds" | "balance" | "paidOn";

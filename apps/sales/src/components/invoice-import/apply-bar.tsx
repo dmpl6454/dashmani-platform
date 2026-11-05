@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { isAdminUser } from "@/lib/access";
@@ -11,7 +11,7 @@ import { Confirm, Toast } from "@/components/sales-ui";
 import { int, invalidateAfterImport } from "./shared";
 
 /** Sticky actions under the check: Import (Admin), the hand-off link (Sales), the report, discard. */
-export function ApplyBar({ imp, onChanged, refresh }: { imp: ImportView; onChanged: (v: ImportView) => void; refresh: () => Promise<unknown> }) {
+export function ApplyBar({ imp, onChanged, refresh, notify }: { imp: ImportView; onChanged: (v: ImportView) => void; refresh: () => Promise<unknown>; notify: (message: string) => void }) {
   const router = useRouter();
   const { user } = useAuth();
   const admin = isAdminUser(user);
@@ -20,6 +20,9 @@ export function ApplyBar({ imp, onChanged, refresh }: { imp: ImportView; onChang
   const live = s?.liveSeriesMoves ?? [];
   const [ack, setAck] = useState(false);
   const [liveOk, setLiveOk] = useState(false);
+  // A tick is consent to the plan it was given on: any new plan (columns, clients, Check again,
+  // PLAN_CHANGED) asks again — the server can't tell an old tick from a fresh one.
+  useEffect(() => { setAck(false); setLiveOk(false); }, [imp.planHash]);
   const [modal, setModal] = useState<null | "apply" | "discard">(null);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   const ready = imp.counts.ready;
@@ -28,9 +31,10 @@ export function ApplyBar({ imp, onChanged, refresh }: { imp: ImportView; onChang
   const apply = async () => {
     try {
       const r = await apiFetch<ImportView>(`/sales/imports/${imp.id}/apply`, { method: "POST", body: JSON.stringify({ planHash: imp.planHash, acceptWarnings: ack, confirmLiveSeries: liveOk }) });
-      onChanged(r.data);
       setModal(null);
-      setToast({ message: `Import started — ${int(ready)} invoices`, tone: "ok" });
+      // The bar unmounts once the status is "applying": the page shows the toast.
+      notify(`Import started — ${int(ready)} invoices`);
+      onChanged(r.data);
     } catch (err) {
       setModal(null);
       setToast({ message: errorSentence(err), tone: "err" });

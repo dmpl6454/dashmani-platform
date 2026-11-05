@@ -15,7 +15,7 @@ export const int = (n: number | null | undefined) => (n ?? 0).toLocaleString("en
 /** The import fields, grouped the way the Columns card shows them. */
 export const FIELD_GROUPS: Array<{ title: string; fields: Array<[ImportFieldKey, string]> }> = [
   { title: "Invoice", fields: [["number", "Invoice number"], ["issueDate", "Invoice date"], ["dueDate", "Due date"], ["docType", "Document type"], ["status", "Status"], ["sellerGstin", "Billed-from GSTIN"], ["placeOfSupply", "Place of supply"], ["poNumber", "PO number"], ["poDate", "PO date"], ["notes", "Notes"], ["irn", "IRN"]] },
-  { title: "Customer", fields: [["customerName", "Customer name"], ["customerGstin", "Customer GSTIN"], ["customerAddress", "Address"], ["customerCity", "City"], ["customerState", "State"], ["customerPincode", "PIN code"], ["customerEmail", "Email"]] },
+  { title: "Customer", fields: [["customerName", "Customer name"], ["customerGstin", "Customer GSTIN"], ["customerAddress", "Address"], ["customerCity", "City"], ["customerState", "State"], ["customerPincode", "PIN code"], ["customerCountry", "Country"], ["customerEmail", "Email"]] },
   { title: "Lines", fields: [["itemName", "Item"], ["itemDescription", "Item description"], ["hsnSac", "HSN/SAC"], ["quantity", "Quantity"], ["rate", "Rate"], ["lineDiscount", "Item discount"], ["gstRate", "GST rate"]] },
   { title: "Amounts", fields: [["taxable", "Taxable value"], ["discount", "Discount"], ["cgst", "CGST"], ["sgst", "SGST"], ["igst", "IGST"], ["totalTax", "Total tax"], ["cess", "Cess"], ["tcs", "TCS"], ["roundOff", "Round off"], ["total", "Invoice total"]] },
   { title: "Payment", fields: [["amountPaid", "Amount paid"], ["tds", "TDS"], ["balance", "Balance"], ["paidOn", "Paid on"]] },

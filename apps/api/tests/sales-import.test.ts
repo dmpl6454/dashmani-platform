@@ -18,7 +18,7 @@ vi.mock("../src/services/email.service", async (orig) => {
 
 import app from "../src/app";
 import { flushSalesBackground } from "../src/services/sales/common";
-import { rerunReconcile, setImportInvoiceHookForTests } from "../src/services/sales/imports.service";
+import { rerunReconcile, setImportClaimHookForTests, setImportInvoiceHookForTests } from "../src/services/sales/imports.service";
 import { setIrpProviderForTests } from "../src/services/sales/irp/provider";
 import { MockIrp } from "../src/services/sales/irp/mock";
 import { UPLOAD_DIR_PATH } from "../src/middleware/upload";
@@ -111,6 +111,7 @@ describe("Swipe import", () => {
   });
   afterEach(async () => {
     setImportInvoiceHookForTests(null);
+    setImportClaimHookForTests(null);
     setIrpProviderForTests(null);
     vi.unstubAllEnvs();
     await flushSalesBackground();
@@ -363,7 +364,9 @@ describe("Swipe import", () => {
     await flushSalesBackground();
     const failed = await getImport(imp.id);
     expect(failed.status).toBe("failed");
-    expect(failed.lastError).toContain("simulated crash");
+    // Raw server text never reaches the portal or the event feed (it can carry paths and buyer details).
+    expect(failed.lastError).toBe("The import stopped because of a server error — resume it to finish (nothing is created twice)");
+    expect(await prisma.salesEvent.count({ where: { entityType: "import", entityId: imp.id, note: { contains: "simulated crash" } } })).toBe(0);
     expect(failed.counts.imported).toBe(2);
     setImportInvoiceHookForTests(null);
     const before = await prisma.client.count();
@@ -400,7 +403,7 @@ describe("Swipe import", () => {
     const filmyBefore = await prisma.clientBillingProfile.findUniqueOrThrow({ where: { clientId: C.filmy } });
     await applied(worked());
     const hunch = await prisma.client.findFirstOrThrow({ where: { companyName: "Hunch Foods LLP" }, include: { billingProfile: true } });
-    expect(hunch.email).toMatch(/^hunch-foods-llp-[0-9a-f]{4}@imported\.invalid$/);
+    expect(hunch.email).toMatch(/^hunch-foods-llp-[0-9a-f]{12}@imported\.invalid$/);
     expect(hunch.billingProfile).toMatchObject({ gstin: "06AAXFH1234K1Z3", stateCode: "06", state: "Haryana", pan: "AAXFH1234K" });
     expect(await prisma.salesEvent.count({ where: { entityType: "client", entityId: hunch.id, action: "client_imported" } })).toBe(1);
     const saffron = await prisma.clientBillingProfile.findUniqueOrThrow({ where: { clientId: C.saffron } });
@@ -459,6 +462,20 @@ describe("Swipe import", () => {
     const refund = await prisma.salesRefund.create({ data: { number: "RF/x/1", paymentId: sw.id, clientId: sw.clientId, amountPaise: 1, refundedOn: new Date(), mode: "upi", createdById: "x" } });
     expect((await undo()).body.error.message).toContain("has a refund");
     await prisma.salesRefund.delete({ where: { id: refund.id } });
+    // (c) an e-invoice record on an imported invoice (its FK is RESTRICT: undo must refuse, not 500)
+    const einv = await prisma.salesEInvoice.create({ data: { docType: "INV", invoiceId: inv.id, gstin: "06AAKCD3352K1ZJ", docNumber: inv.number!, docDate: "01/01/2026" } });
+    r = await undo();
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatchObject({ code: "UNDO_BLOCKED", message: expect.stringContaining("e-invoice") });
+    await prisma.salesEInvoice.delete({ where: { id: einv.id } });
+    // (d2) an import receipt applied to an invoice this import did not create
+    const portalInv = await prisma.salesInvoice.create({ data: { companyKey: "dspl", kind: "tax_invoice", clientId: sw.clientId, number: "INV/22-23/0777", status: "issued", issueDate: new Date("2022-10-01T00:00:00Z"), taxMode: "intra", gstRateBp: 1800, totalPaise: 100, createdById: "x" } });
+    const alloc = await prisma.salesPaymentAllocation.create({ data: { paymentId: sw.id, invoiceId: portalInv.id, amountPaise: 1 } });
+    r = await undo();
+    expect(r.status).toBe(409);
+    expect(r.body.error.message).toContain("which this import did not create");
+    await prisma.salesPaymentAllocation.delete({ where: { id: alloc.id } });
+    await prisma.salesInvoice.delete({ where: { id: portalInv.id } });
     // nothing blocks now: undo
     const before = { clients: await prisma.client.count(), seqs: await prisma.salesSequence.findMany({ orderBy: { key: "asc" } }) };
     r = await undo("Imported the wrong year");
@@ -585,5 +602,61 @@ describe("Swipe import", () => {
     const rows = (await request(app).get(`/v1/sales/imports/${r.body.data.id}/invoices`).set(auth(salesToken))).body.data.rows;
     expect(rows[0]).toMatchObject({ issueDate: "2024-06-12", outcome: "warning" }); // unpaid since 2024 → OLD_RECEIVABLE
     expect(rows[0].issues.map((i: { code: string }) => i.code)).toContain("OLD_RECEIVABLE");
+  });
+
+  it("review: a plan changed between the apply's check and its claim is refused (PLAN_CHANGED), nothing runs", async () => {
+    const imp = await uploaded(worked());
+    // A Sales user picks another client for Hunch Foods while the Admin's apply is between its checks.
+    setImportClaimHookForTests(async () => {
+      setImportClaimHookForTests(null);
+      const r = await request(app).put(`/v1/sales/imports/${imp.id}/clients`).set(auth(salesToken)).send({ choices: [{ groupKey: "gstin:06AAXFH1234K1Z3", clientId: C.filmy }] });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+    });
+    const r = await apply(imp.id, { planHash: imp.planHash, acceptWarnings: true });
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe("PLAN_CHANGED");
+    await flushSalesBackground();
+    const after = await getImport(imp.id);
+    expect(after.status).toBe("draft");
+    expect(after.planHash).not.toBe(imp.planHash);
+    expect(await prisma.salesInvoice.count({ where: { source: "swipe" } })).toBe(0);
+    // Looking at the new plan and importing it works.
+    expect((await apply(imp.id, { planHash: after.planHash, acceptWarnings: true })).status).toBe(202);
+    await flushSalesBackground();
+    expect((await getImport(imp.id)).status).toBe("applied");
+  });
+
+  it("review: one invoice that can't be saved fails alone; the rest import and the run finishes", async () => {
+    const imp = await uploaded(worked());
+    // Stand-in for a figure the database refuses: the first invoice's line rate no longer fits INT.
+    setImportInvoiceHookForTests(async (n) => {
+      if (n !== 0) return;
+      const row = await prisma.salesImportInvoice.findFirstOrThrow({ where: { importId: imp.id, number: "INV/24-25/0102" } });
+      const plan = row.plan as { invoice: { lines: Array<{ unitPricePaise: number }> } };
+      plan.invoice.lines[0].unitPricePaise = 30_000_000_000;
+      await prisma.salesImportInvoice.update({ where: { id: row.id }, data: { plan } });
+    });
+    expect((await apply(imp.id, { planHash: imp.planHash, acceptWarnings: true })).status).toBe(202);
+    await flushSalesBackground();
+    const done = await getImport(imp.id);
+    expect(done.status).toBe("applied");
+    expect(done.lastError).toBeNull();
+    expect(done.counts).toMatchObject({ imported: 2, failed: 1 });
+    const bad = await prisma.salesImportInvoice.findFirstOrThrow({ where: { importId: imp.id, number: "INV/24-25/0102" } });
+    expect(bad.outcome).toBe("failed");
+    expect(bad.error).toMatch(/^SERVER_ERROR: this invoice could not be saved/);
+    expect(await prisma.salesInvoice.count({ where: { number: "INV/24-25/0102" } })).toBe(0);
+  });
+
+  it("review: an export invoice lands with a buyer country other than India", async () => {
+    const foreign = await prisma.client.create({ data: { companyName: "Gulf Brands", contactName: "G", email: "g@gulf.test", passwordHash: "x" } });
+    await prisma.clientBillingProfile.create({ data: { clientId: foreign.id, legalName: "Gulf Brands FZE", country: "AE" } });
+    const done = await applied(csvOf([
+      oneRow({ no: "INV/22-23/0031", date: "01/10/2022", name: "Gulf Brands", gstin: "", pos: "Other Countries", taxable: "100", total: "100" }),
+      oneRow({ no: "INV/22-23/0032", date: "01/10/2022", name: "Overseas Ltd", gstin: "", pos: "Other Countries", taxable: "100", total: "100" }),
+    ]));
+    const inv = await prisma.salesInvoice.findMany({ where: { importId: done.id }, orderBy: { number: "asc" } });
+    expect(inv.map((i) => [i.taxMode, i.placeOfSupplyCode, (i.buyerSnapshot as { country: string }).country])).toEqual([["none", null, "AE"], ["none", null, "ZZ"]]);
+    for (const i of inv) expect((i.buyerSnapshot as { country: string }).country).not.toBe("IN");
   });
 });

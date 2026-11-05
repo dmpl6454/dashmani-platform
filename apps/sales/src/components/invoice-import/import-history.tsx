@@ -6,7 +6,7 @@ import { isAdminUser } from "@/lib/access";
 import { useImports } from "@/lib/hooks";
 import { fmtDate } from "@/lib/format";
 import type { ImportListRow } from "@/lib/sales-types";
-import { Empty, LoadError, Loading, Money, StatusPill } from "@/components/sales-ui";
+import { Empty, LoadError, Loading, Money, StatusPill, Toast } from "@/components/sales-ui";
 import { UndoImportDialog } from "./undo-import-dialog";
 import { int } from "./shared";
 
@@ -16,6 +16,7 @@ export function ImportHistory() {
   const admin = isAdminUser(user);
   const { data, error, isLoading, mutate } = useImports();
   const [undo, setUndo] = useState<ImportListRow | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading && !data) return <Loading />;
   if (!data?.length) return <Empty title="No imports yet." body="Export your invoices from Swipe as CSV or Excel — one financial year at a time works best — and upload the file here." />;
@@ -42,7 +43,8 @@ export function ImportHistory() {
           ))}
         </tbody>
       </table>
-      {undo && <UndoImportDialog imp={undo} onClose={() => setUndo(null)} onDone={() => { setUndo(null); mutate(); }} />}
+      {undo && <UndoImportDialog imp={undo} onClose={() => setUndo(null)} onDone={(message) => { setUndo(null); setToast(message); mutate(); }} />}
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
     </div>
   );
 }

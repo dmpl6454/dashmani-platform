@@ -68,6 +68,8 @@ export function readSource(buf: Buffer, fileName: string, sheet: string | null |
     wb = openWorkbook(buf, maxRows);
   } catch (e) {
     if (e instanceof TabularError && e.kind === "encrypted") throw new ImportReadError("FILE_UNREADABLE", "This file is password-protected — export it again from Swipe without a password");
+    // tabular.ts's own sentence ("…too large to read (over 64 MB once unpacked) — export fewer rows…") tells the person what to do.
+    if (e instanceof TabularError && e.kind === "unreadable" && /too large/i.test(e.message)) throw new ImportReadError("FILE_UNREADABLE", e.message);
     throw new ImportReadError("FILE_UNREADABLE", UNREADABLE);
   }
   const grids = new Map<string, { rows: string[][]; truncated: boolean }>();

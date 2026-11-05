@@ -1,10 +1,10 @@
 "use client";
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useImport } from "@/lib/hooks";
 import type { ImportView } from "@/lib/sales-types";
-import { Empty, LoadError, Loading, PageHead, StatusPill } from "@/components/sales-ui";
+import { Empty, LoadError, Loading, PageHead, StatusPill, Toast } from "@/components/sales-ui";
 import { StepStrip } from "@/components/invoice-import/step-strip";
 import { ColumnMap } from "@/components/invoice-import/column-map";
 import { CheckStep } from "@/components/invoice-import/check-step";
@@ -18,6 +18,10 @@ function ImportViewInner() {
   const id = useSearchParams().get("id");
   const { data: imp, error, isLoading, mutate } = useImport(id);
   const lastStatus = useRef<string | null>(null);
+  // Toasts raised by a step that unmounts as the status moves on (Import started, Import undone).
+  const [toast, setToast] = useState<string | null>(null);
+  // Stable, so the 2-second polls while applying don't restart the toast's timer.
+  const clearToast = useCallback(() => setToast(null), []);
   // When a run finishes, the invoice, payment, client and dashboard lists all changed.
   useEffect(() => {
     if (lastStatus.current === "applying" && imp && imp.status !== "applying") void invalidateAfterImport();
@@ -36,11 +40,12 @@ function ImportViewInner() {
         <>
           <ColumnMap imp={imp} onSaved={set} />
           <CheckStep imp={imp} onChanged={set} />
-          <ApplyBar imp={imp} onChanged={set} refresh={() => mutate()} />
+          <ApplyBar imp={imp} onChanged={set} refresh={() => mutate()} notify={setToast} />
         </>
       )}
-      {(imp.status === "applying" || imp.status === "failed") && <ImportProgress imp={imp} onChanged={set} />}
+      {(imp.status === "applying" || imp.status === "failed") && <ImportProgress imp={imp} onChanged={set} refresh={() => mutate()} notify={setToast} />}
       {(imp.status === "applied" || imp.status === "undone") && <ImportReport imp={imp} refresh={() => mutate()} />}
+      {toast && <Toast message={toast} onDone={clearToast} />}
     </>
   );
 }

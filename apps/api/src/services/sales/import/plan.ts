@@ -6,8 +6,8 @@ import {
 import { amountLevels, IMPORT_FIELD_LABELS, type AmountLevelField, type ImportMapping, type Level } from "./fields";
 import { buildClientIndex, matchGroup, type ClientIndexRow, type MatchCandidate, type MatchDecision } from "./match";
 import {
-  detectDateOrder, dmyOf, gstinChecksumOk, gstinShapeOk, invoiceKey, normaliseParty, parseAmount, parseDay, parseQty, parseRateBp,
-  parseStateCode, parseSwipeStatus, rs, type DateOrder, type SwipeStatus,
+  detectDateOrder, dmyOf, gstinChecksumOk, gstinShapeOk, invoiceKey, normaliseParty, parseAmount, parseCountry, parseDay, parseQty, parseRateBp,
+  parseStateCode, parseSwipeStatus, rs, UNKNOWN_COUNTRY, type DateOrder, type SwipeStatus,
 } from "./values";
 
 // Swipe import (spec-import §4.5–4.11, 4.15): the CHECK. From the stored text grid, the mapping and
@@ -39,7 +39,7 @@ export interface PlanInvoice {
   payment: { cashPaise: number; tdsPaise: number; paidOn: string; number: string; tdsNote: string | null } | null;
   poNumber: string | null; poDate: string | null; notes: string | null; irn: string | null;
   /** Customer details from the file, used when apply creates the client or fills a missing profile. */
-  customer: { address: string | null; city: string | null; pincode: string | null; email: string | null; stateCode: string | null };
+  customer: { address: string | null; city: string | null; pincode: string | null; email: string | null; stateCode: string | null; country?: string | null };
 }
 
 /** What the check report shows for an invoice, whatever its outcome. */
@@ -142,6 +142,7 @@ export function rowsLabel(rowNos: number[]): string {
   return parts.join(", ");
 }
 
+const fitInt = (v: number) => (Math.abs(v) > MAX_PAISE ? 0 : v);
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const seqKey = (scope: string | null, fyLabel: string) => (scope ? `invoice@${scope}:${fyLabel}` : `invoice:${fyLabel}`);
 
@@ -423,7 +424,10 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
     // 2 Place of supply
     const posCol = parseStateCode(firstOf("placeOfSupply"));
     const posState = parseStateCode(firstOf("customerState"));
-    const pos: string | null = posCol ?? (customerGstin ? customerGstin.slice(0, 2) : null) ?? posState ?? matchedClient?.billingProfile?.stateCode ?? null;
+    const countryRaw = firstOf("customerCountry");
+    const fileCountry = parseCountry(countryRaw);
+    const pos: string | null = posCol ?? (customerGstin ? customerGstin.slice(0, 2) : null) ?? posState ?? matchedClient?.billingProfile?.stateCode
+      ?? (fileCountry && fileCountry !== "IN" ? "EXPORT" : null);
     if (customerGstin && pos && pos !== "EXPORT" && pos !== customerGstin.slice(0, 2)) add("POS_GSTIN_DIFFER", "warning", `Place of supply ${pos} differs from the customer GSTIN's state ${customerGstin.slice(0, 2)}`);
 
     // 4 Stated figures
@@ -592,6 +596,7 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
         source = "derived";
         if (totalTaxStated !== null) {
           const tax = totalTaxStated;
+          if (tax === 0) mode = "none"; // no GST charged: zero-rated (SEZ / export without payment), never inter/intra at 0%
           if (mode === "intra") { cgst = Math.floor(tax / 2); sgst = tax - cgst; if (tax % 2) add("TAX_SPLIT", "info", "The total tax is odd — CGST got the smaller half"); }
           else if (mode === "inter") igst = tax;
           else if (tax !== 0) add("TAX_WITHOUT_MODE", "error", "Tax is charged on a supply outside India");
@@ -599,7 +604,9 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
           else { const exact = taxable + tax; total = seller?.roundToRupee === false ? exact : Math.round(exact / 100) * 100; add("TOTAL_DERIVED", "info", "No invoice total in the file — worked out from taxable + GST"); }
         } else {
           const tax = totalStated! - taxable;
-          rateBp = mode === "none" ? 0 : snap(tax, taxable);
+          const derived = snap(tax, taxable);
+          if (derived === 0) mode = "none"; // the total is the taxable value: zero-rated, never inter/intra at 0%
+          rateBp = mode === "none" ? 0 : derived;
           if (rateBp === null) add("TAX_RATE_MISMATCH", "error", `The total implies GST of ${rs(tax)} on ${rs(taxable)} — not a GST rate`);
           else {
             const t = computeTotals({ lines: [{ quantity: 1, unitPricePaise: taxable }], taxMode: mode, gstRateBp: rateBp, roundToRupee: true });
@@ -656,6 +663,22 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
       if (taxable <= 0 || total <= 0 || cgst < 0 || sgst < 0 || igst < 0) add("NEGATIVE_AMOUNT", "error", "Taxable value and total must be above zero and no tax negative");
     }
     if (mode === "inter" && regRes.reg && pos === regRes.reg.stateCode) add("IGST_SAME_STATE", "warning", "IGST charged in the registration's own state — fine for an SEZ unit; otherwise check");
+    // Zero-rated (owner #4): Accounts files tax_mode none as SEZWOP (buyer GSTIN) or EXPWOP (buyer abroad).
+    if (mode === "none" && taxable !== null) {
+      if (pos === "EXPORT") add("ZERO_RATED", "info", "No GST charged — filed as an export without payment of tax (GSTR-1 6A)");
+      else if (customerGstin) add("ZERO_RATED", "info", "No GST charged — filed as a supply to an SEZ without payment of tax (SEZWOP)");
+      else add("ZERO_RATED_DOMESTIC", "warning", "No GST charged to an unregistered buyer in India — Accounts lists it for checking; import it only if it really was tax-free");
+    }
+    // A buyer abroad needs a country other than India, or Accounts reads the invoice as domestic.
+    let buyerCountry: string | null = null;
+    if (pos === "EXPORT") {
+      const profileCountry = matchedClient?.billingProfile?.country?.trim().toUpperCase() || null;
+      buyerCountry = fileCountry && fileCountry !== "IN" ? fileCountry : profileCountry && profileCountry !== "IN" ? profileCountry : null;
+      if (!buyerCountry) {
+        buyerCountry = UNKNOWN_COUNTRY;
+        add("EXPORT_COUNTRY_UNKNOWN", "warning", `${countryRaw && countryRaw !== "-" ? `"${countryRaw.slice(0, 40)}" is not a country the import knows` : "No buyer country in the file or on the client"} — filed as an export (place of supply 96) with the country unknown; map a Country column or set the client's country to name it`);
+      }
+    }
     if (!regRes.reg && !issues.some((i) => i.level === "error") && fy) add("NO_REGISTRATION", "error", `No GST registration of ${ctx.companyName} could bill this invoice`);
     if (pos === null && mode === "intra") add("POS_UNKNOWN", "error", "No place of supply, but CGST+SGST are charged");
     else if (pos === null) add("POS_UNKNOWN", "warning", "No place of supply in the file or on the client");
@@ -666,6 +689,11 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
     const fitFigures = { subtotalPaise: subtotalStored, taxablePaise: taxable ?? 0, cgstPaise: cgst, sgstPaise: sgst, igstPaise: igst, totalPaise: total, roundOffPaise: roundOff };
     let tooLarge = false;
     for (const [k, v] of Object.entries(fitFigures)) if (Math.abs(v) > MAX_PAISE) { tooLarge = true; add("AMOUNT_TOO_LARGE", "error", `${k.replace(/Paise$/, "")} is above ₹2,14,74,836.47 — too large for one document`); break; }
+    // Every stored line figure is an INT column too: a typo'd rate must be an error here, never an overflow at apply.
+    if (!tooLarge && lines.some((l) => [l.unitPricePaise, l.discountPaise, l.amountPaise, l.quantity * l.unitPricePaise].some((v) => Math.abs(v) > MAX_PAISE))) {
+      tooLarge = true;
+      add("AMOUNT_TOO_LARGE", "error", "A line's rate or amount is above ₹2,14,74,836.47 — check the Rate and Quantity columns");
+    }
     void lineSum;
 
     // §4.8 Settlement
@@ -673,7 +701,10 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
     const D = figures.tds ?? 0;
     const B = has("balance") ? figures.balance ?? null : null;
     let P: number;
+    const cancelledDoc = docStatus === "cancelled";
     if (has("amountPaid")) P = figures.amountPaid ?? 0;
+    // A cancelled invoice's balance says nothing about money received (Swipe may print 0 or the total).
+    else if (cancelledDoc) P = 0;
     else if (B !== null) P = T - B - D;
     else if (swipeStatus === "paid") P = T - D;
     else P = 0;
@@ -690,7 +721,8 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
       if (cash >= excess) cash -= excess; else { tdsAmt -= excess - cash; cash = 0; }
       add("SETTLEMENT_CAPPED", "info", `${rs(excess)} over the total — the receipt is capped at the invoice total`);
     }
-    if (B !== null && T > 0 && Math.abs(B - expectedBalance) > 100) add("BALANCE_MISMATCH", "warning", `Swipe's balance ${rs(B)} does not match ${rs(expectedBalance)} worked out from the amounts`);
+    for (const [what, v] of [["Amount paid", P], ["TDS", D]] as const) if (Math.abs(v) > MAX_PAISE) add("AMOUNT_TOO_LARGE", "error", `${what} is above ₹2,14,74,836.47 — too large for one document`);
+    if (!cancelledDoc && B !== null && T > 0 && Math.abs(B - expectedBalance) > 100) add("BALANCE_MISMATCH", "warning", `Swipe's balance ${rs(B)} does not match ${rs(expectedBalance)} worked out from the amounts`);
     const settledNow = cash + tdsAmt;
     if (swipeStatus === "paid" && settledNow < T && docStatus !== "cancelled") add("STATUS_CONFLICT", "warning", `Swipe says Paid but ${rs(T - settledNow)} is unsettled — imported as part-paid; if the client deducted TDS, add a TDS column and upload again`);
     if (swipeStatus === "unpaid" && cash > 0) add("STATUS_CONFLICT", "warning", `Swipe says unpaid but ${rs(cash)} was received — the amounts win`);
@@ -746,7 +778,8 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
       docStatus, swipeStatus: firstOf("status") || null, taxMode: mode, gstRateBp: rateBp,
       taxablePaise: tooLarge ? null : taxable, cgstPaise: mode ? cgst : null, sgstPaise: mode ? sgst : null, igstPaise: mode ? igst : null,
       roundOffPaise: mode ? roundOff : null, totalPaise: tooLarge || !mode ? null : total,
-      paidPaise: payment?.cashPaise ?? 0, tdsPaise: payment?.tdsPaise ?? 0, b2b: !!customerGstin,
+      // sales_import_invoices.paid_paise / tds_paise are INT: a figure too large to store (already an error) shows as 0.
+      paidPaise: fitInt(payment?.cashPaise ?? 0), tdsPaise: fitInt(payment?.tdsPaise ?? 0), b2b: !!customerGstin,
     };
     let invoice: PlanInvoice | null = null;
     if (!errors.length && reg && issueDate && dueDate && fy && mode && rateBp !== null && taxable !== null && lines.length) {
@@ -756,7 +789,7 @@ export function buildPlan(input: PlanInput, ctx: PlanContext, limits: { maxInvoi
         registration: view.registration!, placeOfSupplyCode: pos, taxMode: mode, gstRateBp: rateBp, lines,
         totals: { subtotalPaise: subtotalStored, discountPaise: discountStored, taxablePaise: taxable, cgstPaise: cgst, sgstPaise: sgst, igstPaise: igst, roundOffPaise: roundOff, totalPaise: total, source },
         payment, poNumber: firstOf("poNumber") || null, poDate, notes: firstOf("notes") || null, irn: firstOf("irn") || null,
-        customer: { address: firstOf("customerAddress") || null, city: firstOf("customerCity") || null, pincode: firstOf("customerPincode") || null, email: firstOf("customerEmail") || null, stateCode: posState ?? (customerGstin ? customerGstin.slice(0, 2) : pos && pos !== "EXPORT" ? pos : null) },
+        customer: { address: firstOf("customerAddress") || null, city: firstOf("customerCity") || null, pincode: firstOf("customerPincode") || null, email: firstOf("customerEmail") || null, stateCode: pos === "EXPORT" ? null : posState ?? (customerGstin ? customerGstin.slice(0, 2) : pos), country: buyerCountry },
       };
     }
     rows.push({

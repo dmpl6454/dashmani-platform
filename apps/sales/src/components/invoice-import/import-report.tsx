@@ -20,10 +20,10 @@ export function ImportReport({ imp, refresh }: { imp: ImportView; refresh: () =>
   const { data: events } = useEvents("import", imp.id);
   const { data: failed } = useImportInvoices(imp.id, { outcome: "failed", limit: 200, v: `${imp.status}:${imp.counts.failed}` });
   const [undo, setUndo] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   const rec = imp.summary?.reconcile;
   const report = async () => {
-    try { const { blob, filename } = await apiFetchBlob(`/sales/imports/${imp.id}/report.csv`); downloadBlob(blob, filename ?? "swipe-import.csv"); } catch (err) { setToast(errorSentence(err)); }
+    try { const { blob, filename } = await apiFetchBlob(`/sales/imports/${imp.id}/report.csv`); downloadBlob(blob, filename ?? "swipe-import.csv"); } catch (err) { setToast({ message: errorSentence(err), tone: "err" }); }
   };
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -71,8 +71,8 @@ export function ImportReport({ imp, refresh }: { imp: ImportView; refresh: () =>
           : imp.undo?.blockedBy && <div className="card border-border p-3 text-sm">{imp.undo.blockedBy}</div>)}
       </div>
       <EventList events={events} />
-      {undo && <UndoImportDialog imp={imp} onClose={() => setUndo(false)} onDone={() => { setUndo(false); refresh(); }} />}
-      {toast && <Toast message={toast} tone="err" onDone={() => setToast(null)} />}
+      {undo && <UndoImportDialog imp={imp} onClose={() => setUndo(false)} onDone={(message) => { setUndo(false); setToast({ message, tone: "ok" }); refresh(); }} />}
+      {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </div>
   );
 }

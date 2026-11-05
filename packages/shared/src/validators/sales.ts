@@ -643,7 +643,7 @@ export const IMPORT_FIELDS = [
   // invoice
   "number", "issueDate", "dueDate", "docType", "status", "sellerGstin", "placeOfSupply", "poNumber", "poDate", "notes", "irn",
   // customer
-  "customerName", "customerGstin", "customerAddress", "customerCity", "customerState", "customerPincode", "customerEmail",
+  "customerName", "customerGstin", "customerAddress", "customerCity", "customerState", "customerPincode", "customerCountry", "customerEmail",
   // lines
   "itemName", "itemDescription", "hsnSac", "quantity", "rate", "lineDiscount", "gstRate",
   // amounts (level per column decided by amountLevels)

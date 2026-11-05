@@ -150,7 +150,28 @@ export function parseStateCode(text: string | null | undefined): string | null {
   return STATE_BY_NAME[name] ?? null;
 }
 
-export type SwipeStatus = "paid" | "partial" | "unpaid" | "cancelled" | "draft";
+/** ISO 3166 "user-assigned" code the import stores for a buyer abroad whose country is not known. */
+export const UNKNOWN_COUNTRY = "ZZ";
+
+const COUNTRY_BY_NAME: Record<string, string> = {
+  india: "IN", bharat: "IN", "united states": "US", "united states of america": "US", usa: "US", us: "US", america: "US",
+  "united kingdom": "GB", uk: "GB", "great britain": "GB", britain: "GB", england: "GB", "united arab emirates": "AE", uae: "AE", dubai: "AE",
+  singapore: "SG", canada: "CA", australia: "AU", "new zealand": "NZ", germany: "DE", france: "FR", netherlands: "NL", ireland: "IE",
+  switzerland: "CH", sweden: "SE", spain: "ES", italy: "IT", belgium: "BE", nepal: "NP", bangladesh: "BD", "sri lanka": "LK",
+  bhutan: "BT", maldives: "MV", "saudi arabia": "SA", qatar: "QA", oman: "OM", kuwait: "KW", bahrain: "BH", "hong kong": "HK",
+  japan: "JP", china: "CN", malaysia: "MY", indonesia: "ID", thailand: "TH", philippines: "PH", vietnam: "VN", "south korea": "KR",
+  "south africa": "ZA", kenya: "KE", nigeria: "NG", israel: "IL", mauritius: "MU",
+};
+
+/** A buyer country as an ISO 3166 alpha-2 code, from "AE", "UAE" or "United Arab Emirates"; null when not recognised. */
+export function parseCountry(text: string | null | undefined): string | null {
+  const s = String(text ?? "").trim();
+  if (!s || s === "-") return null;
+  if (/^[A-Za-z]{2}$/.test(s)) return s.toUpperCase();
+  return COUNTRY_BY_NAME[normWords(s)] ?? null;
+}
+
+export type SwipeStatus ="paid" | "partial" | "unpaid" | "cancelled" | "draft";
 
 /** Swipe's status word; `unknown` when it is a word we do not recognise (the amounts then decide). */
 export function parseSwipeStatus(text: string | null | undefined): { status: SwipeStatus | null; unknown: boolean } {

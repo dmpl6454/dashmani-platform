@@ -570,7 +570,7 @@ export async function unlinkedReceiptsFor(lineId: string) {
       paidOn: { gte: dayToDate(plusDays(day, -31)), lte: dayToDate(plusDays(day, 31)) }, amountPaise: { lte: remaining + 100 },
     },
     take: 200,
-    select: { id: true, number: true, amountPaise: true, tdsPaise: true, paidOn: true, reference: true, mode: true, client: { select: { id: true, companyName: true } } },
+    select: { id: true, number: true, amountPaise: true, tdsPaise: true, paidOn: true, reference: true, mode: true, importId: true, client: { select: { id: true, companyName: true } } },
   });
   return rows
     .map((p) => {
@@ -937,8 +937,8 @@ const MAX_RECEIPTS = 60_000;
 /** Tests only: read open credits in pages of `n` (proves matching does not depend on the page). */
 export function setBankLinePageSizeForTests(n: number) { LINE_PAGE = n; }
 
-/** A Swipe-imported receipt: offered to a person, never auto-linked. ⚠️ Becomes `importId != null` on the rebase onto PR 3. */
-const isImportedReceipt = (p: { number: string }) => p.number.startsWith("SW-");
+/** A Swipe-imported receipt (`import_id IS NOT NULL`, spec-00 §6.3): offered to a person, never auto-linked. */
+const isImportedReceipt = (p: { importId: string | null }) => p.importId !== null;
 
 async function loadContext(company: CompanyKey) {
   const other = (company === "dspl" ? "dmpl" : "dspl") as CompanyKey;
@@ -1036,7 +1036,7 @@ async function rematchOnce(company: CompanyKey, actorId: string): Promise<Rematc
   const days = rows.map((r) => dateToDay(r.txn_date)!).sort();
   const from = dayToDate(plusDays(days[0], -60));
   const to = dayToDate(plusDays(days[days.length - 1], 7));
-  type RecRow = { id: string; number: string; clientId: string; amountPaise: number; paidOn: Date; reference: string | null; mode: string };
+  type RecRow = { id: string; number: string; clientId: string; amountPaise: number; paidOn: Date; reference: string | null; mode: string; importId: string | null };
   const recRows: RecRow[] = [];
   let rc: { paidOn: Date; id: string } | null = null;
   while (recRows.length < MAX_RECEIPTS) {
@@ -1047,7 +1047,7 @@ async function rematchOnce(company: CompanyKey, actorId: string): Promise<Rematc
       },
       orderBy: [{ paidOn: "asc" }, { id: "asc" }],
       take: RECEIPT_PAGE,
-      select: { id: true, number: true, clientId: true, amountPaise: true, paidOn: true, reference: true, mode: true },
+      select: { id: true, number: true, clientId: true, amountPaise: true, paidOn: true, reference: true, mode: true, importId: true },
     });
     recRows.push(...page);
     if (page.length < RECEIPT_PAGE) break;

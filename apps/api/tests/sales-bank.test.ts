@@ -558,6 +558,84 @@ describe("bank statements, matching and TDS", () => {
     expect((await api().get("/v1/sales/events?entityType=bank_line&entityId=x").set(auth(sales))).status).toBe(200);
   });
 
+  /** A one-invoice Swipe export, paid in full on `paidOn`, applied through the import API (spec-import). */
+  async function swipeImported(paidOn: string) {
+    const head = "Invoice Number,Invoice Date,Customer Name,Customer GSTIN,Place of Supply,Item,HSN/SAC,Qty,Rate,Taxable Value,CGST,SGST,IGST,Total,Amount Paid,TDS,Balance,Status,Payment Date";
+    const row = ["INV/24-25/0102", "15/06/2024", "Filmy Brands Pvt. Ltd.", "27AABCU9603R1ZX", "27-Maharashtra", "Instagram reel", "998365", "1", "\"1,00,000.00\"", "\"1,00,000.00\"", "\"9,000.00\"", "\"9,000.00\"", "0", "\"1,18,000.00\"", "\"1,18,000.00\"", "0", "0.00", "Paid", dmy(paidOn)].join(",");
+    const up = await api().post("/v1/sales/imports").set(auth(adminT)).field("company", "dspl").attach("file", Buffer.from(`${head}\r\n${row}`), "swipe.csv");
+    expect(up.status, JSON.stringify(up.body)).toBe(201);
+    const ap = await api().post(`/v1/sales/imports/${up.body.data.id}/apply`).set(auth(adminT)).send({ planHash: up.body.data.planHash, acceptWarnings: true, confirmLiveSeries: false });
+    expect(ap.status, JSON.stringify(ap.body)).toBe(202);
+    await flushSalesBackground();
+    const done = (await api().get(`/v1/sales/imports/${up.body.data.id}`).set(auth(adminT))).body.data;
+    expect(done.status, JSON.stringify(done.lastError)).toBe("applied");
+    return { id: done.id as string, receipt: await prisma.salesPayment.findFirstOrThrow({ where: { importId: done.id } }) };
+  }
+
+  it("spec-00 §6.3: a Swipe-imported receipt is offered, never auto-linked; linked by hand, it blocks the import's undo until unlinked (R→G)", async () => {
+    const imp = await swipeImported(d(-1));
+    expect(imp.receipt).toMatchObject({ number: "SW-INV/24-25/0102", amountPaise: 11_800_000, clientId: filmy });
+    // The rule keys on import_id, not on the number Swipe receipts happen to carry.
+    await prisma.salesPayment.update({ where: { id: imp.receipt.id }, data: { number: "RCPT/24-25/9102" } });
+    const r = await importFile(statement([{ date: d(-1), narr: narr("HDFCN52026110063"), cr: 11_800_000 }]));
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.data.autoLinked).toBe(0);
+    let line = await lineOf("HDFCN52026110063");
+    expect(line.status).not.toBe("matched");
+    expect(line.receipts).toEqual([]);
+    expect(line.suggestion.receiptCandidates.map((x: { paymentId: string; why: string }) => [x.paymentId, x.why.includes("Swipe import")])).toEqual([[imp.receipt.id, true]]);
+    const offered = (await api().get(`/v1/sales/bank/lines/${line.id}/receipts`).set(auth(sales))).body.data;
+    expect(offered).toEqual([expect.objectContaining({ paymentId: imp.receipt.id, imported: true, why: expect.stringContaining("Swipe import") })]);
+    await prisma.salesPayment.update({ where: { id: imp.receipt.id }, data: { number: "SW-INV/24-25/0102" } });
+    // Untouched, the import can be undone …
+    expect((await api().get(`/v1/sales/imports/${imp.id}`).set(auth(adminT))).body.data.undo).toEqual({ allowed: true, blockedBy: null });
+    // … but not once a person has matched its receipt to the bank credit.
+    expect((await api().post(`/v1/sales/bank/lines/${line.id}/link`).set(auth(sales)).send({ paymentId: imp.receipt.id })).status).toBe(200);
+    line = await lineOf("HDFCN52026110063");
+    expect(line.status).toBe("matched");
+    const view = (await api().get(`/v1/sales/imports/${imp.id}`).set(auth(adminT))).body.data;
+    expect(view.undo.allowed).toBe(false);
+    expect(view.undo.blockedBy).toContain("SW-INV/24-25/0102 is matched to a bank credit of");
+    const undo = () => api().post(`/v1/sales/imports/${imp.id}/undo`).set(auth(adminT)).send({ reason: "Wrong file" });
+    const blocked = await undo();
+    expect([blocked.status, blocked.body.error.code]).toEqual([409, "UNDO_BLOCKED"]);
+    expect(blocked.body.error.message).toContain("unlink it on the Bank page first");
+    expect(await prisma.salesPayment.count({ where: { importId: imp.id } })).toBe(1);
+    // Unlinked (detach keeps the receipt), the import can go; the line is open again.
+    expect((await api().post(`/v1/sales/bank/lines/${line.id}/unlink`).set(auth(sales)).send({ paymentId: imp.receipt.id, action: "detach", reason: "undo the import" })).status).toBe(200);
+    await flushSalesBackground();
+    const ok = await undo();
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.data.status).toBe("undone");
+    expect(await prisma.salesPayment.count({ where: { importId: imp.id } })).toBe(0);
+    expect((await prisma.salesBankLine.findUniqueOrThrow({ where: { id: line.id } })).matchedPaise).toBe(0n);
+  });
+
+  it("spec-00 §6.4: the Accounts page's bank tile is null without an active account, else the open credits and the latest statement day (R→G)", async () => {
+    const tile = async () => {
+      const r = await api().get("/v1/sales/accounts?company=dspl").set(auth(sales));
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      return r.body.data.bank;
+    };
+    await prisma.salesBankAccount.deleteMany({});
+    expect(await tile()).toBeNull();
+    const a = await api().post("/v1/sales/bank/accounts").set(auth(adminT)).send({ companyKey: "dspl", label: "IDFC First current", bank: "idfc", accountNumber: ACC, ifsc: "IDFB0040178" });
+    expect(a.status).toBe(201);
+    accountId = a.body.data.id;
+    expect(await tile()).toEqual({ unmatchedCount: 0, unmatchedPaise: 0, lastStatementDay: null });
+    expect((await importFile(statement([
+      { date: d(-3), narr: "NEFT CR TILE ONE", cr: 120_000 },
+      { date: d(-2), narr: "ATM WDL TILE", dr: 5_000 },
+      { date: d(-1), narr: "NEFT CR TILE TWO", cr: 30_000 },
+    ]))).status).toBe(201);
+    const st = await prisma.salesBankStatement.findFirstOrThrow();
+    expect(await tile()).toEqual({ unmatchedCount: 2, unmatchedPaise: 150_000, lastStatementDay: st.periodTo.toISOString().slice(0, 10) });
+    // A dmpl account does not leak into dspl, and dmpl without an active account stays null.
+    expect((await api().get("/v1/sales/accounts?company=dmpl").set(auth(sales))).body.data.bank).toBeNull();
+    await prisma.salesBankAccount.update({ where: { id: accountId }, data: { status: "archived" } });
+    expect(await tile()).toBeNull();
+  });
+
   it("bank writes switch off with SALES_BANK_ENABLED=0; reads keep working", async () => {
     vi.stubEnv("SALES_BANK_ENABLED", "0");
     try {

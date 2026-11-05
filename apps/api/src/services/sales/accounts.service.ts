@@ -12,6 +12,7 @@ import {
 import { AppError } from "../../middleware/error-handler";
 import { csvDocument, csvMoney } from "./csv";
 import { getSellerOrDefaults } from "./settings.service";
+import { bankSummary } from "./bank.service";
 import { FILED_SELECT, filedView } from "./filed.service";
 import { assemble, tdsClients, type AccountsView, type ClientName } from "./accounts-assemble";
 import {
@@ -64,11 +65,14 @@ export async function getAccounts(company: CompanyKey, fy: string): Promise<Acco
 }
 
 /**
- * The bank tile. Returns null in this PR (spec-00 §6.4): the bank feature (PR 4) replaces this
- * body with the company's unmatched credit lines. The portal hides the tile while it is null.
+ * The bank tile (spec-00 §6.4, filled by the bank PR): null when the company has no active bank
+ * account (the portal hides the tile), else its open credit lines and the latest statement day.
  */
-export async function bankSummaryOrNull(_company: CompanyKey): Promise<AccountsView["bank"]> {
-  return null;
+export async function bankSummaryOrNull(company: CompanyKey): Promise<AccountsView["bank"]> {
+  if (!(await prisma.salesBankAccount.count({ where: { companyKey: company, status: "active" } }))) return null;
+  const s = await bankSummary(company);
+  const days = s.accounts.map((a) => a.lastStatementTo).filter((x): x is string => !!x).sort();
+  return { unmatchedCount: s.openCount, unmatchedPaise: s.openPaise, lastStatementDay: days[days.length - 1] ?? null };
 }
 
 // ─── CSVs ────────────────────────────────────────────────────────────────────────────────────

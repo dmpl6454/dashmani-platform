@@ -18,6 +18,7 @@ import { buildPlan, extractKeys, PlanLimitError, rowsLabel, type ExistingInvoice
 import { ImportReadError } from "./import/read";
 import { readSourceOffThread } from "./import/read-offthread";
 import { rs, UNKNOWN_COUNTRY } from "./import/values";
+import { shortDay } from "./bank-match";
 
 // Old-invoice import from Swipe (spec-import). Upload → check (in the same request) → an Admin
 // applies → (maybe) undo. The file is parsed in memory and only its text cells are kept, in
@@ -711,7 +712,11 @@ async function undoBlockers(db: Db, importId: string): Promise<{ messages: strin
       ORDER BY ti.doc_number LIMIT 5`;
     await take(e, e[0]?.n ?? 0, (r) => `${r.doc} is already in Tally — cancel it there before undoing`);
   }
-  // (f) a receipt matched to a bank line — added by the bank PR (spec-00 §6.3).
+  // (f) spec-00 §6.3: a receipt of the import matched to a bank credit (a voided one keeps its line too).
+  const f = await db.$queryRaw<Array<{ pay: string; txn_date: Date; n: number }>>`
+    SELECT p."number" AS pay, l.txn_date, count(*) OVER ()::int AS n FROM sales_payments p JOIN sales_bank_lines l ON l.id = p.bank_line_id
+    WHERE p.import_id = ${importId} ORDER BY p."number" LIMIT 5`;
+  await take(f, f[0]?.n ?? 0, (r) => `${r.pay} is matched to a bank credit of ${shortDay(dateToDay(r.txn_date)!)} — unlink it on the Bank page first`);
   return { messages: out, more: Math.max(0, total - out.length) };
 }
 

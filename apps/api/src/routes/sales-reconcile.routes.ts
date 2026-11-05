@@ -1,5 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import {
+  brsReconcileSchema,
+  brsReopenSchema,
   confirmationBatchSchema,
   confirmationCreateSchema,
   confirmationResponseSchema,
@@ -19,7 +21,9 @@ import { AppError } from "../middleware/error-handler";
 import { memoryUpload } from "../middleware/upload-private";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
+import { hasPermission } from "../middleware/rbac";
 import { companyOf, companyQuery, manage, sendDownload, staffId, str, view } from "./sales-route-kit";
+import { brsCsv, brsPdf, getBrs, listBrsMonths, reconcileMonth, reopenMonth } from "../services/sales/recon/brs.service";
 import { getSellerOrDefaults } from "../services/sales/settings.service";
 import { RECON_FILE_PDF_GST, RECON_FILE_PDF_TDS, RECON_FILE_ZIP_GST, RECON_FILE_ZIP_TDS } from "../services/sales/recon/files";
 import { getTdsRecon, uploadTds } from "../services/sales/recon/tds.service";
@@ -189,5 +193,34 @@ router.get("/sales/reconcile/confirmations/:id/file", ...view, asyncHandler(asyn
 router.delete("/sales/reconcile/confirmations/:id/file", ...manage, asyncHandler(async (req, res) => success(res, await removeReply(req.params.id, staffId(req), companyQuery(req)))));
 
 // ─── BRS (PR 6) ───
+// Routes 21–26 (spec-reconcile §6.2): the Bank tab. GETs = view; reconcile/reopen = manage + the
+// kill switch. Debit narrations only for sales:approve (bank's rule). A row's own company wins:
+// an account of the other company with ?company= → 409 COMPANY_MISMATCH.
+
+const seeDebits = async (req: Parameters<RequestHandler>[0]) => hasPermission(staffId(req), "sales", "approve");
+
+router.get("/sales/reconcile/bank/months", ...view, asyncHandler(async (req, res) =>
+  success(res, await listBrsMonths(companyQuery(req), companyOf(req), str(req.query.accountId), todayIST()))));
+
+router.get("/sales/reconcile/bank/brs.pdf", ...view, asyncHandler(async (req, res) => {
+  const out = await brsPdf(companyQuery(req), companyOf(req), str(req.query.accountId), str(req.query.month), str(req.query.version), todayIST(), { seeDebits: await seeDebits(req) });
+  return sendDownload(res, out.pdf, { contentType: "application/pdf", filename: out.filename, inline: req.query.inline === "1" });
+}));
+
+router.get("/sales/reconcile/bank/brs.csv", ...view, asyncHandler(async (req, res) => {
+  const out = await brsCsv(companyQuery(req), companyOf(req), str(req.query.accountId), str(req.query.month), str(req.query.version), todayIST(), { seeDebits: await seeDebits(req), byName: await actorName(req) });
+  return sendDownload(res, out.body, { contentType: "text/csv; charset=utf-8", filename: out.filename });
+}));
+
+router.post("/sales/reconcile/bank/reconcile", ...manage, reconOn, validate(brsReconcileSchema), asyncHandler(async (req, res) => {
+  const out = await reconcileMonth(req.body, companyQuery(req), companyOf(req), staffId(req), todayIST());
+  return success(res, out.result, undefined, out.status);
+}));
+
+router.post("/sales/reconcile/bank/reopen", ...manage, reconOn, validate(brsReopenSchema), asyncHandler(async (req, res) =>
+  success(res, await reopenMonth(req.body, companyQuery(req), companyOf(req), staffId(req)))));
+
+router.get("/sales/reconcile/bank", ...view, asyncHandler(async (req, res) =>
+  success(res, await getBrs(companyQuery(req), companyOf(req), str(req.query.accountId), str(req.query.month), todayIST(), { seeDebits: await seeDebits(req) }))));
 
 export default router;

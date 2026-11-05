@@ -2,6 +2,7 @@ import { reconDay } from "@dashmani/shared";
 import { csvDocument, csvMoney } from "../csv";
 import type { TdsReconView } from "./tds.service";
 import type { GstReconView } from "./gst.service";
+import type { BrsCore } from "./brs";
 
 // The reconcile CSVs (spec-reconcile §8.4): PR 0's csvDocument (UTF-8 BOM, commas, CRLF, formula
 // guard), money bare with its sign via csvMoney. Built from the SAME view the page shows, so the
@@ -59,4 +60,36 @@ export function gstDifferencesCsv(v: GstReconView, meta: { legalName: string; by
       s.filed ? csvMoney(s.filed.valuePaise - s.books.valuePaise) : "", s.note ?? "", s.comparedItemwise ? "" : "Compared as totals only"]);
   }
   return { filename: `gstr1-differences-${v.gstin}-${v.period.key}.csv`, body: csvDocument(out) };
+}
+
+// ─── BRS (PR 6) ──────────────────────────────────────────────────────────────────────────────
+
+export const BRS_ITEM_HEADERS = ["Group", "Date", "Reference", "Description", "Amount", "Reason", "Line id", "Receipt id"] as const;
+
+/** The A/B figures as Figure,Amount rows, then every item and every withdrawal. Debit narrations only when the view carries them. */
+export function brsCsv(v: BrsCore, meta: { legalName: string; by: string; now: Date; version: number | null; frozen: boolean }): Buffer {
+  const status = meta.frozen && meta.version ? `reconciled version ${meta.version}` : "not reconciled (live figures)";
+  const out: unknown[][] = [
+    ["Company", meta.legalName],
+    ["Source", `${v.account.label} ••${v.account.last4} · ${v.month.label} · ${status} · generated ${istStamp(meta.now)} by ${meta.by}`],
+    [],
+    ["Figure", "Amount"],
+    ["Opening balance", v.balances.openingPaise === null ? "" : csvMoney(v.balances.openingPaise)],
+    ["Credits", csvMoney(v.balances.creditsPaise)],
+    ["Withdrawals", csvMoney(v.balances.debitsPaise)],
+    ["Closing balance", v.balances.closingPaise === null ? "" : csvMoney(v.balances.closingPaise)],
+    ...v.formula.map((f) => [f.label, csvMoney(f.paise)]),
+    ["Agrees", v.ties ? "yes" : "NO"],
+    [],
+    [...BRS_ITEM_HEADERS],
+  ];
+  for (const i of v.items) {
+    out.push([i.group, i.day, i.receipt?.number ?? (i.line ? `row ${i.line.rowNo} of ${i.line.fileName}` : ""), i.line?.narration ?? (i.receipt ? `${i.receipt.clientName} · ${i.receipt.mode}` : ""),
+      csvMoney(i.amountPaise), i.reason.text, i.line?.id ?? "", i.receipt?.id ?? ""]);
+  }
+  for (const d of v.debits.lines) {
+    const desc = [d.refund ? `refund ${d.refund.number}` : null, d.reversalOf, d.redacted ? "details visible to admins" : d.narration].filter(Boolean).join(" · ");
+    out.push(["withdrawal", d.day, d.refund?.number ?? "", desc, csvMoney(-d.amountPaise), "", d.id, ""]);
+  }
+  return csvDocument(out);
 }

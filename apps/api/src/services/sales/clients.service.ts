@@ -4,7 +4,8 @@ import { prisma } from "@dashmani/db";
 import type { ClientBillingProfileInput } from "@dashmani/shared";
 import { receiptBalance } from "./payments.service";
 import { AppError } from "../../middleware/error-handler";
-import { logSalesEvent, dateToDay } from "./common";
+import { logSalesEvent, dateToDay, type Tx } from "./common";
+import { clearProfileTan, setTan } from "./recon/tan";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
 import { todayIST, type CompanyKey } from "@dashmani/shared";
 import * as team from "../client-team.service";
@@ -17,8 +18,22 @@ import { listClientProjects } from "../pipeline/projects.service";
 
 const billingSelect = {
   legalName: true, gstin: true, pan: true, addressLine1: true, addressLine2: true, city: true, state: true,
-  stateCode: true, pincode: true, country: true, billingEmail: true, billingPhone: true, notes: true, updatedAt: true,
+  stateCode: true, pincode: true, country: true, billingEmail: true, billingPhone: true, notes: true, tan: true, updatedAt: true,
 } as const;
+
+/**
+ * The TAN on a billing save (reconcile, spec §6.6): never spread into the profile row — it goes
+ * through setTan() so "a TAN belongs to one deductor" holds. undefined = untouched; null = cleared.
+ */
+function splitTan<T extends { tan?: string | null }>(b: T): { data: Omit<T, "tan">; tan: string | null | undefined } {
+  const { tan, ...data } = b;
+  return { data, tan };
+}
+async function applyProfileTan(tx: Tx, clientId: string, tan: string | null | undefined, actorId: string) {
+  if (tan === undefined) return;
+  if (tan === null) return clearProfileTan(tx, clientId);
+  await setTan(tx, { tan, clientId, kind: "client", source: "profile", actorId });
+}
 
 const clientSelect = {
   id: true, companyName: true, contactName: true, email: true, phone: true, status: true, createdAt: true,
@@ -86,8 +101,9 @@ export async function createSalesClient(
     });
     await logSalesEvent(tx, { entityType: "client", entityId: created.id, actorId, action: "client_created" });
     if (input.billing) {
-      const b = input.billing;
+      const { data: b, tan } = splitTan(input.billing);
       await tx.clientBillingProfile.create({ data: { clientId: created.id, ...b, gstin: b.gstin ?? null, pan: b.pan ?? null } });
+      await applyProfileTan(tx, created.id, tan, actorId);
       await logSalesEvent(tx, { entityType: "client", entityId: created.id, actorId, action: "billing_profile_saved" });
     }
     return tx.client.findUniqueOrThrow({ where: { id: created.id }, select: clientSelect });
@@ -124,8 +140,10 @@ export async function updateSalesClientProfile(
     await tx.client.update({ where: { id }, data: { companyName: input.companyName, contactName: input.contactName, phone: input.phone ?? null } });
     await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "client_updated", note: "profile" });
     if (input.billing) {
-      const data = { ...input.billing, gstin: input.billing.gstin ?? null, pan: input.billing.pan ?? null };
+      const { data: b, tan } = splitTan(input.billing);
+      const data = { ...b, gstin: b.gstin ?? null, pan: b.pan ?? null };
       await tx.clientBillingProfile.upsert({ where: { clientId: id }, create: { clientId: id, ...data }, update: data });
+      await applyProfileTan(tx, id, tan, actorId);
       await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "billing_profile_saved" });
     }
   });
@@ -154,15 +172,14 @@ export async function changeSalesClientEmail(id: string, email: string, actorId:
 export async function upsertClientBilling(clientId: string, input: ClientBillingProfileInput, actorId: string) {
   const client = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
   if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
-  const data = { ...input, gstin: input.gstin ?? null, pan: input.pan ?? null };
-  const profile = await prisma.clientBillingProfile.upsert({
-    where: { clientId },
-    create: { clientId, ...data },
-    update: data,
-    select: billingSelect,
+  const { data: b, tan } = splitTan(input);
+  const data = { ...b, gstin: b.gstin ?? null, pan: b.pan ?? null };
+  return prisma.$transaction(async (tx) => {
+    await tx.clientBillingProfile.upsert({ where: { clientId }, create: { clientId, ...data }, update: data });
+    await applyProfileTan(tx, clientId, tan, actorId);
+    await logSalesEvent(tx, { entityType: "client", entityId: clientId, actorId, action: "billing_profile_saved" });
+    return tx.clientBillingProfile.findUniqueOrThrow({ where: { clientId }, select: billingSelect });
   });
-  await logSalesEvent(prisma, { entityType: "client", entityId: clientId, actorId, action: "billing_profile_saved" });
-  return profile;
 }
 
 /** Every money document for one client, with balances — the account statement. */

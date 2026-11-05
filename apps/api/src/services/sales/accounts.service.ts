@@ -103,7 +103,7 @@ const pos = (r: { place_of_supply_code: string | null; buyer_state: string | nul
 const tooMany = () => new AppError(422, "TOO_MANY_ROWS", "That period has more than 20,000 documents — download one quarter at a time.");
 
 /** The registration a GSTR-1 file is for: the one asked for (must be a current registration), else the only one. */
-function pickRegistration(company: CompanyKey, seller: Parameters<typeof sellerRegistrations>[0], gstin: string | null, required: boolean): string | null {
+export function pickRegistration(company: CompanyKey, seller: Parameters<typeof sellerRegistrations>[0], gstin: string | null, required: boolean): string | null {
   const regs = sellerRegistrations(seller).filter((r) => !!r.gstin);
   const short = SALES_COMPANIES[company].short;
   if (gstin) {

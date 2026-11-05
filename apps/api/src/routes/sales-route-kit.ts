@@ -44,6 +44,11 @@ export const ENTITY_TYPES: SalesEntity[] = [
   "bank_account",
   "bank_statement",
   "bank_line",
+  "tds_upload",
+  "gst_upload",
+  "tds_deductor",
+  "confirmation",
+  "brs_month",
 ];
 
 /**

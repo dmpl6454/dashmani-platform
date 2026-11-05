@@ -483,6 +483,10 @@ model Client {
   salesRefunds     SalesRefund[]
   salesRecurring   SalesRecurringInvoice[]
   pipelineProjects PipelineProject[]
+  // smart-invoicing: reconcile (PR 5)
+  salesTdsDeductors         SalesTdsDeductor[]
+  salesBalanceConfirmations SalesBalanceConfirmation[]
+
   // smart-invoicing: tally (PR 2)
 
   @@map("clients")
@@ -2991,6 +2995,9 @@ model ClientBillingProfile {
   billingEmail String?  @map("billing_email") @db.VarChar(200)
   billingPhone String?  @map("billing_phone") @db.VarChar(30)
   notes        String?  @db.Text
+  /// The client's TAN as a TDS deductor (Form 26AS). Learned from 26AS or typed. Never printed or
+  /// frozen into invoices (buyerSnapshotFor lists its fields). Written only through setTan().
+  tan          String?  @unique @db.VarChar(10)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -3550,6 +3557,230 @@ model FinanceFiledFile {
   @@unique([filedYearId, sha256])
   @@map("finance_filed_files")
 }
+
+// ─── smart-invoicing: reconcile (PR 5) ───
+// The /reconcile page (spec-reconcile.md): Form 26AS and GSTR-1 uploads (rows kept, files never
+// stored), TAN mappings, and client balance confirmations. Never writes a money table.
+
+/// A TAN that is NOT on a billing profile: a client's second TAN, the TAN of a client without a
+/// billing profile, or a deductor that is not a sales client (bank interest, rent).
+/// kind: client | non_sales     source: manual (mapped on Reconcile → TDS) | auto (learned at upload)
+/// A client's first TAN lives on client_billing_profiles.tan. setTan() keeps every TAN in one place.
+model SalesTdsDeductor {
+  id          String   @id @default(uuid())
+  tan         String   @unique @db.VarChar(10)
+  kind        String   @default("client") @db.VarChar(10)
+  clientId    String?  @map("client_id")
+  /// non_sales: what it is ("Bank interest — HDFC FD")
+  label       String?  @db.VarChar(120)
+  /// The deductor name as 26AS printed it when mapped
+  nameSeen    String?  @map("name_seen") @db.VarChar(200)
+  source      String   @db.VarChar(8)
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@map("sales_tds_deductors")
+}
+
+/// One Form 26AS / AIS upload. Read in memory, NEVER stored; its rows are. Never deleted.
+/// format: 26as_text | 26as_csv | ais_csv. The current upload of (company, FY) = newest current_since.
+model SalesTdsUpload {
+  id              String    @id @default(uuid())
+  companyKey      String    @map("company_key") @db.VarChar(8)
+  /// "2026-27"
+  financialYear   String    @map("financial_year") @db.VarChar(7)
+  format          String    @db.VarChar(12)
+  fileName        String    @map("file_name") @db.VarChar(200)
+  fileSha256      String    @map("file_sha256") @db.VarChar(64)
+  fileBytes       Int       @map("file_bytes")
+  /// PAN in the file header (null for an AIS CSV that does not print it)
+  pan             String?   @db.VarChar(10)
+  /// 26AS "File Creation Date" (or "Data updated till", the later); null → the IST upload day is used
+  asOn            DateTime? @map("as_on") @db.Date
+  entryCount      Int       @map("entry_count")
+  deductorCount   Int       @map("deductor_count")
+  amountPaidPaise BigInt    @default(0) @map("amount_paid_paise")
+  tdsPaise        BigInt    @default(0) @map("tds_paise")
+  depositedPaise  BigInt    @default(0) @map("deposited_paise")
+  /// Sentences accepted at upload, and unreadable rows [{ ref, message }] (≤ 50)
+  warnings        Json?
+  errorRows       Json?     @map("error_rows")
+  /// Set at insert; set again when the same file is uploaded while another is current
+  currentSince    DateTime  @default(now()) @map("current_since")
+  uploadedById    String    @map("uploaded_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  entries SalesTdsEntry[]
+
+  @@unique([companyKey, financialYear, fileSha256])
+  @@index([companyKey, financialYear, currentSince])
+  @@map("sales_tds_uploads")
+}
+
+/// One Part I transaction of Form 26AS (or one AIS TDS row), amounts exactly as filed.
+/// bookingStatus: F | U | P | O (… as printed, ≤ 2 chars); null for AIS rows
+model SalesTdsEntry {
+  id              String    @id @default(uuid())
+  uploadId        String    @map("upload_id")
+  /// 1-based line in the file ("line 57 of 26as.txt")
+  rowNo           Int       @map("row_no")
+  tan             String    @db.VarChar(10)
+  deductorName    String    @map("deductor_name") @db.VarChar(200)
+  /// 194J | 194C | 194JB | 194A … as printed, without "-"
+  section         String?   @db.VarChar(12)
+  txnDate         DateTime  @map("txn_date") @db.Date
+  /// 1 Apr–Jun · 2 Jul–Sep · 3 Oct–Dec · 4 Jan–Mar (fyQuarter(txnDate))
+  quarter         Int
+  bookingStatus   String?   @map("booking_status") @db.VarChar(2)
+  bookingDate     DateTime? @map("booking_date") @db.Date
+  remarks         String?   @db.VarChar(100)
+  amountPaidPaise BigInt    @map("amount_paid_paise")
+  tdsPaise        BigInt    @map("tds_paise")
+  /// null when the file has no deposited column (AIS without it)
+  depositedPaise  BigInt?   @map("deposited_paise")
+
+  upload SalesTdsUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@index([uploadId, tan])
+  @@map("sales_tds_entries")
+}
+
+/// One GSTR-1 download for a GSTIN and return period. Read in memory, NEVER stored; its documents are.
+/// format: json | xlsx | xls | csv     period: "2026-10" (monthly) | "2026-27-Q3" (quarterly filer)
+/// sections: the sections this file states completely, of b2b | cdnr | b2cl | b2cs | exp | cdnur.
+/// A JSON states all six; a workbook the sheets it has; a CSV one. For each section the current
+/// upload of (company, gstin, period) is the newest current_since among uploads stating it.
+model SalesGstr1Upload {
+  id            String   @id @default(uuid())
+  companyKey    String   @map("company_key") @db.VarChar(8)
+  gstin         String   @db.VarChar(15)
+  period        String   @db.VarChar(10)
+  format        String   @db.VarChar(8)
+  fileName      String   @map("file_name") @db.VarChar(200)
+  fileSha256    String   @map("file_sha256") @db.VarChar(64)
+  fileBytes     Int      @map("file_bytes")
+  /// JSON "fp" (MMYYYY) when present
+  returnPeriod  String?  @map("return_period") @db.VarChar(6)
+  sections      Json
+  /// { b2b, cdnr } document counts
+  counts        Json
+  /// totals of the sections compared as totals only:
+  /// { b2cl|b2cs|exp|cdnur: { docs, valuePaise, taxablePaise, igstPaise, cgstPaise, sgstPaise, cessPaise } }
+  otherSections Json     @map("other_sections")
+  /// false = the sheet had no IGST/CGST/SGST columns (offline-tool template): tax fields are null
+  taxColumns    Boolean  @default(true) @map("tax_columns")
+  warnings      Json?
+  errorRows     Json?    @map("error_rows")
+  currentSince  DateTime @default(now()) @map("current_since")
+  uploadedById  String   @map("uploaded_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  docs SalesGstr1Doc[]
+
+  @@unique([companyKey, gstin, period, fileSha256])
+  @@index([companyKey, gstin, period, currentSince])
+  @@map("sales_gstr1_uploads")
+}
+
+/// One filed b2b invoice or cdnr note, summed over its rate lines. Money BIGINT paise as filed.
+/// section: b2b | cdnr     noteType: C | D (cdnr)     invType: R | SEWP | SEWOP | DE | CBW … as filed
+model SalesGstr1Doc {
+  id            String    @id @default(uuid())
+  uploadId      String    @map("upload_id")
+  section       String    @db.VarChar(8)
+  /// "b2b[3].inv[0]" (JSON) | "b2b!57" / "cdnr!12" (sheet!first row)
+  rowRef        String    @map("row_ref") @db.VarChar(40)
+  ctin          String?   @db.VarChar(15)
+  receiverName  String?   @map("receiver_name") @db.VarChar(200)
+  number        String    @db.VarChar(40)
+  /// normaliseDocNumber(number).key1
+  numberKey     String    @map("number_key") @db.VarChar(40)
+  docDate       DateTime? @map("doc_date") @db.Date
+  noteType      String?   @map("note_type") @db.VarChar(1)
+  /// pre-2020 CDNR layout: the original invoice number
+  origNumber    String?   @map("orig_number") @db.VarChar(40)
+  invType       String?   @map("inv_type") @db.VarChar(8)
+  pos           String?   @db.VarChar(2)
+  reverseCharge Boolean   @default(false) @map("reverse_charge")
+  valuePaise    BigInt    @map("value_paise")
+  taxablePaise  BigInt    @map("taxable_paise")
+  igstPaise     BigInt?   @map("igst_paise")
+  cgstPaise     BigInt?   @map("cgst_paise")
+  sgstPaise     BigInt?   @map("sgst_paise")
+  cessPaise     BigInt?   @map("cess_paise")
+  /// number[] — distinct rates in basis points
+  ratesBp       Json      @map("rates_bp")
+
+  upload SalesGstr1Upload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@unique([uploadId, rowRef])
+  @@index([uploadId, section, numberKey])
+  @@map("sales_gstr1_docs")
+}
+
+/// A balance confirmation asked of one client for one company "as of" a day.
+/// status: pending | confirmed | disputed   ("not sent" = sentCount 0 and status pending)
+/// Balances are OUR side: + = the client owes us (Dr), − = we hold their money (Cr).
+model SalesBalanceConfirmation {
+  id                String    @id @default(uuid())
+  companyKey        String    @map("company_key") @db.VarChar(8)
+  clientId          String    @map("client_id")
+  asOf              DateTime  @map("as_of") @db.Date
+  fromDay           DateTime  @map("from_day") @db.Date
+  status            String    @default("pending") @db.VarChar(12)
+  ourBalancePaise   BigInt    @map("our_balance_paise")
+  /// LedgerView (§5.3) frozen when created or refreshed — exactly what the PDF and the email show
+  ledger            Json
+  /// sha256 hex of the canonical JSON of `ledger`
+  ledgerSha256      String    @map("ledger_sha256") @db.VarChar(64)
+  theirBalancePaise BigInt?   @map("their_balance_paise")
+  responseNote      String?   @map("response_note") @db.VarChar(1000)
+  respondedOn       DateTime? @map("responded_on") @db.Date
+  respondedById     String?   @map("responded_by_id")
+  sentCount         Int       @default(0) @map("sent_count")
+  /// set when a batch queued it; cleared by the send result; older than 10 min = stuck
+  queuedAt          DateTime? @map("queued_at")
+  lastSentAt        DateTime? @map("last_sent_at")
+  lastSentTo        String?   @map("last_sent_to") @db.VarChar(1000)
+  lastSendError     String?   @map("last_send_error") @db.VarChar(300)
+  createdById       String    @map("created_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  client Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  file   SalesConfirmationFile?
+
+  @@unique([companyKey, clientId, asOf])
+  @@index([companyKey, asOf])
+  @@index([clientId])
+  @@map("sales_balance_confirmations")
+}
+
+/// The client's reply (signed confirmation or their ledger). THE BYTES LIVE HERE (BYTEA ≤ 10 MiB):
+/// never on disk, never under uploads/. Only the download route selects `data`; every other query
+/// selects around it (never `include`).
+model SalesConfirmationFile {
+  id             String   @id @default(uuid())
+  confirmationId String   @unique @map("confirmation_id")
+  fileName       String   @map("file_name") @db.VarChar(200)
+  /// application/pdf | image/png | image/jpeg — from the magic bytes, never the name
+  contentType    String   @map("content_type") @db.VarChar(40)
+  sizeBytes      Int      @map("size_bytes")
+  sha256         String   @db.VarChar(64)
+  data           Bytes
+  uploadedById   String   @map("uploaded_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  confirmation SalesBalanceConfirmation @relation(fields: [confirmationId], references: [id], onDelete: Cascade)
+
+  @@map("sales_confirmation_files")
+}
+
+// ─── smart-invoicing: reconcile BRS (PR 6) ───
 
 // ─── smart-invoicing: tally (PR 2) ───
 

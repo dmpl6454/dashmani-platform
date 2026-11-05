@@ -144,6 +144,10 @@ export const sellerProfileSchema = z.object({
 }).transform(fillStateFromGstin);
 export type SellerProfileInput = z.infer<typeof sellerProfileSchema>;
 
+/** A TDS deductor's TAN (Form 26AS): 4 letters, 5 digits, a letter. Reconcile (PR 5) reads it. */
+export const tanSchema = z.string().trim().transform(upper)
+  .pipe(z.string().regex(/^[A-Z]{4}\d{5}[A-Z]$/, "A TAN is 4 letters, 5 digits and a letter, like MUMF12345A"));
+
 export const clientBillingProfileSchema = z.object({
   legalName: safeString.pipe(z.string().min(2).max(200)),
   gstin: gstinSchema.optional().nullable(),
@@ -158,6 +162,7 @@ export const clientBillingProfileSchema = z.object({
   billingEmail: normalizedEmail.optional().nullable(),
   billingPhone: optionalText(30),
   notes: optionalText(2000),
+  tan: tanSchema.optional().nullable(),
 }).superRefine(checkGstinState).transform(fillStateFromGstin);
 export type ClientBillingProfileInput = z.infer<typeof clientBillingProfileSchema>;
 
@@ -403,6 +408,57 @@ export const filedYearSchema = z.object({
 }).refine((v) => FILED_FIGURE_KEYS.some((k) => v[k] != null) || !!v.notes,
   { message: "Type at least one figure, or a note", path: ["revenuePaise"] });
 export type FiledYearInput = z.infer<typeof filedYearSchema>;
+
+// smart-invoicing: reconcile (PR 5)
+// The /reconcile page (spec-reconcile §6.3): Form 26AS / GSTR-1 uploads, TAN mapping, balance
+// confirmations. Module-private names are recon-prefixed (this file is shared by six PRs).
+const reconFy = z.string().regex(/^\d{4}-\d{2}$/, "Pick a financial year like 2025-26");
+/** Multipart text flag — the portal sends "true"; the same encoding as bank's upload flag. */
+const reconFormFlag = z.enum(["true", "false"]).optional().transform((v) => v === "true");
+/** An empty multipart field is "not sent". */
+const reconBlank = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
+export const tdsUploadSchema = z.object({ fy: reconFy, acceptWarnings: reconFormFlag });
+export const gstUploadSchema = z.object({
+  gstin: z.preprocess(reconBlank, gstinSchema.optional()),
+  period: z.string().trim().max(10),
+  acceptWarnings: reconFormFlag,
+});
+export const tdsDeductorSchema = z.object({
+  kind: z.enum(["client", "non_sales"]),
+  clientId: z.string().uuid().nullable().default(null),
+  label: optionalText(120),
+  nameSeen: optionalText(200),
+}).superRefine((v, ctx) => {
+  if (v.kind === "client" && !v.clientId) ctx.addIssue({ code: "custom", path: ["clientId"], message: "Pick the client this TAN belongs to" });
+  if (v.kind === "non_sales" && (v.clientId || (v.label ?? "").length < 2)) ctx.addIssue({ code: "custom", path: ["label"], message: "Say what this deductor is, e.g. Bank interest — HDFC FD" });
+});
+const reconSignedPaise = z.number().int().min(-FILED_MAX_PAISE, "That figure is too large").max(FILED_MAX_PAISE, "That figure is too large");
+export const confirmationCreateSchema = z.object({
+  companyKey: z.enum(COMPANY_KEYS), clientId: z.string().uuid(), asOf: day, from: day,
+  send: z.boolean().default(false), refresh: z.boolean().default(false),
+}).refine((v) => v.from <= v.asOf, { path: ["from"], message: "The statement must start on or before the 'as of' date" });
+export type ConfirmationCreateInput = z.infer<typeof confirmationCreateSchema>;
+export const confirmationBatchSchema = z.object({
+  companyKey: z.enum(COMPANY_KEYS), asOf: day, from: day,
+  clientIds: z.array(z.string().uuid()).min(1).max(25, "Send to at most 25 clients at a time"),
+  resend: z.boolean().default(false),
+}).refine((v) => v.from <= v.asOf, { path: ["from"], message: "The statement must start on or before the 'as of' date" });
+export type ConfirmationBatchInput = z.infer<typeof confirmationBatchSchema>;
+export const confirmationSendSchema = z.object({ refresh: z.boolean().default(false) });
+export const confirmationResponseSchema = z.object({
+  status: z.enum(["pending", "confirmed", "disputed"]),
+  theirBalancePaise: reconSignedPaise.nullable().optional(),
+  respondedOn: day.nullable().optional(),
+  note: optionalText(1000),
+}).superRefine((v, ctx) => {
+  if (v.status === "disputed") {
+    if (v.theirBalancePaise == null) ctx.addIssue({ code: "custom", path: ["theirBalancePaise"], message: "Type the balance the client's books show" });
+    if ((v.note ?? "").length < 3) ctx.addIssue({ code: "custom", path: ["note"], message: "Say what the client disputes" });
+  }
+});
+export type ConfirmationResponseInput = z.infer<typeof confirmationResponseSchema>;
+
+// smart-invoicing: reconcile BRS (PR 6)
 
 // ─── smart-invoicing: tally (PR 2) ───
 

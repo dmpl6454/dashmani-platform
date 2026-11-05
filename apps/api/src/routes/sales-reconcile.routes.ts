@@ -97,6 +97,7 @@ router.post("/sales/reconcile/tds/uploads", ...manage, reconOn, tdsUpload, valid
 router.get("/sales/reconcile/tds/chase.csv", ...view, asyncHandler(async (req, res) => {
   const company = companyOf(req);
   const v = await getTdsRecon(company, str(req.query.fy), todayIST());
+  if (!v.upload) throw new AppError(409, "NO_26AS", `Upload Form 26AS for ${v.fy.label} first — there is nothing to chase without it.`);
   const seller = await getSellerOrDefaults(company);
   const out = tdsChaseCsv(v, { legalName: seller.legalName || SALES_COMPANIES[company].name, by: await actorName(req), now: new Date() });
   return sendDownload(res, out.body, { contentType: "text/csv; charset=utf-8", filename: out.filename });

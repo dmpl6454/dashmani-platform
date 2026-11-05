@@ -15,7 +15,7 @@ import {
 import { AppError } from "../../../middleware/error-handler";
 import { sha256Hex } from "../../../middleware/upload-private";
 import { pickRegistration } from "../accounts.service";
-import { SECTION_SQL } from "../accounts-sql";
+import { LATE_CN_SQL, SECTION_SQL } from "../accounts-sql";
 import { dateToDay, dayToDate, logSalesEvent, toSafeNumber } from "../common";
 import { getSellerOrDefaults } from "../settings.service";
 import { cleanFileName, withParseSlot } from "./read";
@@ -155,7 +155,7 @@ export async function uploadGstr1(file: { buffer: Buffer; originalname: string; 
 // ─── The view ────────────────────────────────────────────────────────────────────────────────
 
 interface BookRow { id: string; number: string; status: string; issue_date: Date; tax_mode: string; gst_rate_bp: number; place_of_supply_code: string | null; taxable_paise: number; cgst_paise: number; sgst_paise: number; igst_paise: number; total_paise: number; cancelled_on: Date | null; cancel_reason: string | null; buyer_gstin: string | null; buyer_name: string | null; buyer_state: string | null; section: string }
-interface CnRow { id: string; number: string; status: string; issue_date: Date; gst_rate_bp: number; taxable_paise: number; cgst_paise: number; sgst_paise: number; igst_paise: number; total_paise: number; cancelled_on: Date | null; invoice_id: string; invoice_number: string | null; place_of_supply_code: string | null; buyer_gstin: string | null; buyer_name: string | null; buyer_state: string | null; section: string }
+interface CnRow { id: string; number: string; status: string; issue_date: Date; gst_rate_bp: number; taxable_paise: number; cgst_paise: number; sgst_paise: number; igst_paise: number; total_paise: number; cancelled_on: Date | null; invoice_id: string; invoice_number: string | null; place_of_supply_code: string | null; buyer_gstin: string | null; buyer_name: string | null; buyer_state: string | null; section: string; late: boolean }
 
 export interface GstReconView {
   company: CompanyKey; gstin: string; registrationLabel: string; registrations: Array<{ gstin: string; label: string }>;
@@ -182,7 +182,7 @@ export async function loadGstBooks(company: CompanyKey, gstin: string, wFrom: st
     SELECT cn.id, cn.number, cn.status, cn.issue_date, cn.gst_rate_bp, cn.taxable_paise, cn.cgst_paise, cn.sgst_paise, cn.igst_paise, cn.total_paise,
            (cn.cancelled_at + interval '330 minutes')::date AS cancelled_on, i.id AS invoice_id, i.number AS invoice_number, i.place_of_supply_code,
            NULLIF(i.buyer_snapshot->>'gstin','') AS buyer_gstin, i.buyer_snapshot->>'legalName' AS buyer_name,
-           NULLIF(i.buyer_snapshot->>'stateCode','') AS buyer_state, ${SECTION_SQL} AS section
+           NULLIF(i.buyer_snapshot->>'stateCode','') AS buyer_state, ${SECTION_SQL} AS section, ${LATE_CN_SQL} AS late
     FROM sales_credit_notes cn JOIN sales_invoices i ON i.id = cn.invoice_id
     WHERE i.company_key = ${company} AND cn.status IN ('issued','cancelled') AND COALESCE(i.seller_snapshot->>'gstin','') = ${gstin}
       AND cn.issue_date >= ${wFrom}::date AND cn.issue_date < ${wTo}::date
@@ -194,7 +194,7 @@ export async function loadGstBooks(company: CompanyKey, gstin: string, wFrom: st
       igstPaise: r.igst_paise, cgstPaise: r.cgst_paise, sgstPaise: r.sgst_paise, ratesBp: [r.gst_rate_bp], invoiceNumber: null, invoiceId: null })),
     ...cns.map((r): BookDoc => ({ id: r.id, kind: "credit_note", number: r.number, status: r.status, date: dateToDay(r.issue_date)!, cancelledOn: dateToDay(r.cancelled_on), cancelReason: null,
       buyerGstin: r.buyer_gstin, buyerName: r.buyer_name, pos: r.place_of_supply_code ?? r.buyer_state, section: r.section, valuePaise: r.total_paise, taxablePaise: r.taxable_paise,
-      igstPaise: r.igst_paise, cgstPaise: r.cgst_paise, sgstPaise: r.sgst_paise, ratesBp: [r.gst_rate_bp], invoiceNumber: r.invoice_number, invoiceId: r.invoice_id })),
+      igstPaise: r.igst_paise, cgstPaise: r.cgst_paise, sgstPaise: r.sgst_paise, ratesBp: [r.gst_rate_bp], invoiceNumber: r.invoice_number, invoiceId: r.invoice_id, late: !!r.late })),
   ];
 }
 
@@ -283,7 +283,7 @@ export async function getGstRecon(company: CompanyKey, gstinIn: string | undefin
   const nextKey = nextPeriodKey(p, p.key);
   const nextB = periodBounds(nextKey);
   const m = matchGstr1({ gstin, period: { key: p.key, label: p.label, from: p.from, toExclusive: p.toExclusive }, books, filed, elsewhere, otherPeriods,
-    nextPeriod: { label: nextB?.label ?? nextKey, uploaded: byPeriod.has(nextKey) }, filedOther });
+    nextPeriod: { label: nextB?.label ?? nextKey, uploaded: byPeriod.has(nextKey) }, filedOther, stated: [...cur.keys()] });
 
   const fyStart = Number(financialYear(today).label.slice(0, 4)) - 1;
   const periodsWithUploads = [...new Set([...byPeriod.keys(), ...(ups.length ? [p.key] : [])])].filter((k) => { const b = periodBounds(k); return !!b && Number(b.fy.slice(0, 4)) >= fyStart; }).sort();

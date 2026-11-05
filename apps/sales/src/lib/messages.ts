@@ -32,6 +32,8 @@ export function errorSentence(err: unknown, fallback = "Something went wrong. Pl
   if (err instanceof ApiError) {
     if (err.code && CODES[err.code]) return CODES[err.code];
     if (err.status === 429) return "Too many attempts — try again in a few minutes.";
+    // The validate middleware's generic sentence hides the real one in details.
+    if (err.code === "VALIDATION_ERROR" && err.details?.[0]?.message && (!err.message || err.message === "Invalid request data")) return err.details[0].message;
     return err.message || fallback;
   }
   if (err instanceof Error && err.message) return err.message;

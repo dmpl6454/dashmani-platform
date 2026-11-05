@@ -320,11 +320,22 @@ describe("reconcile — TDS · 26AS", () => {
     const lines = buf.toString("utf8").slice(1).split("\r\n").filter(Boolean);
     expect(lines[0]).toBe("Company,Digital Sukoon Private Limited");
     expect(lines[1]).toMatch(/^Source,26as\.txt · sha256 [0-9a-f]{12} · as on 5 Nov 2026 · generated .* IST by /);
-    expect(lines[2]).toBe("Client,Legal name,PAN,TAN,Billing email,Quarter,Problem,Our invoice,Invoice date,Our receipt,Receipt date,TDS in our books,TDS in 26AS,TDS deposited (26AS),Difference,26AS booking status,What to ask");
+    expect(lines[2]).toBe("Client,Legal name,PAN,TAN,Billing email,Quarter,Problem,Our invoice,Invoice date,Our receipt,Receipt date,TDS in our books,TDS in 26AS,TDS deposited (26AS),Difference (books − 26AS),Amount to chase,26AS booking status,What to ask");
     const rows = lines.slice(3).filter((l) => !l.startsWith("Unknown deductors"));
     expect(rows).toHaveLength(3);
     expect(rows.some((l) => l.startsWith("'=CMD()"))).toBe(true);
     expect(lines.some((l) => l.startsWith("Unknown deductors,1,"))).toBe(true);
+  });
+
+  it("R-29 no Form 26AS yet: nothing chased, only the upload to-do; chase.csv refused (R→G)", async () => {
+    await seedTdsBooks(a, world.c);
+    const v = (await a.get("/sales/reconcile/tds?fy=2025-26")).body.data;
+    expect(v.upload).toBeNull();
+    expect([v.totals.chaseCount, v.totals.chasePaise, v.rows.length, v.clients.length]).toEqual([0, 0, 0, 0]);
+    expect(v.totals.booksPaise).toBe(R(27180));
+    expect(v.todo.map((t: { code: string }) => t.code)).toEqual(["upload"]);
+    const csv = await a.get("/sales/reconcile/tds/chase.csv?fy=2025-26");
+    expect([csv.status, csv.body.error.code]).toEqual([409, "NO_26AS"]);
   });
 
   it("R-25 a second parse while one is held → 429 RECON_BUSY", async () => {
@@ -401,6 +412,34 @@ describe("reconcile — GST · GSTR-1", () => {
     const byNumber = Object.fromEntries(v.rows.map((r: { books: { number: string } | null; status: string; issues: unknown[] }) => [r.books?.number, [r.status, r.issues.length]]));
     for (const n of ["INV/26-27/0016", "INV/26-27/0017", "INV/26-27/0018", "INV/26-27/0019", cnNumber]) expect(byNumber[n], n).toEqual(["matched", 0]);
     expect(v.counts.cancelledNotFiled).toBe(1);
+  });
+
+  it("R-30 no GSTR-1 yet: nothing 'not filed', no section differences; a late credit note (s.34(2)) is never 'not filed' (R→G)", async () => {
+    const { cnNumber } = await seedOctober();
+    const v0 = (await a.get(`/sales/reconcile/gst?gstin=${MUMBAI}&period=2026-10`)).body.data;
+    expect(v0.counts.not_filed).toBe(0);
+    expect(v0.todo.map((t: { code: string }) => t.code)).toEqual(["upload"]);
+    for (const k of ["b2b", "sez", "cdnr"]) expect(v0.sections.find((x: { section: string }) => x.section === k), k).toMatchObject({ filed: null, differs: false });
+
+    const old = await a.issue(world.c.kanara, { day: "2025-03-10", price: R(10000) });
+    const late = await a.post("/sales/credit-notes", { invoiceId: old.id, reason: "Late correction", taxablePaise: R(1000), issueDate: "2026-10-15" });
+    expect(late.status, JSON.stringify(late.body)).toBe(201);
+    // Accounts' b2b + cdnr files: the cdnr file leaves the late note out.
+    const b2b = await buildGstCsv("dspl", "2026-10", "b2b", MUMBAI);
+    const cdnr = await buildGstCsv("dspl", "2026-10", "cdnr", MUMBAI);
+    expect(cdnr.body.toString("utf8")).not.toContain(late.body.data.number);
+    await a.upload("/sales/reconcile/gst/uploads", b2b.body, "b2b.csv", { gstin: MUMBAI, period: "2026-10" });
+    // only b2b stated: credit notes are not judged yet
+    const v1 = (await a.get(`/sales/reconcile/gst?gstin=${MUMBAI}&period=2026-10`)).body.data;
+    expect(v1.rows.some((r: { section: string }) => r.section === "cdnr")).toBe(false);
+    expect(v1.sections.find((x: { section: string }) => x.section === "cdnr")).toMatchObject({ filed: null, differs: false });
+    await a.upload("/sales/reconcile/gst/uploads", cdnr.body, "cdnr.csv", { gstin: MUMBAI, period: "2026-10" });
+    const v = (await a.get(`/sales/reconcile/gst?gstin=${MUMBAI}&period=2026-10`)).body.data;
+    expect(v.rows.some((r: { books: { number: string } | null }) => r.books?.number === late.body.data.number)).toBe(false);
+    expect(v.rows.find((r: { books: { number: string } | null }) => r.books?.number === cnNumber).status).toBe("matched");
+    expect([v.counts.not_filed, v.counts.lateCreditNotes]).toEqual([0, 1]);
+    expect(v.sections.find((x: { section: string }) => x.section === "cdnr").differs).toBe(false);
+    expect(v.todo.map((t: { code: string }) => t.code)).toEqual([]);
   });
 
   it("R-12 per-section currency: b2b and cdnr CSVs both current; a later JSON current for all six; b2b again → current for b2b only", async () => {
@@ -492,6 +531,34 @@ describe("reconcile — client balances", () => {
     void k;
     const quiet = await a.post("/sales/reconcile/confirmations", { companyKey: "dspl", clientId: world.c.moon, asOf: "2026-10-31", from: "2026-04-01" });
     expect([quiet.status, quiet.body.error.code]).toEqual([409, "CONFIRM_NOTHING"]);
+  });
+
+  it("R-31 a sent statement is never re-frozen without resending; a failed first send is retried by route 10 (R→G)", async () => {
+    await filmyLedgerDocs();
+    const body = { companyKey: "dspl", clientId: world.c.filmy, asOf: "2026-10-31", from: "2026-04-01" };
+    emailMode = "fail";
+    const f1 = await a.post("/sales/reconcile/confirmations", { ...body, send: true });
+    expect([f1.status, f1.body.error.code]).toEqual([502, "CONFIRM_SEND_FAILED"]);
+    emailMode = "ok";
+    const r2 = await a.post("/sales/reconcile/confirmations", { ...body, send: true });
+    expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+    expect(r2.body.data.email).toMatchObject({ sent: true });
+    expect(confs()).toHaveLength(1);
+    const id = r2.body.data.confirmation.id;
+
+    await a.pay(world.c.filmy, { amount: R(10000), day: "2026-10-31" });
+    const before = (await prisma.salesBalanceConfirmation.findUnique({ where: { id } }))!;
+    const refreshOnly = await a.post("/sales/reconcile/confirmations", { ...body, refresh: true });
+    expect([refreshOnly.status, refreshOnly.body.error.code]).toEqual([409, "CONFIRM_ALREADY_SENT"]);
+    const after = (await prisma.salesBalanceConfirmation.findUnique({ where: { id } }))!;
+    expect([after.ledgerSha256, after.ourBalancePaise]).toEqual([before.ledgerSha256, before.ourBalancePaise]);
+    // refresh + send together: allowed, and the replaced ledger stays in the event
+    const both = await a.post("/sales/reconcile/confirmations", { ...body, refresh: true, send: true });
+    expect(both.status, JSON.stringify(both.body)).toBe(200);
+    expect(both.body.data.confirmation.ourBalancePaise).toBe(R(46200));
+    expect(confs()).toHaveLength(2);
+    const ev = await prisma.salesEvent.findFirst({ where: { entityType: "confirmation", entityId: id, action: "refreshed" } });
+    expect(ev!.note).toContain(`was ₹56,200.00 Dr · ledger sha256 ${before.ledgerSha256.slice(0, 12)} →`);
   });
 
   it("R-18 batch: queued and skipped; sent in the background one after another; 26 ids refused", async () => {

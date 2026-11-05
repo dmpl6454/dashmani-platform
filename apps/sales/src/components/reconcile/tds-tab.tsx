@@ -13,7 +13,7 @@ import { errorSentence } from "@/lib/messages";
 import { fmtDate, fmtInr } from "@/lib/format";
 import { reconKey } from "@/lib/reconcile";
 import type { TdsReconView, TdsUploadResult } from "@/lib/sales-types";
-import { Empty, LoadError, Loading, Stat } from "@/components/sales-ui";
+import { Confirm, Empty, LoadError, Loading, Stat } from "@/components/sales-ui";
 import { TodoCard } from "./todo-card";
 import { FilterPills } from "./tab-bar";
 import { UploadFile } from "./upload-file";
@@ -30,6 +30,7 @@ export function TdsTab({ fy, onFy, toast }: { fy?: string; onFy: (fy: string) =>
   const { mutate: globalMutate } = useSWRConfig();
   const [filter, setFilter] = useState<Filter>("all");
   const [busy, setBusy] = useState(false);
+  const [unmapTan, setUnmapTan] = useState<string | null>(null);
   const refresh = () => globalMutate(reconKey, undefined, { revalidate: true });
 
   if (error && (!data || data.company !== company)) return <LoadError error={error} retry={() => mutate()} />;
@@ -50,7 +51,10 @@ export function TdsTab({ fy, onFy, toast }: { fy?: string; onFy: (fy: string) =>
   };
 
   return (
-    <div className={stale ? "opacity-60" : ""} aria-busy={stale || undefined}>
+    <div>
+      {/* keepPreviousData: a failed FY switch leaves the old year on screen — say so above it. */}
+      {error && <div className="mb-4"><LoadError error={error} retry={() => mutate()} /></div>}
+    <div className={stale ? "opacity-60" : ""} aria-busy={(stale && !error) || undefined}>
       <div className="flex flex-wrap gap-2 mb-4 items-center" role="radiogroup" aria-label="Financial year">
         {d.fyOptions.map((f, i) => (
           <button key={f} type="button" role="radio" aria-checked={f === d.fy.label} onClick={() => onFy(f)}
@@ -121,7 +125,7 @@ export function TdsTab({ fy, onFy, toast }: { fy?: string; onFy: (fy: string) =>
                 {known.map((x) => (
                   <li key={x.tan} className="py-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="min-w-0"><span className="font-mono text-xs break-all">{x.tan}</span> · {x.name} → {x.kind === "non_sales" ? `not sales (${x.label ?? ""})` : x.clientName}{x.source === "auto" ? " · learned" : ""}</span>
-                    <span className="flex gap-2"><span className="font-mono">{fmtInr(x.tdsPaise)}</span><button type="button" className="btn btn-ghost btn-sm" onClick={() => unmap(x.tan)}>Unmap</button></span>
+                    <span className="flex gap-2"><span className="font-mono">{fmtInr(x.tdsPaise)}</span><button type="button" className="btn btn-ghost btn-sm" onClick={() => setUnmapTan(x.tan)}>Unmap</button></span>
                   </li>
                 ))}
               </ul>
@@ -129,6 +133,11 @@ export function TdsTab({ fy, onFy, toast }: { fy?: string; onFy: (fy: string) =>
           )}
         </>
       )}
+      {unmapTan && (
+        <Confirm danger title={`Unmap ${unmapTan}?`} confirmLabel="Unmap" body="Its 26AS entries will show as unknown until you say who it is."
+          onClose={() => setUnmapTan(null)} onConfirm={async () => { const t = unmapTan; setUnmapTan(null); await unmap(t); }} />
+      )}
+    </div>
     </div>
   );
 }

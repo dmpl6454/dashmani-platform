@@ -17,7 +17,7 @@ import { FilterPills } from "./tab-bar";
 import { UploadFile } from "./upload-file";
 import { GstRowCard } from "./gst-row-card";
 
-const SECTION_LABEL: Record<string, string> = { b2b: "B2B", sez: "SEZ", cdnr: "Credit notes", b2cl: "B2C large", b2cs: "B2C small", exp: "Exports" };
+const SECTION_LABEL: Record<string, string> = { b2b: "B2B", sez: "SEZ", cdnr: "Credit notes", b2cl: "B2C large", b2cs: "B2C small", exp: "Exports", cdnur: "Credit notes, unregistered" };
 const tax = (h: GstHeads | null) => (h ? (h.igstPaise ?? 0) + (h.cgstPaise ?? 0) + (h.sgstPaise ?? 0) : null);
 type Filter = "problems" | GstStatus | "all";
 
@@ -34,10 +34,12 @@ export function GstTab({ gstin, period, onScope, toast }: { gstin?: string; peri
   const d = data;
   const stale = (!!period && d.period.key !== period) || (!!gstin && d.gstin !== gstin);
   const c = d.counts;
+  // The status pills exist only for non-zero counts: a filter left over from another period falls back.
+  const f: Filter = filter !== "problems" && filter !== "all" && !c[filter] ? "problems" : filter;
   const differ = c.value_mismatch + c.wrong_recipient + c.wrong_period + c.cancelled_but_filed;
   const matched = d.rows.filter((r) => r.status === "matched" || r.status === "matched_note");
   const problems = d.rows.filter((r) => r.status !== "matched" && r.status !== "matched_note");
-  const shown = filter === "all" ? problems : filter === "problems" ? problems : d.rows.filter((r) => r.status === filter);
+  const shown = f === "all" || f === "problems" ? problems : d.rows.filter((r) => r.status === f);
   const nothing = d.rows.length === 0 && d.uploads.length === 0;
   const download = async () => {
     setBusy(true);
@@ -45,7 +47,10 @@ export function GstTab({ gstin, period, onScope, toast }: { gstin?: string; peri
     catch (err) { toast(errorSentence(err), "err"); } finally { setBusy(false); }
   };
   return (
-    <div className={stale ? "opacity-60" : ""} aria-busy={stale || undefined}>
+    <div>
+      {/* keepPreviousData: a failed switch leaves the old period on screen — say so above it. */}
+      {error && <div className="mb-4"><LoadError error={error} retry={() => mutate()} /></div>}
+    <div className={stale ? "opacity-60" : ""} aria-busy={(stale && !error) || undefined}>
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         {d.registrations.length > 1 && d.registrations.map((r) => (
           <button key={r.gstin} type="button" aria-pressed={r.gstin === d.gstin} onClick={() => onScope(r.gstin, d.period.key)}
@@ -81,7 +86,7 @@ export function GstTab({ gstin, period, onScope, toast }: { gstin?: string; peri
         <Empty title={`No GSTR-1 for ${d.period.label} (${d.registrationLabel}) yet.`} body="Upload the GSTR-1 you filed to check it against the invoices in the portal." />
       ) : (
         <>
-          <FilterPills<Filter> label="Show" current={filter} onPick={setFilter} items={[
+          <FilterPills<Filter> label="Show" current={f} onPick={setFilter} items={[
             { key: "problems", label: "Needs attention", count: problems.length },
             ...(["value_mismatch", "wrong_recipient", "wrong_period", "cancelled_but_filed", "not_filed", "not_in_books"] as GstStatus[]).filter((s) => c[s]).map((s) => ({ key: s as Filter, label: GST_STATUS_LABEL[s], count: c[s] })),
           ]} />
@@ -91,6 +96,7 @@ export function GstTab({ gstin, period, onScope, toast }: { gstin?: string; peri
           )}
           {showMatched && <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">{matched.map((r) => <GstRowCard key={r.key} r={r} />)}</div>}
           {c.cancelledNotFiled > 0 && <p className="text-xs text-ink-3 mb-3">{c.cancelledNotFiled} cancelled invoice{c.cancelledNotFiled === 1 ? " was" : "s were"} correctly not filed.</p>}
+          {c.lateCreditNotes > 0 && <p className="text-xs text-ink-3 mb-3">{c.lateCreditNotes} credit note{c.lateCreditNotes === 1 ? " is" : "s are"} dated after 30 November following the invoice&apos;s year — {c.lateCreditNotes === 1 ? "it" : "they"} cannot be reported in GSTR-1 (CGST s.34(2)), so {c.lateCreditNotes === 1 ? "it is" : "they are"} not listed as not filed.</p>}
         </>
       )}
 
@@ -118,6 +124,7 @@ export function GstTab({ gstin, period, onScope, toast }: { gstin?: string; peri
           </details>
         )}
       </section>
+    </div>
     </div>
   );
 }

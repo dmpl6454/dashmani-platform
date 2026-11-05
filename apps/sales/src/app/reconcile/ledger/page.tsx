@@ -53,11 +53,13 @@ function Ledger() {
     try {
       const r = c
         ? await apiFetch<{ email: { to: string[] } }>(`/sales/reconcile/confirmations/${c.id}/send?company=${company}`, { method: "POST", body: JSON.stringify({ refresh: c.stale }) })
-        : await apiFetch<{ email: { to: string[] } | null }>("/sales/reconcile/confirmations", { method: "POST", body: JSON.stringify({ companyKey: company, clientId, asOf: to, from, send: true }) });
+        : await apiFetch<{ email: { to: string[] } | null }>("/sales/reconcile/confirmations", { method: "POST", body: JSON.stringify({ companyKey: company, clientId, asOf: to, from, send: true, refresh: true }) });
       setToast({ message: r.data.email ? `Statement sent to ${r.data.email.to.join(", ")} — ${drCrText(l.closingPaise, false)}.` : "Statement saved.", tone: "ok" });
       await globalMutate(reconKey, undefined, { revalidate: true });
     } catch (err) {
       setToast({ message: errorSentence(err), tone: "err", noEmail: err instanceof ApiError && err.code === "CONFIRM_NO_EMAIL" });
+      // A failed email may still have saved the row — reload so the next click resends it (route 15).
+      await globalMutate(reconKey, undefined, { revalidate: true });
     } finally { setConfirmSend(false); }
   };
   return (

@@ -271,7 +271,7 @@ export async function getTdsRecon(company: CompanyKey, fyIn: string | undefined,
   const { resolved, clients } = await resolveFor(fy, entries, items);
   const asOn = current?.asOn ? dateToDay(current.asOn)! : current ? istDayOf(current.createdAt) : today;
   const clientById = new Map(clients.map((c) => [c.id, c]));
-  const m = matchTds({ fy, asOn, ourPan, entries, items, tans: resolved, clients: clients.map((c) => ({ id: c.id, name: c.companyName, legalName: c.billingProfile?.legalName ?? null, pan: panOf(c.billingProfile?.pan ?? null, c.billingProfile?.gstin ?? null).pan, billingEmail: c.billingProfile?.billingEmail ?? c.email ?? null })) });
+  const m = matchTds({ fy, asOn, ourPan, entries, items, tans: resolved, clients: clients.map((c) => ({ id: c.id, name: c.companyName, legalName: c.billingProfile?.legalName ?? null, pan: panOf(c.billingProfile?.pan ?? null, c.billingProfile?.gstin ?? null).pan, billingEmail: c.billingProfile?.billingEmail ?? c.email ?? null })), hasUpload: !!current });
 
   const extraTans = await prisma.salesTdsDeductor.findMany({ where: { clientId: { in: m.clients.map((c) => c.clientId) } }, select: { tan: true, clientId: true } });
   const cards = m.clients.map((c) => {

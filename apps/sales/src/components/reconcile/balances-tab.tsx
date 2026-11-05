@@ -8,10 +8,10 @@ import { useCompany } from "@/lib/company";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, fmtInr, todayIST } from "@/lib/format";
-import { reconKey } from "@/lib/reconcile";
+import { drCrText, reconKey } from "@/lib/reconcile";
 import { defaultAsOf, fyStartOf } from "@dashmani/shared/src/sales/recon";
 import type { ConfirmationsView } from "@/lib/sales-types";
-import { Empty, Field, LoadError, Loading, Stat } from "@/components/sales-ui";
+import { Confirm, Empty, Field, LoadError, Loading, Stat } from "@/components/sales-ui";
 import { TodoCard } from "./todo-card";
 import { FilterPills } from "./tab-bar";
 import { ConfirmationCard } from "./confirmation-card";
@@ -31,7 +31,8 @@ export function BalancesTab({ asOf, from, onDates, toast }: { asOf?: string; fro
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [reply, setReply] = useState<ConfirmationsView["rows"][number] | null>(null);
-  const [sendRows, setSendRows] = useState<ConfirmationsView["rows"] | null>(null);
+  const [sendRows, setSendRows] = useState<{ rows: ConfirmationsView["rows"]; resend: boolean } | null>(null);
+  const [confirmOne, setConfirmOne] = useState<ConfirmationsView["rows"][number] | null>(null);
   const refresh = () => globalMutate(reconKey, undefined, { revalidate: true });
 
   const rows = useMemo(() => (data?.rows ?? []).filter((r) => {
@@ -44,6 +45,7 @@ export function BalancesTab({ asOf, from, onDates, toast }: { asOf?: string; fro
   if (isLoading && !data) return <Loading label="Adding up balances…" />;
   if (!data || data.company !== company) return <Loading />;
   const d = data;
+  const stale = d.asOf !== a || d.from !== f;
   const c = d.counts;
   const notSentRows = d.rows.filter((r) => (!r.confirmation || r.confirmation.sentCount === 0) && r.balancePaise !== 0);
   const sendOne = async (clientId: string, resend: boolean, id?: string) => {
@@ -59,6 +61,9 @@ export function BalancesTab({ asOf, from, onDates, toast }: { asOf?: string; fro
 
   return (
     <div>
+      {/* keepPreviousData: a failed date change leaves the old figures on screen — say so above them. */}
+      {error && <div className="mb-4"><LoadError error={error} retry={() => mutate()} /></div>}
+    <div className={stale ? "opacity-60" : ""} aria-busy={(stale && !error) || undefined}>
       <div className="flex flex-wrap gap-3 items-end mb-4">
         <Field label="Balance as of"><input type="date" className="input" value={d.asOf} max={today} onChange={(e) => e.target.value && onDates(e.target.value, fyStartOf(e.target.value))} /></Field>
         <Field label="Statement from"><input type="date" className="input" value={d.from} max={d.asOf} onChange={(e) => e.target.value && onDates(d.asOf, e.target.value)} /></Field>
@@ -72,14 +77,15 @@ export function BalancesTab({ asOf, from, onDates, toast }: { asOf?: string; fro
       </div>
       <TodoCard todo={d.todo} empty={`Every balance as of ${fmtDate(d.asOf)} is confirmed or has nothing to confirm.`} actionFor={(t, first) => {
         const cls = first ? "btn btn-sm" : "btn btn-ghost btn-sm";
-        if (t.code === "send") return <button type="button" className={cls} onClick={() => setSendRows(notSentRows)}>Send to {Math.min(25, notSentRows.length)}</button>;
+        if (t.code === "send") return <button type="button" className={cls} onClick={() => setSendRows({ rows: notSentRows, resend: false })}>Send to {Math.min(25, notSentRows.length)}</button>;
         if (t.code === "overdue") return <button type="button" className={cls} onClick={() => setFilter("waiting")}>Show</button>;
         if (t.code === "disputed") return <button type="button" className={cls} onClick={() => setFilter("disputed")}>Show</button>;
+        if (t.code === "stale") return <button type="button" className={cls} onClick={() => setSendRows({ rows: d.rows.filter((r) => r.confirmation?.stale), resend: true })}>Send again</button>;
         return null;
       }} />
       <div className="flex flex-wrap gap-2 items-center mb-1">
         <input className="input w-full sm:w-64" placeholder="Search clients" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search clients" />
-        {picked.size > 0 && <button type="button" className="btn btn-light btn-sm" onClick={() => setSendRows(d.rows.filter((r) => picked.has(r.clientId)))}>Send to {Math.min(25, picked.size)} selected</button>}
+        {picked.size > 0 && <button type="button" className="btn btn-light btn-sm" onClick={() => setSendRows({ rows: d.rows.filter((r) => picked.has(r.clientId)), resend: false })}>Send to {Math.min(25, picked.size)} selected</button>}
       </div>
       <FilterPills<Filter> label="Show" current={filter} onPick={setFilter} items={[
         { key: "not_sent", label: "Not sent", count: c.notSent }, { key: "waiting", label: "Waiting", count: c.pending }, { key: "disputed", label: "Disputed", count: c.disputed },
@@ -90,12 +96,19 @@ export function BalancesTab({ asOf, from, onDates, toast }: { asOf?: string; fro
           {rows.map((r) => (
             <ConfirmationCard key={r.clientId} r={r} asOf={d.asOf} from={d.from} checked={picked.has(r.clientId)}
               onCheck={(v) => setPicked((s) => { const n = new Set(s); if (v) n.add(r.clientId); else n.delete(r.clientId); return n; })}
-              onSend={() => sendOne(r.clientId, !!r.confirmation && r.confirmation.sentCount > 0, r.confirmation?.id)} onReply={() => setReply(r)} />
+              onSend={() => setConfirmOne(r)} onReply={() => setReply(r)} />
           ))}
         </div>
       )}
       {reply?.confirmation && <ReplyDialog c={reply.confirmation} name={reply.name} company={company} onClose={() => setReply(null)} onSaved={async (m) => { setReply(null); toast(m); await refresh(); }} />}
-      {sendRows && <SendDialog rows={sendRows} company={company} asOf={d.asOf} from={d.from} onClose={() => setSendRows(null)} onSent={async (m) => { setSendRows(null); setPicked(new Set()); toast(m); await refresh(); }} />}
+      {confirmOne && (
+        <Confirm title={`${confirmOne.confirmation && confirmOne.confirmation.sentCount > 0 ? "Resend" : "Send"} the statement to ${confirmOne.name}?`} confirmLabel="Send"
+          onClose={() => setConfirmOne(null)}
+          onConfirm={async () => { const r = confirmOne; setConfirmOne(null); await sendOne(r.clientId, !!r.confirmation && r.confirmation.sentCount > 0, r.confirmation?.id); }}
+          body={<>To: <span className="font-mono break-all">{confirmOne.email ?? "no email"}</span> (and the client&apos;s other billing emails), Cc: your accounts emails<br />Balance as of {fmtDate(d.asOf)}: {drCrText(confirmOne.balancePaise)}</>} />
+      )}
+      {sendRows && <SendDialog rows={sendRows.rows} initialResend={sendRows.resend} company={company} asOf={d.asOf} from={d.from} onClose={() => setSendRows(null)} onSent={async (m) => { setSendRows(null); setPicked(new Set()); toast(m); await refresh(); }} />}
+    </div>
     </div>
   );
 }

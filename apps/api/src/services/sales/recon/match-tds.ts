@@ -137,7 +137,10 @@ export interface TdsRowEntry { id: string; rowNo: number; section: string | null
 export interface TdsRow {
   key: string; group: TdsGroup; reason: { code: ReconReasonCode; text: string; action: string | null }; flags: string[]; quarter: Q | null;
   clientId: string | null; clientName: string | null; tan: string | null; deductorName: string | null;
+  /** always books − 26AS (the CSV's "Difference") */
   booksPaise: number; form26Paise: number; depositedPaise: number | null; differencePaise: number;
+  /** chase rows only: the amount to ask the client for (a U/O/short-deposit row's is not books − 26AS) */
+  chasePaise?: number;
   items: TdsRowItem[]; entries: TdsRowEntry[];
 }
 export type CellVerdict = "none" | "matched" | "not_in_26as" | "short" | "extra" | "not_due" | "link_first";
@@ -164,6 +167,8 @@ export function matchTds(input: {
   items: TdsBookItem[];
   tans: TanResolution[];
   clients: TdsClientIn[];
+  /** false = no Form 26AS uploaded for the FY: nothing can be chased, linked or called extra */
+  hasUpload: boolean;
 }): TdsMatchResult {
   const { fy, asOn } = input;
   const items = input.items.map((b) => derive(b, fy)).sort(sortItems);
@@ -183,6 +188,8 @@ export function matchTds(input: {
   const totals = { booksPaise: 0, deductedPaise: 0, depositedPaise: 0, matchedPaise: 0, chasePaise: 0, chaseCount: 0, extraPaise: 0, unknownPaise: 0, nonSalesPaise: 0, notDuePaise: 0, nextYearPaise: 0, linkFirstPaise: 0 };
   for (const e of entries) { totals.deductedPaise += e.tdsPaise; totals.depositedPaise += e.depositedPaise ?? 0; }
   for (const b of items) if (b.inFy) totals.booksPaise += b.tdsPaise;
+  // Without a 26AS every books item would read "not in 26AS" — show the books total only (§7.3.9).
+  if (!input.hasUpload) return { rows: [], totals, clients: [], expectedBy };
 
   // Entries per resolved client; unknown / non-sales listed per TAN.
   const entriesByClient = new Map<string, TdsEntryIn[]>();
@@ -302,10 +309,10 @@ export function matchTds(input: {
         const text = bs.length === 1
           ? `TDS ${reconInr(b.tdsPaise)} deducted on ${b.invoiceNumber ?? b.receiptNumber} (${b.receiptNumber}, ${reconDay(b.paidOn)}, Q${q}) is not in our Form 26AS. Please deposit it and file or revise your Q${q} TDS return with our PAN ${ourPan}.`
           : `TDS ${reconInr(LB)} on ${bs.length} receipts of Q${q} (${bs.map((x) => x.receiptNumber).join(", ")}) is not in our Form 26AS. Please deposit it and file or revise your Q${q} TDS return with our PAN ${ourPan}.`;
-        rows.push({ ...base, key: `cell:${cid}:${q}`, group: "chase", reason: reason("not_in_26as", text) });
+        rows.push({ ...base, key: `cell:${cid}:${q}`, group: "chase", reason: reason("not_in_26as", text), chasePaise: LB });
       } else if (v === "short") {
         totals.chasePaise += LB - L26; totals.chaseCount++;
-        rows.push({ ...base, key: `cell:${cid}:${q}`, group: "chase", reason: reason("short", `Our receipts show ${reconInr(LB)} TDS for Q${q}; Form 26AS shows ${reconInr(L26)} — please revise your Q${q} return for the ${reconInr(LB - L26)} difference, or pay it to us.`) });
+        rows.push({ ...base, key: `cell:${cid}:${q}`, group: "chase", chasePaise: LB - L26, reason: reason("short", `Our receipts show ${reconInr(LB)} TDS for Q${q}; Form 26AS shows ${reconInr(L26)} — please revise your Q${q} return for the ${reconInr(LB - L26)} difference, or pay it to us.`) });
       } else if (v === "not_due") {
         totals.notDuePaise += LB - L26;
         rows.push({ ...base, key: `cell:${cid}:${q}`, group: "not_due", reason: reason("not_due", `Q${q}'s TDS return is not expected in 26AS before ${reconDay(expectedBy[q - 1].day)} — ${reconInr(LB - L26)} is not due yet.`) });
@@ -346,9 +353,9 @@ export function matchTds(input: {
           : st === "O"
             ? `Your Q${e.quarter} return claims more than you deposited (status O) — please pay the difference or correct the return.`
             : `Deducted ${reconInr(e.tdsPaise)} but deposited ${reconInr(e.depositedPaise ?? 0)} — ${reconInr(e.tdsPaise - (e.depositedPaise ?? 0))} is not credited to us until you pay it.`;
-        rows.push({ ...base, key: `flag:${e.id}`, group: "chase", reason: reason(st === "U" ? "status_U" : st === "O" ? "status_O" : "short_deposited", text), flags, differencePaise: amount });
+        rows.push({ ...base, key: `flag:${e.id}`, group: "chase", reason: reason(st === "U" ? "status_U" : st === "O" ? "status_O" : "short_deposited", text), flags, differencePaise: -e.tdsPaise, chasePaise: amount });
       } else if (st === "P") {
-        rows.push({ ...base, key: `p:${e.id}`, group: "status_p", reason: reason("status_P"), flags: ["status_P"], differencePaise: 0 });
+        rows.push({ ...base, key: `p:${e.id}`, group: "status_p", reason: reason("status_P"), flags: ["status_P"], differencePaise: -e.tdsPaise });
       }
     }
     // Per-quarter grid
@@ -359,7 +366,10 @@ export function matchTds(input: {
       const verdict: CellVerdict = cellVerdict.get(q) ?? (booksQ > 0 || f26Q > 0 ? "matched" : "none");
       return { q, booksPaise: booksQ, form26Paise: f26Q, verdict, pairedFrom };
     });
-    const groups = new Set(rows.filter((r) => r.clientId === cid && r.group !== "unknown").map((r) => r.group));
+    const own = rows.filter((r) => r.clientId === cid && r.group !== "unknown");
+    // Only boundary items (homed outside the FY) and no 26AS entry: nothing to show for this FY.
+    if (!ces.length && !cbs.some((b) => b.inFy) && !own.length) continue;
+    const groups = new Set(own.map((r) => r.group));
     const verdict = GROUP_ORDER.find((g) => groups.has(g)) ?? "matched";
     clientOut.push({ clientId: cid, quarters, verdict });
   }

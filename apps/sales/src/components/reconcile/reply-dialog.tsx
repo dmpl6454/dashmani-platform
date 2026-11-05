@@ -3,7 +3,7 @@
 // yet, the reply date, and an optional file uploaded right after the save.
 import { useState } from "react";
 import { ModalPortal } from "@/components/modal-portal";
-import { Field, MoneyInput } from "@/components/sales-ui";
+import { Confirm, Field, MoneyInput } from "@/components/sales-ui";
 import { apiFetch, apiUpload } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { todayIST } from "@/lib/format";
@@ -20,7 +20,12 @@ export function ReplyDialog({ c, name, company, onClose, onSaved }: { c: Confirm
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmReplace, setConfirmReplace] = useState(false);
   const theirs = side === "Dr" ? amount : -amount;
+  const noteMissing = status === "disputed" && note.trim().length < 3;
+  const existing = c.hasFile ? c.file?.fileName ?? "the file already attached" : null;
+  // A new file replaces the stored reply (audit evidence) — ask first.
+  const trySave = () => { if (file && existing) setConfirmReplace(true); else void save(); };
   const save = async () => {
     setBusy(true); setErr(null);
     try {
@@ -51,12 +56,19 @@ export function ReplyDialog({ c, name, company, onClose, onSaved }: { c: Confirm
             </Field>
           )}
           {status !== "pending" && <Field label="Reply date"><input type="date" className="input" value={day} max={todayIST()} onChange={(e) => setDay(e.target.value)} /></Field>}
-          <Field label="Note"><textarea className="input min-h-[72px]" maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder={status === "disputed" ? "What the client disputes" : ""} /></Field>
-          <Field label="Attach their reply (PDF/PNG/JPG, optional)"><input type="file" accept=".pdf,.png,.jpg,.jpeg" className="block w-full text-sm" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+          <Field label={status === "disputed" ? "Note (required)" : "Note"} hint={status === "disputed" ? "What the client disputes — at least 3 characters, e.g. \"Missing credit note CN/26-27/0004\"." : undefined}>
+            <textarea className="input min-h-[72px]" maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder={status === "disputed" ? "What the client disputes" : ""} required={status === "disputed"} aria-invalid={noteMissing || undefined} />
+          </Field>
+          {existing && <p className="text-xs text-ink-3 break-words">Current reply: {existing}</p>}
+          <Field label={existing ? "Replace their reply (PDF/PNG/JPG, optional)" : "Attach their reply (PDF/PNG/JPG, optional)"}><input type="file" accept=".pdf,.png,.jpg,.jpeg" className="block w-full text-sm" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
           {err && <p className="text-sm text-danger" role="alert">{err}</p>}
-          <div className="flex justify-end gap-2"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button type="button" className="btn" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button></div>
+          <div className="flex justify-end gap-2"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button type="button" className="btn" disabled={busy || noteMissing} onClick={trySave}>{busy ? "Saving…" : "Save"}</button></div>
         </div>
       </div>
+      {confirmReplace && (
+        <Confirm danger title={`Replace ${existing}?`} confirmLabel="Replace" body={<>This replaces the reply already stored for {name} with {file?.name}. The earlier file is not kept.</>}
+          onClose={() => setConfirmReplace(false)} onConfirm={async () => { setConfirmReplace(false); await save(); }} />
+      )}
     </ModalPortal>
   );
 }

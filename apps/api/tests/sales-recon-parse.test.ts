@@ -209,6 +209,17 @@ describe("GSTR-1", () => {
     expect(r.items[0]).toMatchObject({ igstPaise: null, cgstPaise: null, sgstPaise: null, taxablePaise: 100_000 });
   });
 
+  it("P-23 the same invoice twice at the same rate → two documents (filed twice), never summed; two rates still sum", () => {
+    const head = ["GSTIN/UIN of Recipient", "Invoice Number", "Invoice date", "Invoice Value", "Rate", "Taxable Value", "Central Tax", "State/UT Tax"];
+    const row = ["27AABCU9603R1ZX", "INV/26-27/0018", "28-10-2026", "59000", "18", "50000", "4500", "4500"];
+    const r = parseGstr1Sheets([{ name: "b2b", rows: [head, row, [...row]] }], "xlsx");
+    expect(r.items.map((d) => [d.rowRef, d.taxablePaise, d.cgstPaise])).toEqual([["b2b!2", 5_000_000, 450_000], ["b2b!3", 5_000_000, 450_000]]);
+    expect(r.warnings).toEqual(["INV/26-27/0018: filed twice at 18% (b2b!2 and b2b!3) — kept as two documents, not added together."]);
+    const multi = parseGstr1Sheets([{ name: "b2b", rows: [head, row, ["27AABCU9603R1ZX", "INV/26-27/0018", "28-10-2026", "59000", "5", "1000", "25", "25"]] }], "xlsx");
+    expect(multi.items).toHaveLength(1);
+    expect(multi.items[0]).toMatchObject({ taxablePaise: 5_100_000, ratesBp: [500, 1800] });
+  });
+
   it("P-16 a lone CSV takes its section from its headings", () => {
     expect(readGstr1File(Buffer.from("Note Number,Note Date,Note Value,Taxable Value,Rate\nCN/1,01-10-2026,118,100,18\n")).sections).toEqual(["cdnr"]);
     expect(readGstr1File(Buffer.from("Invoice Number,Invoice date,Invoice Value,Taxable Value,Rate\nA/1,01-10-2026,118,100,18\n")).sections).toEqual(["b2b"]);

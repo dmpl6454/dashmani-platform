@@ -205,7 +205,8 @@ export interface TdsUploadResult { upload: TdsUploadRow; duplicate: boolean; mad
 export interface TdsRow {
   key: string; group: TdsGroup; reason: ReconReason; flags: string[]; quarter: 1 | 2 | 3 | 4 | null;
   clientId: string | null; clientName: string | null; tan: string | null; deductorName: string | null;
-  booksPaise: number; form26Paise: number; depositedPaise: number | null; differencePaise: number;
+  /** differencePaise = books − 26AS; chasePaise = the amount to ask for (chase rows) */
+  booksPaise: number; form26Paise: number; depositedPaise: number | null; differencePaise: number; chasePaise?: number;
   items: Array<{ key: string; paymentId: string; receiptNumber: string; paidOn: string; invoiceId: string | null; invoiceNumber: string | null; homeDay: string; tdsPaise: number }>;
   entries: Array<{ id: string; rowNo: number; section: string | null; txnDate: string; bookingStatus: string | null; amountPaidPaise: number; tdsPaise: number; depositedPaise: number | null }>;
 }
@@ -236,8 +237,8 @@ export interface GstReconView {
   company: "dspl" | "dmpl"; gstin: string; registrationLabel: string; registrations: Array<{ gstin: string; label: string }>;
   period: { key: string; label: string; from: string; toExclusive: string; fy: string; kind: "month" | "quarter" }; periodOptions: Array<{ key: string; label: string }>;
   uploads: GstUploadRow[]; periodsWithUploads: string[]; taxColumns: boolean;
-  counts: Record<GstStatus, number> & { cancelledNotFiled: number };
-  sections: Array<{ section: "b2b" | "sez" | "cdnr" | "b2cl" | "b2cs" | "exp"; books: GstHeads; filed: GstHeads | null; comparedItemwise: boolean; differs: boolean; note: string | null }>;
+  counts: Record<GstStatus, number> & { cancelledNotFiled: number; lateCreditNotes: number };
+  sections: Array<{ section: "b2b" | "sez" | "cdnr" | "b2cl" | "b2cs" | "exp" | "cdnur"; books: GstHeads; filed: GstHeads | null; comparedItemwise: boolean; differs: boolean; note: string | null }>;
   rows: GstRow[]; importLink: boolean; todo: ReconTodo[];
 }
 export type LedgerLine = { day: string; kind: "invoice" | "refund" | "credit_note" | "receipt" | "tds"; docId: string; number: string; particulars: string; debitPaise: number; creditPaise: number; balancePaise: number };

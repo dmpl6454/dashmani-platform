@@ -17,6 +17,8 @@ export interface BookDoc {
   valuePaise: number; taxablePaise: number; igstPaise: number; cgstPaise: number; sgstPaise: number; ratesBp: number[];
   /** credit note: its invoice's number and id */
   invoiceNumber: string | null; invoiceId: string | null;
+  /** credit note dated after 30 Nov following its invoice's FY (CGST s.34(2)) — can't be reported */
+  late?: boolean;
 }
 export interface FiledIn extends FiledDoc { id: string; uploadId: string }
 export interface ElsewhereDoc { key0: string; kind: "registration" | "company" | "proforma"; number: string; invoiceId: string; companyKey: string; gstin: string | null; label: string }
@@ -31,11 +33,11 @@ export interface GstRow {
   hint: null | { text: string; invoiceId?: string; companyKey?: string; gstin?: string; period?: string; importable?: boolean };
   action: string;
 }
-export interface GstSectionRow { section: "b2b" | "sez" | "cdnr" | "b2cl" | "b2cs" | "exp"; books: Heads; filed: Heads | null; comparedItemwise: boolean; differs: boolean; note: string | null }
-export interface GstMatchResult { rows: GstRow[]; counts: Record<GstStatus, number> & { cancelledNotFiled: number }; sections: GstSectionRow[]; importable: boolean }
+export interface GstSectionRow { section: "b2b" | "sez" | "cdnr" | "b2cl" | "b2cs" | "exp" | "cdnur"; books: Heads; filed: Heads | null; comparedItemwise: boolean; differs: boolean; note: string | null }
+export interface GstMatchResult { rows: GstRow[]; counts: Record<GstStatus, number> & { cancelledNotFiled: number; lateCreditNotes: number }; sections: GstSectionRow[]; importable: boolean }
 
 const zeroHeads = (): Heads => ({ valuePaise: 0, taxablePaise: 0, igstPaise: 0, cgstPaise: 0, sgstPaise: 0, cessPaise: 0 });
-const SECTION_LABEL: Record<GstSectionRow["section"], string> = { b2b: "B2B", sez: "SEZ", cdnr: "Credit notes (CDNR)", b2cl: "B2C large", b2cs: "B2C small", exp: "Exports" };
+const SECTION_LABEL: Record<GstSectionRow["section"], string> = { b2b: "B2B", sez: "SEZ", cdnr: "Credit notes (CDNR)", b2cl: "B2C large", b2cs: "B2C small", exp: "Exports", cdnur: "Credit notes, unregistered (CDNUR)" };
 const HEAD_LABEL: Array<[keyof Heads, string]> = [["taxablePaise", "Taxable"], ["igstPaise", "IGST"], ["cgstPaise", "CGST"], ["sgstPaise", "SGST"], ["valuePaise", "Value"]];
 const signed = (p: number) => `${p >= 0 ? "+" : "−"}${reconInr(Math.abs(p))}`;
 
@@ -57,6 +59,8 @@ export function matchGstr1(input: {
   otherPeriods: OtherPeriodKey[];
   nextPeriod: { label: string; uploaded: boolean };
   filedOther: Partial<Record<"b2cl" | "b2cs" | "exp" | "cdnur", SectionTotals>>;
+  /** sections some current upload states (§5.2.1) — an unstated section is never "not filed" or "differs" */
+  stated: readonly string[];
 }): GstMatchResult {
   const { period } = input;
   const inPeriod = (d: string | null) => !!d && d >= period.from && d < period.toExclusive;
@@ -181,17 +185,20 @@ export function matchGstr1(input: {
     }
   }
 
-  // 6. books that should be in this period's return
+  // 6. books that should be in this period's return — only for a section an upload states, and
+  // never a late credit note (s.34(2): it can't be reported; Accounts' CDNR file leaves it out).
+  const stated = new Set(input.stated);
   let cancelledNotFiled = 0;
-  const invSection = new Map(books.filter((b) => b.kind === "invoice").map((b) => [b.id, b.section]));
+  let lateCreditNotes = 0;
   for (const b of books) {
     if (claimed.has(b.id) || !inPeriod(b.date)) continue;
-    const sec = b.kind === "invoice" ? b.section : b.section;
-    if (sec !== "b2b" && sec !== "sez") continue;
+    if (b.section !== "b2b" && b.section !== "sez") continue;
+    const section = b.kind === "invoice" ? "b2b" : "cdnr";
+    if (!stated.has(section)) continue;
     if (b.status === "cancelled") { cancelledNotFiled++; continue; }
     if (b.kind === "invoice" && b.status !== "issued" && b.status !== "paid") continue;
     if (b.kind === "credit_note" && b.status !== "issued") continue;
-    const section = b.kind === "invoice" ? "b2b" : "cdnr";
+    if (b.kind === "credit_note" && b.late) { lateCreditNotes++; continue; }
     const other = otherKeys.get(`${section}|${normaliseDocNumber(b.number).key1}`);
     if (other) {
       rows.push({ key: `books:${b.id}`, section, status: "wrong_period", issues: [{ code: "filed_other_period", message: `Filed in ${other.label}'s GSTR-1.` }], books: booksView(b), filed: null, diff: null,
@@ -203,7 +210,6 @@ export function matchGstr1(input: {
       rows.push({ key: `books:${b.id}`, section, status: "not_filed", issues: [{ code: "not_filed", message: msg }], books: booksView(b), filed: null, diff: null, hint: null, action: actionFor("not_filed") });
     }
   }
-  void invSection;
 
   // 7. section totals
   const sum = (list: Heads[]): Heads => list.reduce<Heads>((a, h) => ({
@@ -213,18 +219,30 @@ export function matchGstr1(input: {
     sgstPaise: a.sgstPaise === null || h.sgstPaise === null ? null : a.sgstPaise + h.sgstPaise,
     cessPaise: (a.cessPaise ?? 0) + (h.cessPaise ?? 0),
   }), zeroHeads());
-  const live = books.filter((b) => inPeriod(b.date) && (b.kind === "invoice" ? b.status === "issued" || b.status === "paid" : b.status === "issued"));
+  const minus = (a: Heads, b: Heads): Heads => ({
+    valuePaise: a.valuePaise - b.valuePaise, taxablePaise: a.taxablePaise - b.taxablePaise,
+    igstPaise: a.igstPaise === null || b.igstPaise === null ? null : a.igstPaise - b.igstPaise,
+    cgstPaise: a.cgstPaise === null || b.cgstPaise === null ? null : a.cgstPaise - b.cgstPaise,
+    sgstPaise: a.sgstPaise === null || b.sgstPaise === null ? null : a.sgstPaise - b.sgstPaise,
+    cessPaise: (a.cessPaise ?? 0) - (b.cessPaise ?? 0),
+  });
+  // Late credit notes never reduce a section (as Accounts' 3B / CDNR leave them out).
+  const live = books.filter((b) => inPeriod(b.date) && (b.kind === "invoice" ? b.status === "issued" || b.status === "paid" : b.status === "issued" && !b.late));
   const booksBy = (pred: (b: BookDoc) => boolean) => sum(live.filter(pred).map((b) => booksView(b)));
+  const cnOn = (...secs: string[]) => (b: BookDoc) => b.kind === "credit_note" && secs.includes(b.section);
   const filedB2b = input.filed.filter((f) => f.section === "b2b");
-  const filedHeads = (list: FiledIn[]): Heads | null => (list.length ? sum(list.map((f) => filedView(f))) : zeroHeads());
+  const filedHeads = (section: "b2b" | "cdnr", list: FiledIn[]): Heads | null => (!stated.has(section) ? null : list.length ? sum(list.map((f) => filedView(f))) : zeroHeads());
   const fromTotals = (t: SectionTotals | undefined): Heads | null => (t ? { valuePaise: t.valuePaise, taxablePaise: t.taxablePaise, igstPaise: t.igstPaise, cgstPaise: t.cgstPaise, sgstPaise: t.sgstPaise, cessPaise: t.cessPaise } : null);
   const sections: GstSectionRow[] = [
-    { section: "b2b", books: booksBy((b) => b.kind === "invoice" && b.section === "b2b"), filed: filedHeads(filedB2b.filter((f) => f.invType !== "SEWP" && f.invType !== "SEWOP")), comparedItemwise: true, differs: false, note: null },
-    { section: "sez", books: booksBy((b) => b.kind === "invoice" && b.section === "sez"), filed: filedHeads(filedB2b.filter((f) => f.invType === "SEWP" || f.invType === "SEWOP")), comparedItemwise: true, differs: false, note: null },
-    { section: "cdnr", books: booksBy((b) => b.kind === "credit_note" && (b.section === "b2b" || b.section === "sez")), filed: filedHeads(input.filed.filter((f) => f.section === "cdnr" && f.noteType !== "D")), comparedItemwise: true, differs: false, note: null },
+    { section: "b2b", books: booksBy((b) => b.kind === "invoice" && b.section === "b2b"), filed: filedHeads("b2b", filedB2b.filter((f) => f.invType !== "SEWP" && f.invType !== "SEWOP")), comparedItemwise: true, differs: false, note: null },
+    { section: "sez", books: booksBy((b) => b.kind === "invoice" && b.section === "sez"), filed: filedHeads("b2b", filedB2b.filter((f) => f.invType === "SEWP" || f.invType === "SEWOP")), comparedItemwise: true, differs: false, note: null },
+    { section: "cdnr", books: booksBy(cnOn("b2b", "sez")), filed: filedHeads("cdnr", input.filed.filter((f) => f.section === "cdnr" && f.noteType !== "D")), comparedItemwise: true, differs: false, note: null },
     { section: "b2cl", books: booksBy((b) => b.kind === "invoice" && b.section === "b2cl"), filed: fromTotals(input.filedOther.b2cl), comparedItemwise: false, differs: false, note: null },
-    { section: "b2cs", books: booksBy((b) => b.kind === "invoice" && b.section === "b2cs"), filed: fromTotals(input.filedOther.b2cs), comparedItemwise: false, differs: false, note: null },
+    // Table 7 (B2CS) is filed NET of the credit notes on B2C-small invoices — those never go to CDNR/CDNUR.
+    { section: "b2cs", books: minus(booksBy((b) => b.kind === "invoice" && b.section === "b2cs"), booksBy(cnOn("b2cs"))), filed: fromTotals(input.filedOther.b2cs), comparedItemwise: false, differs: false, note: null },
     { section: "exp", books: booksBy((b) => b.kind === "invoice" && b.section === "exp"), filed: fromTotals(input.filedOther.exp), comparedItemwise: false, differs: false, note: null },
+    // Table 9B unregistered: credit notes on B2C-large and export invoices.
+    { section: "cdnur", books: booksBy(cnOn("b2cl", "exp")), filed: fromTotals(input.filedOther.cdnur), comparedItemwise: false, differs: false, note: null },
   ];
   for (const s of sections) {
     if (!s.filed) continue;
@@ -236,9 +254,10 @@ export function matchGstr1(input: {
     }
   }
 
-  const counts = Object.fromEntries(GST_STATUS_ORDER.map((s) => [s, 0])) as Record<GstStatus, number> & { cancelledNotFiled: number };
+  const counts = Object.fromEntries(GST_STATUS_ORDER.map((s) => [s, 0])) as GstMatchResult["counts"];
   for (const r of rows) counts[r.status]++;
   counts.cancelledNotFiled = cancelledNotFiled;
+  counts.lateCreditNotes = lateCreditNotes;
   rows.sort((a, b) => GST_STATUS_ORDER.indexOf(a.status) - GST_STATUS_ORDER.indexOf(b.status) || cmpStr(a.section, b.section)
     || cmpStr(a.books?.number ?? a.filed?.number ?? "", b.books?.number ?? b.filed?.number ?? "") || cmpStr(a.key, b.key));
   return { rows, counts, sections, importable };

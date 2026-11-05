@@ -238,6 +238,9 @@ export function parseGstr1Sheets(sheets: Array<{ name: string; rows: string[][] 
     if (sec === "b2b" || sec === "cdnr") {
       allTaxCols = allTaxCols && taxCols;
       const groups = new Map<string, FiledDoc>();
+      // A second row at a rate the invoice already has is the same invoice filed twice (an
+      // offline-tool slip), not a multi-rate line: kept as its own doc so the match says filed_twice.
+      const twice: FiledDoc[] = [];
       for (let i = headIdx + 1; i < sh.rows.length; i++) {
         const row = sh.rows[i];
         if (!row.some((c) => c.trim() !== "")) continue;
@@ -262,7 +265,8 @@ export function parseGstr1Sheets(sheets: Array<{ name: string; rows: string[][] 
         const valueRaw = govPaise(get(row, "value"));
         if (valueRaw === "error") { pushError(r, ref, `${ref} (${number}): the value is not a number`); continue; }
         const existing = groups.get(key);
-        if (existing) {
+        const repeat = !!existing && rateBp !== null && existing.ratesBp.includes(rateBp);
+        if (existing && !repeat) {
           if (valueRaw !== null && valueRaw !== existing.valuePaise) r.warnings.push(`${number}: the invoice value differs between its rows.`);
           existing.taxablePaise += taxable;
           if (taxCols) {
@@ -274,22 +278,29 @@ export function parseGstr1Sheets(sheets: Array<{ name: string; rows: string[][] 
           if (rateBp !== null && !existing.ratesBp.includes(rateBp)) existing.ratesBp = [...existing.ratesBp, rateBp].sort((a, b) => a - b);
           continue;
         }
-        if (valueRaw === null) { pushError(r, ref, `${ref} (${number}): no invoice value`); continue; }
+        if (valueRaw === null && !repeat) { pushError(r, ref, `${ref} (${number}): no invoice value`); continue; }
         const nt = get(row, "noteType").toUpperCase();
         const invTypeRaw = get(row, "invType");
         const invType = invTypeRaw ? (INV_TYPE[norm(invTypeRaw)] ?? invTypeRaw.toUpperCase().slice(0, 8)) : null;
-        groups.set(key, {
+        const doc: FiledDoc = {
           section: sec, rowRef: ref.slice(0, 40), ctin, receiverName: get(row, "receiver").slice(0, 200) || null,
           number: number.slice(0, 40), numberKey: normaliseDocNumber(number).key1.slice(0, 40), docDate,
           noteType: sec === "cdnr" ? (nt.startsWith("D") ? "D" : nt ? "C" : null) : null, origNumber: null, invType,
           pos: posCode(get(row, "pos")), reverseCharge: get(row, "rchrg").toUpperCase().startsWith("Y"),
-          valuePaise: valueRaw, taxablePaise: taxable,
+          valuePaise: valueRaw ?? existing!.valuePaise, taxablePaise: taxable,
           igstPaise: taxCols ? ig ?? 0 : null, cgstPaise: taxCols ? cg ?? 0 : null, sgstPaise: taxCols ? sg ?? 0 : null,
           cessPaise: map.cess !== undefined ? cs ?? 0 : null, ratesBp: rateBp === null ? [] : [rateBp],
-        });
+        };
+        if (repeat) {
+          r.warnings.push(`${number}: filed twice at ${rateBp! / 100}% (${existing!.rowRef} and ${ref}) — kept as two documents, not added together.`);
+          twice.push(doc);
+          continue;
+        }
+        groups.set(key, doc);
         if (groups.size > RECON_MAX_ROWS) break;
       }
       for (const d of groups.values()) r.items.push(d);
+      for (const d of twice) r.items.push(d);
     } else {
       const t = zeroTotals();
       const seen = new Set<string>();

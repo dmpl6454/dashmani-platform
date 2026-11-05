@@ -9,7 +9,7 @@ import type { GstReconView } from "./gst.service";
 
 export const TDS_CHASE_HEADERS = [
   "Client", "Legal name", "PAN", "TAN", "Billing email", "Quarter", "Problem", "Our invoice", "Invoice date", "Our receipt", "Receipt date",
-  "TDS in our books", "TDS in 26AS", "TDS deposited (26AS)", "Difference", "26AS booking status", "What to ask",
+  "TDS in our books", "TDS in 26AS", "TDS deposited (26AS)", "Difference (books − 26AS)", "Amount to chase", "26AS booking status", "What to ask",
 ] as const;
 export const GST_DIFF_HEADERS = [
   "Section", "Status", "Number (portal)", "Number (GSTR-1)", "Date (portal)", "Date (GSTR-1)", "Recipient GSTIN (portal)", "Recipient GSTIN (GSTR-1)", "Receiver",
@@ -33,7 +33,7 @@ export function tdsChaseCsv(v: TdsReconView, meta: { legalName: string; by: stri
     out.push([
       r.clientName ?? r.deductorName ?? "", c?.name ?? "", c?.pan ?? "", r.tan ?? c?.tans.join(" ") ?? "", c?.billingEmail ?? "", r.quarter ? `Q${r.quarter}` : "",
       PROBLEM[r.reason.code] ?? r.reason.code, it?.invoiceNumber ?? "", it ? (it.homeDay ?? "") : "", r.items.map((i) => i.receiptNumber).join(" "), it?.paidOn ?? "",
-      m(r.booksPaise), m(r.form26Paise), m(r.depositedPaise), m(r.differencePaise), e?.bookingStatus ?? "", r.reason.text,
+      m(r.booksPaise), m(r.form26Paise), m(r.depositedPaise), m(r.differencePaise), m(r.chasePaise ?? r.differencePaise), e?.bookingStatus ?? "", r.reason.text,
     ]);
   }
   const unknown = v.deductors.filter((d) => d.kind === "unknown");

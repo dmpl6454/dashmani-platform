@@ -40,7 +40,7 @@ export function DeductorCard({ d, clients, onSaved, onError }: { d: TdsDeductor;
       </div>
       {nonSales && (
         <div className="flex flex-wrap gap-2 items-center">
-          <input className="input flex-1 min-w-0 basis-48" placeholder="Bank interest — HDFC FD" value={label} onChange={(e) => setLabel(e.target.value)} aria-label="What this deductor is" />
+          <input className="input flex-1 min-w-0 basis-48" placeholder="Bank interest — HDFC FD" maxLength={120} value={label} onChange={(e) => setLabel(e.target.value)} aria-label="What this deductor is" />
           <button type="button" className="btn btn-light btn-sm" disabled={busy || label.trim().length < 2} onClick={() => save({ kind: "non_sales", label: label.trim() }, label.trim())}>Save</button>
         </div>
       )}

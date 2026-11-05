@@ -39,12 +39,12 @@ const BOOKS: TdsBookItem[] = [
 const ENTRIES: TdsEntryIn[] = parse26asText(SAMPLE_26AS).items.map((e, i) => ({ ...e, id: `e${i + 1}` }));
 const BASE_DEDUCTORS = [{ tan: "MUMH03189E", kind: "non_sales", clientId: null, label: "Bank interest — HDFC FD", source: "manual" }];
 
-function run(opts: { profiles?: Array<{ tan: string; clientId: string }>; deductors?: typeof BASE_DEDUCTORS; entries?: TdsEntryIn[]; items?: TdsBookItem[]; asOn?: string; fy?: string } = {}) {
+function run(opts: { profiles?: Array<{ tan: string; clientId: string }>; deductors?: typeof BASE_DEDUCTORS; entries?: TdsEntryIn[]; items?: TdsBookItem[]; asOn?: string; fy?: string; hasUpload?: boolean } = {}) {
   const entries = opts.entries ?? ENTRIES;
   const items = opts.items ?? BOOKS;
   const fy = opts.fy ?? FY;
   const tans = resolveTans({ fy, entries, items, profiles: opts.profiles ?? [], deductors: opts.deductors ?? BASE_DEDUCTORS, clients: CLIENTS });
-  return { tans, m: matchTds({ fy, asOn: opts.asOn ?? AS_ON, ourPan: "AAKCD3352K", entries, items, tans, clients: clientInfo }) };
+  return { tans, m: matchTds({ fy, asOn: opts.asOn ?? AS_ON, ourPan: "AAKCD3352K", entries, items, tans, clients: clientInfo, hasUpload: opts.hasUpload ?? true }) };
 }
 const LEARNED = [{ tan: "MUMF12345A", clientId: C.filmy }, { tan: "BLRK98765C", clientId: C.kanara }];
 const TAPPED = [...BASE_DEDUCTORS, { tan: "DELH55555E", kind: "client", clientId: C.hunch, label: null, source: "manual" }, { tan: "DELR77777Z", kind: "client", clientId: C.red, label: null, source: "manual" }];
@@ -70,8 +70,8 @@ describe("TDS vs 26AS", () => {
       extraPaise: R(8000), unknownPaise: R(2500), nonSalesPaise: R(1250), notDuePaise: 0, nextYearPaise: R(4000), linkFirstPaise: 0,
     });
     const chase = after.m.rows.filter((r) => r.group === "chase");
-    expect(chase.map((r) => [r.clientId, r.reason.code, r.differencePaise])).toEqual([
-      [C.hunch, "short", R(180)], [C.kanara, "status_U", R(4000)], [C.moon, "not_in_26as", R(3000)],
+    expect(chase.map((r) => [r.clientId, r.reason.code, r.chasePaise, r.differencePaise])).toEqual([
+      [C.hunch, "short", R(180), R(180)], [C.kanara, "status_U", R(4000), -R(4000)], [C.moon, "not_in_26as", R(3000), R(3000)],
     ]);
     expect(chase.find((r) => r.clientId === C.kanara)!.flags).toEqual(["status_U", "short_deposited"]);
     expect(chase.find((r) => r.clientId === C.hunch)!.reason.text).toBe("Our receipts show ₹1,180.00 TDS for Q4; Form 26AS shows ₹1,000.00 — please revise your Q4 return for the ₹180.00 difference, or pay it to us.");
@@ -152,7 +152,33 @@ describe("TDS vs 26AS", () => {
     const codes = m.rows.filter((r) => r.group === "chase").map((r) => r.reason.code).sort();
     expect(codes).toEqual(["short_deposited", "status_O", "status_U"]);
     expect(m.rows.filter((r) => r.group === "status_p")).toHaveLength(1);
-    expect(m.rows.find((r) => r.reason.code === "short_deposited")!.differencePaise).toBe(R(3000));
+    const sd = m.rows.find((r) => r.reason.code === "short_deposited")!;
+    expect([sd.chasePaise, sd.differencePaise]).toEqual([R(3000), sd.booksPaise - sd.form26Paise]);
+  });
+
+  it("T-14 every row's Difference is books − 26AS; a U row's chase amount is its own field", () => {
+    const e = (id: string, st: string, dep: number | null) => ({ ...ENTRIES[0], id, rowNo: Number(id.slice(1)), bookingStatus: st, depositedPaise: dep });
+    const { m } = run({ profiles: LEARNED, entries: [e("e1", "U", 0), e("e3", "P", R(10000))], items: BOOKS });
+    for (const r of m.rows) expect(r.differencePaise, r.key).toBe(r.booksPaise - r.form26Paise);
+    const u = m.rows.find((r) => r.reason.code === "status_U")!;
+    expect([u.booksPaise, u.chasePaise, u.differencePaise]).toEqual([0, u.form26Paise, -u.form26Paise]);
+  });
+
+  it("T-15 no Form 26AS uploaded → nothing chased, linked or extra; the books total stays", () => {
+    const { m } = run({ entries: [], items: BOOKS, hasUpload: false });
+    expect(m.rows).toEqual([]);
+    expect(m.clients).toEqual([]);
+    expect([m.totals.chaseCount, m.totals.chasePaise, m.totals.linkFirstPaise]).toEqual([0, 0, 0]);
+    expect(m.totals.booksPaise).toBe(R(10000 + 5000 + 4000 + 1180 + 3000 + 4000));
+    // the same books with an (empty) upload are chased
+    expect(run({ entries: [], items: BOOKS }).m.totals.chaseCount).toBeGreaterThan(0);
+  });
+
+  it("T-16 a client with only boundary items (homed in the previous FY) and no 26AS entry gets no card", () => {
+    const boundary = item("BD", C.red, "INV/24-25/9", "2025-03-28", 40000, 47200, "R/9", "2025-04-05", 43200, 4000);
+    const { m } = run({ profiles: LEARNED, items: [...BOOKS, boundary] });
+    expect(m.clients.some((c) => c.clientId === C.red)).toBe(false);
+    expect(m.clients.some((c) => c.clientId === C.filmy)).toBe(true);
   });
 
   it("T-9 resolveTans: profile first, then a deductors row; sure = name + fit + no rival", () => {
@@ -216,7 +242,7 @@ const PERIOD = { key: "2026-10", label: "October 2026", from: "2026-10-01", toEx
 const filedOf = (json: unknown): FiledIn[] => parseGstr1Json(json).items.map((d, k) => ({ ...d, id: `f${k}`, uploadId: "u1" }));
 const GURUGRAM = [{ key0: "INV/26-27/061", kind: "registration" as const, number: "INV/26-27/061", invoiceId: "g61", companyKey: "dspl", gstin: "06AAKCD3352K1ZJ", label: "Gurugram" }];
 function gst(over: Partial<Parameters<typeof matchGstr1>[0]> = {}) {
-  return matchGstr1({ gstin: "27AAKCD3352K1ZF", period: PERIOD, books: GBOOKS, filed: filedOf(gstr1OctoberJson()), elsewhere: GURUGRAM, otherPeriods: [], nextPeriod: { label: "November 2026", uploaded: false }, filedOther: {}, ...over });
+  return matchGstr1({ gstin: "27AAKCD3352K1ZF", period: PERIOD, books: GBOOKS, filed: filedOf(gstr1OctoberJson()), elsewhere: GURUGRAM, otherPeriods: [], nextPeriod: { label: "November 2026", uploaded: false }, filedOther: {}, stated: ["b2b", "cdnr"], ...over });
 }
 const statusOf = (m: ReturnType<typeof gst>, number: string) => m.rows.find((r) => r.books?.number === number || r.filed?.number === number)!;
 
@@ -236,7 +262,8 @@ describe("GST books vs GSTR-1", () => {
     const r19 = statusOf(m, "INV/26-27/0019");
     expect(r19.status).toBe("not_filed");
     expect(r19.issues[0].message).toContain("November 2026's GSTR-1 is not uploaded here — it may be there");
-    const { cancelledNotFiled, ...counts } = m.counts;
+    const { cancelledNotFiled, lateCreditNotes, ...counts } = m.counts;
+    expect(lateCreditNotes).toBe(0);
     expect(counts).toEqual({ matched: 1, matched_note: 1, value_mismatch: 1, wrong_recipient: 1, wrong_period: 1, not_filed: 1, not_in_books: 2, cancelled_but_filed: 1 });
     expect(cancelledNotFiled).toBe(0);
     expect(m.importable).toBe(true);
@@ -343,6 +370,43 @@ describe("GST books vs GSTR-1", () => {
     const m = gst({ filed });
     expect(statusOf(m, "INV/26-27/0016").status).toBe("matched_note");
     expect(statusOf(m, "INV/26-27/0018").issues.filter((i) => i.code === "value_mismatch").map((i) => i.message.split(":")[0])).toEqual(["Taxable", "Value"]);
+  });
+
+  it("G-14 B2CS is filed net of its credit notes; CDNUR compares notes on B2CL / export invoices", () => {
+    const b2cs = bdoc("s1", "INV/26-27/0030", "2026-10-05", null, 10000, { c: 900, s: 900 });
+    const cnS = bdoc("cs1", "CN/26-27/0009", "2026-10-20", null, 2000, { c: 180, s: 180 }, { kind: "credit_note", section: "b2cs", invoiceNumber: "INV/26-27/0030", invoiceId: "s1" });
+    const cnX = bdoc("cx1", "CN/26-27/0010", "2026-10-21", null, 5000, {}, { kind: "credit_note", section: "exp", invoiceNumber: "EXP-1", invoiceId: "x1" });
+    const tot = (taxable: number, value: number) => ({ docs: 1, valuePaise: R(value), taxablePaise: R(taxable), igstPaise: 0, cgstPaise: R(720), sgstPaise: R(720), cessPaise: 0 });
+    const m = gst({ books: [...GBOOKS, b2cs, cnS, cnX], filedOther: { b2cs: tot(8000, 9440), cdnur: { ...tot(5000, 5000), cgstPaise: 0, sgstPaise: 0 } } });
+    const sec = (k: string) => m.sections.find((s) => s.section === k)!;
+    expect(sec("b2cs")).toMatchObject({ differs: false, books: { taxablePaise: R(8000), valuePaise: R(9440) } });
+    expect(sec("cdnur")).toMatchObject({ comparedItemwise: false, differs: false, books: { taxablePaise: R(5000) } });
+    expect(sec("cdnr").books.taxablePaise).toBe(R(20000));
+    // gross books (the old behaviour) would differ
+    expect(gst({ books: [...GBOOKS, b2cs], filedOther: { b2cs: tot(8000, 9440) } }).sections.find((s) => s.section === "b2cs")!.differs).toBe(true);
+  });
+
+  it("G-15 a late credit note (s.34(2)) is never 'not filed' and stays out of the CDNR total — counted as info", () => {
+    const late = bdoc("cnL", "CN/26-27/0011", "2026-10-25", KANARA, 1000, { i: 180 }, { kind: "credit_note", invoiceNumber: "INV/25-26/0100", invoiceId: "old", late: true });
+    const m = gst({ books: [...GBOOKS, late] });
+    expect(m.rows.some((r) => r.books?.number === "CN/26-27/0011")).toBe(false);
+    expect(m.counts.lateCreditNotes).toBe(1);
+    expect(m.counts.not_filed).toBe(1);
+    expect(m.sections.find((s) => s.section === "cdnr")).toMatchObject({ differs: false, books: { taxablePaise: R(20000) } });
+    // not late → not filed
+    expect(statusOf(gst({ books: [...GBOOKS, { ...late, late: false }] }), "CN/26-27/0011").status).toBe("not_filed");
+  });
+
+  it("G-16 a section no upload states: nothing 'not filed', its total not compared", () => {
+    const none = gst({ filed: [], stated: [] });
+    expect(none.counts.not_filed).toBe(0);
+    expect(none.counts.cancelledNotFiled).toBe(0);
+    for (const k of ["b2b", "sez", "cdnr"]) expect(none.sections.find((s) => s.section === k), k).toMatchObject({ filed: null, differs: false });
+    // a b2b-only CSV: invoices are checked, credit notes are not
+    const b2bOnly = gst({ filed: filedOf(gstr1OctoberJson()).filter((f) => f.section === "b2b"), stated: ["b2b"] });
+    expect(statusOf(b2bOnly, "INV/26-27/0019").status).toBe("not_filed");
+    expect(b2bOnly.rows.some((r) => r.books?.number === "CN/26-27/0003")).toBe(false);
+    expect(b2bOnly.sections.find((s) => s.section === "cdnr")).toMatchObject({ filed: null, differs: false });
   });
 });
 

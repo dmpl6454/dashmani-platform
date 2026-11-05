@@ -7,11 +7,18 @@ import { GST_STATE_CODES, stateCodeFromGstin } from "@dashmani/shared/src/sales/
 
 export const EMPTY_BILLING: BillingProfile = { legalName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "", pincode: "", country: "IN", billingEmail: "", billingPhone: "", notes: "", tan: "" };
 
-/** The API body for a billing form: blanks become null, country defaults to IN. */
-export function billingBody(form: BillingProfile): Record<string, unknown> {
+/**
+ * The API body for a billing form: blanks become null, country defaults to IN. The TAN is sent
+ * only when the user changed it (`loadedTan` = what the form was filled with; omit for a new
+ * client): a 26AS upload may learn the TAN while the form is open, and an untouched field must
+ * not clear it (the API treats tan: null as "clear", absent as "leave alone").
+ */
+export function billingBody(form: BillingProfile, loadedTan?: string | null): Record<string, unknown> {
   const body: Record<string, unknown> = { ...form };
   for (const k of Object.keys(body)) if (body[k] === "") body[k] = null;
   body.country = form.country || "IN";
+  const typed = (form.tan ?? "").trim().toUpperCase();
+  if (loadedTan === undefined ? !typed : typed === (loadedTan ?? "").trim().toUpperCase()) delete body.tan;
   return body;
 }
 

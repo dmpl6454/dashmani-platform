@@ -8,9 +8,9 @@ import { errorSentence } from "@/lib/messages";
 import { drCrText } from "@/lib/reconcile";
 import type { ConfirmationsView } from "@/lib/sales-types";
 
-export function SendDialog({ rows, company, asOf, from, onClose, onSent }: { rows: ConfirmationsView["rows"]; company: string; asOf: string; from: string; onClose: () => void; onSent: (msg: string) => void }) {
+export function SendDialog({ rows, company, asOf, from, onClose, onSent, initialResend = false }: { rows: ConfirmationsView["rows"]; initialResend?: boolean; company: string; asOf: string; from: string; onClose: () => void; onSent: (msg: string) => void }) {
   const list = rows.slice(0, 25);
-  const [resend, setResend] = useState(false);
+  const [resend, setResend] = useState(initialResend);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const send = async () => {

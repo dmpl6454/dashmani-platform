@@ -242,7 +242,12 @@ export async function listConfirmations(company: CompanyKey, asOf: string, from:
 
 // ─── Create / refresh / send ─────────────────────────────────────────────────────────────────
 
-async function freeze(input: { company: CompanyKey; clientId: string; asOf: string; from: string; refresh: boolean; actorId: string; today: string }): Promise<{ row: ConfRow; created: boolean; refreshed: boolean }> {
+/**
+ * Create the row, or (refresh) re-freeze a pending one. A row already SENT is the record of what
+ * the client received (D10): it is only re-frozen when the same call sends the new statement
+ * (willSend), and the replaced ledger's sha + balance stay in the "refreshed" event.
+ */
+async function freeze(input: { company: CompanyKey; clientId: string; asOf: string; from: string; refresh: boolean; willSend: boolean; actorId: string; today: string }): Promise<{ row: ConfRow; created: boolean; refreshed: boolean }> {
   const { company, clientId, asOf, from, actorId } = input;
   const client = await prisma.client.findUnique({ where: { id: clientId }, select: { companyName: true } });
   if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
@@ -265,8 +270,9 @@ async function freeze(input: { company: CompanyKey; clientId: string; asOf: stri
     if (!input.refresh) return { row, created: false, refreshed: false };
     if (row.status !== "pending") throw answered(client.companyName, row);
     if (!hasDocs(ledger)) throw new AppError(409, "CONFIRM_NOTHING", `${client.companyName} has no documents with ${short(company)} up to ${reconDay(asOf)}.`);
+    if (row.sentCount > 0 && !input.willSend) throw new AppError(409, "CONFIRM_ALREADY_SENT", `The statement was already sent to ${client.companyName} — refresh and resend together, so the record matches what they received.`);
     await tx.salesBalanceConfirmation.update({ where: { id: row.id }, data: { fromDay: dayToDate(from), ourBalancePaise: BigInt(ledger.closingPaise), ledger: ledger as unknown as Prisma.InputJsonValue, ledgerSha256: ledgerHash } });
-    await logSalesEvent(tx, { entityType: "confirmation", entityId: row.id, actorId, action: "refreshed", note: `${drCr(ledger.closingPaise)} as of ${reconDay(asOf)}` });
+    await logSalesEvent(tx, { entityType: "confirmation", entityId: row.id, actorId, action: "refreshed", note: `${drCr(ledger.closingPaise)} as of ${reconDay(asOf)} · was ${drCr(toSafeNumber(row.ourBalancePaise))} · ledger sha256 ${row.ledgerSha256.slice(0, 12)} → ${ledgerHash.slice(0, 12)}${row.sentCount > 0 ? ` · sent ${row.sentCount}×` : ""}` });
     return { row: await tx.salesBalanceConfirmation.findUniqueOrThrow({ where: { id: row.id }, select: CONF_SELECT }), created: false, refreshed: true };
   });
 }
@@ -282,9 +288,10 @@ async function liveBalance(company: CompanyKey, clientId: string, asOf: string):
 
 export async function createConfirmation(body: ConfirmationCreateInput, actorId: string, today: string): Promise<{ status: number; result: { confirmation: ConfirmationState; email: EmailResult | null } }> {
   checkRange(body.from, body.asOf, today);
-  const { row, created, refreshed } = await freeze({ company: body.companyKey, clientId: body.clientId, asOf: body.asOf, from: body.from, refresh: body.refresh, actorId, today });
+  const { row, created, refreshed } = await freeze({ company: body.companyKey, clientId: body.clientId, asOf: body.asOf, from: body.from, refresh: body.refresh, willSend: body.send, actorId, today });
   let email: EmailResult | null = null;
-  if (body.send && (created || refreshed)) email = await sendOne(row.id, actorId);
+  // Send a new or refreshed row, or a pending one never sent (e.g. the first send failed).
+  if (body.send && (created || refreshed || (row.status === "pending" && row.sentCount === 0))) email = await sendOne(row.id, actorId);
   const fresh = await prisma.salesBalanceConfirmation.findUniqueOrThrow({ where: { id: row.id }, select: CONF_SELECT });
   return { status: created ? 201 : 200, result: { confirmation: stateOf(fresh, await liveBalance(body.companyKey, body.clientId, body.asOf)), email } };
 }
@@ -294,7 +301,7 @@ export async function sendConfirmation(id: string, body: { refresh: boolean }, a
   if (!row) throw new AppError(404, "NOT_FOUND", "Confirmation not found");
   companyMismatch(row.companyKey, requested);
   if (row.status !== "pending") throw answered(row.client.companyName, row);
-  if (body.refresh) await freeze({ company: row.companyKey as CompanyKey, clientId: row.clientId, asOf: dateToDay(row.asOf)!, from: dateToDay(row.fromDay)!, refresh: true, actorId, today });
+  if (body.refresh) await freeze({ company: row.companyKey as CompanyKey, clientId: row.clientId, asOf: dateToDay(row.asOf)!, from: dateToDay(row.fromDay)!, refresh: true, willSend: true, actorId, today });
   const email = await sendOne(id, actorId);
   const fresh = await prisma.salesBalanceConfirmation.findUniqueOrThrow({ where: { id }, select: CONF_SELECT });
   return { confirmation: stateOf(fresh, await liveBalance(row.companyKey as CompanyKey, row.clientId, dateToDay(row.asOf)!)), email };
@@ -316,7 +323,7 @@ export async function sendBatch(body: ConfirmationBatchInput, actorId: string, t
     if (existing && existing.status !== "pending") { skipped.push({ clientId, name, reason: answered(name, existing).message }); continue; }
     if (existing && existing.sentCount > 0 && !body.resend) { skipped.push({ clientId, name, reason: `Already sent to ${name} — tick Resend to send it again.` }); continue; }
     try {
-      const { row } = await freeze({ company, clientId, asOf: body.asOf, from: body.from, refresh: !!existing, actorId, today });
+      const { row } = await freeze({ company, clientId, asOf: body.asOf, from: body.from, refresh: !!existing, willSend: true, actorId, today });
       await prisma.salesBalanceConfirmation.update({ where: { id: row.id }, data: { queuedAt: new Date(), lastSendError: null } });
       queued.push({ clientId, name });
       toSend.push(row.id);

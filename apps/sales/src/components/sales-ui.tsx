@@ -1,6 +1,7 @@
 "use client";
 import { type ReactNode, useEffect, useState } from "react";
 import { fmtInr, toPaise } from "@/lib/format";
+import { formatFiledAmount, parseFiledAmount, type EntryUnit } from "@dashmani/shared/src/sales/accounts";
 
 // Small building blocks shared by every page, in the site's .card / .btn / .input vocabulary.
 
@@ -194,3 +195,65 @@ export function Confirm({ title, body, confirmLabel = "Confirm", onConfirm, onCl
 export const PLATFORM_LABEL: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", youtube: "YouTube", snapchat: "Snapchat", x: "X", linkedin: "LinkedIn", pinterest: "Pinterest", telegram: "Telegram" };
 export const platformLabel = (p: string | null | undefined) => (p ? PLATFORM_LABEL[p] ?? p : "—");
 export const titleCase = (s: string | null | undefined) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ") : "—");
+
+// ─── smart-invoicing: accounts (PR 1) ───
+/**
+ * An amount typed in the unit printed on the signed statements (rupees / thousands / lakhs /
+ * crores), held as integer paise or null ("Not stated"). Signed figures get a two-button toggle
+ * on the same row, because phone keypads have no minus key. String arithmetic only
+ * (parseFiledAmount) — never Math.round(n * 100).
+ */
+export function SignedAmountInput({ paise, onChange, unit, signLabels, disabled, id, label }: {
+  paise: number | null; onChange: (p: number | null) => void; unit: EntryUnit; signLabels?: [string, string]; disabled?: boolean; id?: string; label?: string;
+}) {
+  const [text, setText] = useState(() => formatFiledAmount(paise == null ? null : Math.abs(paise), unit));
+  const [negative, setNegative] = useState(() => (paise ?? 0) < 0);
+  const [invalid, setInvalid] = useState(false);
+  // Re-sync from the prop (or a unit change) only when the text no longer says the same thing —
+  // the MoneyInput rule, so typing is never rewritten mid-number.
+  useEffect(() => {
+    const parsed = parseFiledAmount(text, unit);
+    const current = parsed === "invalid" || parsed == null ? parsed : negative ? -parsed : parsed;
+    if (current === paise) return;
+    setText(formatFiledAmount(paise == null ? null : Math.abs(paise), unit));
+    setNegative((paise ?? 0) < 0);
+    setInvalid(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paise, unit]);
+  const emit = (t: string, neg: boolean) => {
+    const p = parseFiledAmount(t, unit);
+    if (p === "invalid") { setInvalid(true); return; }
+    setInvalid(false);
+    if (p == null) { onChange(null); return; }
+    // A typed minus or brackets flips the toggle too, so the two never disagree.
+    if (p < 0) { setNegative(true); setText(t.replace(/^\s*[-−(]\s*/, "").replace(/\)\s*$/, "")); onChange(p); return; }
+    onChange(neg && p !== 0 ? -p : p);
+  };
+  return (
+    <div className="min-w-0">
+      <div className="flex gap-2 items-stretch min-w-0">
+        <input
+          id={id} aria-label={label} type="text" inputMode="decimal" placeholder="Not stated" disabled={disabled} value={text}
+          aria-invalid={invalid || undefined}
+          className={`input text-right font-mono flex-1 min-w-0 ${invalid ? "border-danger" : ""}`}
+          onChange={(e) => { setText(e.target.value); emit(e.target.value, negative); }}
+        />
+        {signLabels && (
+          <div className="flex shrink-0" role="group" aria-label={`${label ?? "Figure"}: ${signLabels[0]} or ${signLabels[1]}`}>
+            {signLabels.map((l, i) => {
+              const on = (i === 1) === negative;
+              return (
+                <button key={l} type="button" disabled={disabled} aria-pressed={on}
+                  className={`px-2 text-xs border-2 ${i === 1 ? "border-l-0" : ""} ${on ? (i === 1 ? "bg-danger-bg border-danger text-danger" : "bg-indigo text-white border-indigo") : "border-border text-ink-3 hover:text-white"}`}
+                  onClick={() => { const neg = i === 1; setNegative(neg); emit(text, neg); }}>
+                  {l}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {invalid && <span className="block text-xs text-danger mt-1">Use digits, commas and one decimal point</span>}
+    </div>
+  );
+}

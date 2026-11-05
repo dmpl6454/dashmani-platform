@@ -2,7 +2,7 @@
 import useSWR, { type SWRConfiguration } from "swr";
 import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
-import type { BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
+import type { AccountsView, FiledYearView, BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
 // SWR hooks over /v1/sales/*. A null key skips the request (no id yet, or a detail page
 // opened without ?id=). keepPreviousData keeps a list on screen while a filter changes.
@@ -76,6 +76,16 @@ export const useRecurringList = (f: { clientId?: string; status?: string } = {})
 export const useRecurring = (id: string | null) => useSWR<Recurring>(id ? `/sales/recurring/${id}` : null, fetcher, opts);
 
 // ─── smart-invoicing: accounts (PR 1) ───
+/** The accounts page for the current company and a financial year (default: the current one). */
+export const useAccounts = (fy?: string) => {
+  const { company } = useCompany();
+  return useSWR<AccountsView>(`/sales/accounts${qs({ company, fy })}`, fetcher, opts);
+};
+/** Filed years of a company (the current one unless given), newest first; PDFs listed without bytes. */
+export const useFiledYears = (forCompany?: CompanyKey) => {
+  const { company } = useCompany();
+  return useSWR<FiledYearView[]>(`/sales/accounts/filed${qs({ company: forCompany ?? company })}`, fetcher, opts);
+};
 
 // ─── smart-invoicing: tally (PR 2) ───
 

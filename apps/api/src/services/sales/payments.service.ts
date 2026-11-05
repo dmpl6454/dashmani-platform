@@ -1,7 +1,7 @@
 import { prisma, type Prisma } from "@dashmani/db";
 import { companyScope, MAX_PAISE, registrationByGstin, SALES_COMPANIES, todayIST, type CompanyKey, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
-import { dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
+import { dateToDay, dayToDate, inBackground, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { queueInvoiceEmails } from "./invoice-email.service";
 import { getSellerOrDefaults } from "./settings.service";
 import { recomputeSettlement, releaseExcess } from "./invoices.service";
@@ -19,6 +19,15 @@ const paymentInclude = {
   client: { select: { id: true, companyName: true } },
   allocations: { include: { invoice: { select: { id: true, number: true, totalPaise: true, companyKey: true } } } },
   refunds: { orderBy: { createdAt: "asc" as const } },
+  // Bank (PR 4): the statement credit this receipt is matched to. The account number is cut to its
+  // last 4 digits in present() — a payment never carries the full number.
+  bankLine: {
+    select: {
+      id: true, txnDate: true, rowNo: true,
+      statement: { select: { fileName: true } },
+      bankAccount: { select: { label: true, accountNumber: true } },
+    },
+  },
 } as const;
 
 const rs = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -44,9 +53,15 @@ export function receiptBalance(p: PaymentRow) {
   };
 }
 
-function present<T extends PaymentRow>(p: T) {
+type BankLineRef = { id: string; txnDate: Date; rowNo: number; statement: { fileName: string }; bankAccount: { label: string; accountNumber: string } } | null;
+
+function present<T extends PaymentRow & { bankLine?: BankLineRef }>(p: T) {
+  const bl = p.bankLine ?? null;
   return {
     ...p,
+    bankLine: bl
+      ? { id: bl.id, txnDate: dateToDay(bl.txnDate), rowNo: bl.rowNo, statement: { fileName: bl.statement.fileName }, bankAccount: { label: bl.bankAccount.label, last4: bl.bankAccount.accountNumber.replace(/\D/g, "").slice(-4) } }
+      : null,
     paidOn: dateToDay(p.paidOn),
     refunds: p.refunds.map((r) => ({ ...r, refundedOn: dateToDay(r.refundedOn) })),
     ...receiptBalance(p),
@@ -199,7 +214,12 @@ export async function recordReceiptTx(
 
 export async function createPayment(input: PaymentCreateInput, actorId: string) {
   const seller = await getSellerOrDefaults(input.companyKey);
-  const { id, invoiceIds } = await prisma.$transaction((tx) => recordReceiptTx(tx, input, actorId, { receiptPrefix: seller.receiptPrefix }));
+  const { id, invoiceIds } = await prisma.$transaction((tx) =>
+    recordReceiptTx(tx, input, actorId, {
+      receiptPrefix: seller.receiptPrefix,
+      columns: { tdsRateBp: input.tdsRateBp ?? null, tdsSection: input.tdsSection ?? null },
+    }),
+  );
   // After commit: the invoice PDF goes to the client and the company's billing addresses.
   queueInvoiceEmails(invoiceIds, id, actorId);
   return getPayment(id);
@@ -241,22 +261,35 @@ export async function allocatePayment(paymentId: string, input: PaymentAllocateI
  * its history; its allocations stop counting, so the invoices it paid are open again. A receipt
  * with refunds out of it cannot be voided until those refunds are cancelled.
  */
+export async function voidPaymentInTx(tx: Tx, paymentId: string, reason: string, actorId: string): Promise<{ bankLineId: string | null }> {
+  const p = await lockPayment(tx, paymentId);
+  if (p.status === "voided") return { bankLineId: p.bankLineId ?? null };
+  if (p.refunds.some((r) => r.status === "issued")) {
+    throw new AppError(409, "PAYMENT_HAS_REFUNDS", `${p.number} has refunds against it — cancel them before voiding the receipt`);
+  }
+  const invoiceIds = [...new Set(p.allocations.map((a) => a.invoiceId))];
+  await lockInvoices(tx, invoiceIds);
+  await tx.salesPayment.update({ where: { id: paymentId }, data: { status: "voided", voidedAt: new Date(), voidReason: reason, voidedById: actorId } });
+  for (const id of invoiceIds) {
+    await recomputeSettlement(tx, id);
+    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "payment_voided", note: `${p.number} — ${reason}` });
+  }
+  await logSalesEvent(tx, { entityType: "payment", entityId: p.id, actorId, action: "voided", fromStatus: "recorded", toStatus: "voided", note: reason });
+  return { bankLineId: p.bankLineId ?? null };
+}
+
 export async function voidPayment(paymentId: string, reason: string, actorId: string) {
-  await prisma.$transaction(async (tx) => {
-    const p = await lockPayment(tx, paymentId);
-    if (p.status === "voided") return;
-    if (p.refunds.some((r) => r.status === "issued")) {
-      throw new AppError(409, "PAYMENT_HAS_REFUNDS", `${p.number} has refunds against it — cancel them before voiding the receipt`);
-    }
-    const invoiceIds = [...new Set(p.allocations.map((a) => a.invoiceId))];
-    await lockInvoices(tx, invoiceIds);
-    await tx.salesPayment.update({ where: { id: paymentId }, data: { status: "voided", voidedAt: new Date(), voidReason: reason, voidedById: actorId } });
-    for (const id of invoiceIds) {
-      await recomputeSettlement(tx, id);
-      await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "payment_voided", note: `${p.number} — ${reason}` });
-    }
-    await logSalesEvent(tx, { entityType: "payment", entityId: p.id, actorId, action: "voided", fromStatus: "recorded", toStatus: "voided", note: reason });
-  });
+  // The receipt → invoices transaction is unchanged; a bank line the receipt was matched to (it
+  // keeps bankLineId) is refreshed AFTER commit — confirm/link recompute under the line lock, so
+  // the brief stale cache can never cause an over-match (spec-bank D10).
+  const r = await prisma.$transaction((tx) => voidPaymentInTx(tx, paymentId, reason, actorId));
+  if (r.bankLineId) {
+    const lineId = r.bankLineId;
+    inBackground("bank line refresh", async () => {
+      const { refreshBankLineAfterVoid } = await import("./bank.service"); // dynamic: bank.service imports this file
+      await refreshBankLineAfterVoid(lineId, paymentId, actorId);
+    });
+  }
   return getPayment(paymentId);
 }
 

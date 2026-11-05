@@ -105,6 +105,9 @@ export interface Payment {
   importId: string | null;
 
   // smart-invoicing: bank (PR 4)
+  /** The bank statement credit this receipt is matched to (account number cut to its last 4). */
+  bankLine?: { id: string; txnDate: string | null; rowNo: number; statement: { fileName: string }; bankAccount: { label: string; last4: string } } | null;
+  tdsRateBp?: number | null; tdsSection?: string | null;
 }
 export interface CreditNote { id: string; number: string; invoiceId: string; status: string; issueDate: string | null; reason: string; taxablePaise: number; totalPaise: number; invoice?: { id: string; number: string | null }; client?: { id: string; companyName: string } }
 export interface Statement { client: ClientRow; invoices: InvoiceRow[]; payments: Payment[]; creditNotes: CreditNote[]; totals: { invoicedPaise: number; collectedPaise: number; tdsPaise: number; creditedPaise: number; outstandingPaise: number; overduePaise: number; refundedPaise: number; unappliedPaise: number } }
@@ -141,6 +144,8 @@ export interface BookingsSummary {
   recentToInvoice: Array<{ id: string; name: string; brand: string; status: string; statusLabel: string; client: string; billablePaise: number }>;
 }
 export interface Dashboard {
+  /** Bank (PR 4): null when the company has no bank account. */
+  bank?: BankSummary | null;
   company: string; today: string; bookings?: BookingsSummary; financialYear: string; ordersByFy: Array<{ financialYear: string; count: number; totalPaise: number; closedPaise: number }>; invoicedFyPaise: number; invoicedFyCount: number; invoicedMonthPaise: number; collectedFyPaise: number; tdsFyPaise: number; collectedMonthPaise: number;
   outstandingPaise: number; outstandingCount: number; overduePaise: number; overdueCount: number;
   openQuotes: { count: number; totalPaise: number }; acceptedQuotes: { count: number; totalPaise: number }; activeOrders: { count: number; totalPaise: number }; deliveredOrders: { count: number; totalPaise: number };
@@ -398,3 +403,60 @@ export interface ImportInvoiceRow {
 }
 
 // ─── smart-invoicing: bank (PR 4) ───
+export type BankPreset = "idfc" | "icici" | "hdfc" | "sbi" | "axis" | "kotak" | "yes" | "other";
+export type BankLineStatus = "unmatched" | "suggested" | "partly_matched" | "matched" | "ignored";
+export type BankConfidence = "high" | "medium" | "low";
+export interface BankAccount {
+  id: string; companyKey: string; label: string; bank: BankPreset; accountNumber: string; last4: string; ifsc: string | null;
+  matchFrom: string | null; status: "active" | "archived"; lastStatementTo: string | null; createdAt: string;
+}
+export interface BankMapping {
+  sheet?: string | null; headerRow: number;
+  columns: { date: number; valueDate?: number | null; narration: number; reference?: number | null; debit?: number | null; credit?: number | null; amount?: number | null; drCr?: number | null; balance?: number | null };
+  dateOrder: "dmy" | "mdy" | "ymd"; amountStyle: "split" | "drcr_column" | "suffix" | "signed_credit_positive" | "signed_debit_positive";
+}
+export interface StatementPreview {
+  fileName: string; fileSha256: string; fileBytes: number; format: string; sheets: string[]; sheet: string | null;
+  preset: BankPreset | null; presetLabel: string | null; headerRow: number | null; headers: string[]; firstRows: string[][];
+  mapping: BankMapping | null; mappingSource: "given" | "last_used" | "detected" | null; needs: Array<"columns" | "dateFormat" | "amountSign">;
+  accountCheck: { status: "match" | "mismatch" | "not_stated"; found: string | null };
+  counts: { rows: number; credits: number; debits: number; skipped: number; errors: number; alreadyImported: number; possibleDuplicates: number; newLines: number; beforeCutover: number };
+  totals: { creditsPaise: number; debitsPaise: number; openingPaise: number | null; closingPaise: number | null };
+  period: { from: string; to: string } | null;
+  balanceCheck: { status: "ok" | "breaks" | "no_balance_column"; breaks: Array<{ rowNo: number; expectedPaise: number; foundPaise: number }> };
+  skipped: Array<{ rowNo: number; reason: string }>; errors: Array<{ rowNo: number; message: string }>;
+  sample: Array<{ rowNo: number; txnDate: string; narration: string; reference: string | null; debitPaise: number | null; creditPaise: number | null; balancePaise: number | null; alreadyImported: boolean }>;
+  duplicateOf: { statementId: string; fileName: string; createdAt: string } | null;
+  blockers: string[]; warnings: string[]; canImport: boolean;
+}
+export interface BankStatementRow {
+  id: string; companyKey: string; bankAccountId: string; account: { label: string; bank: string; last4: string }; fileName: string; format: string;
+  periodFrom: string; periodTo: string; rowCount: number; newLineCount: number; duplicateCount: number; skippedCount: number;
+  creditTotalPaise: number; debitTotalPaise: number; openingBalancePaise: number | null; closingBalancePaise: number | null;
+  warnings: string[] | null; uploadedById: string; createdAt: string; lineCounts: Record<BankLineStatus, number>;
+}
+export interface ImportResult { statement: BankStatementRow; newLines: number; duplicates: number; credits: number; debits: number; autoLinked: number; suggested: number; sure: number; unmatched: number }
+export interface BankCandidate {
+  kind: "invoice" | "advance"; codes: string[]; score: number; confidence: BankConfidence; clientId: string; client: { id: string; companyName: string };
+  amountPaise: number; tdsPaise: number; tdsRateBp: number | null; tdsBase: "taxable" | "gross" | null; tdsSection: string | null;
+  allocations: Array<{ invoiceId: string; number: string; amountPaise: number; tdsPaise: number; balancePaise: number; liveBalancePaise: number; dueDate: string | null }>;
+  advancePaise: number; reasons: string[]; stale: boolean;
+}
+export interface BankLineView {
+  id: string; companyKey: string; bankAccountId: string; account: { label: string; bank: string; last4: string }; statementId: string; statement: { fileName: string };
+  rowNo: number; txnDate: string; valueDate: string | null; narration: string; reference: string | null; utr: string | null; redacted?: true;
+  creditPaise: number; debitPaise: number; balancePaise: number | null; status: BankLineStatus; matchedPaise: number; remainingPaise: number; possibleDuplicate: boolean;
+  bestScore: number | null; confidence: BankConfidence | null; ignoreReason: string | null; ignoreNote: string | null;
+  suggestion: {
+    candidates: BankCandidate[]; receiptCandidates: Array<{ paymentId: string; number: string; clientId: string; clientName: string; amountPaise: number; paidOn: string; why: string }>;
+    conflict: { lineId: string; txnDate: string; invoiceNumber: string } | null; ignoreHint: { reason: string; why: string } | null; note: "too_large" | null;
+  } | null;
+  debitHint: { refund?: { id: string; number: string }; reversalOf?: { lineId: string; txnDate: string; receiptNumbers: string[] } } | null;
+  receipts: Array<{ id: string; number: string; clientName: string; amountPaise: number; tdsPaise: number; status: "recorded" | "voided"; paidOn: string | null }>;
+}
+export interface BankSummary {
+  unmatchedMonthCount: number; unmatchedMonthPaise: number; openCount: number; openPaise: number; reviewCount: number; sureCount: number;
+  accounts: Array<{ id: string; label: string; last4: string; lastStatementTo: string | null }>;
+}
+export interface BankLinesResponse { lines: BankLineView[]; counts: { review: number; sure: number; matched: number; ignored: number; debits: number }; summary: BankSummary | null }
+export interface LineReceipt { paymentId: string; number: string; clientId: string; clientName: string; amountPaise: number; tdsPaise: number; paidOn: string | null; reference: string | null; mode: string; days: number; imported: boolean; why: string }

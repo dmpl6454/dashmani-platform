@@ -13,7 +13,7 @@ const TRUNCATE_SQL = `
       sales_confirmation_files, sales_balance_confirmations, sales_gstr1_docs, sales_gstr1_uploads, sales_tds_entries, sales_tds_uploads, sales_tds_deductors,
       -- smart-invoicing/brs (PR 6): sales_brs_signoffs,
       sales_payment_allocations, sales_payments,
-      -- smart-invoicing/bank (PR 4): sales_bank_lines, sales_bank_statements, sales_bank_accounts,
+      sales_bank_lines, sales_bank_statements, sales_bank_accounts,
       sales_invoice_items, sales_invoices,
       sales_import_invoices, sales_imports,
       sales_order_items, sales_orders, sales_quote_items, sales_quotes, sales_sequences, client_billing_profiles,

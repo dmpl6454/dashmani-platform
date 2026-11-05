@@ -3,6 +3,7 @@ import useSWR, { type SWRConfiguration } from "swr";
 import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
 import type { ConfirmationsView, GstReconView, LedgerResponse, TdsReconView } from "./sales-types";
+import type { BankAccount, BankLinesResponse, BankLineView, BankStatementRow, LineReceipt } from "./sales-types";
 import type { AccountsView, FiledYearView, BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, ImportInvoiceRow, ImportListRow, ImportView, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
 // SWR hooks over /v1/sales/*. A null key skips the request (no id yet, or a detail page
@@ -149,3 +150,18 @@ export const useImportInvoices = (id: string | null, f: { outcome?: string; q?: 
   useSWR<{ total: number; rows: ImportInvoiceRow[] }>(id ? `/sales/imports/${id}/invoices${qs({ outcome: f.outcome, q: f.q, from: String(f.from ?? 0), limit: f.limit ? String(f.limit) : undefined, v: f.v })}` : null, fetcher, opts);
 
 // ─── smart-invoicing: bank (PR 4) ───
+export const useBankAccounts = (forCompany?: CompanyKey) => {
+  const { company } = useCompany();
+  return useSWR<BankAccount[]>(`/sales/bank/accounts${qs({ company: forCompany ?? company })}`, fetcher, opts);
+};
+export const useBankLines = (f: { tab?: string; q?: string; accountId?: string; statementId?: string }) => {
+  const { company } = useCompany();
+  return useSWR<BankLinesResponse>(`/sales/bank/lines${qs({ company, ...f })}`, fetcher, opts);
+};
+export const useBankLine = (id: string | null) => useSWR<BankLineView>(id ? `/sales/bank/lines/${id}` : null, fetcher, opts);
+export const useBankStatements = (f: { accountId?: string } = {}) => {
+  const { company } = useCompany();
+  return useSWR<BankStatementRow[]>(`/sales/bank/statements${qs({ company, ...f })}`, fetcher, opts);
+};
+export const useBankStatement = (id: string | null) => useSWR<BankStatementRow & { lines: BankLineView[] }>(id ? `/sales/bank/statements/${id}` : null, fetcher, opts);
+export const useLineReceipts = (id: string | null) => useSWR<LineReceipt[]>(id ? `/sales/bank/lines/${id}/receipts` : null, fetcher, opts);

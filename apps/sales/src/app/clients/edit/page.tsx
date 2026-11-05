@@ -22,6 +22,8 @@ function EditClient() {
   const [details, setDetails] = useState({ companyName: "", contactName: "", phone: "" });
   const [billing, setBilling] = useState<BillingProfile>(EMPTY_BILLING);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // The TAN the form was filled with — a background refresh may bring a TAN learned from 26AS.
+  const [loadedTan, setLoadedTan] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
@@ -37,6 +39,7 @@ function EditClient() {
         : { ...EMPTY_BILLING, legalName: client.companyName, billingEmail: client.email },
     );
     setEmail(client.email);
+    setLoadedTan(client.billingProfile?.tan ?? null);
     setLoadedFor(client.id);
   }, [client, loadedFor]);
 
@@ -52,7 +55,7 @@ function EditClient() {
     try {
       await apiFetch(`/sales/clients/${id}/profile`, {
         method: "PUT",
-        body: JSON.stringify({ ...details, phone: details.phone || null, billing: billingBody({ ...billing, legalName: billing.legalName || details.companyName }) }),
+        body: JSON.stringify({ ...details, phone: details.phone || null, billing: billingBody({ ...billing, legalName: billing.legalName || details.companyName }, loadedTan) }),
       });
       await mutate();
       router.push(`/clients/view?id=${id}`);

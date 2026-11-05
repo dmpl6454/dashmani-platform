@@ -2,6 +2,7 @@
 import useSWR, { type SWRConfiguration } from "swr";
 import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
+import type { ConfirmationsView, GstReconView, LedgerResponse, TdsReconView } from "./sales-types";
 import type { AccountsView, FiledYearView, BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
 // SWR hooks over /v1/sales/*. A null key skips the request (no id yet, or a detail page
@@ -86,6 +87,29 @@ export const useFiledYears = (forCompany?: CompanyKey) => {
   const { company } = useCompany();
   return useSWR<FiledYearView[]>(`/sales/accounts/filed${qs({ company: forCompany ?? company })}`, fetcher, opts);
 };
+
+// ─── smart-invoicing: reconcile (PR 5) ───
+/** Reconcile → TDS · 26AS for the current company and a FY (default chosen by the server). */
+export const useTdsRecon = (fy?: string) => {
+  const { company } = useCompany();
+  return useSWR<TdsReconView>(`/sales/reconcile/tds${qs({ company, fy })}`, fetcher, opts);
+};
+/** Reconcile → GST · GSTR-1 for a registration and a month / quarter (defaults chosen by the server). */
+export const useGstRecon = (gstin?: string, period?: string) => {
+  const { company } = useCompany();
+  return useSWR<GstReconView>(`/sales/reconcile/gst${qs({ company, gstin, period })}`, fetcher, opts);
+};
+/** Client balances as of a day; polls while a batch is sending. */
+export const useConfirmations = (asOf?: string, from?: string) => {
+  const { company } = useCompany();
+  return useSWR<ConfirmationsView>(`/sales/reconcile/confirmations${qs({ company, asOf, from })}`, fetcher, { ...opts, refreshInterval: (d) => (d?.rows.some((r) => r.confirmation?.sending) ? 3000 : 0) });
+};
+export const useLedger = (clientId: string | null, from?: string, to?: string) => {
+  const { company } = useCompany();
+  return useSWR<LedgerResponse>(clientId ? `/sales/reconcile/ledger${qs({ company, clientId, from, to })}` : null, fetcher, opts);
+};
+
+// ─── smart-invoicing: reconcile BRS (PR 6) ───
 
 // ─── smart-invoicing: tally (PR 2) ───
 

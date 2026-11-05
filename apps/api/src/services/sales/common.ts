@@ -152,7 +152,12 @@ export type SalesEntity =
   | "import"
   | "bank_account"
   | "bank_statement"
-  | "bank_line";
+  | "bank_line"
+  | "tds_upload"
+  | "gst_upload"
+  | "tds_deductor"
+  | "confirmation"
+  | "brs_month";
 
 export async function logSalesEvent(
   tx: Tx | typeof prisma,

@@ -21,7 +21,7 @@ function monthRange(day: string): { from: string; to: string } {
  * not bare actions: another feature's `imported` must not vanish with import's. The `import`
  * entity's own events stay visible.
  */
-const FEED_HIDDEN_ENTITY_TYPES = ["tally_run", "filed_year", "bank_account", "bank_statement", "bank_line"];
+const FEED_HIDDEN_ENTITY_TYPES = ["tally_run", "filed_year", "bank_account", "bank_statement", "bank_line", "tds_upload", "gst_upload", "tds_deductor", "confirmation", "brs_month"];
 const FEED_HIDDEN_ACTIONS: Array<{ entityType: string; action: string }> = [
   { entityType: "invoice", action: "imported" },
   { entityType: "invoice", action: "payment_imported" },
@@ -38,6 +38,8 @@ const FEED_HIDDEN_ACTIONS: Array<{ entityType: string; action: string }> = [
   // Bank: a rematch auto-links many receipts at once (one payment/bank_matched each). A manual
   // confirm still shows through its payment/recorded event.
   { entityType: "payment", action: "bank_matched" },
+  // Reconcile (PR 5): an upload learns several TANs at once.
+  { entityType: "client", action: "tan_learned" },
 ];
 
 /** One company's books: every figure below is filtered to its documents. */

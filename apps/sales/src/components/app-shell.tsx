@@ -24,6 +24,8 @@ const NAV = [
 
   // smart-invoicing: accounts (PR 1)
   { href: "/accounts", label: "Accounts" },
+  // smart-invoicing: reconcile (PR 5)
+  { href: "/reconcile", label: "Reconcile" },
 
   // smart-invoicing: tally (PR 2)
   { href: "/pipeline", label: "Pipeline" },

@@ -11,16 +11,16 @@ import type { CreditNoteView } from "./payments.service";
 // client received. Built-in Helvetica has no rupee glyph, so amounts print as "Rs."; the
 // portal's on-screen view uses ₹.
 
-const PAGE = { width: 595.28, height: 841.89, margin: 40 }; // A4
-const INK = "#111111";
-const MUTED = "#666666";
-const RULE = "#cccccc";
+export const PAGE = { width: 595.28, height: 841.89, margin: 40 }; // A4
+export const INK = "#111111";
+export const MUTED = "#666666";
+export const RULE = "#cccccc";
 
 // Each billing company's logo, printed top-left of its documents when the file exists
 // (apps/api/assets/logos/<companyKey>.png; PNG or JPEG only — pdfkit cannot draw SVG/WebP).
 const LOGO_DIR = path.resolve(__dirname, "../../../assets/logos");
 const logoCache = new Map<string, Buffer | null>();
-function logoFor(companyKey: string | null | undefined): Buffer | null {
+export function logoFor(companyKey: string | null | undefined): Buffer | null {
   const key = /^[a-z]{2,8}$/.test(companyKey ?? "") ? companyKey! : "dspl";
   if (!logoCache.has(key)) {
     const file = path.join(LOGO_DIR, `${key}.png`);
@@ -32,27 +32,27 @@ const LOGO_W = 66;
 const LOGO_H = 56;
 
 /** Draw the logo (if any) and return where the seller's name and address column starts. */
-function sellerColumn(doc: PDFKit.PDFDocument, companyKey: string | null | undefined, left: number, width: number): { x: number; w: number; logoBottom: number } {
+export function sellerColumn(doc: PDFKit.PDFDocument, companyKey: string | null | undefined, left: number, width: number): { x: number; w: number; logoBottom: number } {
   const logo = logoFor(companyKey);
   if (!logo) return { x: left, w: width * 0.6, logoBottom: PAGE.margin };
   doc.image(logo, left, PAGE.margin, { fit: [LOGO_W, LOGO_H] });
   return { x: left + LOGO_W + 12, w: width * 0.6 - LOGO_W - 12, logoBottom: PAGE.margin + LOGO_H };
 }
 
-function rs(paise: number): string {
+export function rs(paise: number): string {
   const rupees = paise / 100;
   const sign = rupees < 0 ? "-" : "";
   return `${sign}Rs. ${Math.abs(rupees).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function fmtDay(day: string | null): string {
+export function fmtDay(day: string | null): string {
   if (!day) return "—";
   const [y, m, d] = day.split("-");
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y}`;
 }
 
-function addressLines(p: { addressLine1?: string | null; addressLine2?: string | null; city?: string | null; state?: string | null; pincode?: string | null; stateCode?: string | null }): string[] {
+export function addressLines(p: { addressLine1?: string | null; addressLine2?: string | null; city?: string | null; state?: string | null; pincode?: string | null; stateCode?: string | null }): string[] {
   const lines = [p.addressLine1, p.addressLine2, [p.city, p.state, p.pincode].filter(Boolean).join(", ")].filter((l): l is string => !!l && l.trim().length > 0);
   if (p.stateCode) lines.push(`State code: ${p.stateCode}${GST_STATE_CODES[p.stateCode] ? ` (${GST_STATE_CODES[p.stateCode]})` : ""}`);
   return lines;
@@ -82,13 +82,13 @@ async function drawEInvoice(doc: PDFKit.PDFDocument, e: EInvoiceView, left: numb
   doc.y = Math.max(doc.y, top + 90) + 6;
 }
 
-function drawDraftMark(doc: PDFKit.PDFDocument): void {
+export function drawDraftMark(doc: PDFKit.PDFDocument, text = "DRAFT — NOT ISSUED"): void {
   // text() moves the cursor; the page content must start where it would have.
   const { x, y } = doc;
   doc.save();
   doc.rotate(-35, { origin: [PAGE.width / 2, PAGE.height / 2] });
   doc.font("Helvetica-Bold").fontSize(64).fillColor("#b00020").fillOpacity(0.08);
-  doc.text("DRAFT — NOT ISSUED", 0, PAGE.height / 2 - 32, { width: PAGE.width, align: "center", lineBreak: false });
+  doc.text(text, 0, PAGE.height / 2 - 32, { width: PAGE.width, align: "center", lineBreak: false });
   doc.restore();
   doc.fillOpacity(1);
   doc.x = x;

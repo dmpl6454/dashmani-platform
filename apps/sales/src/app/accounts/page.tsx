@@ -247,6 +247,7 @@ function GstSection({ d, setToast }: { d: AccountsView; setToast: (t: { message:
           onClick={() => run("cdnr", q("cdnr", true), `gstr1-cdnr-${period}.csv`)}><Download size={14} aria-hidden />{busy === "cdnr" ? "Preparing…" : "Credit notes CDNR CSV"}</button>
         <button type="button" className="btn btn-light btn-sm inline-flex items-center gap-1" disabled={nothing || !!busy} title={nothing ? nothingTitle : undefined}
           onClick={() => run("register", registerQ, `sales-register-${period}.csv`)}><Download size={14} aria-hidden />{busy === "register" ? "Preparing…" : "Sales register CSV"}</button>
+        {reg?.gstin && pb && pb.kind !== "year" && <Link href={`/reconcile?tab=gst&gstin=${reg.gstin}&period=${period}`} className="btn btn-ghost btn-sm">Check against filed GSTR-1 →</Link>}
       </div>
       {nothing && <p className="text-sm text-ink-3 mb-3">{nothingTitle}</p>}
       {reg && totals && (
@@ -343,6 +344,7 @@ function Tds({ d, setToast }: { d: AccountsView; setToast: (t: { message: string
         <button type="button" className="btn btn-light btn-sm inline-flex items-center gap-1" disabled={!!busy || d.tds.totalPaise === 0} onClick={() => run("tds", `/sales/accounts/tds.csv?company=${d.company}&fy=${d.fy.label}`, `tds-by-client-${d.fy.label}.csv`)}>
           <Download size={14} aria-hidden />{busy ? "Preparing…" : "TDS by client CSV"}
         </button>
+        <Link href={`/reconcile?tab=tds&fy=${d.fy.label}`} className="btn btn-ghost btn-sm">Check against Form 26AS →</Link>
       </div>
       {d.tds.totalPaise === 0 ? <Empty title={`No TDS recorded on receipts in ${d.fy.label}.`} body="TDS is entered on Record payment when a client pays less than the invoice." /> : (
         <>

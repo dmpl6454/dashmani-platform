@@ -15,6 +15,7 @@ import salesAccountsRoutes from "../src/routes/sales-accounts.routes";
 import salesTallyRoutes from "../src/routes/sales-tally.routes";
 import salesImportRoutes from "../src/routes/sales-import.routes";
 import salesBankRoutes from "../src/routes/sales-bank.routes";
+import salesReconcileRoutes from "../src/routes/sales-reconcile.routes";
 import { admin, ENTITY_TYPES, manage, sendDownload, staffId, view } from "../src/routes/sales-route-kit";
 import { hasPermission } from "../src/middleware/rbac";
 import { memoryUpload, sha256Hex } from "../src/middleware/upload-private";
@@ -67,7 +68,7 @@ describe("feature routers", () => {
     const stack = (apiRouter as unknown as { stack: Array<{ handle: unknown }> }).stack.map((l) => l.handle);
     const at = stack.indexOf(salesRoutes);
     expect(at).toBeGreaterThanOrEqual(0);
-    expect(stack.slice(at, at + 5)).toEqual([salesRoutes, salesAccountsRoutes, salesTallyRoutes, salesImportRoutes, salesBankRoutes]);
+    expect(stack.slice(at, at + 6)).toEqual([salesRoutes, salesAccountsRoutes, salesTallyRoutes, salesImportRoutes, salesBankRoutes, salesReconcileRoutes]);
   });
 
   for (const f of FEATURES) {
@@ -103,7 +104,7 @@ describe("feature routers", () => {
   });
 
   it("GET /sales/events accepts every pre-registered entity type", async () => {
-    expect(ENTITY_TYPES).toEqual(["quote", "order", "invoice", "payment", "credit_note", "settings", "client", "recurring", "filed_year", "tally_run", "import", "bank_account", "bank_statement", "bank_line"]);
+    expect(ENTITY_TYPES).toEqual(["quote", "order", "invoice", "payment", "credit_note", "settings", "client", "recurring", "filed_year", "tally_run", "import", "bank_account", "bank_statement", "bank_line", "tds_upload", "gst_upload", "tds_deductor", "confirmation", "brs_month"]);
     await logSalesEvent(prisma, { entityType: "bank_line", entityId: "line-1", action: "ignored" });
     const r = await request(app).get("/v1/sales/events?entityType=bank_line&entityId=line-1").set(auth(viewer.token));
     expect(r.status).toBe(200);

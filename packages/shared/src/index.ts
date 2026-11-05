@@ -80,6 +80,8 @@ export * from "./sales/companies";
 export * from "./sales/tds";
 // smart-invoicing: accounts (PR 1)
 export * from "./sales/accounts";
+// smart-invoicing: reconcile (PR 5)
+export * from "./sales/recon";
 
 // smart-invoicing: bank (PR 4)
 export * as contentValidators from "./validators/content";

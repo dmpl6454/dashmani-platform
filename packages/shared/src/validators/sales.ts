@@ -2,6 +2,7 @@ import { z } from "zod";
 import { safeString, normalizedEmail, isHttpUrl, HTTP_URL_MESSAGE } from "../utils/sanitize";
 import { DEFAULT_GST_RATE_BP, DEFAULT_SAC, GST_STATE_CODES, TAX_MODES } from "../sales/gst";
 import { COMPANY_KEYS } from "../sales/companies";
+import { FILED_FIGURE_KEYS } from "../sales/accounts";
 
 // sales.digitalsukoon.com — shared by the API (input validation) and the portal (forms).
 // Import BY PATH from the frontend ("@dashmani/shared/src/validators/sales"), never via the barrel.
@@ -381,6 +382,27 @@ export const creditNoteCreateSchema = z.object({
 export type CreditNoteCreateInput = z.infer<typeof creditNoteCreateSchema>;
 
 // ─── smart-invoicing: accounts (PR 1) ───
+// Filed accounts (sales.digitalsukoon.com/accounts): the 12 key figures typed from a company's
+// signed balance sheet + P&L for one closed FY. BIGINT paise, bounded so Number() stays exact.
+export const FILED_MAX_PAISE = 1_000_000_000_000_000;
+export const FILED_ENTRY_UNITS = ["rupees", "thousands", "lakhs", "crores"] as const;
+export const FILED_FILE_KINDS = ["accounts", "audit_report", "other"] as const;
+const filedAmount = (signed: boolean) => z.number().int()
+  .min(signed ? -FILED_MAX_PAISE : 0, signed ? "That figure is too large — check the unit (rupees, lakhs, crores)" : "This figure can't be negative")
+  .max(FILED_MAX_PAISE, "That figure is too large — check the unit (rupees, lakhs, crores)")
+  .nullable();
+export const filedYearSchema = z.object({
+  revenuePaise: filedAmount(false), otherIncomePaise: filedAmount(false), totalExpensesPaise: filedAmount(false),
+  profitBeforeTaxPaise: filedAmount(true), taxExpensePaise: filedAmount(true), profitAfterTaxPaise: filedAmount(true),
+  totalAssetsPaise: filedAmount(false), totalLiabilitiesPaise: filedAmount(false), equityPaise: filedAmount(true),
+  cashAndBankPaise: filedAmount(false), tradeReceivablesPaise: filedAmount(false), tradePayablesPaise: filedAmount(false),
+  enteredIn: z.enum(FILED_ENTRY_UNITS).default("rupees"),
+  notes: optionalText(4000),
+  /** updatedAt of the row the form loaded; null when the form started from no row. */
+  baseUpdatedAt: z.string().datetime().nullable(),
+}).refine((v) => FILED_FIGURE_KEYS.some((k) => v[k] != null) || !!v.notes,
+  { message: "Type at least one figure, or a note", path: ["revenuePaise"] });
+export type FiledYearInput = z.infer<typeof filedYearSchema>;
 
 // ─── smart-invoicing: tally (PR 2) ───
 

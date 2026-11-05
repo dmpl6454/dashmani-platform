@@ -152,6 +152,40 @@ export interface Recurring {
 }
 
 // ─── smart-invoicing: accounts (PR 1) ───
+// GET /sales/accounts (spec-accounts §3.2). Money = integer paise; days YYYY-MM-DD (IST); months YYYY-MM.
+export type { EntryUnit, FiledFigureKey, GstSection, AgeKey } from "@dashmani/shared/src/sales/accounts";
+export type { TdsRateLabel } from "@dashmani/shared/src/sales/tds";
+type AcctTds = import("@dashmani/shared/src/sales/tds").TdsRateLabel;
+type AcctUnit = import("@dashmani/shared/src/sales/accounts").EntryUnit;
+type AcctFigure = import("@dashmani/shared/src/sales/accounts").FiledFigureKey;
+type AcctAge = import("@dashmani/shared/src/sales/accounts").AgeKey;
+export type Money4 = { taxablePaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number };
+export type Money5 = Money4 & { totalPaise: number };
+export interface FiledFile { id: string; kind: string; fileName: string; sizeBytes: number; sha256: string; createdAt: string }
+/** A filed year as the API sends it — the PDF list NEVER carries the bytes. */
+export interface FiledYearView { id: string; fy: string; enteredIn: AcctUnit; notes: string | null; updatedAt: string; updatedById: string; figures: Record<AcctFigure, number | null>; files: FiledFile[] }
+export interface GstMonth { month: string; invoices: Money5 & { count: number }; creditNotes: Money5 & { count: number }; net: Money5; b2cTaxablePaise: number; gstr3b: { a: Money4; b: { taxablePaise: number; igstPaise: number } } }
+export interface AccountsView {
+  company: "dspl" | "dmpl";
+  fy: { label: string; startDay: string; endDay: string; closed: boolean };
+  today: string; computedAt: string;
+  years: Array<{ fy: string; closed: boolean; liveInvoices: number; liveNetTaxablePaise: number; filed: FiledYearView | null; gapPaise: number | null }>;
+  registrations: Array<{ gstin: string; label: string; current: boolean }>;
+  invoiced: { gross: Money5 & { count: number; roundOffPaise: number }; creditNotes: Money5 & { count: number; onEarlierYearInvoices: number }; net: Money5; cancelled: { count: number; totalPaise: number } };
+  collected: { receipts: number; receivedPaise: number; refundedPaise: number; netPaise: number; tdsPaise: number; byMode: Array<{ mode: string; receipts: number; receivedPaise: number; refundedPaise: number; netPaise: number }> };
+  months: Array<{ month: string; invoicedPaise: number; collectedPaise: number; tdsPaise: number; future: boolean }>;
+  gst: {
+    byRegistration: Array<{ gstin: string; months: GstMonth[]; totals: { invoices: Money5; creditNotes: Money5; net: Money5 } }>;
+    documents: Array<{ month: string; gstin: string; doc: "invoice" | "credit_note"; series: string; first: string; last: string; total: number; cancelled: number }>;
+    warnings: Array<{ code: "CHANGED_AFTER_DUE" | "CREDIT_NOTE_LATE" | "NO_SELLER_GSTIN" | "SECTION_CHECK"; count: number; message: string; documents: Array<{ id: string; kind: "invoice" | "credit_note"; number: string }> }>;
+  };
+  tds: { totalPaise: number; receipts: number; byQuarter: [number, number, number, number]; clients: Array<{ clientId: string; name: string; pan: string | null; panSource: "profile" | "gstin" | null; gstin: string | null; quarters: [number, number, number, number]; totalPaise: number; receipts: number; rates: AcctTds[] }> };
+  receivables: { asOf: string; totalPaise: number; invoices: number; overduePaise: number; fromThisFyPaise: number; buckets: Array<{ key: AcctAge; label: string; paise: number; invoices: number }>; topDebtors: Array<{ clientId: string; name: string; balancePaise: number; overduePaise: number; invoices: number; oldestDue: string }> };
+  unapplied: { cashPaise: number; tdsPaise: number; receipts: number; clients: number; top: Array<{ clientId: string; name: string; paise: number }> };
+  bank: null | { unmatchedCount: number; unmatchedPaise: number; lastStatementDay: string | null };
+  filed: FiledYearView | null;
+  comparison: { state: "current" | "closed_filed" | "closed_not_filed"; filedRevenuePaise: number | null; liveNetTaxablePaise: number; gapPaise: number | null; gapBp: number | null };
+}
 
 // ─── smart-invoicing: tally (PR 2) ───
 

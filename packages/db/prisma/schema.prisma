@@ -3491,6 +3491,66 @@ model SalesRecurringInvoice {
 
 // ─── smart-invoicing: accounts (PR 1) ───
 
+/// Key figures from a company's FILED financial statements (signed balance sheet + P&L) for one
+/// CLOSED financial year, typed by an admin on sales.digitalsukoon.com/accounts. Money is BIGINT
+/// paise (a year's figures pass the INT cap); null = not typed; PBT, tax, PAT and equity may be
+/// negative. Never computed — the live figures come from the sales tables on every read.
+model FinanceFiledYear {
+  id                    String   @id @default(uuid())
+  /// dspl | dmpl (SALES_COMPANIES)
+  companyKey            String   @map("company_key") @db.VarChar(8)
+  /// "2025-26" = 1 April 2025 – 31 March 2026. Only years that have ended.
+  financialYear         String   @map("financial_year") @db.VarChar(7)
+  revenuePaise          BigInt?  @map("revenue_paise")
+  otherIncomePaise      BigInt?  @map("other_income_paise")
+  totalExpensesPaise    BigInt?  @map("total_expenses_paise")
+  profitBeforeTaxPaise  BigInt?  @map("profit_before_tax_paise")
+  taxExpensePaise       BigInt?  @map("tax_expense_paise")
+  profitAfterTaxPaise   BigInt?  @map("profit_after_tax_paise")
+  totalAssetsPaise      BigInt?  @map("total_assets_paise")
+  /// non-current + current liabilities, EXCLUDING equity
+  totalLiabilitiesPaise BigInt?  @map("total_liabilities_paise")
+  /// share capital + other equity
+  equityPaise           BigInt?  @map("equity_paise")
+  cashAndBankPaise      BigInt?  @map("cash_and_bank_paise")
+  tradeReceivablesPaise BigInt?  @map("trade_receivables_paise")
+  tradePayablesPaise    BigInt?  @map("trade_payables_paise")
+  /// rupees | thousands | lakhs | crores — the unit the figures were typed in (display only)
+  enteredIn             String   @default("rupees") @map("entered_in") @db.VarChar(10)
+  notes                 String?  @db.Text
+  createdById           String   @map("created_by_id")
+  updatedById           String   @map("updated_by_id")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  files FinanceFiledFile[]
+
+  @@unique([companyKey, financialYear])
+  @@map("finance_filed_years")
+}
+
+/// A signed PDF attached to a filed year. The BYTES LIVE HERE (BYTEA, ≤ 10 MiB) — never under the
+/// public uploads/ folder, never on disk. Only the download route selects `data`; every other
+/// query must `select` around it.
+model FinanceFiledFile {
+  id           String   @id @default(uuid())
+  filedYearId  String   @map("filed_year_id")
+  /// accounts (signed balance sheet + P&L) | audit_report | other
+  kind         String   @default("accounts") @db.VarChar(16)
+  fileName     String   @map("file_name") @db.VarChar(200)
+  sizeBytes    Int      @map("size_bytes")
+  /// hex SHA-256 of the bytes — the same PDF attached twice is one row
+  sha256       String   @db.VarChar(64)
+  data         Bytes
+  uploadedById String   @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  filedYear FinanceFiledYear @relation(fields: [filedYearId], references: [id], onDelete: Restrict)
+
+  @@unique([filedYearId, sha256])
+  @@map("finance_filed_files")
+}
+
 // ─── smart-invoicing: tally (PR 2) ───
 
 // ─── smart-invoicing: import (PR 3) ───

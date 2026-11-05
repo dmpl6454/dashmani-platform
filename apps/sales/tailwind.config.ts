@@ -24,6 +24,8 @@ const config: Config = {
         attention: { DEFAULT: "#F5B445", bg: "rgba(245,180,69,0.14)" },
         success:   { DEFAULT: "#6EE7A0", bg: "rgba(110,231,160,0.14)" },
         danger:    { DEFAULT: "#FF8A8A", bg: "rgba(255,138,138,0.14)" },
+        // The accounts chart (validated for the dark surface): invoiced, collected.
+        chart:     { 1: "#3987e5", 2: "#d95926" },
       },
       fontFamily: {
         sans: ["Manrope", "system-ui", "sans-serif"],

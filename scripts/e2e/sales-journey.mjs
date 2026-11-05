@@ -484,6 +484,46 @@ await journey("client-statement-and-search", async () => {
 });
 
 // smart-invoicing: accounts steps
+await journey("accounts-page", async () => {
+  await go("/accounts"); await ready(); await page.getByRole("heading", { name: "Accounts", exact: true, level: 1 }).waitFor();
+  check("accounts page shows the live figures", /Invoiced/.test(await text()) && /GST output/.test(await text()), (await text()).slice(0, 200));
+  const pills = page.getByRole("radiogroup", { name: "Financial year" }).getByRole("radio");
+  const n = await pills.count();
+  check("financial-year pills listed", n >= 4, n);
+  // The whole year's sales register: header line first.
+  const fyLabel = (await pills.first().innerText()).slice(0, 7);
+  await page.getByLabel("Return period").selectOption(fyLabel);
+  const register = page.getByRole("button", { name: /Sales register CSV/ });
+  if (await register.isEnabled()) {
+    const [dl] = await Promise.all([page.waitForEvent("download"), register.click()]);
+    const body = await (await import("node:fs/promises")).readFile(await dl.path(), "utf8");
+    check("register CSV starts with its header", body.replace(/^\uFEFF/, "").startsWith("Seller GSTIN,Section,Document"), body.slice(0, 80));
+  }
+  // A closed year's filed figures, typed in lakhs with a loss.
+  await pills.nth(1).click(); await settle(); await page.waitForTimeout(500);
+  const closed = (await pills.nth(1).innerText()).slice(0, 7);
+  await go(`/accounts/filed?fy=${closed}&company=dspl`); await ready();
+  await page.getByLabel("Typing figures in").selectOption("lakhs");
+  // exact: the sign toggle's group is labelled "Profit after tax: Profit or Loss".
+  const revenue = page.getByRole("textbox", { name: "Revenue from operations", exact: true });
+  const pat = page.getByRole("textbox", { name: "Profit after tax", exact: true });
+  await revenue.fill("48.2153");
+  await pat.fill("12");
+  await page.getByRole("group", { name: /Profit after tax/ }).getByRole("button", { name: "Loss" }).click();
+  // A red box blocks Save; fixing it unblocks it.
+  await pat.fill("12.3.4");
+  await page.getByText("Fix the figures marked in red first.").waitFor({ timeout: 3_000 }).catch(() => {});
+  check("an invalid figure disables Save", await page.getByRole("button", { name: "Save filed figures" }).isDisabled(), "enabled");
+  await pat.fill("12");
+  await page.locator("input[type=file]").setInputFiles({ name: "signed.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\n%e2e\n") });
+  await page.waitForTimeout(1200);
+  check("signed PDF attached", /signed\.pdf/.test(await text()), await toastText());
+  check("the first attach keeps the typed figures", (await revenue.inputValue()) === "48.2153" && (await page.getByLabel("Typing figures in").inputValue()) === "lakhs", await revenue.inputValue());
+  await page.getByRole("button", { name: "Save filed figures" }).click();
+  await page.waitForURL(/\/accounts\?fy=/); await settle(); await ready();
+  check("the save is confirmed on /accounts", /Filed figures for .* saved\.|Nothing changed\./.test(await toastText()), await toastText()); // a re-run saves the same figures
+  check("filed row shows in Filed accounts vs the portal", /48,21,530/.test(await text()), (await text()).slice(-400));
+});
 
 // smart-invoicing: tally steps
 
@@ -501,7 +541,7 @@ await journey("desktop-screens", async () => {
 await journey("phone-pass", async () => {
   await page.setViewportSize({ width: 390, height: 844 });
   const pages = ["/dashboard", "/inventory", "/clients", `/clients/view?id=${ids.client}`, "/quotes", `/quotes/view?id=${ids.quote}`, "/orders", `/orders/view?id=${ids.order}`, "/invoices", `/invoices/view?id=${ids.invoice}`, "/payments", `/payments/view?id=${ids.receipt}`, "/bookings", "/settings", `/quotes/edit?clientId=${ids.client}`, `/orders/edit?clientId=${ids.client}`, `/invoices/edit?clientId=${ids.client}`, `/payments/record?clientId=${ids.client}`, `/payments/record?clientId=${ids.ka}`, `/invoices/view?id=${ids.kaInv}`];
-  pages.push(/* accounts (PR 1) */);
+  pages.push(/* accounts (PR 1) */ "/accounts", "/accounts/filed?fy=2025-26&company=dspl");
 
   pages.push(/* tally (PR 2) */);
 

@@ -3808,6 +3808,49 @@ model SalesConfirmationFile {
 }
 
 // ─── smart-invoicing: reconcile BRS (PR 6) ───
+// The Bank tab of /reconcile (spec-reconcile §5.4): bank reconciliation statements, receipts side.
+// Figures are computed on read; only the sign-offs are stored.
+
+/// One reconciled version of a bank account × month. Immutable once written except the supersede
+/// columns. The current reconciliation is the row whose activeKey is set.
+/// balanceSource: statement | typed     supersedeKind: re_reconciled | reopened
+model SalesBrsSignoff {
+  id                 String    @id @default(uuid())
+  companyKey         String    @map("company_key") @db.VarChar(8)
+  bankAccountId      String    @map("bank_account_id")
+  /// "2026-10"
+  month              String    @db.VarChar(7)
+  version            Int
+  /// "<bankAccountId>:<month>" while current; NULL once superseded
+  activeKey          String?   @unique @map("active_key") @db.VarChar(64)
+  /// md5 hex of the month's inputs (§5.4.6)
+  fingerprint        String    @db.VarChar(32)
+  balanceSource      String    @map("balance_source") @db.VarChar(9)
+  openingPaise       BigInt    @map("opening_paise")
+  creditsPaise       BigInt    @map("credits_paise")
+  debitsPaise        BigInt    @map("debits_paise")
+  closingPaise       BigInt    @map("closing_paise")
+  booksPaise         BigInt    @map("books_paise")
+  openItemsPaise     BigInt    @map("open_items_paise")
+  openItemCount      Int       @map("open_item_count")
+  /// BrsView as reconciled (numbers only, every item with its reason) — this version's PDF/CSV render from it
+  snapshot           Json
+  /// acknowledgements given: subset of ["open_items","coverage_gap","statement_break"]
+  accepted           Json
+  note               String?   @db.VarChar(1000)
+  reconciledById     String    @map("reconciled_by_id")
+  reconciledAt       DateTime  @default(now()) @map("reconciled_at")
+  supersededAt       DateTime? @map("superseded_at")
+  supersededById     String?   @map("superseded_by_id")
+  supersedeKind      String?   @map("supersede_kind") @db.VarChar(16)
+  supersedeReason    String?   @map("supersede_reason") @db.VarChar(500)
+
+  bankAccount SalesBankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([bankAccountId, month, version])
+  @@index([companyKey, month])
+  @@map("sales_brs_signoffs")
+}
 
 // ─── smart-invoicing: tally (PR 2) ───
 
@@ -4082,6 +4125,7 @@ model SalesBankAccount {
 
   statements SalesBankStatement[]
   lines      SalesBankLine[]
+  brsSignoffs SalesBrsSignoff[]
 
   @@index([companyKey])
   @@map("sales_bank_accounts")

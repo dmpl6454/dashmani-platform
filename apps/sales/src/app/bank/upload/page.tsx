@@ -7,9 +7,9 @@ import { useCompany } from "@/lib/company";
 import { apiUpload } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, fmtInr } from "@/lib/format";
-import { Field, Loading, Money, PageHead, Toast } from "@/components/sales-ui";
+import { Field, LoadError, Loading, Money, PageHead, Toast } from "@/components/sales-ui";
 import { MappingEditor } from "@/components/bank/mapping-editor";
-import { refreshAfterBankAction } from "@/components/bank/line-card";
+import { refreshAfterBankAction, setBankFlash } from "@/components/bank/line-card";
 import type { BankMapping, ImportResult, StatementPreview } from "@/lib/sales-types";
 
 // /bank/upload — choose the account and the file; the statement is read at once (nothing is
@@ -18,7 +18,7 @@ import type { BankMapping, ImportResult, StatementPreview } from "@/lib/sales-ty
 export default function UploadPage() {
   const router = useRouter();
   const { company, info } = useCompany();
-  const { data: accounts, isLoading } = useBankAccounts();
+  const { data: accounts, error: accError, isLoading, mutate: retryAccounts } = useBankAccounts();
   const active = (accounts ?? []).filter((a) => a.status === "active");
   const [accountId, setAccountId] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -31,10 +31,12 @@ export default function UploadPage() {
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => { if (!accountId && active.length) setAccountId(active[0].id); }, [accountId, active]);
 
-  async function read(f: File, m: BankMapping | null) {
+  // The account is passed in, never read from this render's closure: changing the select and
+  // re-reading in one handler would otherwise preview against the PREVIOUS account.
+  async function read(f: File, m: BankMapping | null, acct: string = accountId) {
     setBusy("reading"); setErr(null); setAccept(false);
     const form = new FormData();
-    form.append("bankAccountId", accountId);
+    form.append("bankAccountId", acct);
     if (m) form.append("mapping", JSON.stringify(m));
     form.append("file", f);
     try {
@@ -55,12 +57,14 @@ export default function UploadPage() {
       const r = await apiUpload<ImportResult>(`/sales/bank/statements?company=${company}`, form);
       await refreshAfterBankAction();
       const d = r.data;
-      setToast(`Imported ${d.newLines} lines (${d.credits} credits) · ${d.autoLinked} linked to receipts already recorded · ${d.suggested} to review.`);
+      // The upload page unmounts on the way to /bank, so the summary travels with it.
+      setBankFlash(`Imported ${d.newLines} lines (${d.credits} credits) · ${d.autoLinked} linked to receipts already recorded · ${d.suggested} to review${d.matching === "running" ? " · still matching older credits, refresh in a minute" : ""}.`);
       router.replace("/bank");
     } catch (e) { setErr(errorSentence(e)); } finally { setBusy(null); }
   }
 
   if (isLoading) return <Loading />;
+  if (accError) return <LoadError error={accError} retry={() => retryAccounts()} />;
   const p = preview;
   const blocked = !p || !p.canImport || (p.warnings.length > 0 && !accept);
   return (
@@ -70,7 +74,7 @@ export default function UploadPage() {
       {!active.length ? <p className="text-sm text-ink-3">No active bank account for {info.short} — an admin adds one in Settings → Bank accounts.</p> : (
         <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           <Field label="Bank account">
-            <select className="input" value={accountId} onChange={(e) => { setAccountId(e.target.value); if (file) void read(file, null); }}>
+            <select className="input" value={accountId} onChange={(e) => { const v = e.target.value; setAccountId(v); setPreview(null); if (file) void read(file, null, v); }}>
               {active.map((a) => <option key={a.id} value={a.id}>{a.label} ••{a.last4}</option>)}
             </select>
           </Field>

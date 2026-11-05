@@ -16,6 +16,22 @@ import type { BankCandidate, BankLineView } from "@/lib/sales-types";
 export const refreshAfterBankAction = () =>
   mutateGlobal((k) => typeof k === "string" && ["/sales/invoices", "/sales/payments", "/sales/dashboard", "/sales/clients", "/sales/bank"].some((p) => k.startsWith(p)), undefined, { revalidate: true });
 
+/** One message carried to /bank across a navigation (sessionStorage; never required to work). */
+const FLASH_KEY = "sales.bank.flash";
+export function setBankFlash(message: string) {
+  try { sessionStorage.setItem(FLASH_KEY, message); } catch { /* private window: the summary is lost, the import is not */ }
+}
+export function takeBankFlash(): string | null {
+  try { const m = sessionStorage.getItem(FLASH_KEY); sessionStorage.removeItem(FLASH_KEY); return m; } catch { return null; }
+}
+
+/** A credit "Confirm" can record as is — the card's button and "Confirm all sure" use this one rule (as the server does). */
+export function isSure(line: BankLineView): boolean {
+  const top = line.suggestion?.candidates[0] ?? null;
+  return line.status === "suggested" && line.confidence === "high" && !!top && !top.stale && !line.suggestion?.conflict
+    && !line.suggestion?.receiptCandidates.length && !line.possibleDuplicate;
+}
+
 export function ConfidencePill({ confidence }: { confidence: string | null }) {
   if (confidence === "high") return <StatusPill status="matched" label="sure" />;
   if (confidence === "medium") return <StatusPill status="suggested" label="likely" />;
@@ -42,7 +58,7 @@ export function LineCard({ line, onToast }: { line: BankLineView; onToast: (mess
   const [reopen, setReopen] = useState(false);
   const top = line.suggestion?.candidates[0] ?? null;
   const isDebit = line.debitPaise > 0;
-  const sure = line.status === "suggested" && line.confidence === "high" && top && !top.stale && !line.suggestion?.conflict && !line.suggestion?.receiptCandidates.length && !line.possibleDuplicate;
+  const sure = isSure(line);
   const open = ["unmatched", "suggested", "partly_matched"].includes(line.status);
   async function confirmIt() {
     try {

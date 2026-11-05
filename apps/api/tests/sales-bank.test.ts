@@ -19,6 +19,7 @@ vi.mock("../src/services/email.service", async (orig) => {
 
 import app from "../src/app";
 import { flushSalesBackground } from "../src/services/sales/common";
+import { setBankLinePageSizeForTests } from "../src/services/sales/bank.service";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
 
 const SELLER = {
@@ -124,6 +125,21 @@ describe("bank statements, matching and TDS", () => {
     expect(asSales[0]).toMatchObject({ narration: "", reference: null, utr: null, redacted: true, debitPaise: 20_000 });
     const asAdmin = (await api().get("/v1/sales/bank/lines?company=dspl&tab=debits").set(auth(adminT))).body.data.lines;
     expect(asAdmin[0].narration).toBe("ATM WDL SALARY RAVI");
+    // A text search must not tell a non-admin which withdrawals mention a word — on ANY tab (R→G).
+    for (const tab of ["all", "debits", "review"]) {
+      expect((await api().get(`/v1/sales/bank/lines?company=dspl&tab=${tab}&q=SALARY`).set(auth(sales))).body.data.lines).toHaveLength(0);
+    }
+    const st = await prisma.salesBankStatement.findFirstOrThrow();
+    expect((await api().get(`/v1/sales/bank/lines?company=dspl&tab=all&statementId=${st.id}&q=SALARY`).set(auth(sales))).body.data.lines).toHaveLength(0);
+    expect((await api().get("/v1/sales/bank/lines?company=dspl&tab=all&q=SALARY").set(auth(adminT))).body.data.lines).toHaveLength(1);
+  });
+
+  it("an all-digit search finds a UTR/RRN as well as an amount (R→G)", async () => {
+    await importFile(statement([{ date: d(-1), narr: "UPI/530912345678/PAYMENT FROM RIYA", cr: 250_000 }, { date: d(-1), narr: "NEFT CR OTHER", cr: 530_900 }]));
+    const byRrn = (await api().get("/v1/sales/bank/lines?company=dspl&tab=all&q=530912345678").set(auth(sales))).body.data.lines;
+    expect(byRrn.map((l: { creditPaise: number }) => l.creditPaise)).toEqual([250_000]);
+    const byAmount = (await api().get("/v1/sales/bank/lines?company=dspl&tab=all&q=5309").set(auth(sales))).body.data.lines;
+    expect(byAmount.map((l: { creditPaise: number }) => l.creditPaise).sort()).toEqual([250_000, 530_900]);
   });
 
   it("preview writes nothing and stores no file (R→G)", async () => {
@@ -373,6 +389,43 @@ describe("bank statements, matching and TDS", () => {
     expect((await prisma.salesBankLine.findUniqueOrThrow({ where: { id: l2.id } })).status).toBe("matched");
   });
 
+  it("a voided receipt stays on its line: unlink refuses it; a second void logs nothing more (R→G)", async () => {
+    await issued();
+    await importFile(statement([{ date: d(-1), narr: narr("HDFCN52026110021"), cr: 11_800_000 }]));
+    const line = await lineOf("HDFCN52026110021");
+    const p = (await confirmTop(line)).body.data.payment;
+    expect((await api().post(`/v1/sales/payments/${p.id}/void`).set(auth(sales)).send({ reason: "bounced" })).status).toBe(200);
+    await flushSalesBackground();
+    expect((await api().post(`/v1/sales/payments/${p.id}/void`).set(auth(sales)).send({ reason: "bounced again" })).status).toBe(200);
+    await flushSalesBackground();
+    const voidedEvents = await prisma.salesEvent.count({ where: { entityType: "bank_line", entityId: line.id, action: "receipt_voided" } });
+    expect(voidedEvents).toBe(1);
+    for (const action of ["detach", "void"]) {
+      const r = await api().post(`/v1/sales/bank/lines/${line.id}/unlink`).set(auth(sales)).send({ paymentId: p.id, action, reason: "tidy up" });
+      expect([r.status, r.body.error.code]).toEqual([409, "PAYMENT_VOIDED"]);
+    }
+    expect((await prisma.salesPayment.findUniqueOrThrow({ where: { id: p.id } })).bankLineId).toBe(line.id);
+    expect(await prisma.salesEvent.count({ where: { entityType: "bank_line", entityId: line.id, action: "receipt_voided" } })).toBe(1);
+  });
+
+  it("matching does not depend on how open credits are paged: two credits for one invoice → one sure (R→G)", async () => {
+    setBankLinePageSizeForTests(1);
+    try {
+      await issued();
+      await importFile(statement([
+        { date: d(-2), narr: narr("HDFCN52026110031"), cr: 11_800_000 },
+        { date: d(-1), narr: narr("HDFCN52026110032"), cr: 11_800_000 },
+      ]));
+      const lines = await prisma.salesBankLine.findMany({ where: { creditPaise: { gt: 0 } } });
+      expect(lines).toHaveLength(2);
+      expect(lines.filter((l) => l.confidence === "high")).toHaveLength(1);
+      const other = lines.find((l) => l.confidence !== "high")!;
+      expect((other.suggestion as { conflict: { invoiceNumber: string } | null }).conflict).not.toBeNull();
+    } finally {
+      setBankLinePageSizeForTests(2000);
+    }
+  });
+
   it("voiding a bank-matched receipt from its own page reopens the line after commit (R→G)", async () => {
     await issued();
     await importFile(statement([{ date: d(-1), narr: narr("HDFCN52026110015"), cr: 11_800_000 }]));
@@ -414,7 +467,12 @@ describe("bank statements, matching and TDS", () => {
     const p = await api().post(`/v1/sales/bank/lines/${l.id}/confirm`).set(auth(sales)).send({ clientId: filmy, amountPaise: 1_000 });
     expect(p.status).toBe(201);
     expect((await api().post(`/v1/sales/bank/lines/${l.id}/ignore`).set(auth(sales)).send({ reason: "interest" })).body.error.code).toBe("BANK_LINE_HAS_RECEIPTS");
-    const bulk = await api().post("/v1/sales/bank/lines/ignore-before?company=dspl").set(auth(sales)).send({ before: d(-30), reason: "other", note: "Swipe-era credits" });
+    // Bulk ignore is an admin action, and a dry run counts without changing anything.
+    expect((await api().post("/v1/sales/bank/lines/ignore-before?company=dspl").set(auth(sales)).send({ before: d(-30), reason: "other", note: "Swipe-era credits" })).status).toBe(403);
+    const dry = await api().post("/v1/sales/bank/lines/ignore-before?company=dspl").set(auth(adminT)).send({ before: d(-30), reason: "other", note: "Swipe-era credits", dryRun: true });
+    expect(dry.body.data).toEqual({ wouldIgnore: 2, wouldIgnorePaise: 3_000 });
+    expect(await prisma.salesBankLine.count({ where: { narration: { startsWith: "OLD CREDIT" }, status: "ignored" } })).toBe(0);
+    const bulk = await api().post("/v1/sales/bank/lines/ignore-before?company=dspl").set(auth(adminT)).send({ before: d(-30), reason: "other", note: "Swipe-era credits" });
     expect(bulk.body.data).toEqual({ ignored: 2 });
     expect((await prisma.salesBankLine.findMany({ where: { narration: { startsWith: "OLD CREDIT" } } })).every((x) => x.status === "ignored" && x.ignoreNote === "Swipe-era credits")).toBe(true);
     expect((await prisma.salesBankLine.findUniqueOrThrow({ where: { id: l.id } })).status).toBe("partly_matched");

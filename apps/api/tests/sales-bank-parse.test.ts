@@ -179,6 +179,13 @@ describe("account hint", () => {
     expect(run("Statement of account").status).toBe("not_stated");
     expect(checkAccount("123456789", "88452818788").status).toBe("mismatch");
   });
+  it("an SBI header that zero-pads the number matches the number as registered (R→G)", () => {
+    const run = (pre: string, mine: string) => { const r = withPre(pre); return applyMapping(r, detectMapping(r)!.mapping, { ...OPTS, accountNumber: mine }).accountCheck.status; };
+    expect(run("Account Number : 00000031234567890", "31234567890")).toBe("match");
+    expect(run("Account Number : 31234567890", "00031234567890")).toBe("match");
+    expect(run("Account Number : 00000031234567891", "31234567890")).toBe("mismatch");
+    expect(checkAccount("0000000", "0")).toEqual({ status: "mismatch", found: "0000000" });
+  });
 });
 
 describe("extractUtr", () => {

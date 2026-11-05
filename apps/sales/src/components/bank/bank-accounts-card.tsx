@@ -8,7 +8,7 @@ import { isAdminUser } from "@/lib/access";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
-import { Field, StatusPill, Toast } from "@/components/sales-ui";
+import { Field, LoadError, StatusPill, Toast } from "@/components/sales-ui";
 import type { BankAccount } from "@/lib/sales-types";
 
 // Settings → Bank accounts (#bank). Each company's bank account(s), set by an Admin; statements are
@@ -21,7 +21,7 @@ export function BankAccountsCard() {
   const { company, info } = useCompany();
   const { user } = useAuth();
   const admin = isAdminUser(user);
-  const { data: accounts, mutate } = useBankAccounts();
+  const { data: accounts, error: accError, mutate } = useBankAccounts();
   const { data: seller } = useSeller();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<BankAccount | null>(null);
@@ -37,7 +37,7 @@ export function BankAccountsCard() {
         <h2 className="font-bold">Bank accounts <span className="text-ink-3 font-normal text-xs">{info.name}</span></h2>
         {admin && !adding && <button type="button" className="btn btn-sm" onClick={() => setAdding(true)}>Add account</button>}
       </div>
-      {!accounts?.length ? <p className="text-sm text-ink-3">No bank account yet. {admin ? "Add the account the company's money comes into." : "An admin adds it here."}</p> : (
+      {accError ? <LoadError error={accError} retry={() => mutate()} /> : !accounts ? <p className="text-sm text-ink-3">Loading…</p> : !accounts.length ? <p className="text-sm text-ink-3">No bank account yet. {admin ? "Add the account the company's money comes into." : "An admin adds it here."}</p> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-[0.1em] text-ink-3"><th className="p-2">Label</th><th className="p-2">Bank</th><th className="p-2">Account</th><th className="p-2">IFSC</th><th className="p-2">Matching from</th><th className="p-2">Last statement</th><th className="p-2"></th></tr></thead>

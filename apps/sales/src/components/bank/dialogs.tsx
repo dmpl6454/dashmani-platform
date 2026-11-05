@@ -5,7 +5,7 @@ import { useLineReceipts } from "@/lib/hooks";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate, fmtInr } from "@/lib/format";
-import { Field, Money } from "@/components/sales-ui";
+import { Field, LoadError, Money } from "@/components/sales-ui";
 import { ModalPortal } from "@/components/modal-portal";
 import type { BankLineView } from "@/lib/sales-types";
 
@@ -27,7 +27,7 @@ function Shell({ title, children, onClose, wide }: { title: string; children: Re
 }
 
 export function LinkDialog({ line, onClose, onDone }: { line: BankLineView; onClose: () => void; onDone: (msg: string, tone?: "ok" | "err") => void }) {
-  const { data, isLoading } = useLineReceipts(line.id);
+  const { data, error, isLoading, mutate } = useLineReceipts(line.id);
   const [pick, setPick] = useState("");
   const [busy, setBusy] = useState(false);
   async function go() {
@@ -38,7 +38,7 @@ export function LinkDialog({ line, onClose, onDone }: { line: BankLineView; onCl
   return (
     <Shell title="Link an existing receipt" onClose={onClose} wide>
       <p className="text-sm text-ink-3 mb-3">Receipts that could be this money:</p>
-      {isLoading ? <p className="text-sm">Loading…</p> : !data?.length ? (
+      {error ? <LoadError error={error} retry={() => mutate()} /> : isLoading ? <p className="text-sm">Loading…</p> : !data?.length ? (
         <p className="text-sm">No unlinked receipt of {fmtInr(line.remainingPaise)} or less near {fmtDate(line.txnDate)} — record a new one instead.</p>
       ) : (
         <ul className="grid gap-2 mb-4">
@@ -57,8 +57,8 @@ export function LinkDialog({ line, onClose, onDone }: { line: BankLineView; onCl
   );
 }
 
-export function IgnoreDialog({ line, onClose, onDone }: { line: BankLineView; onClose: () => void; onDone: (msg: string, tone?: "ok" | "err") => void }) {
-  const [reason, setReason] = useState(line.suggestion?.ignoreHint?.reason ?? "other");
+export function IgnoreDialog({ line, onClose, onDone, initialReason }: { line: BankLineView; onClose: () => void; onDone: (msg: string, tone?: "ok" | "err") => void; initialReason?: string }) {
+  const [reason, setReason] = useState(initialReason ?? line.suggestion?.ignoreHint?.reason ?? "other");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   async function go() {

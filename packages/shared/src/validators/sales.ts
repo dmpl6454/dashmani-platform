@@ -827,6 +827,8 @@ export const bankIgnoreBeforeSchema = z
     note: optionalText(300),
     /** Also ignore credits that carry a suggestion (default: only those with nothing suggested). */
     includeSuggested: z.boolean().default(false),
+    /** Count what would be ignored; change nothing. The portal asks with the count first. */
+    dryRun: z.boolean().default(false),
   })
   .refine((v) => v.reason !== "other" || (v.note ?? "").length >= 3, { message: "Say what these credits are", path: ["note"] });
 export type BankIgnoreBeforeInput = z.infer<typeof bankIgnoreBeforeSchema>;

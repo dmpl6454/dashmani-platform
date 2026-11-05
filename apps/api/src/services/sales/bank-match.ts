@@ -1,4 +1,4 @@
-import { BANK_LINK_WINDOW_DAYS, BANK_TOLERANCE_PAISE, MAX_PAISE, TDS_RATES, bankInr, bankPct, netGross, netTaxable, sectionForRate, tdsAt } from "@dashmani/shared";
+import { BANK_LINK_WINDOW_DAYS, BANK_TOLERANCE_PAISE, MAX_PAISE, TDS_RATES, bankInr, bankPct, nearestRate, netGross, netTaxable, sectionForRate, tdsAt } from "@dashmani/shared";
 
 // The bank matcher (spec-bank §4.3–4.4) — PURE and DETERMINISTIC: no DB, no clock, no randomness,
 // and no dependence on the order of its inputs (every input list is sorted by a total order first).
@@ -429,12 +429,47 @@ export function matchCredits(linesIn: MatchLine[], ctx: MatchContext): Record<st
   const anyLines = new Map<string, string[]>();
   const ids = new Map<string, Map<string, Identity>>();
   for (const l of lines) ids.set(l.id, identities(l));
+  // Receipt index (the whole open history runs in ONE call — up to 30,000 credits, so no line may
+  // scan every receipt). A hit needs the amount within TOL or a reference hit (a UTR token of ≥ 10
+  // characters inside the receipt's reference, or the exact reference), so these three lookups
+  // return every receipt the full scan could have accepted. They are visited in the same (id)
+  // order as before, so the result is identical.
+  const receiptById = new Map(receipts.map((r) => [r.id, r]));
+  const rRefs = receipts.map((r) => compact(r.reference));
+  const byAmount = receipts.map((_, i) => i).sort((a, b) => receipts[a].amountPaise - receipts[b].amountPaise || a - b);
+  const refExact = new Map<string, number[]>();
+  const refSub10 = new Map<string, number[]>();
+  rRefs.forEach((ref, i) => {
+    if (!ref) return;
+    const l = refExact.get(ref); if (l) l.push(i); else refExact.set(ref, [i]);
+    const seen = new Set<string>();
+    for (let k = 0; k + 10 <= ref.length; k++) {
+      const s = ref.slice(k, k + 10);
+      if (seen.has(s)) continue;
+      seen.add(s);
+      const m = refSub10.get(s); if (m) m.push(i); else refSub10.set(s, [i]);
+    }
+  });
+  const lowerBound = (v: number) => {
+    let lo = 0;
+    let hi = byAmount.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (receipts[byAmount[mid]].amountPaise < v) lo = mid + 1; else hi = mid; }
+    return lo;
+  };
+  const receiptsFor = (l: MatchLine): UnlinkedReceipt[] => {
+    const f = facts.get(l.id)!;
+    const set = new Set<number>();
+    for (let k = lowerBound(l.remainingPaise - TOL); k < byAmount.length && receipts[byAmount[k]].amountPaise <= l.remainingPaise + TOL; k++) set.add(byAmount[k]);
+    if (l.reference) { const c = compact(l.reference); if (c.length >= 6) for (const i of refExact.get(c) ?? []) set.add(i); }
+    for (const u of f.utrTokens) for (const i of refSub10.get(u.slice(0, 10)) ?? []) set.add(i);
+    return [...set].sort((a, b) => a - b).map((i) => receipts[i]);
+  };
   for (const l of lines) {
     const f = facts.get(l.id)!;
     const C = l.remainingPaise;
     const cashOk = f.rawTokens.has("CASH");
     const list: Hit[] = [];
-    for (const r of receipts) {
+    for (const r of receiptsFor(l)) {
       if (r.mode === "razorpay") continue;
       if (!RECEIPT_MODES.has(r.mode) && !(r.mode === "cash" && cashOk)) continue;
       const rRef = compact(r.reference);
@@ -491,7 +526,7 @@ export function matchCredits(linesIn: MatchLine[], ctx: MatchContext): Record<st
   for (const [rid, list] of [...amtCandidates.entries()].sort((a, b) => cmpStr(a[0], b[0]))) {
     list.sort((a, b) => a.days - b.days || cmpStr(a.line.txnDate, b.line.txnDate) || a.line.rowNo - b.line.rowNo || cmpStr(a.line.id, b.line.id));
     const win = list[0];
-    const r = receipts.find((x) => x.id === rid)!;
+    const r = receiptById.get(rid)!;
     autoLink.set(win.line.id, { paymentId: r.id, number: r.number, why: `same amount, ${win.days === 0 ? "same day" : `${win.days} day${win.days === 1 ? "" : "s"} apart`}` });
     claimedReceipts.add(rid);
   }
@@ -692,3 +727,30 @@ export function matchDebits(
 }
 
 export { shortDay };
+
+/**
+ * A past TDS deduction's rate and base, from one allocation (the client's "own practice").
+ * A STORED rate is tested against both bases: a confirmed gross-TDS receipt stores e.g. 10% that
+ * was taken on the total incl. GST, and reading it as a taxable-base rate would teach the matcher
+ * the wrong practice. A stored rate that fits neither base falls back to the inference.
+ */
+export function classifyPastTds(row: { tdsRateBp: number | null; amountPaise: number; tdsPaise: number; taxablePaise: number; totalPaise: number }): { rateBp: number; base: "taxable" | "gross" } | null {
+  if (row.totalPaise <= 0 || row.tdsPaise <= 0) return null;
+  const share = (row.amountPaise + row.tdsPaise) / row.totalPaise;
+  const taxable = Math.round(row.taxablePaise * share);
+  const gross = row.amountPaise + row.tdsPaise;
+  const ratesBp = TDS_RATES.map((r) => r.rateBp);
+  if (row.tdsRateBp) {
+    if (Math.abs(tdsAt(taxable, row.tdsRateBp) - row.tdsPaise) <= TOL) return { rateBp: row.tdsRateBp, base: "taxable" };
+    if (Math.abs(tdsAt(gross, row.tdsRateBp) - row.tdsPaise) <= TOL) return { rateBp: row.tdsRateBp, base: "gross" };
+  }
+  let rateBp = nearestRate(row.tdsPaise, taxable, ratesBp);
+  if (rateBp !== null) return { rateBp, base: "taxable" };
+  rateBp = nearestRate(row.tdsPaise, gross, ratesBp);
+  if (rateBp !== null) return { rateBp, base: "gross" };
+  if (taxable > 0) {
+    const custom = Math.round((row.tdsPaise * 10000) / taxable / 5) * 5;
+    if (custom >= 1 && custom <= 3000) return { rateBp: custom, base: "taxable" };
+  }
+  return null;
+}

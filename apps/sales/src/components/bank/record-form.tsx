@@ -80,9 +80,11 @@ export function RecordForm({ line, fill, ack, onDone }: { line: BankLineView; fi
   const effective = tdsOn && taxableChosen > 0 && tdsTotal > 0 ? (tdsTotal * 10000) / taxableChosen : null;
   const standard = effective != null && TDS_RATES.some((r) => Math.abs(tdsAt(taxableChosen, r.rateBp) - tdsTotal) <= 100);
 
+  // An advance carries NO TDS: per-invoice TDS from ticked rows would otherwise be recorded on no
+  // invoice (the server's TDS ceiling only runs with allocations), unseen in the confirm text.
   const body = (asAdvance: boolean, extra: Ack) => ({
-    clientId, amountPaise: cash, tdsPaise: asAdvance && !tdsOn ? 0 : tdsTotal,
-    tdsRateBp: tdsTotal > 0 ? rateBp ?? null : null, tdsSection: tdsTotal > 0 ? section || null : null,
+    clientId, amountPaise: cash, tdsPaise: asAdvance ? 0 : tdsTotal,
+    tdsRateBp: !asAdvance && tdsTotal > 0 ? rateBp ?? null : null, tdsSection: !asAdvance && tdsTotal > 0 ? section || null : null,
     allocations: asAdvance ? [] : chosen.map((r) => ({ invoiceId: r.inv.id, amountPaise: r.a.amountPaise, tdsPaise: tdsOn ? r.a.tdsPaise : 0 })),
     notes: notes || null, ...ack, ...extra,
   });
@@ -160,7 +162,7 @@ export function RecordForm({ line, fill, ack, onDone }: { line: BankLineView; fi
         <Confirm title="Record this receipt?" confirmLabel="Record receipt" onConfirm={() => send(asking === "advance")} onClose={() => setAsking(null)}
           body={<p>
             {fmtInr(cash)} received from {client?.companyName ?? "the client"} on {fmtDate(line.txnDate)}{tdsTotal && asking === "confirm" ? ` + TDS ${fmtInr(tdsTotal)}${section ? ` (${section}${rateBp ? `, ${bankPct(rateBp)}` : ""})` : ""}` : ""}.{" "}
-            {asking === "advance" ? `${fmtInr(cash)} will be held as an advance from ${client?.companyName ?? "the client"}.` : <>Settles {chosen.map((c) => c.inv.number).join(", ")}.{advance > 0 ? ` ${fmtInr(advance)} will be held as an advance.` : ""} The invoice will be emailed to the client.</>}
+            {asking === "advance" ? `${fmtInr(cash)} will be held as an advance from ${client?.companyName ?? "the client"}${tdsTotal ? " — no TDS is recorded with an advance; record TDS when the advance is applied to an invoice" : ""}.` : <>Settles {chosen.map((c) => c.inv.number).join(", ")}.{advance > 0 ? ` ${fmtInr(advance)} will be held as an advance.` : ""} The invoice will be emailed to the client.</>}
           </p>} />
       )}
     </section>

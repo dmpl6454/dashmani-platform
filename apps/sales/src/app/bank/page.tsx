@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BANK_IGNORE_LABELS } from "@dashmani/shared/src/sales/bank";
 import { useBankAccounts, useBankLines, useBankStatements } from "@/lib/hooks";
@@ -10,7 +10,7 @@ import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import { daysBetween, fmtDate, fmtInr, todayIST } from "@/lib/format";
 import { Confirm, Empty, Field, LoadError, Loading, PageHead, Stat, Toast } from "@/components/sales-ui";
-import { LineCard, candidateShort, refreshAfterBankAction } from "@/components/bank/line-card";
+import { LineCard, candidateShort, isSure, refreshAfterBankAction, takeBankFlash } from "@/components/bank/line-card";
 
 // /bank — the review queue (phone first). Credits from uploaded statements, each with a stored
 // suggestion; nothing is recorded until someone confirms (one card, or "Confirm all sure").
@@ -25,16 +25,19 @@ export default function BankPage() {
   const [tab, setTab] = useState<string>("review");
   const [q, setQ] = useState("");
   const [accountId, setAccountId] = useState("");
-  const { data: accounts, isLoading: accLoading } = useBankAccounts();
+  const { data: accounts, error: accError, isLoading: accLoading, mutate: retryAccounts } = useBankAccounts();
   const { data, error, isLoading, mutate } = useBankLines({ tab, q: q.trim() || undefined, accountId: accountId || undefined });
-  const { data: statements } = useBankStatements({ accountId: accountId || undefined });
+  const { data: statements, error: stError, mutate: retryStatements } = useBankStatements({ accountId: accountId || undefined });
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   const [sureOpen, setSureOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const say = (message: string, tone: "ok" | "err" = "ok") => setToast({ message, tone });
+  // The import summary from /bank/upload (that page unmounts on the way here).
+  useEffect(() => { const m = takeBankFlash(); if (m) setToast({ message: m, tone: "ok" }); }, []);
 
   if (accLoading) return <Loading label="Reading the statements…" />;
+  if (accError) return <><PageHead kicker={`Bank · ${info.short}`} title="Bank" /><LoadError error={accError} retry={() => retryAccounts()} /></>;
   const active = (accounts ?? []).filter((a) => a.status === "active");
   if (!active.length) {
     return (
@@ -47,7 +50,8 @@ export default function BankPage() {
   }
   const s = data?.summary;
   const newest = s?.accounts.map((a) => a.lastStatementTo).filter((x): x is string => !!x).sort().pop() ?? null;
-  const sureLines = (data?.lines ?? []).filter((l) => l.status === "suggested" && l.confidence === "high" && l.suggestion?.candidates[0] && !l.suggestion.candidates[0].stale).slice(0, 25);
+  // The same rule as each card's Confirm button and the server's confirm-sure.
+  const sureLines = (data?.lines ?? []).filter(isSure).slice(0, 25);
 
   async function rematch() {
     setBusy(true);
@@ -103,12 +107,13 @@ export default function BankPage() {
         )}
         <div className="flex flex-wrap gap-2">
           {(tab === "review" || tab === "sure") && sureLines.length > 0 && <button type="button" className="btn" onClick={() => setSureOpen(true)}>Confirm all sure ({sureLines.length})</button>}
-          {tab === "review" && <button type="button" className="btn btn-ghost" onClick={() => setBulkOpen(true)}>Ignore old credits…</button>}
+          {tab === "review" && admin && <button type="button" className="btn btn-ghost" onClick={() => setBulkOpen(true)}>Ignore old credits…</button>}
         </div>
       </div>
 
       {error ? <LoadError error={error} retry={() => mutate()} />
         : isLoading || !data ? <Loading label="Reading the statements…" />
+        : stError && tab === "review" ? <LoadError error={stError} retry={() => retryStatements()} />
         : !statements?.length && tab === "review" ? (
           <Empty title="No bank statements yet." body="Download the statement from net banking as Excel or CSV and upload it — credits are matched to invoices for you, TDS included. Nothing is recorded until you confirm." action={<Link href="/bank/upload" className="btn">Upload statement</Link>} />
         ) : data.lines.length === 0 ? (
@@ -142,7 +147,7 @@ export default function BankPage() {
         <Confirm title={`Record ${sureLines.length} receipt${sureLines.length === 1 ? "" : "s"}?`} confirmLabel="Record receipts" onConfirm={confirmSure} onClose={() => setSureOpen(false)}
           body={<div className="grid gap-2"><ul className="text-xs max-h-60 overflow-y-auto grid gap-1">{sureLines.map((l) => <li key={l.id}>{fmtInr(l.creditPaise)} · {candidateShort(l.suggestion!.candidates[0])}</li>)}</ul><p>Each receipt settles the invoice shown and emails the client the paid invoice, as when you record a payment by hand.</p></div>} />
       )}
-      {bulkOpen && <IgnoreBefore company={company} accounts={active} onClose={() => setBulkOpen(false)} onDone={(n) => { setBulkOpen(false); say(`Ignored ${n} old credit${n === 1 ? "" : "s"}.`); }} onError={(e) => say(errorSentence(e), "err")} />}
+      {bulkOpen && admin && <IgnoreBefore company={company} accounts={active} onClose={() => setBulkOpen(false)} onDone={(n) => { setBulkOpen(false); say(`Ignored ${n} old credit${n === 1 ? "" : "s"}.`); }} onError={(e) => say(errorSentence(e), "err")} />}
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>
   );
@@ -156,13 +161,30 @@ function IgnoreBefore({ company, accounts, onClose, onDone, onError }: { company
   const [accountId, setAccountId] = useState("");
   const [includeSuggested, setIncludeSuggested] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [count, setCount] = useState<null | { wouldIgnore: number; wouldIgnorePaise: number }>(null);
+  const payload = (dryRun: boolean) => JSON.stringify({ before, reason, note: note || null, accountId: accountId || null, includeSuggested, dryRun });
+  // First a dry run: the confirm says exactly how many credits (and how much money) this ignores.
+  async function check() {
+    setBusy(true);
+    try {
+      const r = await apiFetch<{ wouldIgnore: number; wouldIgnorePaise: number }>(`/sales/bank/lines/ignore-before?company=${company}`, { method: "POST", body: payload(true) });
+      setCount(r.data);
+    } catch (err) { onError(err); } finally { setBusy(false); }
+  }
   async function go() {
     setBusy(true);
     try {
-      const r = await apiFetch<{ ignored: number }>(`/sales/bank/lines/ignore-before?company=${company}`, { method: "POST", body: JSON.stringify({ before, reason, note: note || null, accountId: accountId || null, includeSuggested }) });
+      const r = await apiFetch<{ ignored: number }>(`/sales/bank/lines/ignore-before?company=${company}`, { method: "POST", body: payload(false) });
       await refreshAfterBankAction();
       onDone(r.data.ignored);
     } catch (err) { onError(err); } finally { setBusy(false); }
+  }
+  if (count) {
+    return (
+      <Confirm title={count.wouldIgnore ? `Ignore ${count.wouldIgnore} credit${count.wouldIgnore === 1 ? "" : "s"}?` : "Nothing to ignore"} confirmLabel={count.wouldIgnore ? "Ignore credits" : "Close"}
+        onConfirm={count.wouldIgnore ? go : onClose} onClose={onClose}
+        body={<p>{count.wouldIgnore ? `${count.wouldIgnore} credit${count.wouldIgnore === 1 ? "" : "s"} dated before ${fmtDate(before)} (${fmtInr(count.wouldIgnorePaise)}) will be marked ignored. Each one can be reopened later, one at a time.` : `No open credit dated before ${fmtDate(before)} fits these choices.`}</p>} />
+    );
   }
   return (
     <div className="fixed inset-0 z-40 bg-black/70 grid place-items-center p-4" onClick={busy ? undefined : onClose}>
@@ -178,7 +200,7 @@ function IgnoreBefore({ company, accounts, onClose, onDone, onError }: { company
         </div>
         <div className="flex justify-end gap-2">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn" disabled={busy || !before || (reason === "other" && note.trim().length < 3)} onClick={go}>{busy ? "Working…" : "Ignore credits"}</button>
+          <button type="button" className="btn" disabled={busy || !before || (reason === "other" && note.trim().length < 3)} onClick={check}>{busy ? "Counting…" : "Count credits…"}</button>
         </div>
       </div>
     </div>

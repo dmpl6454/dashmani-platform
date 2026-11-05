@@ -9,9 +9,9 @@ import {
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { sha256Hex } from "../../middleware/upload-private";
-import { dateToDay, dayToDate, logSalesEvent, toSafeNumber, type Tx } from "./common";
+import { dateToDay, dayToDate, inBackground, logSalesEvent, toSafeNumber, type Tx } from "./common";
 import { applyMapping, dedupeHashes, detectMapping, headerSignature, readGrid, type Cell, type Need, type ParsedLine, type StatementFormat } from "./bank-parse";
-import { fingerprintTokens, matchCredits, matchDebits, shortDay, type ClientInfo, type MatchContext, type MatchLine, type MatchResult, type OpenInvoice, type UnlinkedReceipt } from "./bank-match";
+import { classifyPastTds, fingerprintTokens, matchCredits, matchDebits, shortDay, type ClientInfo, type MatchContext, type MatchLine, type MatchResult, type OpenInvoice, type UnlinkedReceipt } from "./bank-match";
 import { getPayment, lockPayment, recordReceiptTx, voidPaymentInTx } from "./payments.service";
 import { queueInvoiceEmails, SYSTEM_ACTOR } from "./invoice-email.service";
 import { getSellerOrDefaults } from "./settings.service";
@@ -351,7 +351,7 @@ export async function importStatement(file: UploadedFile | undefined, body: Bank
     return s;
   }, { timeout: 30_000, maxWait: 5_000 });
 
-  await rematchCompany(account.companyKey as CompanyKey, actorId).catch((err) => console.error("[sales] bank rematch after import failed", err));
+  const matched = await rematchAfterWrite(account.companyKey as CompanyKey, actorId, IMPORT_REMATCH_WAIT_MS);
   await writeDebitHints(statement.id).catch((err) => console.error("[sales] bank debit hints failed", err));
   const lines = await prisma.salesBankLine.findMany({ where: { statementId: statement.id }, select: { creditPaise: true, status: true, confidence: true, payments: { select: { id: true }, take: 1 } } });
   const cr = lines.filter((l) => l.creditPaise > 0n);
@@ -362,6 +362,8 @@ export async function importStatement(file: UploadedFile | undefined, body: Bank
     suggested: cr.filter((l) => l.status === "suggested").length,
     sure: cr.filter((l) => l.status === "suggested" && l.confidence === "high").length,
     unmatched: cr.filter((l) => l.status === "unmatched").length,
+    /** "running": matching continues in the background — refresh the queue in a minute. */
+    matching: matched ? ("done" as const) : ("running" as const),
   };
 }
 
@@ -532,12 +534,17 @@ export async function listBankLines(filter: { company?: CompanyKey; tab?: BankTa
   };
   const q = filter.q?.trim();
   const amount = q ? rupeesQuery(q) : null;
+  // A numeric query is an amount OR a UTR/RRN/cheque number. Withdrawal narrations, references
+  // and UTRs are for sales:approve only, so for everyone else the text arm matches credits only —
+  // on every tab, or a matching withdrawal would reveal what its narration says.
+  const textArm: Prisma.SalesBankLineWhereInput = { OR: [{ narration: { contains: q ?? "", mode: "insensitive" } }, { reference: { contains: q ?? "", mode: "insensitive" } }, { utr: { contains: q ?? "", mode: "insensitive" } }] };
+  const text: Prisma.SalesBankLineWhereInput = opts.seeDebits ? textArm : { AND: [{ creditPaise: { gt: 0 } }, textArm] };
   const search: Prisma.SalesBankLineWhereInput = !q ? {}
-    : amount !== null ? { OR: [{ creditPaise: BigInt(amount) }, { debitPaise: BigInt(amount) }] }
-    : { OR: [{ narration: { contains: q, mode: "insensitive" } }, { reference: { contains: q, mode: "insensitive" } }, { utr: { contains: q, mode: "insensitive" } }] };
+    : amount !== null ? { OR: [{ creditPaise: BigInt(amount) }, { debitPaise: BigInt(amount) }, text] }
+    : text;
   const ranked = tab === "review" || tab === "sure";
   const rows = await prisma.salesBankLine.findMany({
-    where: { AND: [scope, tabWhere[tab], search, ...(tab === "debits" && !opts.seeDebits && q && amount === null ? [{ id: "none" }] : [])] },
+    where: { AND: [scope, tabWhere[tab], search] },
     orderBy: [...(ranked ? [{ bestScore: { sort: "desc" as const, nulls: "last" as const } }] : []), { txnDate: "desc" }, { rowNo: "desc" }],
     take: 500,
     include: lineInclude,
@@ -568,7 +575,7 @@ export async function unlinkedReceiptsFor(lineId: string) {
   return rows
     .map((p) => {
       const days = Math.abs(daysBetween(dateToDay(p.paidOn)!, day));
-      const imported = p.number.startsWith("SW-");
+      const imported = isImportedReceipt(p);
       const tags = [Math.abs(p.amountPaise - remaining) <= 100 ? "exact amount" : null, days <= 3 ? "±3 days" : null, imported ? "Swipe import" : null].filter(Boolean);
       return { paymentId: p.id, number: p.number, clientId: p.client.id, clientName: p.client.companyName, amountPaise: p.amountPaise, tdsPaise: p.tdsPaise, paidOn: dateToDay(p.paidOn), reference: p.reference, mode: p.mode, days, imported, why: tags.join(" · ") };
     })
@@ -705,7 +712,7 @@ export async function confirmBankLine(lineId: string, input: BankLineConfirmInpu
     return p;
   }, { timeout: 20_000, maxWait: 10_000 });
   queueInvoiceEmails(result.invoiceIds, result.id, actorId);
-  if (opts.rematch) await rematchCompany(company, actorId).catch((err) => console.error("[sales] bank rematch failed", err));
+  if (opts.rematch) await rematchAfterWrite(company, actorId, ACTION_REMATCH_WAIT_MS);
   return { line: await getBankLine(lineId, { seeDebits: true }), payment: await getPayment(result.id) };
 }
 
@@ -746,7 +753,7 @@ export async function confirmSureLines(lineIds: string[], actorId: string) {
       else throw err;
     }
   }
-  for (const c of companies) await rematchCompany(c, actorId).catch((err) => console.error("[sales] bank rematch failed", err));
+  for (const c of companies) await rematchAfterWrite(c, actorId, ACTION_REMATCH_WAIT_MS);
   return { confirmed, skipped };
 }
 
@@ -780,8 +787,10 @@ export async function linkReceipt(lineId: string, paymentId: string, actorId: st
 export async function unlinkReceipt(lineId: string, input: BankLineUnlinkInput, actorId: string) {
   const company = await prisma.$transaction(async (tx) => {
     const line = await lockBankLine(tx, lineId);
-    const pay = await tx.salesPayment.findUnique({ where: { id: input.paymentId }, select: { bankLineId: true, number: true } });
+    const pay = await tx.salesPayment.findUnique({ where: { id: input.paymentId }, select: { bankLineId: true, number: true, status: true } });
     if (!pay || pay.bankLineId !== lineId) throw new AppError(409, "RECEIPT_NOT_LINKED", "That receipt is not on this bank line");
+    // A voided receipt keeps its bank line as history (spec §2.2): never detached, never re-voided.
+    if (pay.status === "voided") throw new AppError(409, "PAYMENT_VOIDED", `${pay.number} is already voided — it stays on this line as history`);
     if (input.action === "detach") {
       await lockPayment(tx, input.paymentId);
       await tx.salesPayment.update({ where: { id: input.paymentId }, data: { bankLineId: null } });
@@ -794,7 +803,7 @@ export async function unlinkReceipt(lineId: string, input: BankLineUnlinkInput, 
     if (input.action === "detach") await logSalesEvent(tx, { entityType: "payment", entityId: input.paymentId, actorId, action: "bank_unlinked", note: input.reason });
     return line.companyKey as CompanyKey;
   }, { maxWait: 10_000 });
-  await rematchCompany(company, actorId).catch((err) => console.error("[sales] bank rematch failed", err));
+  await rematchAfterWrite(company, actorId, ACTION_REMATCH_WAIT_MS);
   return { line: await getBankLine(lineId, { seeDebits: true }), payment: await getPayment(input.paymentId) };
 }
 
@@ -822,7 +831,7 @@ export async function reopenBankLine(lineId: string, actorId: string) {
     await logSalesEvent(tx, { entityType: "bank_line", entityId: lineId, actorId, action: "reopened", fromStatus: "ignored", toStatus: after.status });
     return line.companyKey as CompanyKey;
   });
-  if (company) await rematchCompany(company, actorId).catch((err) => console.error("[sales] bank rematch failed", err));
+  if (company) await rematchAfterWrite(company, actorId, ACTION_REMATCH_WAIT_MS);
   return { line: await getBankLine(lineId, { seeDebits: true }) };
 }
 
@@ -834,6 +843,16 @@ export async function reopenBankLine(lineId: string, actorId: string) {
  */
 export async function ignoreUnmatchedBefore(company: CompanyKey, input: BankIgnoreBeforeInput, actorId: string) {
   const statuses = input.includeSuggested ? ["unmatched", "suggested"] : ["unmatched"];
+  if (input.dryRun) {
+    const a = await prisma.salesBankLine.aggregate({
+      where: {
+        companyKey: company, creditPaise: { gt: 0 }, ignoredAt: null, status: { in: statuses }, matchedPaise: 0, txnDate: { lt: dayToDate(input.before) },
+        ...(input.accountId ? { bankAccountId: input.accountId } : {}),
+      },
+      _count: true, _sum: { creditPaise: true },
+    });
+    return { wouldIgnore: a._count, wouldIgnorePaise: n(a._sum.creditPaise ?? 0n) };
+  }
   let ignored = 0;
   let lastId = "";
   for (let guard = 0; guard < 200; guard++) {
@@ -889,8 +908,37 @@ export function rematchCompany(company: CompanyKey, actorId: string): Promise<Re
   return entry.promise;
 }
 
-const LINE_CHUNK = 1000;
-const MAX_CHUNKS = 30; // ≤ 30,000 open credits per run — years of statements (owner: from 2023)
+/**
+ * After a money write has committed: rematch the company in the background (serialised per
+ * company), but wait up to `waitMs` so the reply usually carries the fresh suggestions. A long
+ * full-history pass never holds the request past the proxy timeout — the write is already
+ * committed, and a timed-out request would make staff retry into DUPLICATE_STATEMENT /
+ * BANK_LINE_SETTLED. Returns true when the pass finished within the wait.
+ */
+export async function rematchAfterWrite(company: CompanyKey, actorId: string, waitMs: number): Promise<boolean> {
+  let done = false;
+  const p = rematchCompany(company, actorId).then(() => { done = true; }, (err) => console.error("[sales] bank rematch failed", err));
+  inBackground("bank rematch", () => p);
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([p, new Promise<void>((resolve) => { timer = setTimeout(resolve, waitMs); })]);
+  if (timer) clearTimeout(timer);
+  return done;
+}
+const IMPORT_REMATCH_WAIT_MS = 20_000;
+const ACTION_REMATCH_WAIT_MS = 4_000;
+
+// Open credits are READ in keyset pages but MATCHED in one call: the one-invoice-one-credit and
+// one-receipt-one-line rules (claims, conflicts, the closest line for a receipt) only hold inside
+// one matchCredits call. The matcher indexes receipts and invoices, so 30,000 lines fit.
+let LINE_PAGE = 2000;
+const MAX_LINES = 30_000; // years of statements (owner: from 2023)
+const RECEIPT_PAGE = 5000;
+const MAX_RECEIPTS = 60_000;
+/** Tests only: read open credits in pages of `n` (proves matching does not depend on the page). */
+export function setBankLinePageSizeForTests(n: number) { LINE_PAGE = n; }
+
+/** A Swipe-imported receipt: offered to a person, never auto-linked. ⚠️ Becomes `importId != null` on the rebase onto PR 3. */
+const isImportedReceipt = (p: { number: string }) => p.number.startsWith("SW-");
 
 async function loadContext(company: CompanyKey) {
   const other = (company === "dspl" ? "dmpl" : "dspl") as CompanyKey;
@@ -922,20 +970,10 @@ async function loadContext(company: CompanyKey) {
     ORDER BY p.paid_on DESC, p.created_at DESC LIMIT 5000`;
   const pastTds = new Map<string, ClientInfo["pastTds"]>();
   const tally = new Map<string, Map<string, { n: number; first: number; rateBp: number; base: "taxable" | "gross"; receipt: string }>>();
-  const ratesBp = TDS_RATES.map((r) => r.rateBp);
   past.forEach((row, idx) => {
-    const share = (row.amount_paise + row.tds_paise) / row.total_paise;
-    const base = Math.round(row.taxable_paise * share);
-    let rateBp: number | null = null;
-    let kind: "taxable" | "gross" = "taxable";
-    if (row.tds_rate_bp) rateBp = row.tds_rate_bp;
-    else if ((rateBp = nearestRate(row.tds_paise, base, ratesBp)) !== null) kind = "taxable";
-    else if ((rateBp = nearestRate(row.tds_paise, row.amount_paise + row.tds_paise, ratesBp)) !== null) kind = "gross";
-    else if (base > 0) {
-      const custom = Math.round((row.tds_paise * 10000) / base / 5) * 5;
-      if (custom >= 1 && custom <= 3000) rateBp = custom;
-    }
-    if (!rateBp) return;
+    const c = classifyPastTds({ tdsRateBp: row.tds_rate_bp, amountPaise: row.amount_paise, tdsPaise: row.tds_paise, taxablePaise: row.taxable_paise, totalPaise: row.total_paise });
+    if (!c) return;
+    const { rateBp, base: kind } = c;
     const m = tally.get(row.client_id) ?? new Map();
     const key = `${rateBp}|${kind}`;
     const e = m.get(key) ?? { n: 0, first: idx, rateBp, base: kind, receipt: row.number };
@@ -962,64 +1000,92 @@ const sigOf = (r: MatchResult) => createHash("sha1").update(JSON.stringify({
   a: r.autoLink, rc: r.receiptCandidates.map((x) => x.paymentId), k: r.conflict, h: r.ignoreHint, n: r.note,
 })).digest("hex");
 
+type OpenLineRow = { id: string; txn_date: Date; row_no: number; credit_paise: bigint; matched_paise: bigint; narration: string; reference: string | null; utr: string | null; possible_duplicate: boolean; sig: string | null };
+
 async function rematchOnce(company: CompanyKey, actorId: string): Promise<RematchResult> {
   const base = await loadContext(company);
   const out: RematchResult = { checked: 0, autoLinked: 0, suggested: 0, sure: 0, unmatched: 0 };
+  // 1. Every open credit, newest first (index-backed: company_key, status, txn_date). Only the
+  //    stored signature is read, never the stored suggestion JSON.
+  const rows: OpenLineRow[] = [];
   let cursor: { txnDate: Date; rowNo: number; id: string } | null = null;
-  for (let chunk = 0; chunk < MAX_CHUNKS; chunk++) {
-    // Index-backed: (company_key, status, txn_date), newest first, keyset-paginated.
-    const rows: Array<{ id: string; txnDate: Date; rowNo: number; creditPaise: bigint; matchedPaise: bigint; narration: string; reference: string | null; utr: string | null; possibleDuplicate: boolean; suggestion: Prisma.JsonValue }> = await prisma.salesBankLine.findMany({
+  while (rows.length < MAX_LINES) {
+    const take = Math.min(LINE_PAGE, MAX_LINES - rows.length);
+    const page: OpenLineRow[] = cursor
+      ? await prisma.$queryRaw<OpenLineRow[]>`
+          SELECT id, txn_date, row_no, credit_paise, matched_paise, narration, reference, utr, possible_duplicate, suggestion->>'sig' AS sig
+          FROM sales_bank_lines
+          WHERE company_key = ${company} AND credit_paise > 0 AND ignored_at IS NULL AND status IN ('unmatched','suggested','partly_matched')
+            AND (txn_date, row_no, id) < (${cursor.txnDate}::date, ${cursor.rowNo}::int, ${cursor.id})
+          ORDER BY txn_date DESC, row_no DESC, id DESC LIMIT ${take}`
+      : await prisma.$queryRaw<OpenLineRow[]>`
+          SELECT id, txn_date, row_no, credit_paise, matched_paise, narration, reference, utr, possible_duplicate, suggestion->>'sig' AS sig
+          FROM sales_bank_lines
+          WHERE company_key = ${company} AND credit_paise > 0 AND ignored_at IS NULL AND status IN ('unmatched','suggested','partly_matched')
+          ORDER BY txn_date DESC, row_no DESC, id DESC LIMIT ${take}`;
+    rows.push(...page);
+    if (page.length < take) break;
+    const last = page[page.length - 1];
+    cursor = { txnDate: last.txn_date, rowNo: last.row_no, id: last.id };
+  }
+  if (rows.length >= MAX_LINES) console.warn(`[sales] bank rematch: ${company} has ${MAX_LINES}+ open credits — the oldest are not matched`);
+  if (!rows.length) return out;
+
+  // 2. Unlinked receipts across the whole span, once, in a fixed order (paid_on, id). Swipe
+  //    imports are included: they are what blocks a "sure" credit that may already be recorded.
+  const days = rows.map((r) => dateToDay(r.txn_date)!).sort();
+  const from = dayToDate(plusDays(days[0], -60));
+  const to = dayToDate(plusDays(days[days.length - 1], 7));
+  type RecRow = { id: string; number: string; clientId: string; amountPaise: number; paidOn: Date; reference: string | null; mode: string };
+  const recRows: RecRow[] = [];
+  let rc: { paidOn: Date; id: string } | null = null;
+  while (recRows.length < MAX_RECEIPTS) {
+    const page: RecRow[] = await prisma.salesPayment.findMany({
       where: {
-        companyKey: company, creditPaise: { gt: 0 }, ignoredAt: null, status: { in: OPEN_STATUSES },
-        ...(cursor ? { OR: [{ txnDate: { lt: cursor.txnDate } }, { txnDate: cursor.txnDate, rowNo: { lt: cursor.rowNo } }, { txnDate: cursor.txnDate, rowNo: cursor.rowNo, id: { lt: cursor.id } }] } : {}),
+        companyKey: company, status: "recorded", bankLineId: null, mode: { not: "razorpay" }, paidOn: { gte: from, lte: to },
+        ...(rc ? { OR: [{ paidOn: { gt: rc.paidOn } }, { paidOn: rc.paidOn, id: { gt: rc.id } }] } : {}),
       },
-      orderBy: [{ txnDate: "desc" }, { rowNo: "desc" }, { id: "desc" }],
-      take: LINE_CHUNK,
-      select: { id: true, txnDate: true, rowNo: true, creditPaise: true, matchedPaise: true, narration: true, reference: true, utr: true, possibleDuplicate: true, suggestion: true },
+      orderBy: [{ paidOn: "asc" }, { id: "asc" }],
+      take: RECEIPT_PAGE,
+      select: { id: true, number: true, clientId: true, amountPaise: true, paidOn: true, reference: true, mode: true },
     });
-    if (!rows.length) break;
-    const last = rows[rows.length - 1];
-    cursor = { txnDate: last.txnDate, rowNo: last.rowNo, id: last.id };
-    const days = rows.map((r) => dateToDay(r.txnDate)!).sort();
-    const recRows = await prisma.salesPayment.findMany({
-      where: { companyKey: company, status: "recorded", bankLineId: null, mode: { not: "razorpay" }, paidOn: { gte: dayToDate(plusDays(days[0], -60)), lte: dayToDate(plusDays(days[days.length - 1], 7)) } },
-      take: 2000, select: { id: true, number: true, clientId: true, amountPaise: true, paidOn: true, reference: true, mode: true },
-    });
-    // A receipt a person detached from a bank line is never auto-linked again (only offered).
-    const detached = recRows.length
-      ? new Set((await prisma.salesEvent.findMany({ where: { entityType: "payment", action: "bank_unlinked", entityId: { in: recRows.map((p) => p.id) } }, select: { entityId: true } })).map((e) => e.entityId))
-      : new Set<string>();
-    const receipts: UnlinkedReceipt[] = recRows.map((p) => ({
-      id: p.id, number: p.number, clientId: p.clientId, amountPaise: p.amountPaise, paidOn: dateToDay(p.paidOn)!, reference: p.reference, mode: p.mode,
-      imported: p.number.startsWith("SW-"), manualOnly: detached.has(p.id),
-    }));
-    const lines: MatchLine[] = rows.map((r) => ({
-      id: r.id, txnDate: dateToDay(r.txnDate)!, creditPaise: n(r.creditPaise), remainingPaise: Math.max(0, n(r.creditPaise) - n(r.matchedPaise)),
-      narration: r.narration, reference: r.reference, utr: r.utr, possibleDuplicate: r.possibleDuplicate, rowNo: r.rowNo,
-    }));
-    const ctx: MatchContext = { ...base, receipts };
-    const results = matchCredits(lines, ctx);
-    for (const r of rows) {
-      const res = results[r.id];
-      if (!res) continue;
-      out.checked++;
-      const sig = sigOf(res);
-      const old = r.suggestion as { sig?: string } | null;
-      if (old?.sig !== sig) {
-        await prisma.$transaction(async (tx) => {
-          const got = await tx.$queryRaw<Array<{ id: string; ignored_at: Date | null }>>`SELECT id, ignored_at FROM sales_bank_lines WHERE id = ${r.id} FOR UPDATE SKIP LOCKED`;
-          if (!got.length || got[0].ignored_at) return;
-          await tx.salesBankLine.update({ where: { id: r.id }, data: { suggestion: { ...res, sig } as unknown as Prisma.InputJsonValue, bestScore: res.bestScore, confidence: res.confidence, suggestedAt: new Date() } });
-          await refreshBankLine(tx, r.id);
-        });
-      }
-      if (res.autoLink) {
-        if (await autoLink(r.id, res.autoLink, company)) out.autoLinked++;
-      } else if (res.confidence === "high") { out.sure++; out.suggested++; }
-      else if (res.confidence === "medium") out.suggested++;
-      else out.unmatched++;
+    recRows.push(...page);
+    if (page.length < RECEIPT_PAGE) break;
+    rc = { paidOn: page[page.length - 1].paidOn, id: page[page.length - 1].id };
+  }
+  if (recRows.length >= MAX_RECEIPTS) console.warn(`[sales] bank rematch: ${company} has ${MAX_RECEIPTS}+ unlinked receipts in the window — the newest are not matched`);
+  // A receipt a person detached from a bank line is never auto-linked again (only offered).
+  const detached = new Set((await prisma.$queryRaw<Array<{ entity_id: string }>>`
+    SELECT DISTINCT entity_id FROM sales_events WHERE entity_type = 'payment' AND action = 'bank_unlinked'`).map((e) => e.entity_id));
+  const receipts: UnlinkedReceipt[] = recRows.map((p) => ({
+    id: p.id, number: p.number, clientId: p.clientId, amountPaise: p.amountPaise, paidOn: dateToDay(p.paidOn)!, reference: p.reference, mode: p.mode,
+    imported: isImportedReceipt(p), manualOnly: detached.has(p.id),
+  }));
+  const lines: MatchLine[] = rows.map((r) => ({
+    id: r.id, txnDate: dateToDay(r.txn_date)!, creditPaise: n(r.credit_paise), remainingPaise: Math.max(0, n(r.credit_paise) - n(r.matched_paise)),
+    narration: r.narration, reference: r.reference, utr: r.utr, possibleDuplicate: r.possible_duplicate, rowNo: r.row_no,
+  }));
+
+  // 3. One matcher call over everything, then write only what changed.
+  const results = matchCredits(lines, { ...base, receipts });
+  for (const r of rows) {
+    const res = results[r.id];
+    if (!res) continue;
+    out.checked++;
+    const sig = sigOf(res);
+    if (r.sig !== sig) {
+      await prisma.$transaction(async (tx) => {
+        const got = await tx.$queryRaw<Array<{ id: string; ignored_at: Date | null }>>`SELECT id, ignored_at FROM sales_bank_lines WHERE id = ${r.id} FOR UPDATE SKIP LOCKED`;
+        if (!got.length || got[0].ignored_at) return;
+        await tx.salesBankLine.update({ where: { id: r.id }, data: { suggestion: { ...res, sig } as unknown as Prisma.InputJsonValue, bestScore: res.bestScore, confidence: res.confidence, suggestedAt: new Date() } });
+        await refreshBankLine(tx, r.id);
+      });
     }
-    if (rows.length < LINE_CHUNK) break;
+    if (res.autoLink) {
+      if (await autoLink(r.id, res.autoLink, company)) out.autoLinked++;
+    } else if (res.confidence === "high") { out.sure++; out.suggested++; }
+    else if (res.confidence === "medium") out.suggested++;
+    else out.unmatched++;
   }
   void actorId;
   return out;

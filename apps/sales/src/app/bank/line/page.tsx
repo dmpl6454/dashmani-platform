@@ -23,7 +23,7 @@ function LineView() {
   const { data: events, mutate: mutateEvents } = useEvents("bank_line", id);
   const [fill, setFill] = useState<BankCandidate | null>(null);
   const [ack, setAck] = useState<Ack>({});
-  const [dialog, setDialog] = useState<null | "link" | "ignore" | "reopen" | { unlink: { id: string; number: string } }>(null);
+  const [dialog, setDialog] = useState<null | "link" | "ignore" | "ignore-duplicate" | "reopen" | { unlink: { id: string; number: string } }>(null);
   const [ask, setAsk] = useState<null | { code: string; message: string; resend: (a: Ack) => void }>(null);
   const [toast, setToast] = useState<{ message: string; tone: "ok" | "err" } | null>(null);
   if (!id) return <Empty title="No bank line selected." action={<Link href="/bank" className="btn">Back to the bank</Link>} />;
@@ -69,7 +69,7 @@ function LineView() {
       {line.possibleDuplicate && open && (
         <div className="card border-attention p-3 text-sm mb-4 flex flex-wrap items-center gap-2">
           <span>This looks like the same transaction as a line imported earlier.</span>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDialog("ignore")}>Ignore as duplicate</button>
+          {line.matchedPaise === 0 && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDialog("ignore-duplicate")}>Ignore as duplicate</button>}
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setAck({ ...ack, ackDuplicateLine: true }); setToast({ message: "Marked as a separate payment — record it below.", tone: "ok" }); }}>It is a separate payment</button>
         </div>
       )}
@@ -98,7 +98,7 @@ function LineView() {
               </div>
             ))}
           </section>
-          <div className="lg:col-span-2 lg:order-1 min-w-0"><RecordForm line={line} fill={fill} ack={ack} onDone={onRecorded} /></div>
+          <div className="lg:col-span-2 lg:order-1 min-w-0"><RecordForm key={`${line.id}:${line.remainingPaise}`} line={line} fill={fill} ack={ack} onDone={onRecorded} /></div>
         </div>
       )}
 
@@ -119,6 +119,7 @@ function LineView() {
 
       {dialog === "link" && <LinkDialog line={line} onClose={() => setDialog(null)} onDone={done} />}
       {dialog === "ignore" && <IgnoreDialog line={line} onClose={() => setDialog(null)} onDone={done} />}
+      {dialog === "ignore-duplicate" && <IgnoreDialog line={line} initialReason="duplicate" onClose={() => setDialog(null)} onDone={done} />}
       {dialog === "reopen" && <Confirm title="Put this credit back in the review queue?" confirmLabel="Reopen" onConfirm={reopen} onClose={() => setDialog(null)} />}
       {dialog && typeof dialog === "object" && <UnlinkDialog line={line} receipt={dialog.unlink} onClose={() => setDialog(null)} onDone={done} />}
       {ask && (

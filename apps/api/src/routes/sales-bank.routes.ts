@@ -20,7 +20,7 @@ import * as bank from "../services/sales/bank.service";
 // come from ./sales-route-kit — never redefine them here.
 //   view   (sales:view)    — accounts, statements, lines, suggestions
 //   manage (sales:manage)  — preview/import, confirm, confirm-sure, link, unlink, ignore, reopen, rematch
-//   admin  (sales:approve) — bank accounts, delete a statement; also sees withdrawal narrations
+//   admin  (sales:approve) — bank accounts, delete a statement, bulk ignore-before; also sees withdrawal narrations
 
 const router = Router();
 
@@ -48,7 +48,7 @@ router.delete("/sales/bank/statements/:id", ...admin, ...write, validate(bankSta
 router.get("/sales/bank/lines", ...view, asyncHandler(async (req, res) =>
   success(res, await bank.listBankLines({ company: companyQuery(req), tab: tabOf(req.query.tab), accountId: str(req.query.accountId), statementId: str(req.query.statementId), q: str(req.query.q) }, await seeDebits(req)))));
 router.post("/sales/bank/lines/confirm-sure", ...manage, ...write, validate(bankConfirmSureSchema), asyncHandler(async (req, res) => success(res, await bank.confirmSureLines(req.body.lineIds, staffId(req)))));
-router.post("/sales/bank/lines/ignore-before", ...manage, ...write, validate(bankIgnoreBeforeSchema), asyncHandler(async (req, res) => success(res, await bank.ignoreUnmatchedBefore(companyOf(req), req.body, staffId(req)))));
+router.post("/sales/bank/lines/ignore-before", ...admin, ...write, validate(bankIgnoreBeforeSchema), asyncHandler(async (req, res) => success(res, await bank.ignoreUnmatchedBefore(companyOf(req), req.body, staffId(req)))));
 router.post("/sales/bank/rematch", ...manage, ...write, asyncHandler(async (req, res) => success(res, await bank.rematchCompany(companyOf(req), staffId(req)))));
 router.get("/sales/bank/lines/:id", ...view, asyncHandler(async (req, res) => success(res, await bank.getBankLine(req.params.id, await seeDebits(req)))));
 router.get("/sales/bank/lines/:id/receipts", ...view, asyncHandler(async (req, res) => success(res, await bank.unlinkedReceiptsFor(req.params.id))));

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { MAX_PAISE, sectionForRate, splitTds } from "@dashmani/shared";
-import { fingerprintTokens, ignoreHintFor, matchCredits, matchDebits, prepareNarration, type ClientInfo, type MatchContext, type MatchLine, type OpenInvoice, type UnlinkedReceipt } from "../src/services/sales/bank-match";
+import { classifyPastTds, fingerprintTokens, ignoreHintFor, matchCredits, matchDebits, prepareNarration, type ClientInfo, type MatchContext, type MatchLine, type OpenInvoice, type UnlinkedReceipt } from "../src/services/sales/bank-match";
 
 const OWN = ["Digital Sukoon Private Limited", "Dashmani Media Private Limited"];
 const FILMY: ClientInfo = { id: "c-filmy", names: ["Filmy Brands", "Filmy Brands Private Limited"], gstin: "27AABCU9603R1ZX", pan: "AABCU9603R", pastTds: null };
@@ -313,5 +313,39 @@ describe("shared helpers", () => {
     expect(splitTds([{ id: "a", balancePaise: 100, basePaise: 1 }], 101)).toBeNull();
     expect(sectionForRate(200)).toBe("194C");
     expect(sectionForRate(1000)).toBe("194J");
+  });
+});
+
+describe("receipt index (one call over the whole history)", () => {
+  it("finds the same receipts as a full scan: amount within ±₹1, UTR inside a long reference, a near-UTR short receipt", () => {
+    const noise = Array.from({ length: 300 }, (_, k) => rc({ id: `n${String(k).padStart(3, "0")}`, amountPaise: 1_000_000 + k * 1_000, paidOn: "2026-11-04", reference: `REF${k}XYZ${k}` }));
+    const lines = [
+      line({ id: "A", creditPaise: 1_150_000 }),
+      line({ id: "B", creditPaise: 9_000_000, utr: "HDFCN52026119999" }),
+    ];
+    const receipts = [
+      ...noise,
+      rc({ id: "u1", amountPaise: 8_000_000, paidOn: "2026-10-01", reference: "PAID VIA NEFT HDFCN52026119999 THANKS" }),
+    ];
+    const r = matchCredits(lines, ctx({ receipts }));
+    expect(r.A.autoLink?.paymentId).toBe("n150");
+    expect(r.B.receiptCandidates.map((x) => x.paymentId)).toEqual(["u1"]);
+    expect(r.B.receiptCandidates[0].why).toContain("same UTR, differs by");
+  });
+});
+
+describe("classifyPastTds (a stored rate keeps its base)", () => {
+  // Invoice: taxable ₹1,00,000, total ₹1,18,000.
+  const base = { taxablePaise: 10_000_000, totalPaise: 11_800_000 };
+  it("10% of the total incl. GST stored as 1000 bp is a GROSS-base practice, not taxable (R→G)", () => {
+    expect(classifyPastTds({ ...base, tdsRateBp: 1000, amountPaise: 10_620_000, tdsPaise: 1_180_000 })).toEqual({ rateBp: 1000, base: "gross" });
+  });
+  it("10% of taxable stored as 1000 bp stays taxable; a stored rate that fits neither base falls back to inference", () => {
+    expect(classifyPastTds({ ...base, tdsRateBp: 1000, amountPaise: 10_800_000, tdsPaise: 1_000_000 })).toEqual({ rateBp: 1000, base: "taxable" });
+    expect(classifyPastTds({ ...base, tdsRateBp: 1000, amountPaise: 11_600_000, tdsPaise: 200_000 })).toEqual({ rateBp: 200, base: "taxable" });
+  });
+  it("no stored rate: inferred as before", () => {
+    expect(classifyPastTds({ ...base, tdsRateBp: null, amountPaise: 10_620_000, tdsPaise: 1_180_000 })).toEqual({ rateBp: 1000, base: "gross" });
+    expect(classifyPastTds({ ...base, tdsRateBp: null, amountPaise: 11_600_000, tdsPaise: 0 })).toBeNull();
   });
 });

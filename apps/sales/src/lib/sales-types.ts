@@ -435,7 +435,7 @@ export interface BankStatementRow {
   creditTotalPaise: number; debitTotalPaise: number; openingBalancePaise: number | null; closingBalancePaise: number | null;
   warnings: string[] | null; uploadedById: string; createdAt: string; lineCounts: Record<BankLineStatus, number>;
 }
-export interface ImportResult { statement: BankStatementRow; newLines: number; duplicates: number; credits: number; debits: number; autoLinked: number; suggested: number; sure: number; unmatched: number }
+export interface ImportResult { statement: BankStatementRow; newLines: number; duplicates: number; credits: number; debits: number; autoLinked: number; suggested: number; sure: number; unmatched: number; matching?: "done" | "running" }
 export interface BankCandidate {
   kind: "invoice" | "advance"; codes: string[]; score: number; confidence: BankConfidence; clientId: string; client: { id: string; companyName: string };
   amountPaise: number; tdsPaise: number; tdsRateBp: number | null; tdsBase: "taxable" | "gross" | null; tdsSection: string | null;

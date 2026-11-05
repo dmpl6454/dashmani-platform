@@ -261,9 +261,10 @@ export async function allocatePayment(paymentId: string, input: PaymentAllocateI
  * its history; its allocations stop counting, so the invoices it paid are open again. A receipt
  * with refunds out of it cannot be voided until those refunds are cancelled.
  */
-export async function voidPaymentInTx(tx: Tx, paymentId: string, reason: string, actorId: string): Promise<{ bankLineId: string | null }> {
+export async function voidPaymentInTx(tx: Tx, paymentId: string, reason: string, actorId: string): Promise<{ bankLineId: string | null; changed: boolean }> {
   const p = await lockPayment(tx, paymentId);
-  if (p.status === "voided") return { bankLineId: p.bankLineId ?? null };
+  // Already voided (a double click, a retry): nothing changes, so nothing may be logged after.
+  if (p.status === "voided") return { bankLineId: p.bankLineId ?? null, changed: false };
   if (p.refunds.some((r) => r.status === "issued")) {
     throw new AppError(409, "PAYMENT_HAS_REFUNDS", `${p.number} has refunds against it — cancel them before voiding the receipt`);
   }
@@ -275,7 +276,7 @@ export async function voidPaymentInTx(tx: Tx, paymentId: string, reason: string,
     await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "payment_voided", note: `${p.number} — ${reason}` });
   }
   await logSalesEvent(tx, { entityType: "payment", entityId: p.id, actorId, action: "voided", fromStatus: "recorded", toStatus: "voided", note: reason });
-  return { bankLineId: p.bankLineId ?? null };
+  return { bankLineId: p.bankLineId ?? null, changed: true };
 }
 
 export async function voidPayment(paymentId: string, reason: string, actorId: string) {
@@ -283,7 +284,7 @@ export async function voidPayment(paymentId: string, reason: string, actorId: st
   // keeps bankLineId) is refreshed AFTER commit — confirm/link recompute under the line lock, so
   // the brief stale cache can never cause an over-match (spec-bank D10).
   const r = await prisma.$transaction((tx) => voidPaymentInTx(tx, paymentId, reason, actorId));
-  if (r.bankLineId) {
+  if (r.bankLineId && r.changed) {
     const lineId = r.bankLineId;
     inBackground("bank line refresh", async () => {
       const { refreshBankLineAfterVoid } = await import("./bank.service"); // dynamic: bank.service imports this file

@@ -433,7 +433,10 @@ export function checkAccount(found: string | null, accountNumber: string): { sta
   if (!found) return { status: "not_stated", found: null };
   const mine = accountNumber.replace(/\D/g, "");
   const masked = /[xX*]/.test(found);
-  if (!masked) return { status: found === mine ? "match" : "mismatch", found };
+  // SBI and some ICICI/Kotak exports zero-pad the number in the header (00000031234567890) while
+  // staff register it as printed on the cheque book (31234567890): compare without leading zeros.
+  const bare = (x: string) => x.replace(/\D/g, "").replace(/^0+/, "");
+  if (!masked) return { status: bare(found) !== "" && bare(found) === bare(mine) ? "match" : "mismatch", found };
   const digits = found.replace(/[^0-9]/g, "");
   return { status: digits.length >= 4 && mine.endsWith(digits.slice(-4)) ? "match" : "mismatch", found };
 }

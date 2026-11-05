@@ -31,7 +31,7 @@ export interface ClientInfo {
   id: string; names: string[]; gstin: string | null; pan: string | null;
   pastTds: { rateBp: number; base: "taxable" | "gross"; receiptNumber: string } | null;
 }
-/** `imported`: a Swipe (SW-…) receipt — offered to a person, never auto-linked (spec-00 §6.3). */
+/** `imported`: a receipt with `import_id` set (a Swipe import, whatever its number) — offered to a person, never auto-linked (spec-00 §6.3). */
 export interface UnlinkedReceipt {
   id: string; number: string; clientId: string; amountPaise: number; paidOn: string; reference: string | null; mode: string; imported?: boolean;
   /** A person detached this receipt from a bank line before: offered, never auto-linked again. */

@@ -924,6 +924,20 @@ export async function rematchAfterWrite(company: CompanyKey, actorId: string, wa
   if (timer) clearTimeout(timer);
   return done;
 }
+
+/**
+ * spec-00 §6.3: after a Swipe import is applied or undone, its receipts and invoices appear or
+ * vanish, so the stored suggestions are refreshed in the background — a credit then names the new
+ * SW- receipts (and is no longer "sure"), and an undone import's receipts stop being offered. Never
+ * waits; skipped with SALES_BANK_ENABLED=0 and for a company without a bank account.
+ */
+export function scheduleBankRematch(company: CompanyKey, actorId: string): void {
+  if (process.env.SALES_BANK_ENABLED === "0") return;
+  inBackground("bank rematch", async () => {
+    if (!(await prisma.salesBankAccount.count({ where: { companyKey: company } }))) return;
+    await rematchCompany(company, actorId);
+  });
+}
 const IMPORT_REMATCH_WAIT_MS = 20_000;
 const ACTION_REMATCH_WAIT_MS = 4_000;
 
@@ -1139,9 +1153,13 @@ export async function bankSummary(company: CompanyKey) {
   };
 }
 
-/** The dashboard tile: null when the company has no bank account (two small queries). */
+/**
+ * The dashboard tile: null when the company has no ACTIVE bank account — the same rule as the
+ * Accounts page's tile (spec-00 §6.4). Its open figures, like the /bank Review list both tiles
+ * open, still count an archived account's unrecorded credits.
+ */
 export async function bankSummaryOrNullForDashboard(company: CompanyKey): Promise<BankSummary | null> {
-  const any = await prisma.salesBankAccount.count({ where: { companyKey: company } });
+  const any = await prisma.salesBankAccount.count({ where: { companyKey: company, status: "active" } });
   return any ? bankSummary(company) : null;
 }
 

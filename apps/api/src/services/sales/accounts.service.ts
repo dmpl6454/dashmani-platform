@@ -66,7 +66,10 @@ export async function getAccounts(company: CompanyKey, fy: string): Promise<Acco
 
 /**
  * The bank tile (spec-00 §6.4, filled by the bank PR): null when the company has no active bank
- * account (the portal hides the tile), else its open credit lines and the latest statement day.
+ * account (the portal hides the tile — the dashboard's tile uses the same rule), else its open
+ * credit lines and the latest statement day. The open figures are those of the /bank Review list
+ * the tile links to, so an archived account's unrecorded credits still count; the statement day
+ * is the active accounts' latest.
  */
 export async function bankSummaryOrNull(company: CompanyKey): Promise<AccountsView["bank"]> {
   if (!(await prisma.salesBankAccount.count({ where: { companyKey: company, status: "active" } }))) return null;

@@ -609,6 +609,46 @@ describe("bank statements, matching and TDS", () => {
     expect(ok.body.data.status).toBe("undone");
     expect(await prisma.salesPayment.count({ where: { importId: imp.id } })).toBe(0);
     expect((await prisma.salesBankLine.findUniqueOrThrow({ where: { id: line.id } })).matchedPaise).toBe(0n);
+    // The undo rematches the bank: the deleted receipt is no longer offered on the line (R→G).
+    await flushSalesBackground();
+    expect((await lineOf("HDFCN52026110063")).suggestion.receiptCandidates).toEqual([]);
+  });
+
+  it("spec-00 §6.3: a Swipe receipt voided from its bank credit blocks undo for good — and says so, not 'unlink it' (R→G)", async () => {
+    const imp = await swipeImported(d(-1));
+    expect((await importFile(statement([{ date: d(-1), narr: narr("HDFCN52026110064"), cr: 11_800_000 }]))).status).toBe(201);
+    const line = await lineOf("HDFCN52026110064");
+    expect((await api().post(`/v1/sales/bank/lines/${line.id}/link`).set(auth(sales)).send({ paymentId: imp.receipt.id })).status).toBe(200);
+    const v = await api().post(`/v1/sales/bank/lines/${line.id}/unlink`).set(auth(sales)).send({ paymentId: imp.receipt.id, action: "void", reason: "bounced" });
+    expect(v.status, JSON.stringify(v.body)).toBe(200);
+    await flushSalesBackground();
+    const undo = (await api().get(`/v1/sales/imports/${imp.id}`).set(auth(adminT))).body.data.undo;
+    expect(undo.allowed).toBe(false);
+    expect(undo.blockedBy).toContain("SW-INV/24-25/0102 was voided on a bank credit of");
+    expect(undo.blockedBy).toContain("this import can no longer be undone");
+    expect(undo.blockedBy).not.toContain("unlink it");
+    // The Bank page indeed refuses to unlink it.
+    const again = await api().post(`/v1/sales/bank/lines/${line.id}/unlink`).set(auth(sales)).send({ paymentId: imp.receipt.id, action: "detach", reason: "undo the import" });
+    expect([again.status, again.body.error.code]).toEqual([409, "PAYMENT_VOIDED"]);
+  });
+
+  it("spec-00 §6.3: applying a Swipe import rematches the bank — a 'sure' credit names the SW- receipt and stops being sure; undo restores it (R→G)", async () => {
+    await issued(filmy, 10_000_000, d(-10));
+    expect((await importFile(statement([{ date: d(-1), narr: narr("HDFCN52026110065"), cr: 11_800_000 }]))).status).toBe(201);
+    const sure = async () => (await api().get("/v1/sales/bank/lines?company=dspl&tab=sure").set(auth(sales))).body.data.lines.map((l: { id: string }) => l.id);
+    let line = await lineOf("HDFCN52026110065");
+    expect(line.suggestion.receiptCandidates).toEqual([]);
+    expect(await sure()).toEqual([line.id]);
+    const imp = await swipeImported(d(-1));
+    line = await lineOf("HDFCN52026110065");
+    expect(line.suggestion.receiptCandidates.map((x: { paymentId: string }) => x.paymentId)).toEqual([imp.receipt.id]);
+    expect(await sure()).toEqual([]);
+    expect(line.receipts).toEqual([]);
+    expect((await api().post(`/v1/sales/imports/${imp.id}/undo`).set(auth(adminT)).send({ reason: "Wrong file" })).status).toBe(200);
+    await flushSalesBackground();
+    line = await lineOf("HDFCN52026110065");
+    expect(line.suggestion.receiptCandidates).toEqual([]);
+    expect(await sure()).toEqual([line.id]);
   });
 
   it("spec-00 §6.4: the Accounts page's bank tile is null without an active account, else the open credits and the latest statement day (R→G)", async () => {
@@ -634,6 +674,19 @@ describe("bank statements, matching and TDS", () => {
     expect((await api().get("/v1/sales/accounts?company=dmpl").set(auth(sales))).body.data.bank).toBeNull();
     await prisma.salesBankAccount.update({ where: { id: accountId }, data: { status: "archived" } });
     expect(await tile()).toBeNull();
+    // The dashboard's tile follows the same rule: no active account → no tile (R→G).
+    expect((await api().get("/v1/sales/dashboard?company=dspl").set(auth(sales))).body.data.bank).toBeNull();
+    // Active + archived: the tile shows, its open credits are the /bank Review list's (the archived
+    // account's included), and the statement day is the active account's.
+    const b = await api().post("/v1/sales/bank/accounts").set(auth(adminT)).send({ companyKey: "dspl", label: "HDFC current", bank: "other", accountNumber: "50200012345678" });
+    expect(b.status, JSON.stringify(b.body)).toBe(201);
+    accountId = b.body.data.id;
+    expect((await importFile(statement([{ date: d(-5), narr: "NEFT CR TILE THREE", cr: 7_000 }], { account: "50200012345678" }))).status).toBe(201);
+    const st2 = await prisma.salesBankStatement.findFirstOrThrow({ where: { bankAccountId: accountId } });
+    const review = (await api().get("/v1/sales/bank/lines?company=dspl&tab=review").set(auth(sales))).body.data.counts.review;
+    expect(review).toBe(3);
+    expect(await tile()).toEqual({ unmatchedCount: 3, unmatchedPaise: 157_000, lastStatementDay: st2.periodTo.toISOString().slice(0, 10) });
+    expect((await api().get("/v1/sales/dashboard?company=dspl").set(auth(sales))).body.data.bank).toMatchObject({ openCount: 3, openPaise: 157_000 });
   });
 
   it("bank writes switch off with SALES_BANK_ENABLED=0; reads keep working", async () => {

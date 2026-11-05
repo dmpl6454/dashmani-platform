@@ -277,6 +277,40 @@ export interface LedgerResponse { ledger: LedgerView; recipients: { to: string[]
 export type ReconEmailResult = { sent: boolean; to: string[]; cc: string[] };
 
 // ─── smart-invoicing: reconcile BRS (PR 6) ───
+// The Bank tab of /reconcile (spec-reconcile §6.4) — mirrors apps/api/src/services/sales/recon/brs*.ts.
+export type BrsState = "running" | "open" | "reconciled" | "changed";
+export type BrsGroup = "not_credited" | "credited_other_month" | "unmatched" | "ignored" | "rounding" | "over_matched" | "duplicate";
+export interface BrsItem {
+  key: string; group: BrsGroup; open: boolean; reason: { code: string; text: string; action: string | null }; day: string; amountPaise: number;
+  line?: { id: string; txnDate: string; rowNo: number; statementId: string; fileName: string; narration: string; reference: string | null; utr: string | null; creditPaise: number; matchedPaise: number };
+  receipt?: { id: string; number: string; paidOn: string; clientName: string; mode: string; amountPaise: number; creditedOn: string | null };
+  link?: { lineId: string; paymentId: string; text: string };
+}
+export interface BrsAccountRef { id: string; label: string; bank: string; last4: string; ifsc: string | null; matchFrom: string | null }
+export interface BrsView {
+  company: "dspl" | "dmpl"; account: BrsAccountRef;
+  accounts: Array<{ id: string; label: string; last4: string; isDefault: boolean }>;
+  defaultAccount: { id: string; why: "only" | "printed_on_invoices" | "oldest" } | null;
+  month: { key: string; label: string; from: string; to: string; over: boolean };
+  coverage: { complete: boolean; gaps: Array<{ from: string; to: string }>; statements: Array<{ id: string; fileName: string; periodFrom: string; periodTo: string }> };
+  balances: { source: "statement" | "typed" | "unknown"; openingPaise: number | null; creditsPaise: number; creditCount: number; debitsPaise: number; debitCount: number; closingPaise: number | null;
+    breaks: Array<{ kind: "day" | "equation" | "statement_open" | "statement_close"; day?: string; fileName?: string; expectedPaise: number | null; foundPaise: number | null; text: string }>; warnings: string[]; agreesWith: string | null };
+  books: { receiptsPaise: number; receiptCount: number; excluded: { cashPaise: number; cashCount: number; razorpayPaise: number; razorpayCount: number; otherAccountsPaise: number; otherAccountsCount: number } };
+  formula: Array<{ key: "books" | "not_credited" | "credited_other_month" | "unmatched" | "ignored" | "rounding" | "over_matched" | "credits"; label: string; paise: number; count: number }>;
+  ties: boolean; items: BrsItem[]; openItems: { count: number; paise: number };
+  debits: { totalPaise: number; lines: Array<{ id: string; day: string; amountPaise: number; refund: { id: string; number: string } | null; reversalOf: string | null; narration: string; redacted: boolean }> };
+  fingerprint: string; state: BrsState;
+  signoff: null | { id: string; version: number; reconciledAt: string; reconciledByName: string; note: string | null; accepted: string[]; balanceSource: string; closingPaise: number; booksPaise: number; openItemsPaise: number };
+  versions: Array<{ version: number; reconciledAt: string; reconciledByName: string; supersedeKind: string | null; supersededAt: string | null; supersedeReason: string | null; supersededByName: string | null }>;
+  reopened: null | { byName: string; at: string; reason: string | null };
+  changes: null | { added: BrsItem[]; removed: BrsItem[]; figures: Array<{ key: string; frozenPaise: number | null; livePaise: number | null }>; newLines: Array<{ statementId: string; fileName: string; uploadedByName: string; uploadedAt: string; lines: number }> };
+  blockers: Array<{ code: string; sentence: string }>; needsAck: Array<"open_items" | "coverage_gap" | "statement_break" | "typed_closing">; todo: ReconTodo[];
+}
+export interface BrsMonthsView {
+  company: "dspl" | "dmpl"; account: BrsAccountRef | null; accounts: BrsView["accounts"]; defaultAccount: BrsView["defaultAccount"];
+  months: Array<{ month: string; label: string; state: BrsState; creditsPaise: number; debitsPaise: number; lineCount: number; coverage: "complete" | "partial" | "none"; coverageNote: string | null;
+    reconciledAt: string | null; reconciledByName: string | null; version: number | null }>;
+}
 
 // ─── smart-invoicing: tally (PR 2) ───
 // Tally export / Send to Tally (spec-tally §3.4).

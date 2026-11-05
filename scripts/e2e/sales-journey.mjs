@@ -563,7 +563,7 @@ await journey("phone-pass", async () => {
   const pages = ["/dashboard", "/inventory", "/clients", `/clients/view?id=${ids.client}`, "/quotes", `/quotes/view?id=${ids.quote}`, "/orders", `/orders/view?id=${ids.order}`, "/invoices", `/invoices/view?id=${ids.invoice}`, "/payments", `/payments/view?id=${ids.receipt}`, "/bookings", "/settings", `/quotes/edit?clientId=${ids.client}`, `/orders/edit?clientId=${ids.client}`, `/invoices/edit?clientId=${ids.client}`, `/payments/record?clientId=${ids.client}`, `/payments/record?clientId=${ids.ka}`, `/invoices/view?id=${ids.kaInv}`];
   pages.push(/* accounts (PR 1) */ "/accounts", "/accounts/filed?fy=2025-26&company=dspl");
   pages.push(/* reconcile (PR 5) */ "/reconcile", "/reconcile?tab=gst", "/reconcile?tab=balances", `/reconcile/ledger?clientId=${ids.client}`);
-  pages.push(/* reconcile BRS (PR 6) */);
+  pages.push(/* reconcile BRS (PR 6) */ "/reconcile?tab=bank", "/reconcile/brs");
 
   pages.push(/* tally (PR 2) */ "/tally", "/tally/view", "/tally/settings", "/tally/parties");
 

@@ -164,8 +164,15 @@ const istStamp = (iso: string) => {
 export async function renderBrsPdf(v: BrsCore, opts: {
   frozen: boolean; redactDebits: boolean;
   seller: { legalName: string; gstins: string[]; address: string };
-  signoff: null | { version: number; byName: string; at: string; note: string | null; accepted: string[]; fingerprint: string };
+  signoff: null | {
+    version: number; byName: string; at: string; note: string | null; accepted: string[]; fingerprint: string;
+    /** Set when this version was reopened or replaced: printed in the status box and as a mark on every page. */
+    superseded?: { kind: string; at: string; byName: string; reason: string | null } | null;
+  };
 }): Promise<Buffer> {
+  // Helvetica (WinAnsi) has neither ₹ nor U+2212: every string the core wrote goes through this.
+  const pt = (t: string) => t.replace(/₹/g, "Rs. ").replace(/\u2212/g, "-");
+  const sup = opts.frozen ? opts.signoff?.superseded ?? null : null;
   const company = (v.company in SALES_COMPANIES ? v.company : "dspl") as CompanyKey;
   const created = opts.signoff ? new Date(opts.signoff.at) : new Date();
   const doc = new PDFDocument({ size: "A4", margin: PAGE.margin, bufferPages: true, info: { Title: `Bank reconciliation statement — ${v.account.label} ${v.month.label}`, Author: opts.seller.legalName, CreationDate: created } });
@@ -204,7 +211,10 @@ export async function renderBrsPdf(v: BrsCore, opts: {
   // 2. Status box
   const top = doc.y;
   const status = opts.frozen && opts.signoff
-    ? [`RECONCILED · version ${opts.signoff.version} · ${opts.signoff.byName} · ${istStamp(opts.signoff.at)}`, opts.signoff.note ?? "", opts.signoff.accepted.length ? `Acknowledged: ${opts.signoff.accepted.join(", ").replace(/_/g, " ")}` : ""].filter(Boolean)
+    ? [
+      ...(sup ? [`SUPERSEDED — ${sup.kind === "re_reconciled" ? "replaced by a later version" : "reopened"} on ${istStamp(sup.at)} by ${sup.byName}${sup.reason ? `: ${sup.reason}` : ""}`] : []),
+      `RECONCILED · version ${opts.signoff.version} · ${opts.signoff.byName} · ${istStamp(opts.signoff.at)}`, opts.signoff.note ?? "", opts.signoff.accepted.length ? `Acknowledged: ${opts.signoff.accepted.join(", ").replace(/_/g, " ")}` : "",
+    ].filter(Boolean).map(pt)
     : [`NOT RECONCILED — figures as on ${istStamp(new Date().toISOString())}`];
   doc.font("Helvetica-Bold").fontSize(8.5).fillColor(INK);
   const h = status.reduce((s, t) => s + doc.heightOfString(t, { width: width - 16 }) + 2, 0);
@@ -222,14 +232,14 @@ export async function renderBrsPdf(v: BrsCore, opts: {
   pair(`= Closing balance${b.source === "typed" ? " (typed from the bank's statement)" : ""}`, b.closingPaise === null ? "unknown" : signed(b.closingPaise), true);
   doc.font("Helvetica").fontSize(8).fillColor(MUTED);
   if (b.agreesWith) doc.text(`Agrees with ${b.agreesWith}`, left, doc.y, { width });
-  for (const br of b.breaks) doc.fillColor("#b00020").text(br.text.replace(/₹/g, "Rs. "), left, doc.y, { width });
+  for (const br of b.breaks) doc.fillColor("#b00020").text(pt(br.text), left, doc.y, { width });
   doc.fillColor(MUTED).text(`Statements: ${v.coverage.statements.map((s) => `${s.fileName} (${dmy(s.periodFrom)} to ${dmy(s.periodTo)})`).join("; ") || "none"}`, left, doc.y, { width });
 
   // 4. B — reconciliation of receipts
   heading("B — Reconciliation of receipts");
   for (const f of v.formula) {
     const sign = f.key === "not_credited" ? "- " : f.key === "books" || f.key === "credits" ? "" : "+ ";
-    pair(`${f.key === "credits" ? "= " : sign}${f.label.replace(/₹/g, "Rs. ")}${f.count ? ` (${f.count})` : ""}`, signed(f.paise), f.key === "credits" || f.key === "books");
+    pair(`${f.key === "credits" ? "= " : sign}${pt(f.label)}${f.count ? ` (${f.count})` : ""}`, signed(f.paise), f.key === "credits" || f.key === "books");
   }
   doc.font("Helvetica-Bold").fontSize(8.5).fillColor(v.ties ? INK : "#b00020").text(v.ties ? "AGREES with credits as per bank" : "DOES NOT AGREE — do not rely on this statement", left, doc.y, { width });
 
@@ -255,7 +265,7 @@ export async function renderBrsPdf(v: BrsCore, opts: {
     for (const it of items) {
       const ref = it.receipt ? it.receipt.number : it.line ? `row ${it.line.rowNo} of ${it.line.fileName}` : "";
       const desc = it.line ? it.line.narration.slice(0, 60) : it.receipt ? `${it.receipt.clientName} · ${it.receipt.mode.replace(/_/g, " ")}` : "";
-      row([dmy(it.day), ref, desc, it.reason.text.replace(/₹/g, "Rs. "), signed(it.amountPaise)]);
+      row([dmy(it.day), pt(ref), pt(desc), pt(it.reason.text), signed(it.amountPaise)]);
     }
     row(["", "", "", "Total", signed(items.reduce((s, i) => s + i.amountPaise, 0))], true);
   }
@@ -269,7 +279,7 @@ export async function renderBrsPdf(v: BrsCore, opts: {
   for (const l of refunds) pair(`${dmy(l.day)} · refund ${l.refund!.number}`, rupees(l.amountPaise));
   for (const l of reversals) pair(`${dmy(l.day)} · ${l.reversalOf}`, rupees(l.amountPaise));
   if (opts.redactDebits) pair(`Other withdrawals (${others.length}) — details are visible to admins`, rupees(others.reduce((s, l) => s + l.amountPaise, 0)));
-  else for (const l of others) pair(`${dmy(l.day)} · ${l.narration.slice(0, 70)}`, rupees(l.amountPaise));
+  else for (const l of others) pair(`${dmy(l.day)} · ${pt(l.narration.slice(0, 70))}`, rupees(l.amountPaise));
 
   // 7. E — not included
   const ex = v.books.excluded;
@@ -290,6 +300,7 @@ export async function renderBrsPdf(v: BrsCore, opts: {
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
     if (!opts.frozen) drawDraftMark(doc, "NOT RECONCILED");
+    else if (sup) drawDraftMark(doc, "SUPERSEDED");
     const bottom = doc.page.margins.bottom;
     doc.page.margins.bottom = 0;
     doc.font("Helvetica").fontSize(7).fillColor(MUTED).text(

@@ -4,6 +4,9 @@
  * random months from a seeded PRNG.
  */
 import { describe, it, expect } from "vitest";
+import zlib from "zlib";
+import { bankBalanceFromSide } from "@dashmani/shared";
+import { renderBrsPdf } from "../src/services/sales/recon/recon-pdf";
 import {
   brsChanges, brsState, buildBrs, coverageOf, dayBalances, monthBounds,
   type BrsBookReceipt, type BrsInput, type BrsLineIn, type BrsReceipt, type BrsStatementIn,
@@ -248,6 +251,45 @@ describe("BRS — pure (§10.4)", () => {
     expect(typed.balances).toMatchObject({ source: "typed", closingPaise: R(790618.8), openingPaise: R(402118.4) });
   });
 
+  it("B-6b one printed balance is not enough: opening only → unknown + typed_closing; a typed closing is then checked against it and against last month's sign-off (R→G)", () => {
+    const i = october();
+    const noBal = i.lines.map((l) => ({ ...l, balancePaise: null }));
+    // A CSV without a balance column: opening from the preamble, closing null; or a period running past the month.
+    const openOnly = i.statements.map((s) => (s.id === "st-oct" ? { ...s, closingPaise: null } : s));
+    const v = buildBrs({ ...i, lines: noBal, statements: openOnly });
+    expect(v.balances).toMatchObject({ source: "unknown", openingPaise: null, closingPaise: null, agreesWith: null });
+    expect(v.needsAck).toContain("typed_closing");
+    const past = buildBrs({ ...i, lines: noBal, statements: [{ ...i.statements[1], periodTo: "2026-11-15", closingPaise: null }] });
+    expect(past.balances).toMatchObject({ source: "unknown", agreesWith: null });
+    // Typed: agrees with the printed opening → no break, but nothing printed a closing to agree with.
+    const ok = buildBrs({ ...i, lines: noBal, statements: openOnly, typedClosingPaise: R(790618.8) });
+    expect(ok.balances).toMatchObject({ source: "typed", openingPaise: R(402118.4), breaks: [], agreesWith: null });
+    // A typing slip: the worked-back opening no longer meets the printed one.
+    const slip = buildBrs({ ...i, lines: noBal, statements: openOnly, typedClosingPaise: R(790618.8) + R(100) });
+    expect(slip.balances.breaks).toEqual([expect.objectContaining({ kind: "statement_open", fileName: "oct.csv", expectedPaise: R(402118.4), foundPaise: R(402218.4) })]);
+    expect(slip.needsAck).toContain("statement_break");
+    // Closing only printed → typed and equal → agrees with that file (it was compared).
+    const closeOnly = i.statements.map((s) => (s.id === "st-oct" ? { ...s, openingPaise: null } : s));
+    expect(buildBrs({ ...i, lines: noBal, statements: closeOnly }).balances.source).toBe("unknown");
+    expect(buildBrs({ ...i, lines: noBal, statements: closeOnly, typedClosingPaise: R(790618.8) }).balances).toMatchObject({ source: "typed", agreesWith: "oct.csv", breaks: [] });
+    // Last month's signed-off closing is checked against the worked-back opening.
+    const none = i.statements.map((s) => ({ ...s, openingPaise: null, closingPaise: null }));
+    const prevOk = buildBrs({ ...i, lines: noBal, statements: none, typedClosingPaise: R(790618.8), previousSignedClosingPaise: R(402118.4) });
+    expect(prevOk.balances.breaks).toEqual([]);
+    const prevBad = buildBrs({ ...i, lines: noBal, statements: none, typedClosingPaise: R(790618.8), previousSignedClosingPaise: R(400000) });
+    expect(prevBad.balances.breaks).toEqual([expect.objectContaining({ kind: "statement_open", expectedPaise: R(400000), foundPaise: R(402118.4) })]);
+    expect(prevBad.balances.breaks[0].text).toMatch(/^Last month was signed off with a closing balance of ₹4,00,000\.00/);
+    // A statement with balances that the lines agree with: "Agrees with" only when its closing equals ours.
+    expect(buildBrs(i).balances.agreesWith).toBe("oct.csv");
+    expect(buildBrs({ ...i, statements: i.statements.map((s) => (s.id === "st-oct" ? { ...s, closingPaise: null } : s)) }).balances.agreesWith).toBeNull();
+  });
+
+  it("B-6c a bank statement's side: Cr is money in the account (positive), Dr is overdrawn", () => {
+    expect(bankBalanceFromSide(R(790618.8), "Cr")).toBe(R(790618.8));
+    expect(bankBalanceFromSide(R(790618.8), "Dr")).toBe(-R(790618.8));
+    expect(bankBalanceFromSide(0, "Cr")).toBe(0);
+  });
+
   it("B-7 attribution: default account counts unlinked bank-mode receipts; another account lists them as a memo; a linked cash receipt counts", () => {
     const i = october();
     const other = buildBrs({ ...i, defaultAccountId: "acc-icici" });
@@ -289,6 +331,30 @@ describe("BRS — pure (§10.4)", () => {
     expect(sug.items.find((x) => x.key === "line:L28")!.reason).toMatchObject({ code: "SUGGESTED", text: "Bank suggests INV/26-27/0019 — confirm it on Bank" });
   });
 
+  it("B-8b a receipt linked to a line stored twice in ANOTHER month was never credited: an open item, not a closed timing item (R→G)", () => {
+    const i = october();
+    const v = buildBrs({ ...i, books: i.books.map((b) => (b.id === "p-RCPT/26-27/0044" ? { ...b, lineIsDuplicate: true } : b)) });
+    expect(v.items.find((x) => x.key === "nc:p-RCPT/26-27/0044")).toMatchObject({ group: "not_credited", open: true, reason: { code: "ON_UNCOUNTED_LINE" } });
+    expect(v.openItems).toEqual({ count: 4, paise: R(130000) });
+    expect(v.ties).toBe(true);
+  });
+
+  it("B-8c who ignored a line, and when, is the IST day (an ignore at 01:30 IST is that day, not yesterday)", () => {
+    const i = october();
+    const v = buildBrs({ ...i, lines: i.lines.map((l) => (l.id === "L22" ? { ...l, ignoredAt: "2026-11-02T20:00:00.000Z" } : l)) });
+    expect(v.items.find((x) => x.key === "line:L22")!.reason.text).toContain("Riya Shah, 3 Nov 2026");
+  });
+
+  it("B-11 the PDF prints no glyph Helvetica lacks: ₹ → Rs., − → -", async () => {
+    const i = october();
+    const eq = buildBrs({ ...i, lines: [], books: [], statements: [{ ...i.statements[1], closingPaise: R(5) }] });
+    expect(eq.balances.breaks[0].text).toContain("−");
+    const pdf = await renderBrsPdf(eq, { frozen: false, redactDebits: false, seller: { legalName: "Digital Sukoon Private Limited", gstins: [], address: "" }, signoff: null });
+    const text = pdfText(pdf);
+    expect(text).toContain("credits - withdrawals");
+    expect(text).toContain("Rs. ");
+  });
+
   it("B-9 over-matched credit → item + blocker BRS_OVER_MATCHED", () => {
     const i = october();
     const v = buildBrs({ ...i, lines: i.lines.map((l) => (l.id === "L28" ? { ...l, receipts: [rcpt("RCPT/X", "2026-10-28", R(45000))] } : l)), books: [...i.books, book(rcpt("RCPT/X", "2026-10-28", R(45000)), { lineId: "L28", day: "2026-10-28" })] });
@@ -313,6 +379,18 @@ describe("BRS — pure (§10.4)", () => {
     expect(monthBounds("2026-12")).toMatchObject({ from: "2026-12-01", to: "2026-12-31", next: "2027-01-01", label: "December 2026" });
   });
 });
+
+function pdfText(buf: Buffer): string {
+  const s = buf.toString("latin1");
+  let text = "";
+  for (const m of s.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+    let body: string;
+    try { body = zlib.inflateSync(Buffer.from(m[1], "latin1")).toString("latin1"); } catch { continue; }
+    for (const h of body.matchAll(/<([0-9a-fA-F]+)>/g)) text += Buffer.from(h[1], "hex").toString("latin1");
+    text += " ";
+  }
+  return text;
+}
 
 function prng(seed: number) {
   let s = seed >>> 0;

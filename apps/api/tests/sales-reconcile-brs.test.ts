@@ -33,10 +33,11 @@ const rs = (paise: number) => (paise / 100).toFixed(2);
 
 type Row = { date: string; narr: string; dr?: number; cr?: number };
 /** An IDFC-layout statement; balances run from `opening` unless `balance: false`; `breakAt` shifts later balances by ₹500. */
-function statement(rows: Row[], o: { opening: number; balance?: boolean; account?: string; breakAt?: number }): Buffer {
+function statement(rows: Row[], o: { opening: number; balance?: boolean; account?: string; breakAt?: number; openingRow?: boolean }): Buffer {
   let bal = o.opening;
   const withBal = o.balance !== false;
   const out: string[][] = [[`Account No : ${o.account ?? ACC}`], [], ["Transaction Date", "Particulars", "Cheque No", "Debit", "Credit", ...(withBal ? ["Balance"] : [])]];
+  if (o.openingRow) out.push(["", "Opening Balance", "", "", rs(o.opening), ...(withBal ? [rs(o.opening)] : [])]);
   rows.forEach((r, i) => {
     bal += (r.cr ?? 0) - (r.dr ?? 0);
     if (o.breakAt !== undefined && i === o.breakAt) bal += R(500);
@@ -223,6 +224,12 @@ describe("BRS — routes + DB (§10.5)", () => {
     expect(after).toMatchObject({ state: "reconciled", signoff: { version: 1, reconciledByName: "Riya Shah", note: "Cheque 0043 clears in Nov" } });
     const events = await api().get(`/v1/sales/events?entityType=brs_month&entityId=${w.accountId}:2026-10`).set(auth(w.sales));
     expect(events.status).toBe(200);
+    // The CSV of the sign-off says who reconciled it, not only who downloaded it.
+    const csv = (await api().get(`/v1/sales/reconcile/bank/brs.csv?company=dspl&accountId=${w.accountId}&month=2026-10`).set(auth(w.admin))).text.replace(/^\uFEFF/, "").split("\r\n");
+    expect(csv).toContain("Reconciled by,Riya Shah");
+    expect(csv).toContain("Note,Cheque 0043 clears in Nov");
+    expect(csv).toContain("Acknowledged,open items");
+    expect(csv.find((r) => r.startsWith("Source,"))).toContain("by Boss Admin");
   });
 
   it("S-3 a later statement adds an October line → changed (naming the file and uploader); v1's PDF/CSV keep v1; reconcile again → v2, v1 superseded re_reconciled (R→G)", async () => {
@@ -286,6 +293,14 @@ describe("BRS — routes + DB (§10.5)", () => {
     expect(after).toMatchObject({ state: "open", signoff: null, reopened: { byName: "Riya Shah", reason: "cheque bounced" } });
     expect(await prisma.salesBrsSignoff.findFirst({ where: { bankAccountId: w.accountId, supersedeKind: "reopened" } })).toBeTruthy();
     expect(await prisma.salesEvent.count({ where: { entityType: "brs_month", action: "reopened" } })).toBe(1);
+    // v1's files now say they were withdrawn (R→G).
+    const pdf1 = await api().get(`/v1/sales/reconcile/bank/brs.pdf?company=dspl&accountId=${w.accountId}&month=2026-10&version=1`).set(auth(w.sales)).buffer(true).parse((res, cb) => { const c: Buffer[] = []; res.on("data", (d: Buffer) => c.push(d)); res.on("end", () => cb(null, Buffer.concat(c))); });
+    const t = pdfText(pdf1.body as Buffer);
+    expect(t).toContain("SUPERSEDED");
+    expect(t).toContain("cheque bounced");
+    const csv1 = await api().get(`/v1/sales/reconcile/bank/brs.csv?company=dspl&accountId=${w.accountId}&month=2026-10&version=1`).set(auth(w.sales));
+    expect(csv1.text).toMatch(/reconciled version 1 — superseded/);
+    expect(csv1.text).toContain("Superseded,reopened");
   });
 
   it("S-6 a coverage gap and a statement break need their tick and a note ≥ 10 chars; a statement without balances needs a typed closing", async () => {
@@ -305,6 +320,20 @@ describe("BRS — routes + DB (§10.5)", () => {
     const so = await prisma.salesBrsSignoff.findFirstOrThrow({ where: { month: "2026-08" } });
     expect(so).toMatchObject({ balanceSource: "typed", closingPaise: BigInt(R(10700)), openingPaise: BigInt(R(10000)) });
     expect((await brs(w, "2026-08")).body.data).toMatchObject({ state: "reconciled", balances: { source: "typed", closingPaise: R(10700) } });
+    // §5.4.7: a typed month that changes is reconciled again directly — the dialog sends no closing, the frozen one is kept (R→G).
+    await importFile(w, statement([{ date: "2026-08-25", narr: "NEFT CR AUG TWO", cr: R(50) }], { opening: 0, balance: false }), "aug2.csv");
+    const ch = (await brs(w, "2026-08")).body.data;
+    expect(ch).toMatchObject({ state: "changed", balances: { source: "typed", closingPaise: R(10700) } });
+    expect(ch.needsAck).not.toContain("typed_closing");
+    const again = await reconcile(w, { ...base, fingerprint: ch.fingerprint, acceptCoverageGaps: true, note: "No transactions outside 3–25 Aug" });
+    expect(again.status, JSON.stringify(again.body)).toBe(201);
+    expect(again.body.data.version).toBe(2);
+    expect(await prisma.salesBrsSignoff.findFirstOrThrow({ where: { month: "2026-08", activeKey: { not: null } } })).toMatchObject({ balanceSource: "typed", closingPaise: BigInt(R(10700)) });
+    // A mistyped closing is corrected by reconciling again with the right figure (R→G); the same figure again is unchanged.
+    const fixed = await reconcile(w, { ...base, fingerprint: ch.fingerprint, acceptCoverageGaps: true, note: "Closing corrected from the bank's PDF", typedClosingPaise: R(10800) });
+    expect(fixed.status, JSON.stringify(fixed.body)).toBe(201);
+    expect(fixed.body.data.version).toBe(3);
+    expect((await reconcile(w, { ...base, fingerprint: ch.fingerprint, acceptCoverageGaps: true, note: "Closing corrected from the bank's PDF", typedClosingPaise: R(10800) })).body.data).toMatchObject({ unchanged: true, version: 3 });
     // July: a statement whose balances break mid-way.
     await importFile(w, statement([
       { date: "2026-07-01", narr: "NEFT CR JUL A", cr: R(100) }, { date: "2026-07-14", narr: "NEFT CR JUL B", cr: R(200) }, { date: "2026-07-31", narr: "NEFT CR JUL C", cr: R(300) },
@@ -315,6 +344,64 @@ describe("BRS — routes + DB (§10.5)", () => {
     expect(b.body.error.code).toBe("BRS_STATEMENT_BREAK");
     expect(b.body.error.message).toMatch(/ — fix it on Bank, or reconcile with a note explaining it\.$/);
     expect((await reconcile(w, { month: "2026-07", fingerprint: jul.fingerprint, acceptOpenItems: true, acceptBreaks: true, note: "Bank corrected the balance on 14 Jul" })).status).toBe(201);
+    // July is signed off closing at ₹6,100.00; August's typed closing works back to a different opening → a break to acknowledge.
+    const aug2 = (await brs(w, "2026-08")).body.data;
+    expect(aug2.balances.breaks.map((b: { text: string }) => b.text)).toContainEqual(expect.stringMatching(/^Last month was signed off with a closing balance of ₹6,100\.00, but the typed closing works back to an opening of ₹10,050\.00$/));
+    expect(aug2.needsAck).toContain("statement_break");
+  });
+
+  it("S-6b a statement without a balance column but with an opening line: the closing is typed and checked against that opening, never 'agrees' unchecked (R→G)", async () => {
+    await importFile(w, statement([{ date: "2026-05-01", narr: "NEFT CR MAY ONE", cr: R(1000) }, { date: "2026-05-31", narr: "ATM MAY", dr: R(300) }], { opening: R(5000), balance: false, openingRow: true }), "may.csv");
+    const st = await prisma.salesBankStatement.findFirstOrThrow({ where: { fileName: "may.csv" } });
+    expect(st.openingBalancePaise).toBe(BigInt(R(5000)));
+    expect(st.closingBalancePaise).toBeNull();
+    const may = (await brs(w, "2026-05")).body.data;
+    expect(may.balances).toMatchObject({ source: "unknown", closingPaise: null, agreesWith: null });
+    expect(may.needsAck).toContain("typed_closing");
+    const base = { month: "2026-05", fingerprint: may.fingerprint, acceptOpenItems: true };
+    expect((await reconcile(w, base)).body.error.code).toBe("BRS_BALANCE_UNKNOWN");
+    const slip = await reconcile(w, { ...base, typedClosingPaise: R(5800) });
+    expect(slip.body.error.code).toBe("BRS_STATEMENT_BREAK");
+    expect(slip.body.error.message).toMatch(/^may\.csv opens at ₹5,000\.00, but the typed closing works back to an opening of ₹5,100\.00/);
+    const ok = await reconcile(w, { ...base, typedClosingPaise: R(5700) });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    expect(await prisma.salesBrsSignoff.findFirstOrThrow({ where: { month: "2026-05" } })).toMatchObject({ balanceSource: "typed", openingPaise: BigInt(R(5000)), closingPaise: BigInt(R(5700)) });
+  });
+
+  it("S-6c a receipt's line in another month marked as stored twice: the reconciled month changes and the receipt is an open item (R→G)", async () => {
+    const { r44 } = await buildOctober(w);
+    const v = (await brs(w)).body.data;
+    expect((await reconcile(w, { fingerprint: v.fingerprint, acceptOpenItems: true })).status).toBe(201);
+    await prisma.salesBankLine.update({ where: { id: (await lineByNarr("UPI CR FILMY 0044")).id }, data: { ignoreReason: "duplicate", ignoredAt: new Date() } });
+    const after = (await brs(w)).body.data;
+    expect(after.state).toBe("changed");
+    expect(after.items.find((i: { key: string }) => i.key === `nc:${r44.id}`)).toMatchObject({ open: true, reason: { code: "ON_UNCOUNTED_LINE" } });
+    expect(after.openItems.count).toBe(4);
+  });
+
+  it("S-6d a second account printed on invoices later does not re-attribute a signed-off month (R→G)", async () => {
+    await buildOctober(w);
+    const v = (await brs(w)).body.data;
+    expect((await reconcile(w, { fingerprint: v.fingerprint, acceptOpenItems: true })).status).toBe(201);
+    const hd = await api().post("/v1/sales/bank/accounts").set(auth(w.admin)).send({ companyKey: "dspl", label: "HDFC", bank: "hdfc", accountNumber: "50100123456789" });
+    expect(hd.status, JSON.stringify(hd.body)).toBe(201);
+    expect((await api().put("/v1/sales/settings/seller").set(auth(w.admin)).send({ ...SELLER, accountNumber: "50100123456789" })).status).toBe(200);
+    const after = (await brs(w)).body.data;
+    expect(after.state).toBe("reconciled");
+    expect(after.defaultAccount).toMatchObject({ id: w.accountId });
+    expect(after.items.find((i: { reason: { code: string } }) => i.reason.code === "CHEQUE_CLEARING")).toBeTruthy();
+    const months = (await api().get(`/v1/sales/reconcile/bank/months?company=dspl&accountId=${w.accountId}`).set(auth(w.sales))).body.data.months;
+    expect(months.find((m: { month: string }) => m.month === "2026-10").state).toBe("reconciled");
+    // HDFC now holds an October statement, so as of October it is a candidate and, printed on invoices, the default —
+    // October's sign-off still judges it with the account it froze.
+    await importFile(w, statement([{ date: "2026-10-20", narr: "HDFC NEFT CR OCT", cr: R(10) }], { opening: R(100), account: "50100123456789" }), "hdfc-oct.csv", hd.body.data.id);
+    const later = (await brs(w)).body.data;
+    expect(later.state).toBe("reconciled");
+    expect(later.defaultAccount).toMatchObject({ id: w.accountId });
+    // September (HDFC had no statement then) keeps the old account; November, unsigned, follows the setting.
+    const at = async (m: string) => (await api().get(`/v1/sales/reconcile/bank?company=dspl&accountId=${w.accountId}&month=${m}`).set(auth(w.sales))).body.data.defaultAccount;
+    expect(await at("2026-09")).toMatchObject({ id: w.accountId, why: "only" });
+    expect(await at("2026-11")).toMatchObject({ id: hd.body.data.id, why: "printed_on_invoices" });
   });
 
   it("S-7 concurrency: parallel reconciles give one 201 and one 200/409; a reconcile racing a bank confirm never 500s and the stored fingerprint stays honest", async () => {

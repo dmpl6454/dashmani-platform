@@ -3,7 +3,7 @@ import { dayAdd, last4, type CompanyKey } from "@dashmani/shared";
 import { AppError } from "../../../middleware/error-handler";
 import { dateToDay, dayToDate, toSafeNumber, type Tx } from "../common";
 import { getSellerOrDefaults } from "../settings.service";
-import { accountName, monthBounds, type BrsAccountIn, type BrsBookReceipt, type BrsInput, type BrsLineIn, type BrsOpenCredit, type BrsReceipt, type BrsStatementIn } from "./brs";
+import { accountName, monthBounds, monthOf, type BrsAccountIn, type BrsBookReceipt, type BrsInput, type BrsLineIn, type BrsOpenCredit, type BrsReceipt, type BrsStatementIn } from "./brs";
 
 // The BRS reads (spec-reconcile §5.4.1, §5.4.6): bounded, company-scoped, read-only. Every BIGINT
 // goes through toSafeNumber. Nothing here locks or writes a bank line, receipt or invoice.
@@ -15,15 +15,37 @@ export interface AccountRow { id: string; companyKey: string; label: string; ban
 
 export const accountIn = (a: AccountRow): BrsAccountIn => ({ id: a.id, label: a.label, bank: a.bank, last4: last4(a.accountNumber), ifsc: a.ifsc, matchFrom: dateToDay(a.matchFrom) });
 
-/** §5.4.2: the only active account; else the one printed on invoices; else the oldest. */
-export async function defaultReceivingAccount(db: Db, company: CompanyKey): Promise<{ account: AccountRow; why: "only" | "printed_on_invoices" | "oldest" } | null> {
+export type DefaultAccount = { account: AccountRow; why: "only" | "printed_on_invoices" | "oldest" };
+
+/**
+ * §5.4.2: the only active account; else the one printed on invoices; else the oldest — decided AS
+ * OF a month when one is given: only accounts that existed by the month's end, or hold a
+ * statement starting by then, are candidates (none → every active account, so a company that set
+ * its one account up later still has a default). A sign-off freezes the result it used
+ * (snapshot.defaultAccount), so a settings edit made today never re-attributes a signed-off month.
+ */
+export async function defaultResolver(db: Db, company: CompanyKey): Promise<(asOfMonth?: string) => DefaultAccount | null> {
   const active = await db.salesBankAccount.findMany({ where: { companyKey: company, status: "active" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-  if (!active.length) return null;
-  if (active.length === 1) return { account: active[0], why: "only" };
-  const printed = ((await getSellerOrDefaults(company)).accountNumber ?? "").replace(/\D/g, "");
-  const hit = printed ? active.find((a) => a.accountNumber === printed) : undefined;
-  if (hit) return { account: hit, why: "printed_on_invoices" };
-  return { account: active[0], why: "oldest" };
+  if (active.length <= 1) return () => (active.length ? { account: active[0], why: "only" } : null);
+  const printed = ((await getSellerOrDefaults(company, db)).accountNumber ?? "").replace(/\D/g, "");
+  const firstSt = new Map((await db.salesBankStatement.groupBy({ by: ["bankAccountId"], where: { bankAccountId: { in: active.map((a) => a.id) } }, _min: { periodFrom: true } }))
+    .map((g) => [g.bankAccountId, dateToDay(g._min.periodFrom)]));
+  return (asOfMonth) => {
+    let pool: AccountRow[] = active;
+    if (asOfMonth) {
+      const end = monthBounds(asOfMonth).to;
+      const cand = active.filter((a) => dateToDay(a.createdAt)! <= end || ((firstSt.get(a.id) ?? "9999") <= end));
+      if (cand.length) pool = cand;
+    }
+    if (pool.length === 1) return { account: pool[0], why: "only" };
+    const hit = printed ? pool.find((a) => a.accountNumber === printed) : undefined;
+    if (hit) return { account: hit, why: "printed_on_invoices" };
+    return { account: pool[0], why: "oldest" };
+  };
+}
+
+export async function defaultReceivingAccount(db: Db, company: CompanyKey, asOfMonth?: string): Promise<DefaultAccount | null> {
+  return (await defaultResolver(db, company))(asOfMonth);
 }
 
 type LineRow = Prisma.SalesBankLineGetPayload<{ include: { statement: { select: { fileName: true } }; payments: { select: { id: true; number: true; paidOn: true; mode: true; amountPaise: true; status: true; client: { select: { companyName: true } } } } } }>;
@@ -86,6 +108,7 @@ export async function loadBrsInput(db: Db, o: { company: CompanyKey; account: Ac
     firstRowDay: dateToDay(dir.get(s.id)?.first_day ?? null), lastRowDay: dateToDay(dir.get(s.id)?.last_day ?? null),
   }));
   const cov = await db.salesBankStatement.aggregate({ where: { bankAccountId: acc.id }, _max: { periodTo: true } });
+  const prevSigned = await db.salesBrsSignoff.findFirst({ where: { bankAccountId: acc.id, month: monthOf(dayAdd(from, -1)), activeKey: { not: null } }, select: { closingPaise: true } });
 
   const payRows = await db.salesPayment.findMany({
     where: { companyKey: o.company, status: "recorded", paidOn: range },
@@ -120,7 +143,7 @@ export async function loadBrsInput(db: Db, o: { company: CompanyKey; account: Ac
     company: o.company, account: accountIn(acc), defaultAccountId: o.defaultAccountId, month: o.month, today: o.today,
     lines: rows.map((l) => lineIn(l, names)), statements, books, openCredits, unlinked: unRows.map(receiptOf), refunds,
     coverageEnd: dateToDay(cov._max.periodTo), previousDayLines: prevRows.map((l) => lineIn(l, names)),
-    typedClosingPaise: o.typedClosingPaise ?? null, seeDebits: o.seeDebits,
+    typedClosingPaise: o.typedClosingPaise ?? null, previousSignedClosingPaise: prevSigned ? toSafeNumber(prevSigned.closingPaise) : null, seeDebits: o.seeDebits,
   };
 }
 
@@ -129,10 +152,13 @@ export async function loadBrsInput(db: Db, o: { company: CompanyKey; account: Ac
  * [firstMonth, lastMonth] in ONE statement. Not suggestions, reasons, statuses or notes; not where
  * a not-credited receipt was later credited.
  */
-export async function brsFingerprints(db: Db, o: { accountId: string; company: string; firstMonth: string; lastMonth: string; defaultAccountId: string | null }): Promise<Map<string, string>> {
+export async function brsFingerprints(db: Db, o: { accountId: string; company: string; firstMonth: string; lastMonth: string; defaultAccountId?: string | null; defaultMonths?: string[] }): Promise<Map<string, string>> {
   const start = `${o.firstMonth}-01`;
   const end = monthBounds(o.lastMonth).next;
-  const def = o.defaultAccountId ?? "";
+  // The months in which THIS account is the default receiving account (unlinked bank-mode receipts count on it).
+  const all: string[] = [];
+  for (let m = o.firstMonth; m <= o.lastMonth; m = monthOf(monthBounds(m).next)) all.push(m);
+  const defMonths = o.defaultMonths ?? (o.defaultAccountId === o.accountId ? all : []);
   const rows = await db.$queryRaw<Array<{ month: string; fingerprint: string }>>`
     WITH months AS (SELECT to_char(d, 'YYYY-MM') AS month FROM generate_series(${start}::date, ${end}::date - 1, interval '1 month') d),
     lp AS (SELECT p.bank_line_id, string_agg(p.id || '=' || p.amount_paise, ',' ORDER BY p.id) AS pairs
@@ -146,12 +172,13 @@ export async function brsFingerprints(db: Db, o: { accountId: string; company: s
           WHERE l.bank_account_id = ${o.accountId} AND l.txn_date >= ${start}::date AND l.txn_date < ${end}::date GROUP BY 1),
     r AS (SELECT to_char(p.paid_on, 'YYYY-MM') AS month,
                  md5(string_agg(concat_ws(':', p.id, p.amount_paise, p.mode,
-                     COALESCE(pl.bank_account_id = ${o.accountId} AND date_trunc('month', pl.txn_date) = date_trunc('month', p.paid_on), false)::text),
+                     COALESCE(pl.bank_account_id = ${o.accountId} AND date_trunc('month', pl.txn_date) = date_trunc('month', p.paid_on), false)::text,
+                     COALESCE(pl.ignore_reason = 'duplicate', false)::text),
                      ',' ORDER BY p.id)) AS h
           FROM sales_payments p LEFT JOIN sales_bank_lines pl ON pl.id = p.bank_line_id
           WHERE p.company_key = ${o.company} AND p.status = 'recorded' AND p.paid_on >= ${start}::date AND p.paid_on < ${end}::date
             AND (pl.bank_account_id = ${o.accountId}
-                 OR (p.bank_line_id IS NULL AND p.mode IN ('bank_transfer','upi','cheque','other') AND ${def}::text = ${o.accountId}::text))
+                 OR (p.bank_line_id IS NULL AND p.mode IN ('bank_transfer','upi','cheque','other') AND to_char(p.paid_on, 'YYYY-MM') = ANY(${defMonths}::text[])))
           GROUP BY 1),
     s AS (SELECT m.month, md5(COALESCE(string_agg(concat_ws(':', st.id, st.period_from, st.period_to,
                  COALESCE(st.opening_balance_paise::text, '-'), COALESCE(st.closing_balance_paise::text, '-')), ',' ORDER BY st.id), '')) AS h

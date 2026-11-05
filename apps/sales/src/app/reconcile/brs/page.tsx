@@ -3,9 +3,9 @@
 // reconciliation of receipts (every rupee of credits explained), withdrawals, Mark reconciled /
 // Reopen, PDF and CSV, and the history (spec-reconcile §7.6). Nothing here changes a receipt;
 // the one-tap Link goes through Bank's own route.
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSWRConfig } from "swr";
 import { useBrs, useEvents } from "@/lib/hooks";
 import { useCompany } from "@/lib/company";
@@ -66,7 +66,13 @@ function Brs() {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [showFrozen, setShowFrozen] = useState(false);
+  const router = useRouter();
+  // The account in the URL belongs to the other company (after a company switch) or is gone: Retry
+  // would fail the same way, so go back to the months list of the switcher's company.
+  const wrongAccount = error instanceof ApiError && (error.code === "COMPANY_MISMATCH" || error.code === "NO_BANK_ACCOUNT");
+  useEffect(() => { if (wrongAccount) router.replace("/reconcile?tab=bank"); }, [wrongAccount, router]);
   if (!accountId || !month) return <Empty title="No month selected." action={<Link href="/reconcile?tab=bank" className="btn">Bank reconciliation</Link>} />;
+  if (wrongAccount) return <Loading label="This account belongs to the other company — opening the months list…" />;
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading || !data) return <Loading label="Reconciling the month…" />;
   if (data.company !== company) return <Loading />;

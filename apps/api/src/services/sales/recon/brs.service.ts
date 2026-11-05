@@ -4,7 +4,7 @@ import { AppError } from "../../../middleware/error-handler";
 import { logSalesEvent, toSafeNumber, type Tx } from "../common";
 import { getSellerOrDefaults } from "../settings.service";
 import { accountName, brsChanges, brsState, buildBrs, coverageOf, monthBounds, monthOf, type BrsCore, type BrsItem, type BrsState } from "./brs";
-import { accountIn, brsFingerprints, brsMonthTotals, defaultReceivingAccount, loadBrsInput, type AccountRow } from "./brs-sql";
+import { accountIn, brsFingerprints, brsMonthTotals, defaultReceivingAccount, defaultResolver, loadBrsInput, type AccountRow } from "./brs-sql";
 import { renderBrsPdf } from "./recon-pdf";
 import { brsCsv as buildBrsCsv } from "./recon-csv";
 
@@ -28,6 +28,20 @@ export type BrsView = BrsCore & {
   reopened: null | { byName: string; at: string; reason: string | null };
   changes: null | { added: BrsItem[]; removed: BrsItem[]; figures: Array<{ key: string; frozenPaise: number | null; livePaise: number | null }>; newLines: Array<{ statementId: string; fileName: string; uploadedByName: string; uploadedAt: string; lines: number }> };
 };
+
+type MonthDefault = { id: string; why: "only" | "printed_on_invoices" | "oldest" } | null;
+/** The default receiving account a month is judged with: the one its active sign-off froze, else the one as of that month. */
+function frozenDefault(active: SignoffRow | null | undefined): MonthDefault | undefined {
+  const snap = active?.snapshot as { defaultAccount?: MonthDefault } | null | undefined;
+  return snap && "defaultAccount" in snap ? snap.defaultAccount ?? null : undefined;
+}
+async function monthDefault(db: Tx, company: CompanyKey, month: string, active: SignoffRow | null): Promise<MonthDefault> {
+  const f = frozenDefault(active);
+  if (f !== undefined) return f;
+  const d = await defaultReceivingAccount(db, company, month);
+  return d ? { id: d.account.id, why: d.why } : null;
+}
+const defaultMonthsFor = (accountId: string, month: string, def: MonthDefault) => (def?.id === accountId ? [month] : []);
 
 /** The month whose end has passed most recently. */
 export const lastClosedMonth = (today: string) => monthOf(dayAdd(`${today.slice(0, 7)}-01`, -1));
@@ -78,11 +92,19 @@ export async function listBrsMonths(companyQ: CompanyKey | undefined, fallback: 
     let first = monthOf(mf && mf > firstSt ? mf : firstSt);
     const last = monthOf(today);
     if (first > last) first = last;
-    const fps = await brsFingerprints(db, { accountId: account.id, company, firstMonth: first, lastMonth: last, defaultAccountId: def?.account.id ?? null });
-    const totals = await brsMonthTotals(db, account.id);
     const active = await db.salesBrsSignoff.findMany({ where: { bankAccountId: account.id, activeKey: { not: null } } });
-    const who = await names(db, active.map((s) => s.reconciledById));
     const activeBy = new Map(active.map((s) => [s.month, s]));
+    // Each month's default receiving account: frozen by its sign-off, else as of that month.
+    const resolve = await defaultResolver(db, company);
+    const defaultMonths: string[] = [];
+    for (let m = first; m <= last; m = monthOf(monthBounds(m).next)) {
+      const f = frozenDefault(activeBy.get(m));
+      const id = f !== undefined ? f?.id ?? null : resolve(m)?.account.id ?? null;
+      if (id === account.id) defaultMonths.push(m);
+    }
+    const fps = await brsFingerprints(db, { accountId: account.id, company, firstMonth: first, lastMonth: last, defaultMonths });
+    const totals = await brsMonthTotals(db, account.id);
+    const who = await names(db, active.map((s) => s.reconciledById));
     const months = [...fps.keys()].sort().reverse().map((m) => {
       const mb = monthBounds(m);
       const so = activeBy.get(m);
@@ -112,19 +134,20 @@ function coverageNote(from: string, to: string, gaps: Array<{ from: string; to: 
 
 // ─── One month (route 22) ────────────────────────────────────────────────────────────────────
 
-async function buildView(db: Tx, o: { company: CompanyKey; account: AccountRow; def: Awaited<ReturnType<typeof defaultReceivingAccount>>; month: string; today: string; seeDebits: boolean; typedClosingPaise?: number | null }) {
+async function buildView(db: Tx, o: { company: CompanyKey; account: AccountRow; month: string; today: string; seeDebits: boolean; typedClosingPaise?: number | null }) {
   const signoffs = await db.salesBrsSignoff.findMany({ where: { bankAccountId: o.account.id, month: o.month }, orderBy: { version: "asc" } });
   const active = signoffs.find((s) => s.activeKey) ?? null;
+  const def = await monthDefault(db, o.company, o.month, active);
   const typed = o.typedClosingPaise ?? (active && active.balanceSource === "typed" ? toSafeNumber(active.closingPaise) : null);
-  const input = await loadBrsInput(db, { company: o.company, account: o.account, defaultAccountId: o.def?.account.id ?? null, month: o.month, today: o.today, seeDebits: o.seeDebits, typedClosingPaise: typed });
+  const input = await loadBrsInput(db, { company: o.company, account: o.account, defaultAccountId: def?.id ?? null, month: o.month, today: o.today, seeDebits: o.seeDebits, typedClosingPaise: typed });
   const core = buildBrs(input);
   if (!core.ties) console.error(`[sales] brs did not tie ${o.account.id} ${o.month}`);
-  const fp = (await brsFingerprints(db, { accountId: o.account.id, company: o.company, firstMonth: o.month, lastMonth: o.month, defaultAccountId: o.def?.account.id ?? null })).get(o.month)!;
-  return { core, fp, signoffs, active, input };
+  const fp = (await brsFingerprints(db, { accountId: o.account.id, company: o.company, firstMonth: o.month, lastMonth: o.month, defaultMonths: defaultMonthsFor(o.account.id, o.month, def) })).get(o.month)!;
+  return { core, fp, signoffs, active, input, def };
 }
 
-async function decorate(db: Tx, b: Awaited<ReturnType<typeof buildView>>, o: { company: CompanyKey; account: AccountRow; def: Awaited<ReturnType<typeof defaultReceivingAccount>>; month: string; today: string; seeDebits: boolean }): Promise<BrsView> {
-  const { core, fp, signoffs, active } = b;
+async function decorate(db: Tx, b: Awaited<ReturnType<typeof buildView>>, o: { company: CompanyKey; account: AccountRow; month: string; today: string; seeDebits: boolean }): Promise<BrsView> {
+  const { core, fp, signoffs, active, def } = b;
   const mb = monthBounds(o.month);
   const who = await names(db, signoffs.flatMap((s) => [s.reconciledById, s.supersededById]));
   const state = brsState({ monthTo: mb.to, today: o.today, activeFingerprint: active?.fingerprint ?? null, liveFingerprint: fp });
@@ -143,8 +166,8 @@ async function decorate(db: Tx, b: Awaited<ReturnType<typeof buildView>>, o: { c
   const reopened = !active && latest?.supersedeKind === "reopened" ? { byName: who.get(latest.supersededById ?? "") ?? "staff", at: latest.supersededAt!.toISOString(), reason: latest.supersedeReason } : null;
   return {
     ...core,
-    accounts: await accountsList(db, o.company, o.def?.account.id ?? null),
-    defaultAccount: o.def ? { id: o.def.account.id, why: o.def.why } : null,
+    accounts: await accountsList(db, o.company, def?.id ?? null),
+    defaultAccount: def,
     fingerprint: fp, state,
     signoff: active ? {
       id: active.id, version: active.version, reconciledAt: active.reconciledAt.toISOString(), reconciledByName: who.get(active.reconciledById) ?? "staff", note: active.note,
@@ -167,9 +190,9 @@ export async function getBrs(companyQ: CompanyKey | undefined, fallback: Company
   return prisma.$transaction(async (db) => {
     await db.$executeRawUnsafe("SET TRANSACTION READ ONLY");
     await db.$executeRawUnsafe("SET LOCAL statement_timeout = '10s'");
-    const { account, company, def } = await resolveAccount(db, companyQ, accountId, fallback);
+    const { account, company } = await resolveAccount(db, companyQ, accountId, fallback);
     if (!account) throw new AppError(404, "NO_BANK_ACCOUNT", `No bank account is set up for ${SALES_COMPANIES[company].name} — an admin adds it in Settings → Bank accounts.`);
-    const o = { company, account, def, month, today, seeDebits: opts.seeDebits };
+    const o = { company, account, month, today, seeDebits: opts.seeDebits };
     return decorate(db, await buildView(db, o), o);
   }, RO);
 }
@@ -180,19 +203,23 @@ const lockKey = (accountId: string, month: string) => `brs:${accountId}:${month}
 
 export async function reconcileMonth(body: BrsReconcileInput, companyQ: CompanyKey | undefined, fallback: CompanyKey, actorId: string, today: string) {
   return prisma.$transaction(async (db) => {
-    const { account, company, def } = await resolveAccount(db, companyQ, body.accountId, fallback);
+    const { account, company } = await resolveAccount(db, companyQ, body.accountId, fallback);
     if (!account) throw new AppError(404, "NOT_FOUND", "Bank account not found");
     await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey(account.id, body.month)}))`;
-    const fpArgs = { accountId: account.id, company, firstMonth: body.month, lastMonth: body.month, defaultAccountId: def?.account.id ?? null };
+    const active = await db.salesBrsSignoff.findFirst({ where: { bankAccountId: account.id, month: body.month, activeKey: { not: null } } });
+    const def = await monthDefault(db, company, body.month, active);
+    const fpArgs = { accountId: account.id, company, firstMonth: body.month, lastMonth: body.month, defaultMonths: defaultMonthsFor(account.id, body.month, def) };
     const fp1 = (await brsFingerprints(db, fpArgs)).get(body.month)!;
     const stale = new AppError(409, "BRS_CHANGED", "The statement or the receipts changed while you were looking — the page now shows the new figures; check them and mark reconciled again.");
     if (fp1 !== body.fingerprint) throw stale;
     const mb = monthBounds(body.month);
     if (mb.to >= today) throw new AppError(422, "MONTH_NOT_OVER", `${mb.label} isn't over yet — it can be reconciled from ${reconDay(mb.next)}.`);
-    const active = await db.salesBrsSignoff.findFirst({ where: { bankAccountId: account.id, month: body.month, activeKey: { not: null } } });
-    if (active && active.fingerprint === fp1) return { status: 200, result: { unchanged: true, version: active.version } };
+    // A typed closing is not in the fingerprint: a corrected figure makes a new version; none sent keeps the active one's (as the page shows it).
+    const activeTyped = active && active.balanceSource === "typed" ? toSafeNumber(active.closingPaise) : null;
+    const retyped = body.typedClosingPaise != null && activeTyped !== null && body.typedClosingPaise !== activeTyped;
+    if (active && active.fingerprint === fp1 && !retyped) return { status: 200, result: { unchanged: true, version: active.version } };
 
-    const input = await loadBrsInput(db, { company, account, defaultAccountId: def?.account.id ?? null, month: body.month, today, seeDebits: true, typedClosingPaise: body.typedClosingPaise ?? null });
+    const input = await loadBrsInput(db, { company, account, defaultAccountId: def?.id ?? null, month: body.month, today, seeDebits: true, typedClosingPaise: body.typedClosingPaise ?? activeTyped });
     const core = buildBrs(input);
     const accName = accountName({ label: account.label, last4: core.account.last4 });
     if (!core.coverage.statements.length) throw new AppError(422, "BRS_NO_STATEMENT", `No statement of ${accName} covers ${mb.label} — upload it on Bank.`);
@@ -222,7 +249,7 @@ export async function reconcileMonth(body: BrsReconcileInput, companyQ: CompanyK
         companyKey: company, bankAccountId: account.id, month: body.month, version, activeKey: `${account.id}:${body.month}`, fingerprint: fp1,
         balanceSource: core.balances.source, openingPaise: big(core.balances.openingPaise), creditsPaise: big(core.balances.creditsPaise), debitsPaise: big(core.balances.debitsPaise),
         closingPaise: big(core.balances.closingPaise), booksPaise: big(core.books.receiptsPaise), openItemsPaise: big(core.openItems.paise), openItemCount: core.openItems.count,
-        snapshot: core as unknown as Prisma.InputJsonValue, accepted, note: body.note ?? null, reconciledById: actorId,
+        snapshot: { ...core, defaultAccount: def } as unknown as Prisma.InputJsonValue, accepted, note: body.note ?? null, reconciledById: actorId,
       },
     });
     await logSalesEvent(db, {
@@ -255,18 +282,19 @@ async function downloadSource(companyQ: CompanyKey | undefined, fallback: Compan
   if (versionQ && (!Number.isInteger(version) || version! < 1)) throw new AppError(400, "VALIDATION_ERROR", "version must be a whole number");
   return prisma.$transaction(async (db) => {
     await db.$executeRawUnsafe("SET TRANSACTION READ ONLY");
-    const { account, company, def } = await resolveAccount(db, companyQ, accountId, fallback);
+    const { account, company } = await resolveAccount(db, companyQ, accountId, fallback);
     if (!account) throw new AppError(404, "NO_BANK_ACCOUNT", "No bank account is set up for this company.");
     const who = async (id: string) => (await names(db, [id])).get(id) ?? "staff";
     if (version) {
       const s = await db.salesBrsSignoff.findUnique({ where: { bankAccountId_month_version: { bankAccountId: account.id, month, version } } });
       if (!s) throw new AppError(404, "NOT_FOUND", `${monthBounds(month).label} has no version ${version}.`);
-      return { company, core: s.snapshot as unknown as BrsCore, signoff: s, byName: await who(s.reconciledById), frozen: true };
+      const superseded = s.supersededAt ? { kind: s.supersedeKind ?? "reopened", at: s.supersededAt.toISOString(), byName: s.supersededById ? await who(s.supersededById) : "staff", reason: s.supersedeReason } : null;
+      return { company, core: s.snapshot as unknown as BrsCore, signoff: s, byName: await who(s.reconciledById), frozen: true, superseded };
     }
-    const o = { company, account, def, month, today, seeDebits: true };
+    const o = { company, account, month, today, seeDebits: true };
     const b = await buildView(db, o);
-    if (b.active && b.active.fingerprint === b.fp) return { company, core: b.active.snapshot as unknown as BrsCore, signoff: b.active, byName: await who(b.active.reconciledById), frozen: true };
-    return { company, core: b.core, signoff: null as SignoffRow | null, byName: null as string | null, frozen: false };
+    if (b.active && b.active.fingerprint === b.fp) return { company, core: b.active.snapshot as unknown as BrsCore, signoff: b.active, byName: await who(b.active.reconciledById), frozen: true, superseded: null };
+    return { company, core: b.core, signoff: null as SignoffRow | null, byName: null as string | null, frozen: false, superseded: null };
   }, RO);
 }
 
@@ -283,7 +311,7 @@ export async function brsPdf(companyQ: CompanyKey | undefined, fallback: Company
   const pdf = await renderBrsPdf(redact(src.core, opts.seeDebits), {
     frozen: src.frozen, redactDebits: !opts.seeDebits,
     seller: { legalName: seller.legalName || SALES_COMPANIES[src.company].name, gstins: [seller.gstin, ...((seller.branches ?? []).map((b) => b.gstin))].filter(Boolean) as string[], address: [seller.addressLine1, seller.addressLine2, seller.city, seller.pincode].filter(Boolean).join(", ") },
-    signoff: src.signoff ? { version: src.signoff.version, byName: src.byName ?? "staff", at: src.signoff.reconciledAt.toISOString(), note: src.signoff.note, accepted: src.signoff.accepted as string[], fingerprint: src.signoff.fingerprint } : null,
+    signoff: src.signoff ? { version: src.signoff.version, byName: src.byName ?? "staff", at: src.signoff.reconciledAt.toISOString(), note: src.signoff.note, accepted: src.signoff.accepted as string[], fingerprint: src.signoff.fingerprint, superseded: src.superseded } : null,
   });
   return { pdf, filename: `${fileStem(src.company, src.core, src.signoff?.version ?? null)}.pdf` };
 }
@@ -291,6 +319,9 @@ export async function brsPdf(companyQ: CompanyKey | undefined, fallback: Company
 export async function brsCsv(companyQ: CompanyKey | undefined, fallback: CompanyKey, accountId: string | undefined, monthQ: string | undefined, versionQ: string | undefined, today: string, opts: { seeDebits: boolean; byName: string }) {
   const src = await downloadSource(companyQ, fallback, accountId, monthQ, versionQ, today);
   const seller = await getSellerOrDefaults(src.company);
-  const body = buildBrsCsv(redact(src.core, opts.seeDebits), { legalName: seller.legalName || SALES_COMPANIES[src.company].name, by: opts.byName, now: new Date(), version: src.signoff?.version ?? null, frozen: src.frozen });
+  const body = buildBrsCsv(redact(src.core, opts.seeDebits), {
+    legalName: seller.legalName || SALES_COMPANIES[src.company].name, by: opts.byName, now: new Date(), version: src.signoff?.version ?? null, frozen: src.frozen,
+    signoff: src.signoff ? { byName: src.byName ?? "staff", at: src.signoff.reconciledAt, note: src.signoff.note, accepted: src.signoff.accepted as string[], superseded: src.superseded } : null,
+  });
   return { body, filename: `${fileStem(src.company, src.core, src.signoff?.version ?? null)}.csv` };
 }

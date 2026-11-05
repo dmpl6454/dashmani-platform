@@ -11,8 +11,9 @@ export const SELLER_SETTINGS_KEY = SALES_COMPANIES.dspl.settingsKey;
 
 export type SellerProfile = SellerProfileInput;
 
-export async function getSellerProfile(company: CompanyKey = DEFAULT_COMPANY): Promise<SellerProfile | null> {
-  const row = await prisma.systemSetting.findUnique({ where: { key: SALES_COMPANIES[company].settingsKey } });
+/** `db` lets a caller inside a transaction read through its own connection (a pool of 1 would otherwise wait on itself). */
+export async function getSellerProfile(company: CompanyKey = DEFAULT_COMPANY, db: Pick<typeof prisma, "systemSetting"> = prisma): Promise<SellerProfile | null> {
+  const row = await db.systemSetting.findUnique({ where: { key: SALES_COMPANIES[company].settingsKey } });
   if (!row) return null;
   try {
     const parsed = sellerProfileSchema.safeParse(JSON.parse(row.value));
@@ -38,8 +39,8 @@ const FALLBACKS: Record<CompanyKey, SellerProfile> = {
 export const SELLER_FALLBACK = FALLBACKS.dspl;
 export const sellerFallback = (company: CompanyKey = DEFAULT_COMPANY): SellerProfile => FALLBACKS[company];
 
-export async function getSellerOrDefaults(company: CompanyKey = DEFAULT_COMPANY): Promise<SellerProfile> {
-  return (await getSellerProfile(company)) ?? FALLBACKS[company];
+export async function getSellerOrDefaults(company: CompanyKey = DEFAULT_COMPANY, db: Pick<typeof prisma, "systemSetting"> = prisma): Promise<SellerProfile> {
+  return (await getSellerProfile(company, db)) ?? FALLBACKS[company];
 }
 
 /** Everything a tax invoice must print about the supplier. Missing fields block issuing. */

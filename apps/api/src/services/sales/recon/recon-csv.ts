@@ -67,11 +67,20 @@ export function gstDifferencesCsv(v: GstReconView, meta: { legalName: string; by
 export const BRS_ITEM_HEADERS = ["Group", "Date", "Reference", "Description", "Amount", "Reason", "Line id", "Receipt id"] as const;
 
 /** The A/B figures as Figure,Amount rows, then every item and every withdrawal. Debit narrations only when the view carries them. */
-export function brsCsv(v: BrsCore, meta: { legalName: string; by: string; now: Date; version: number | null; frozen: boolean }): Buffer {
-  const status = meta.frozen && meta.version ? `reconciled version ${meta.version}` : "not reconciled (live figures)";
+export function brsCsv(v: BrsCore, meta: {
+  legalName: string; by: string; now: Date; version: number | null; frozen: boolean;
+  signoff?: { byName: string; at: Date; note: string | null; accepted: string[]; superseded?: { kind: string; at: string; byName: string; reason: string | null } | null } | null;
+}): Buffer {
+  const so = meta.frozen ? meta.signoff ?? null : null;
+  const sup = so?.superseded ?? null;
+  const status = meta.frozen && meta.version ? `reconciled version ${meta.version}${sup ? ` — superseded ${istStamp(new Date(sup.at))}` : ""}` : "not reconciled (live figures)";
   const out: unknown[][] = [
     ["Company", meta.legalName],
     ["Source", `${v.account.label} ••${v.account.last4} · ${v.month.label} · ${status} · generated ${istStamp(meta.now)} by ${meta.by}`],
+    ...(so ? [
+      ["Reconciled by", so.byName], ["Reconciled at", istStamp(so.at)], ["Note", so.note ?? ""], ["Acknowledged", so.accepted.join(", ").replace(/_/g, " ")],
+      ...(sup ? [["Superseded", `${sup.kind === "re_reconciled" ? "replaced by a later version" : "reopened"} ${istStamp(new Date(sup.at))} by ${sup.byName}${sup.reason ? `: ${sup.reason}` : ""}`]] : []),
+    ] : []),
     [],
     ["Figure", "Amount"],
     ["Opening balance", v.balances.openingPaise === null ? "" : csvMoney(v.balances.openingPaise)],

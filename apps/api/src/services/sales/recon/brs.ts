@@ -1,4 +1,4 @@
-import { BANK_IGNORE_LABELS, RECON_TOLERANCE_PAISE, dayAdd, dayDiff, reconDay, reconInr } from "@dashmani/shared";
+import { BANK_IGNORE_LABELS, RECON_TOLERANCE_PAISE, dateToIST, dayAdd, dayDiff, reconDay, reconInr } from "@dashmani/shared";
 
 // Bank reconciliation statement, receipts side (spec-reconcile §5.4, PR 6). PURE: no DB, no clock
 // (today is a parameter), no randomness — the same inputs in any order give the same view.
@@ -54,6 +54,8 @@ export interface BrsInput {
   /** Lines of the last day before the month (computes last month's closing for the warning). */
   previousDayLines?: BrsLineIn[];
   typedClosingPaise?: number | null;
+  /** Last month's ACTIVE sign-off closing on this account — a typed closing's worked-back opening is checked against it. */
+  previousSignedClosingPaise?: number | null;
   seeDebits: boolean;
 }
 
@@ -243,26 +245,42 @@ export function buildBrs(input: BrsInput): BrsCore {
           text: `${s.fileName} closes at ${reconInr(s.closingPaise)}, but its last day ends at ${reconInr(dayOf.get(lastDay)!.end)}` });
       }
     }
-  } else {
-    const st0 = stmts.find((s) => s.periodFrom === from && s.openingPaise !== null);
-    const st1 = stmts.find((s) => s.periodTo === to && s.closingPaise !== null);
-    if (st0 || st1) {
-      source = "statement";
-      opening = st0 ? st0.openingPaise : st1!.closingPaise! - credits + debits;
-      closing = st1 ? st1.closingPaise : st0!.openingPaise! + credits - debits;
-    }
+  }
+  // §5.4.3 fallback: a balance comes from a statement only when the statement PRINTS it — the
+  // opening from one starting on the 1st, the closing from one ending on the month end. Both are
+  // needed; with one of them the closing is typed and the known one becomes a check.
+  const st0 = days && days.length ? undefined : stmts.find((s) => s.periodFrom === from && s.openingPaise !== null);
+  const st1 = days && days.length ? undefined : stmts.find((s) => s.periodTo === to && s.closingPaise !== null);
+  if (st0 && st1) {
+    source = "statement";
+    opening = st0.openingPaise;
+    closing = st1.closingPaise;
   }
   if (source === "unknown" && input.typedClosingPaise != null) {
     source = "typed";
     closing = input.typedClosingPaise;
     opening = closing - credits + debits;
+    if (st0 && st0.openingPaise !== opening) {
+      breaks.push({ kind: "statement_open", day: from, fileName: st0.fileName, expectedPaise: st0.openingPaise, foundPaise: opening,
+        text: `${st0.fileName} opens at ${reconInr(st0.openingPaise!)}, but the typed closing works back to an opening of ${reconInr(opening)}` });
+    }
+    if (st1 && st1.closingPaise !== closing) {
+      breaks.push({ kind: "statement_close", day: to, fileName: st1.fileName, expectedPaise: st1.closingPaise, foundPaise: closing,
+        text: `${st1.fileName} closes at ${reconInr(st1.closingPaise!)}, but the typed closing is ${reconInr(closing)}` });
+    }
+    if (input.previousSignedClosingPaise != null && input.previousSignedClosingPaise !== opening) {
+      breaks.push({ kind: "statement_open", day: from, expectedPaise: input.previousSignedClosingPaise, foundPaise: opening,
+        text: `Last month was signed off with a closing balance of ${reconInr(input.previousSignedClosingPaise)}, but the typed closing works back to an opening of ${reconInr(opening)}` });
+    }
   }
   if (source === "statement" && opening !== null && closing !== null && opening + credits - debits !== closing) {
     breaks.push({ kind: "equation", expectedPaise: opening + credits - debits, foundPaise: closing,
       text: `Opening ${reconInr(opening)} + credits − withdrawals = ${reconInr(opening + credits - debits)}, but the closing balance is ${reconInr(closing)}` });
   }
-  if (source === "statement" && closing !== null && !breaks.length) {
-    const closer = [...stmts].reverse().find((s) => s.periodTo >= from && s.periodFrom <= to);
+  // "Agrees with <file>" only when the closing was COMPARED with a balance a statement printed:
+  // one that closes inside the month with exactly this closing.
+  if (source !== "unknown" && closing !== null && !breaks.length) {
+    const closer = [...stmts].reverse().find((s) => s.periodTo >= from && s.periodTo <= to && s.closingPaise !== null && s.closingPaise === closing);
     if (closer) agreesWith = closer.fileName;
   }
   if (opening !== null && input.previousDayLines?.length) {
@@ -301,7 +319,7 @@ export function buildBrs(input: BrsInput): BrsCore {
     if (l.ignoreReason) {
       if (rem !== 0) {
         const label = l.ignoreReason === "before_cutover" ? "Before bank matching started" : BANK_IGNORE_LABELS[l.ignoreReason] ?? l.ignoreReason;
-        const who = [l.ignoreNote, l.ignoredByName && l.ignoredAt ? `${l.ignoredByName}, ${reconDay(l.ignoredAt.slice(0, 10))}` : null].filter(Boolean).join(" · ");
+        const who = [l.ignoreNote, l.ignoredByName && l.ignoredAt ? `${l.ignoredByName}, ${reconDay(dateToIST(new Date(l.ignoredAt)))}` : null].filter(Boolean).join(" · ");
         items.push({ key: `line:${l.id}`, group: "ignored", open: false, day: l.txnDate, amountPaise: rem, reason: reason(`IGNORED_${l.ignoreReason.toUpperCase()}`, who ? `${label} — ${who}` : label), line: lineView(l, m) });
       }
       continue;
@@ -351,14 +369,15 @@ export function buildBrs(input: BrsInput): BrsCore {
   for (const b of booksList) {
     if (inMonthOnLine.has(b.id)) continue;
     const rv = { id: b.id, number: b.number, paidOn: b.paidOn, clientName: b.clientName, mode: b.mode, amountPaise: b.amountPaise };
-    if (b.bankLineId && b.lineAccountId === acc.id && b.lineDay && !(b.lineDay >= from && b.lineDay <= to)) {
+    // A line stored twice is not counted anywhere (§5.4.1), so a receipt on it was never credited.
+    if (b.bankLineId && b.lineAccountId === acc.id && b.lineDay && !b.lineIsDuplicate && !(b.lineDay >= from && b.lineDay <= to)) {
       const later = b.lineDay > to;
       items.push({ key: `nc:${b.id}`, group: "not_credited", open: false, day: b.paidOn, amountPaise: b.amountPaise,
         reason: reason(later ? "CREDITED_LATER" : "CREDITED_EARLIER", `credited ${reconDay(b.lineDay)}`), receipt: { ...rv, creditedOn: b.lineDay } });
       continue;
     }
     if (b.bankLineId) {
-      // Linked to a line of this month that is stored twice (or otherwise not counted).
+      // Linked to a line that is stored twice (this month or another), or otherwise not counted.
       items.push({ key: `nc:${b.id}`, group: "not_credited", open: true, day: b.paidOn, amountPaise: b.amountPaise,
         reason: reason("ON_UNCOUNTED_LINE", "linked to a line that is not counted (stored twice)", "Unlink it on Bank and link the real line"), receipt: { ...rv, creditedOn: b.lineDay } });
       continue;

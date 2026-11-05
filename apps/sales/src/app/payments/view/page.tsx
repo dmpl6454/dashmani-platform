@@ -46,10 +46,11 @@ function PaymentView() {
 
   return (
     <>
-      <PageHead kicker={<><Link href="/payments" className="hover:text-white">Payments</Link> · {companyName(p.companyKey)} · <Link href={`/clients/view?id=${p.client.id}`} className="hover:text-white">{p.client.companyName}</Link></> as unknown as string} title={<><span className="font-mono">{p.number}</span> <StatusPill status={p.status} /></>}>
+      <PageHead kicker={<><Link href="/payments" className="hover:text-white">Payments</Link> · {companyName(p.companyKey)} · <Link href={`/clients/view?id=${p.client.id}`} className="hover:text-white">{p.client.companyName}</Link></> as unknown as string} title={<><span className="font-mono">{p.number}</span> <StatusPill status={p.status} />{/* smart-invoicing: tally badge (PR 2) */}</>}>
         {live && p.unallocatedPaise > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("refund")}>Refund</button>}
         {live && liveRefunds.length === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("void")}>Void receipt</button>}
       </PageHead>
+      {/* smart-invoicing: import banner (PR 3) */}
       {!live && <div className="card border-danger p-3 text-sm mb-4">Voided{p.voidedAt ? ` on ${fmtDate(p.voidedAt)}` : ""}{p.voidReason ? ` — ${p.voidReason}` : ""}. The number stays on record; this receipt no longer pays anything.</div>}
       {live && liveRefunds.length > 0 && <p className="text-xs text-ink-3 mb-4">To void this receipt, cancel its refunds first.</p>}
 
@@ -63,6 +64,7 @@ function PaymentView() {
             <dt className="text-ink-3">Mode</dt><dd className="text-right">{titleCase(p.mode)}</dd>
             {p.reference && <><dt className="text-ink-3">Reference</dt><dd className="text-right font-mono text-xs">{p.reference}</dd></>}
             {p.bankName && <><dt className="text-ink-3">Bank</dt><dd className="text-right">{p.bankName}</dd></>}
+            {/* smart-invoicing: bank row (PR 4) */}
           </dl>
           {p.notes && <p className="text-sm text-ink-3 mt-3">{p.notes}</p>}
         </section>

@@ -167,6 +167,9 @@ export default function SettingsPage() {
         <div><button type="submit" className="btn" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></div>
        </fieldset>
       </form>
+      {/* smart-invoicing: bank accounts card (PR 4) */}
+
+      {/* smart-invoicing: tally link card (PR 2) */}
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>
   );

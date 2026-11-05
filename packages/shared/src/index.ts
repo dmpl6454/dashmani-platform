@@ -76,6 +76,11 @@ export * as creatorValidators from "./validators/creator";
 export * from "./validators/sales";
 export * from "./sales/gst";
 export * from "./sales/companies";
+// Smart invoicing (spec-00 §2.7): TDS rules shared by accounts, import and bank.
+export * from "./sales/tds";
+// smart-invoicing: accounts (PR 1)
+
+// smart-invoicing: bank (PR 4)
 export * as contentValidators from "./validators/content";
 export * as offerLetterValidators from "./validators/offer-letter";
 export { generateOfferLetterSchema } from "./validators/offer-letter";

@@ -9,6 +9,9 @@ import { prisma } from "@dashmani/db";
 import app from "../src/app";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
 import { financialYear, todayIST } from "@dashmani/shared";
+import { recordReceiptTx } from "../src/services/sales/payments.service";
+import { getSellerOrDefaults } from "../src/services/sales/settings.service";
+import { flushSalesBackground } from "../src/services/sales/common";
 
 const SELLER = {
   legalName: "Dashmani Media Private Limited", gstin: "27AAACD1234E1Z5", pan: "AAACD1234E", addressLine1: "Andheri West", city: "Mumbai",
@@ -18,6 +21,7 @@ const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
 describe("billing follow-ups", () => {
   let token: string;
+  let actorId: string;
   let clientMh: string;
   let fyShort: string;
   const today = todayIST();
@@ -29,6 +33,7 @@ describe("billing follow-ups", () => {
     const u = await createTestUser({ name: "Biller", roleNames: ["Sales"] });
     const a = await createTestUser({ name: "Office Admin", roleNames: ["Admin"] });
     token = generateToken(u.id, u.email, ["Sales"]);
+    actorId = u.id;
     const adminToken = generateToken(a.id, a.email, ["Admin"]);
     const mh = await prisma.client.create({ data: { companyName: "Filmy Brands", contactName: "Riya", email: "riya@filmy.test", passwordHash: "x" } });
     await prisma.clientBillingProfile.create({ data: { clientId: mh.id, legalName: "Filmy Brands Pvt Ltd", gstin: "27AABCU9603R1ZX", stateCode: "27", state: "Maharashtra", city: "Mumbai" } });
@@ -163,5 +168,64 @@ describe("billing follow-ups", () => {
     // …and the conversion issues cleanly.
     const conv = (await api().post(`/v1/sales/invoices/${pf.id}/convert`).set(auth(token))).body.data;
     expect((await issue(conv.id)).status).toBe(200);
+  });
+  // ── Receipt core (spec-00 §2.6): createPayment = recordReceiptTx + the email ─────────────────
+
+  const eventsOf = (entityType: string, entityId: string) =>
+    prisma.salesEvent.findMany({ where: { entityType, entityId }, orderBy: { createdAt: "asc" }, select: { action: true, note: true, actorId: true } });
+
+  it("recordReceiptTx writes exactly what POST /sales/payments writes, minus the email", async () => {
+    const a = await issued();
+    const b = await issued();
+    const input = { companyKey: "dspl" as const, clientId: clientMh, amountPaise: 50_000, tdsPaise: 2_000, mode: "upi" as const, reference: "UTR77", paidOn: today, bankName: "IDFC First", notes: "part" };
+    const viaApi = await api().post("/v1/sales/payments").set(auth(token)).send({ ...input, allocations: [{ invoiceId: a.id, amountPaise: 50_000, tdsPaise: 2_000 }] });
+    expect(viaApi.status, JSON.stringify(viaApi.body)).toBe(201);
+    const seller = await getSellerOrDefaults("dspl");
+    const core = await prisma.$transaction((tx) => recordReceiptTx(tx, { ...input, allocations: [{ invoiceId: b.id, amountPaise: 50_000, tdsPaise: 2_000 }] }, actorId, { receiptPrefix: seller.receiptPrefix }));
+    await flushSalesBackground();
+
+    // Same series, the next serial.
+    expect(viaApi.body.data.number).toBe(`RCPT/${fyShort}/0001`);
+    expect(core).toEqual({ id: expect.any(String), number: `RCPT/${fyShort}/0002`, invoiceIds: [b.id] });
+    // Same row, column for column.
+    const [pa, pb] = await Promise.all([viaApi.body.data.id, core.id].map((id) => prisma.salesPayment.findUniqueOrThrow({ where: { id }, include: { allocations: true } })));
+    const strip = (p: typeof pa) => ({ ...p, id: "", number: "", createdAt: null, allocations: p.allocations.map((x) => ({ ...x, id: "", paymentId: "", invoiceId: "", createdAt: null })) });
+    expect(strip(pb)).toEqual(strip(pa));
+    // Same settlement and the same events.
+    const [ia, ib] = await Promise.all([inv(a.id), inv(b.id)]);
+    for (const k of ["status", "derivedStatus", "paidPaise", "tdsPaise", "balancePaise"]) expect(ib[k]).toEqual(ia[k]);
+    expect(await eventsOf("payment", core.id)).toEqual([{ action: "recorded", note: "upi UTR77", actorId }]);
+    expect(await eventsOf("payment", pa.id)).toEqual([{ action: "recorded", note: "upi UTR77", actorId }]);
+    const invA = (await eventsOf("invoice", a.id)).filter((e) => e.action.startsWith("payment") || e.action.startsWith("email"));
+    const invB = (await eventsOf("invoice", b.id)).filter((e) => e.action.startsWith("payment") || e.action.startsWith("email"));
+    expect(invB).toEqual([{ action: "payment_allocated", note: core.number, actorId }]);
+    // The API path then queued the invoice email (sent or failed — either way a row); the core never does.
+    expect(invA.map((e) => e.action)).toEqual(["payment_allocated", expect.stringMatching(/^email(ed|_failed)$/)]);
+  });
+
+  it("recordReceiptTx with a given number and imported: true logs imported events and queues no email", async () => {
+    const i = await issued();
+    const r = await prisma.$transaction((tx) =>
+      recordReceiptTx(tx, { companyKey: "dspl", clientId: clientMh, amountPaise: i.totalPaise, tdsPaise: 0, mode: "bank_transfer", reference: "Swipe import", paidOn: today, allocations: [{ invoiceId: i.id, amountPaise: i.totalPaise, tdsPaise: 0 }] }, actorId, { number: `SW-${i.number}`, imported: true }));
+    await flushSalesBackground();
+    expect(r).toEqual({ id: expect.any(String), number: `SW-${i.number}`, invoiceIds: [i.id] });
+    expect((await prisma.salesPayment.findUniqueOrThrow({ where: { id: r.id } })).number).toBe(`SW-${i.number}`);
+    expect(await inv(i.id)).toMatchObject({ status: "paid", derivedStatus: "paid", balancePaise: 0 });
+    expect(await eventsOf("payment", r.id)).toEqual([{ action: "imported", note: "bank_transfer Swipe import", actorId }]);
+    const invEvents = (await eventsOf("invoice", i.id)).map((e) => e.action);
+    expect(invEvents).toContain("payment_imported");
+    expect(invEvents).not.toContain("payment_allocated");
+    expect(invEvents.filter((a) => a.startsWith("email"))).toEqual([]);
+    // No receipt serial was taken: the next portal receipt is still 0001.
+    const next = await receipt(100);
+    expect(next.body.data.number).toBe(`RCPT/${fyShort}/0001`);
+  });
+
+  it("recordReceiptTx keeps every allocation rule (wrong company refused inside the caller's transaction)", async () => {
+    const i = await issued();
+    await expect(prisma.$transaction((tx) =>
+      recordReceiptTx(tx, { companyKey: "dmpl", clientId: clientMh, amountPaise: 100, tdsPaise: 0, mode: "upi", paidOn: today, allocations: [{ invoiceId: i.id, amountPaise: 100, tdsPaise: 0 }] }, actorId, { number: "SW-X" }),
+    )).rejects.toMatchObject({ code: "WRONG_COMPANY" });
+    expect(await prisma.salesPayment.count()).toBe(0);
   });
 });

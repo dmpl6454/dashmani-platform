@@ -548,7 +548,7 @@ export async function issueInvoice(
       ? { kind: "proforma" as const, prefix: SALES_COMPANIES[company].proformaPrefix, scope: companyScope(company, null), digits: 4 }
       : { kind: "invoice" as const, prefix: reg.invoicePrefix, scope: companyScope(company, reg.scope), digits: reg.serialDigits };
     const number = input.number
-      ? await claimManualNumber(tx, series.kind, series.prefix, issueDate, series.scope, input.number)
+      ? await claimManualNumber(tx, series.kind, series.prefix, issueDate, series.scope, input.number, series.digits)
       : await nextDocumentNumber(tx, series.kind, series.prefix, issueDate, series.scope, series.digits);
     // Numbers are unique across every invoice; say so plainly instead of failing on the index.
     const taken = await tx.salesInvoice.findFirst({ where: { number: { equals: number, mode: "insensitive" }, id: { not: id } }, select: { id: true } });

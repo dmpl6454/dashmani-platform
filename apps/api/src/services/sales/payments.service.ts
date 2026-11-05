@@ -1,4 +1,4 @@
-import { prisma } from "@dashmani/db";
+import { prisma, type Prisma } from "@dashmani/db";
 import { companyScope, registrationByGstin, SALES_COMPANIES, todayIST, type CompanyKey, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
@@ -103,46 +103,76 @@ async function checkAllocations(tx: Tx, clientId: string, company: string, alloc
 }
 
 /** Lock a receipt row and read it with what hangs off it (allocations, refunds). */
-async function lockPayment(tx: Tx, paymentId: string) {
+export async function lockPayment(tx: Tx, paymentId: string) {
   await tx.$queryRaw`SELECT id FROM sales_payments WHERE id = ${paymentId} FOR UPDATE`;
   const p = await tx.salesPayment.findUnique({ where: { id: paymentId }, include: { allocations: true, refunds: true } });
   if (!p) throw new AppError(404, "NOT_FOUND", "Payment not found");
   return p;
 }
 
+/** The columns recordReceiptTx always writes itself; a caller's `columns` can never override them. */
+type ReceiptCoreKeys = "id" | "number" | "companyKey" | "clientId" | "amountPaise" | "tdsPaise" | "mode" | "reference"
+  | "paidOn" | "bankName" | "notes" | "status" | "createdById" | "createdAt" | "updatedAt"
+  | "recordedById" | "allocations" | "refunds" | "voidedAt" | "voidReason" | "voidedById";
+/** Extra sales_payments columns a feature attaches to a receipt (import: importId; bank: bankLineId, tdsRateBp, tdsSection). Typed from Prisma, so a new column needs no edit here. */
+export type ReceiptExtraColumns = Partial<Omit<Prisma.SalesPaymentUncheckedCreateInput, ReceiptCoreKeys>>;
+
+/**
+ * Record a receipt inside the caller's transaction — the one receipt core shared by the portal's
+ * "Record payment" (createPayment), import's Swipe receipts and bank's matched credits
+ * (spec-00 §2.6). In order: the allocation checks under the invoice locks, the number
+ * (`opts.number`, else the next in the company's receipt series), the insert (with
+ * `opts.columns`), then per invoice recomputeSettlement + an invoice event, then the payment
+ * event. `imported: true` logs `payment_imported` / `imported` instead of `payment_allocated` /
+ * `recorded`. It queues NO email — the caller decides (createPayment does, after commit).
+ */
+export async function recordReceiptTx(
+  tx: Tx,
+  input: PaymentCreateInput,
+  actorId: string,
+  opts: { receiptPrefix?: string; number?: string; imported?: boolean; columns?: ReceiptExtraColumns } = {},
+): Promise<{ id: string; number: string; invoiceIds: string[] }> {
+  const invoiceIds = input.allocations.map((a) => a.invoiceId);
+  await checkAllocations(tx, input.clientId, input.companyKey, input.allocations);
+  let number: string;
+  if (opts.number !== undefined) {
+    number = opts.number;
+  } else {
+    if (opts.receiptPrefix === undefined) throw new Error("[sales] recordReceiptTx needs a receipt number or the receipt prefix");
+    number = await nextDocumentNumber(tx, "receipt", opts.receiptPrefix, input.paidOn, companyScope(input.companyKey, null));
+  }
+  const p = await tx.salesPayment.create({
+    data: {
+      number,
+      companyKey: input.companyKey,
+      clientId: input.clientId,
+      amountPaise: input.amountPaise,
+      tdsPaise: input.tdsPaise,
+      mode: input.mode,
+      reference: input.reference ?? null,
+      paidOn: dayToDate(input.paidOn),
+      bankName: input.bankName ?? null,
+      notes: input.notes ?? null,
+      recordedById: actorId,
+      allocations: { create: input.allocations.map((a) => ({ invoiceId: a.invoiceId, amountPaise: a.amountPaise, tdsPaise: a.tdsPaise })) },
+      ...opts.columns,
+    },
+    select: { id: true },
+  });
+  for (const id of invoiceIds) {
+    await recomputeSettlement(tx, id);
+    await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: opts.imported ? "payment_imported" : "payment_allocated", note: number });
+  }
+  await logSalesEvent(tx, { entityType: "payment", entityId: p.id, actorId, action: opts.imported ? "imported" : "recorded", note: `${input.mode} ${input.reference ?? ""}`.trim() });
+  return { id: p.id, number, invoiceIds };
+}
+
 export async function createPayment(input: PaymentCreateInput, actorId: string) {
   const seller = await getSellerOrDefaults(input.companyKey);
-  const invoiceIds = input.allocations.map((a) => a.invoiceId);
-  const created = await prisma.$transaction(async (tx) => {
-    await checkAllocations(tx, input.clientId, input.companyKey, input.allocations);
-    const number = await nextDocumentNumber(tx, "receipt", seller.receiptPrefix, input.paidOn, companyScope(input.companyKey, null));
-    const p = await tx.salesPayment.create({
-      data: {
-        number,
-        companyKey: input.companyKey,
-        clientId: input.clientId,
-        amountPaise: input.amountPaise,
-        tdsPaise: input.tdsPaise,
-        mode: input.mode,
-        reference: input.reference ?? null,
-        paidOn: dayToDate(input.paidOn),
-        bankName: input.bankName ?? null,
-        notes: input.notes ?? null,
-        recordedById: actorId,
-        allocations: { create: input.allocations.map((a) => ({ invoiceId: a.invoiceId, amountPaise: a.amountPaise, tdsPaise: a.tdsPaise })) },
-      },
-      select: { id: true },
-    });
-    for (const id of invoiceIds) {
-      await recomputeSettlement(tx, id);
-      await logSalesEvent(tx, { entityType: "invoice", entityId: id, actorId, action: "payment_allocated", note: number });
-    }
-    await logSalesEvent(tx, { entityType: "payment", entityId: p.id, actorId, action: "recorded", note: `${input.mode} ${input.reference ?? ""}`.trim() });
-    return p;
-  });
+  const { id, invoiceIds } = await prisma.$transaction((tx) => recordReceiptTx(tx, input, actorId, { receiptPrefix: seller.receiptPrefix }));
   // After commit: the invoice PDF goes to the client and the company's billing addresses.
-  queueInvoiceEmails(invoiceIds, created.id, actorId);
-  return getPayment(created.id);
+  queueInvoiceEmails(invoiceIds, id, actorId);
+  return getPayment(id);
 }
 
 /**

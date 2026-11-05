@@ -1,4 +1,4 @@
-import { Router, Request } from "express";
+import { Router } from "express";
 import {
   campaignReviewNoteSchema,
   clientBillingProfileSchema,
@@ -19,19 +19,14 @@ import {
   salesClientEmailSchema,
   salesClientProfileSchema,
   sellerProfileSchema,
-  DEFAULT_COMPANY,
-  isCompanyKey,
-  type CompanyKey,
   clientValidators,
 } from "@dashmani/shared";
-import { authenticate } from "../middleware/auth";
-import { requireInternalUser } from "../middleware/require-internal-user";
-import { requirePermission } from "../middleware/rbac";
 import { validate } from "../middleware/validate";
 import { AppError } from "../middleware/error-handler";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 import { listSalesEvents, type SalesEntity } from "../services/sales/common";
+import { admin, companyOf, companyQuery, ENTITY_TYPES, manage, staffId, str, view } from "./sales-route-kit";
 import { getSellerProfile, saveSellerProfile, sellerFallback, sellerMissingFields } from "../services/sales/settings.service";
 import { listInventory } from "../services/sales/inventory.service";
 import {
@@ -61,24 +56,13 @@ import {
 
 // sales.digitalsukoon.com — staff only. `sales.view` reads; `sales.manage` writes (the Sales
 // role and both admin roles hold both, see packages/db/prisma/seed.ts). Every money action is
-// logged to sales_events by the service it lives in.
+// logged to sales_events by the service it lives in. The gates and request helpers live in
+// sales-route-kit.ts (shared with the smart-invoicing feature routers, spec-00 §2.1).
+//
+// Smart invoicing (spec-00 §4): features add NO routes here — each has its own router
+// (sales-accounts / sales-tally / sales-import / sales-bank .routes.ts), mounted right after this one.
 
 const router = Router();
-const view = [authenticate, requireInternalUser, requirePermission("sales", "view")];
-const manage = [authenticate, requireInternalUser, requirePermission("sales", "manage")];
-// The company's own GST identity and BANK DETAILS print on every invoice; a changed account number
-// is how invoice fraud starts. Only Admin / Super Admin (who hold sales:approve) may change them.
-const admin = [authenticate, requireInternalUser, requirePermission("sales", "approve")];
-const staffId = (req: Request) => req.user!.userId;
-const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-/** ?company=dspl|dmpl. Lists without it show both companies; settings and the dashboard default to Digital Sukoon. */
-const companyQuery = (req: Request): CompanyKey | undefined => {
-  const v = str(req.query.company);
-  if (v === undefined) return undefined;
-  if (!isCompanyKey(v)) throw new AppError(400, "BAD_COMPANY", "Unknown company");
-  return v;
-};
-const companyOf = (req: Request): CompanyKey => companyQuery(req) ?? DEFAULT_COMPANY;
 
 // ── Dashboard, settings, inventory ─────────────────────────────────────────────
 
@@ -251,7 +235,6 @@ router.post("/sales/credit-notes/:id/cancel", ...manage, asyncHandler(async (req
 
 // ── Audit trail ─────────────────────────────────────────────────────────────────
 
-const ENTITY_TYPES: SalesEntity[] = ["quote", "order", "invoice", "payment", "credit_note", "settings", "client", "recurring"];
 router.get("/sales/events", ...view, asyncHandler(async (req, res) => {
   const entityType = str(req.query.entityType) as SalesEntity | undefined;
   const entityId = str(req.query.entityId);

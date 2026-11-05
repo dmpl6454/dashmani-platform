@@ -157,6 +157,44 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, _retr
 }
 
 /**
+ * A file upload (multipart/form-data, field "file" plus any form fields) — bank statements and
+ * Swipe exports. POST, the same envelope, error mapping and single 401 refresh as apiFetch. No
+ * Content-Type header: the browser sets the multipart boundary itself.
+ */
+export async function apiUpload<T>(path: string, form: FormData, _retried = false): Promise<ApiEnvelope<T>> {
+  const token = read(TOKEN_KEYS.access);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+  } catch {
+    throw new ApiError("Couldn't reach the server — check your connection and try again.", "NETWORK", undefined, 0);
+  }
+
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw badResponse(res.status);
+  }
+
+  if (!data?.success) {
+    if (res.status === 401 && token && typeof window !== "undefined") {
+      if (!_retried && (await tryRefresh())) return apiUpload<T>(path, form, true);
+      clearSession();
+      sendToLogin();
+    }
+    throw apiErrorFrom(data, res.status);
+  }
+
+  return data as ApiEnvelope<T>;
+}
+
+/**
  * A binary download (an invoice PDF, a CSV). On success returns the Blob plus the filename the
  * server suggested (Content-Disposition). On 401 it refreshes once, like apiFetch.
  */

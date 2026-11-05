@@ -14,6 +14,29 @@ function monthRange(day: string): { from: string; to: string } {
   return { from, to: next };
 }
 
+/**
+ * Event types and (type, action) pairs kept OUT of the 80-row "Recent activity" read (spec-00 §2.9):
+ * one Swipe import writes thousands of events, one Tally confirm one `tally_synced` per document,
+ * one bank rematch many rows — any of them would push everything else out of the window. Pairs,
+ * not bare actions: another feature's `imported` must not vanish with import's. The `import`
+ * entity's own events stay visible.
+ */
+const FEED_HIDDEN_ENTITY_TYPES = ["tally_run", "filed_year", "bank_account", "bank_statement", "bank_line"];
+const FEED_HIDDEN_ACTIONS: Array<{ entityType: string; action: string }> = [
+  { entityType: "invoice", action: "imported" },
+  { entityType: "invoice", action: "payment_imported" },
+  { entityType: "invoice", action: "import_undone" },
+  { entityType: "payment", action: "imported" },
+  { entityType: "payment", action: "import_undone" },
+  { entityType: "client", action: "client_imported" },
+  { entityType: "client", action: "billing_profile_imported" },
+  { entityType: "invoice", action: "tally_synced" },
+  { entityType: "credit_note", action: "tally_synced" },
+  { entityType: "payment", action: "tally_synced" },
+  { entityType: "client", action: "tally_ledger_set" },
+  { entityType: "settings", action: "tally_settings_saved" },
+];
+
 /** One company's books: every figure below is filtered to its documents. */
 export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
   const c = { companyKey: company };
@@ -51,7 +74,11 @@ export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
       _count: true,
     }),
     // Events carry no company: read more and keep this company's (see below).
-    prisma.salesEvent.findMany({ orderBy: { createdAt: "desc" }, take: 80 }),
+    prisma.salesEvent.findMany({
+      where: { entityType: { notIn: FEED_HIDDEN_ENTITY_TYPES }, NOT: { OR: FEED_HIDDEN_ACTIONS } },
+      orderBy: { createdAt: "desc" },
+      take: 80,
+    }),
     // Every non-cancelled, non-draft order with its deal day: the "sales by financial year" table.
     prisma.salesOrder.findMany({ where: { ...c, status: { in: ["confirmed", "in_progress", "delivered", "closed"] } }, select: { totalPaise: true, startDate: true, createdAt: true, status: true } }),
     prisma.salesRefund.aggregate({ where: { status: "issued", payment: { ...c, status: "recorded" }, refundedOn: { gte: fyStart, lt: fyEndExclusive } }, _sum: { amountPaise: true } }),

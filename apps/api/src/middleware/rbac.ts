@@ -75,3 +75,25 @@ export function requirePermission(resource: string, action: string, opts: Permis
     next();
   });
 }
+
+/**
+ * Does this user hold `resource.action` through any of their roles? The same
+ * userRole → role → permissions lookup requirePermission runs, for a decision INSIDE a handler
+ * (Tally's canApprove, bank's "see withdrawal narrations"). Scopes are ignored: sales grants are
+ * global. Not a gate — routes still gate with requirePermission.
+ */
+export async function hasPermission(userId: string, resource: string, action: string): Promise<boolean> {
+  const userRoles = await prisma.userRole.findMany({
+    where: { userId },
+    include: {
+      role: {
+        include: {
+          permissions: {
+            where: { resource, action },
+          },
+        },
+      },
+    },
+  });
+  return userRoles.some((ur) => ur.role.permissions.length > 0);
+}

@@ -1,5 +1,5 @@
 import { prisma, Prisma } from "@dashmani/db";
-import { documentNumber, financialYear, MAX_PAISE, shortFy } from "@dashmani/shared";
+import { documentNumber, financialYear, MAX_PAISE, seriesSerial, shortFy } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 
 // Shared plumbing for the sales services: the transaction client type, IST day <-> DATE column
@@ -74,15 +74,25 @@ export async function peekDocumentNumber(kind: NumberKind, prefix: string, day: 
  * document's financial year — the series moves past it, so the automatic number after it can
  * never repeat it; a number in any other format leaves the series alone. Uniqueness is the
  * caller's check (and the column's unique index).
+ *
+ * With `digits` (the series' zero-padded serial length) the number must be EXACTLY this series'
+ * format (seriesSerial): two registrations can share a prefix — Mumbai INV with 4 digits, Gurugram
+ * INV with 3 — and a typed INV/26-27/060 (Gurugram's format) on a Mumbai draft must not move
+ * Mumbai's series from 16 to 61. Without `digits`, the original any-digit-count rule applies.
  */
-export async function claimManualNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null, number: string): Promise<string> {
+export async function claimManualNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null, number: string, digits?: number): Promise<string> {
   const fy = financialYear(day);
   const n = number.trim();
   if (GST_NUMBERED.has(kind) && n.length > 16) throw new AppError(422, "NUMBER_TOO_LONG", `${n} is longer than the 16 characters GST allows`);
-  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
-  const m = n.match(new RegExp(`^${esc(prefix)}/${esc(shortFy(fy.label))}/(\\d+)$`, "i"));
-  if (m) {
-    const serial = Number(m[1]);
+  let serial: number | null = null;
+  if (digits !== undefined) {
+    serial = seriesSerial(n, prefix, fy.label, digits);
+  } else {
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+    const m = n.match(new RegExp(`^${esc(prefix)}/${esc(shortFy(fy.label))}/(\\d+)$`, "i"));
+    if (m) serial = Number(m[1]);
+  }
+  if (serial !== null) {
     const key = sequenceKey(kind, scope, fy.label);
     await tx.$executeRaw`INSERT INTO sales_sequences ("key", "next", "updated_at") VALUES (${key}, 1, now()) ON CONFLICT ("key") DO NOTHING`;
     await tx.$executeRaw`UPDATE sales_sequences SET "next" = GREATEST("next", ${serial + 1}), "updated_at" = now() WHERE "key" = ${key}`;
@@ -103,6 +113,16 @@ export async function lockInvoices(tx: Tx, ids: string[]): Promise<void> {
   await tx.$queryRaw`SELECT id FROM sales_invoices WHERE id IN (${Prisma.join(sorted)}) ORDER BY id FOR UPDATE`;
 }
 
+/**
+ * A BIGINT read (a `::bigint` SUM, a BIGINT column) as a JS number — never a bare Number(v), which
+ * silently rounds past 2^53. null/undefined read as 0. Throws when the value is not a safe integer.
+ */
+export function toSafeNumber(v: bigint | number | null | undefined, what = "amount"): number {
+  const n = Number(v ?? 0);
+  if (!Number.isSafeInteger(n)) throw new Error(`[sales] ${what} out of safe range`);
+  return n;
+}
+
 /** Money columns are Postgres INT (max ₹2,14,74,836.47): refuse a document that would not fit. */
 export function assertMoneyFits(values: Record<string, number>): void {
   for (const [field, v] of Object.entries(values)) {
@@ -113,7 +133,22 @@ export function assertMoneyFits(values: Record<string, number>): void {
   }
 }
 
-export type SalesEntity = "quote" | "order" | "invoice" | "payment" | "credit_note" | "settings" | "client" | "recurring";
+/** Every sales_events.entityType. The smart-invoicing types are pre-registered by PR 0 (spec-00 §2.2); features never edit this list. */
+export type SalesEntity =
+  | "quote"
+  | "order"
+  | "invoice"
+  | "payment"
+  | "credit_note"
+  | "settings"
+  | "client"
+  | "recurring"
+  | "filed_year"
+  | "tally_run"
+  | "import"
+  | "bank_account"
+  | "bank_statement"
+  | "bank_line";
 
 export async function logSalesEvent(
   tx: Tx | typeof prisma,

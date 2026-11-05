@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import * as XLSX from "xlsx";
-import { decodeText, excelSerialToDay, openWorkbook, parseDelimited, ROW_HEADROOM, sniffFormat, TabularError } from "../src/services/sales/tabular";
+import { decodeText, excelSerialToDay, MAX_UNZIPPED_BYTES, openWorkbook, parseDelimited, ROW_HEADROOM, sniffFormat, TabularError, zipUnpackedBytes } from "../src/services/sales/tabular";
 import { csvDocument, csvField, csvMoney } from "../src/services/sales/csv";
 
 const workbook = (rows: unknown[][], fmt: Record<string, string> = {}, bookType: XLSX.BookType = "xlsx") => {
@@ -95,6 +95,9 @@ describe("excelSerialToDay", () => {
     expect(excelSerialToDay(45383)).toBe("2024-04-01");
     expect(excelSerialToDay(0)).toBeNull();
     expect(excelSerialToDay(Number.NaN)).toBeNull();
+    // The 1904 date system: the same serial is 4 years and 1 day later.
+    expect(excelSerialToDay(44870)).toBe("2022-11-05");
+    expect(excelSerialToDay(44870, true)).toBe("2026-11-06");
   });
 });
 
@@ -119,6 +122,44 @@ describe("openWorkbook", () => {
       ]);
     });
   }
+
+  // PR 0 review: a Mac / legacy workbook in the 1904 date system — Excel shows 06-11-2026 for serial
+  // 44870; read under the 1900 system it would come out 2022-11-05, another financial year.
+  for (const bookType of ["xlsx", "biff8"] as const) {
+    it(`reads a ${bookType} workbook in the 1904 date system as the day Excel shows`, () => {
+      const ws = XLSX.utils.aoa_to_sheet([["Date"], [{ t: "n", v: 44870, z: "dd-mm-yyyy" }]]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Sales");
+      wb.Workbook = { WBProps: { date1904: true } };
+      const read = openWorkbook(Buffer.from(XLSX.write(wb, { type: "buffer", bookType })), 10);
+      expect(read.grid("Sales")).toEqual([["Date"], ["2026-11-06"]]);
+    });
+  }
+
+  it("refuses an xlsx that unpacks past MAX_UNZIPPED_BYTES before SheetJS inflates it", () => {
+    const small = workbook([["a"]]);
+    const declared = zipUnpackedBytes(small);
+    expect(declared).toBeGreaterThan(0);
+    expect(declared).toBeLessThan(MAX_UNZIPPED_BYTES);
+    // ~650 KB on disk, 70 MB of sheet XML once inflated.
+    const cfb = XLSX.CFB.utils.cfb_new();
+    XLSX.CFB.utils.cfb_add(cfb, "/xl/worksheets/sheet1.xml", Buffer.alloc(70 * 1024 * 1024, 0x20));
+    const bomb = Buffer.from(XLSX.CFB.write(cfb, { type: "buffer", fileType: "zip", compression: true }) as Buffer);
+    expect(bomb.length).toBeLessThan(2 * 1024 * 1024);
+    expect(zipUnpackedBytes(bomb)).toBeGreaterThan(MAX_UNZIPPED_BYTES);
+    const t = Date.now();
+    try {
+      openWorkbook(bomb, 10);
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(TabularError);
+      expect((e as TabularError).kind).toBe("unreadable");
+      expect((e as Error).message).toMatch(/too large/);
+    }
+    expect(Date.now() - t).toBeLessThan(500);
+    // Not a ZIP at all → no claim; SheetJS decides.
+    expect(zipUnpackedBytes(Buffer.from("plain text"))).toBeNull();
+  });
 
   it("keeps an HTML table's cells exactly as shown (no month-first date guess)", () => {
     const html = Buffer.from("<html><body><table><tr><td>Date</td><td>Amount</td></tr><tr><td>05/11/2026</td><td>1,234.50</td></tr></table></body></html>");

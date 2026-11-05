@@ -122,8 +122,13 @@ describe("feature routers", () => {
     }
     await logSalesEvent(prisma, { entityType: "settings", entityId: "sales.seller", action: "tally_settings_saved" });
     await logSalesEvent(prisma, { entityType: "settings", entityId: "sales.seller", action: "saved" });
+    // Bank's rematch writes payment/bank_matched for every receipt it auto-links: hidden. The
+    // receipt's own payment/recorded stays visible.
+    const pay = await prisma.salesPayment.create({ data: { number: "RC/26-27/0099", companyKey: "dspl", clientId: c.id, amountPaise: 100, mode: "upi", paidOn: new Date("2026-11-01"), recordedById: "system" } });
+    await logSalesEvent(prisma, { entityType: "payment", entityId: pay.id, action: "recorded" });
+    await logSalesEvent(prisma, { entityType: "payment", entityId: pay.id, action: "bank_matched" });
     const feed = (await request(app).get("/v1/sales/dashboard").set(auth(viewer.token))).body.data.recent as Array<{ entityType: string; action: string }>;
-    expect(feed.map((e) => `${e.entityType}/${e.action}`).sort()).toEqual(["client/updated", "settings/saved"]);
+    expect(feed.map((e) => `${e.entityType}/${e.action}`).sort()).toEqual(["client/updated", "payment/recorded", "settings/saved"]);
   });
 });
 
@@ -193,6 +198,18 @@ describe("memoryUpload", () => {
     expect(longField.status).toBe(400);
     expect(longField.body.error.code).toBe("INVALID_UPLOAD");
     expect((await request(mini).post("/up").field("company", "dspl")).body.error.code).toBe("NO_FILE");
+  });
+
+  // PR 0 review: a body cut off mid-upload (a dropped or cancelled browser upload) is the client's
+  // mistake — a 400, never a logged 500.
+  it("answers a truncated or malformed multipart body with 400 INVALID_UPLOAD", async () => {
+    const cut = "--XYZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.csv\"\r\nContent-Type: text/csv\r\n\r\na,b\n1,2\n";
+    const r = await request(mini).post("/up").set("Content-Type", "multipart/form-data; boundary=XYZ").send(cut);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatchObject({ code: "INVALID_UPLOAD", message: "The upload was incomplete or malformed — try again" });
+    const noBoundary = await request(mini).post("/up").set("Content-Type", "multipart/form-data").send("garbage");
+    expect(noBoundary.status).toBe(400);
+    expect(noBoundary.body.error.code).toBe("INVALID_UPLOAD");
   });
 });
 

@@ -1,5 +1,5 @@
 import { prisma, type Prisma } from "@dashmani/db";
-import { companyScope, registrationByGstin, SALES_COMPANIES, todayIST, type CompanyKey, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
+import { companyScope, MAX_PAISE, registrationByGstin, SALES_COMPANIES, todayIST, type CompanyKey, type PaymentAllocateInput, type PaymentCreateInput, type CreditNoteCreateInput, type RefundCreateInput, computeTotals, type TaxMode } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { dateToDay, dayToDate, lockInvoices, logSalesEvent, nextDocumentNumber, type Tx } from "./common";
 import { queueInvoiceEmails } from "./invoice-email.service";
@@ -126,12 +126,42 @@ export type ReceiptExtraColumns = Partial<Omit<Prisma.SalesPaymentUncheckedCreat
  * event. `imported: true` logs `payment_imported` / `imported` instead of `payment_allocated` /
  * `recorded`. It queues NO email — the caller decides (createPayment does, after commit).
  */
+/**
+ * The receipt-level rules paymentCreateSchema refines (each invoice once, allocations within the
+ * cash and the TDS, something received, every figure a whole number of paise in range). The portal
+ * route already passed them through Zod; import and bank build their input in code, so the core
+ * checks them again — checkAllocations reads each invoice's balance once and would let two
+ * allocations to one invoice over-settle it. Strings are not re-parsed (re-running safeString
+ * could change a value the route already cleaned).
+ */
+function assertReceiptShape(input: PaymentCreateInput) {
+  const bad = (msg: string): never => { throw new AppError(400, "INVALID_RECEIPT", msg); };
+  const paiseOk = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= MAX_PAISE;
+  if (!paiseOk(input.amountPaise) || !paiseOk(input.tdsPaise)) bad("The amount and TDS must be whole paise between 0 and the per-document limit");
+  if (input.amountPaise + input.tdsPaise <= 0) bad("Enter an amount received or TDS withheld");
+  const allocations = input.allocations ?? [];
+  if (allocations.length > 50) bad("A receipt can settle at most 50 invoices");
+  let amount = 0;
+  let tds = 0;
+  const seen = new Set<string>();
+  for (const a of allocations) {
+    if (!paiseOk(a.amountPaise) || !paiseOk(a.tdsPaise)) bad("Each allocation must be whole paise between 0 and the per-document limit");
+    if (seen.has(a.invoiceId)) bad("List each invoice once in a payment");
+    seen.add(a.invoiceId);
+    amount += a.amountPaise;
+    tds += a.tdsPaise;
+  }
+  if (amount > input.amountPaise) bad("Allocated more than was received");
+  if (tds > input.tdsPaise) bad("Allocated more TDS than was withheld");
+}
+
 export async function recordReceiptTx(
   tx: Tx,
   input: PaymentCreateInput,
   actorId: string,
   opts: { receiptPrefix?: string; number?: string; imported?: boolean; columns?: ReceiptExtraColumns } = {},
 ): Promise<{ id: string; number: string; invoiceIds: string[] }> {
+  assertReceiptShape(input);
   const invoiceIds = input.allocations.map((a) => a.invoiceId);
   await checkAllocations(tx, input.clientId, input.companyKey, input.allocations);
   let number: string;

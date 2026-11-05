@@ -42,7 +42,9 @@ export function memoryUpload(o: MemoryUploadOptions): RequestHandler {
         if (err.code === "LIMIT_FILE_SIZE") return next(o.tooLarge);
         return next(new AppError(400, "INVALID_UPLOAD", err.message));
       }
-      return next(err);
+      // Anything else multer/busboy raises here is the request body itself — cut off mid-upload
+      // ("Unexpected end of form"), no boundary, a broken part: the client's mistake, not a 500.
+      return next(new AppError(400, "INVALID_UPLOAD", "The upload was incomplete or malformed — try again"));
     });
   };
 }

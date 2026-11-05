@@ -17,6 +17,10 @@ export function csvMoney(paise: number | bigint): string {
  * One cell. A number (or bigint), or a string that is exactly a plain decimal ("-200.00", "0016"),
  * is written bare so a spreadsheet reads it as a number — a number can never be a formula. Everything
  * else goes through csvCell: RFC 4180 quoting plus the formula-injection guard (= + - @ prefixed).
+ * ⚠️ An all-digit IDENTIFIER (account number, RRN, cheque "000123") comes out the same either way:
+ * csvCell does not quote it, and Excel converts a quoted "000123" to 123 just the same when it
+ * opens a .csv — quoting cannot keep it text. A feature that exports such a column keeps its
+ * non-digit context (e.g. "••8788", "CHQ 000123") or documents that the column is an identifier.
  */
 export function csvField(v: unknown): string {
   if (typeof v === "bigint") return String(v);

@@ -212,21 +212,25 @@ export function parseDelimited(text: string, maxRows: number): { delimiter: "," 
   return { delimiter, rows: dropTrailingEmpty(rows) };
 }
 
-/** An Excel date serial → YYYY-MM-DD by the workbook calendar (46331 → "2026-11-05"); no JS Date, no time zone. */
-export function excelSerialToDay(n: number): string | null {
-  if (!Number.isFinite(n) || n < 1 || n > 2_958_465) return null;
-  const d = XLSX.SSF.parse_date_code(n);
+/**
+ * An Excel date serial → YYYY-MM-DD by the workbook calendar (46331 → "2026-11-05"); no JS Date, no
+ * time zone. `date1904`: the workbook's 1904 date system (old Mac workbooks) — the same serial is
+ * then 4 years and 1 day later, so it must come from the workbook, never be assumed.
+ */
+export function excelSerialToDay(n: number, date1904 = false): string | null {
+  if (!Number.isFinite(n) || n < (date1904 ? 0 : 1) || n > 2_958_465) return null;
+  const d = XLSX.SSF.parse_date_code(n, { date1904 });
   if (!d || !d.y || !d.m || !d.d) return null;
   return `${String(d.y).padStart(4, "0")}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
 }
 
-function cellText(cell: XLSX.CellObject | undefined): string {
+function cellText(cell: XLSX.CellObject | undefined, date1904: boolean): string {
   if (!cell) return "";
   switch (cell.t) {
     case "n": {
       const v = cell.v as number;
       if (!Number.isFinite(v)) return "";
-      if (cell.z && XLSX.SSF.is_date(cell.z as string)) return excelSerialToDay(v) ?? String(Math.round(v * 1e6) / 1e6);
+      if (cell.z && XLSX.SSF.is_date(cell.z as string)) return excelSerialToDay(v, date1904) ?? String(Math.round(v * 1e6) / 1e6);
       return String(Math.round(v * 1e6) / 1e6);
     }
     case "s":
@@ -236,6 +240,38 @@ function cellText(cell: XLSX.CellObject | undefined): string {
     default:
       return "";
   }
+}
+
+/** Largest total an XLSX's parts may unpack to. SheetJS inflates every sheet in full (sheetRows only limits what it keeps). */
+export const MAX_UNZIPPED_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The uncompressed size an XLSX (a ZIP) declares for all its parts, read from the central directory
+ * without inflating anything; null when the buffer is not a well-formed ZIP (SheetJS then decides).
+ * A ZIP64 size (0xFFFFFFFF) counts as Infinity. The sizes are the file's own claim: this stops an
+ * honestly huge workbook and the common zip bomb, not a crafted file that lies in its headers —
+ * callers still run openWorkbook for large files off the request path.
+ */
+export function zipUnpackedBytes(buf: Buffer): number | null {
+  const EOCD = 0x06054b50;
+  const CEN = 0x02014b50;
+  if (buf.length < 22) return null;
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) {
+    if (buf.readUInt32LE(i) === EOCD) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const entries = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  let total = 0;
+  for (let n = 0; n < entries; n++) {
+    if (p + 46 > buf.length || buf.readUInt32LE(p) !== CEN) return null;
+    const size = buf.readUInt32LE(p + 24);
+    if (size === 0xffffffff) return Infinity;
+    total += size;
+    p += 46 + buf.readUInt16LE(p + 28) + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+  }
+  return total;
 }
 
 /**
@@ -248,6 +284,12 @@ function cellText(cell: XLSX.CellObject | undefined): string {
  * A password-protected file → TabularError("encrypted"); anything else unreadable → "unreadable".
  */
 export function openWorkbook(buf: Buffer, maxRows: number): { sheetNames: string[]; grid(sheet: string, maxCols?: number): string[][] } {
+  if (startsWith(buf, [0x50, 0x4b, 0x03, 0x04])) {
+    const unpacked = zipUnpackedBytes(buf);
+    if (unpacked !== null && unpacked > MAX_UNZIPPED_BYTES) {
+      throw new TabularError("unreadable", `The spreadsheet is too large to read (over ${MAX_UNZIPPED_BYTES / 1024 / 1024} MB once unpacked) — export fewer rows or one period at a time`);
+    }
+  }
   let wb: XLSX.WorkBook;
   try {
     wb = XLSX.read(buf, {
@@ -270,6 +312,8 @@ export function openWorkbook(buf: Buffer, maxRows: number): { sheetNames: string
     throw new TabularError("unreadable", "The file could not be read as a spreadsheet");
   }
   if (!wb?.SheetNames?.length) throw new TabularError("unreadable", "The file has no sheets");
+  // The 1904 date system is a workbook setting (old Mac workbooks); a serial means another day under it.
+  const date1904 = !!wb.Workbook?.WBProps?.date1904;
   return {
     sheetNames: [...wb.SheetNames],
     grid(sheet: string, maxCols: number = DEFAULT_MAX_COLS): string[][] {
@@ -290,7 +334,7 @@ export function openWorkbook(buf: Buffer, maxRows: number): { sheetNames: string
       const rows: string[][] = [];
       for (let r = 0; r <= lastRow; r++) {
         const out: string[] = [];
-        for (let c = 0; c <= lastCol; c++) out.push(cellText(ws[XLSX.utils.encode_cell({ r, c })] as XLSX.CellObject | undefined));
+        for (let c = 0; c <= lastCol; c++) out.push(cellText(ws[XLSX.utils.encode_cell({ r, c })] as XLSX.CellObject | undefined, date1904));
         rows.push(out);
       }
       return dropTrailingEmpty(rows);

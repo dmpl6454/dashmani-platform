@@ -75,22 +75,26 @@ export async function peekDocumentNumber(kind: NumberKind, prefix: string, day: 
  * never repeat it; a number in any other format leaves the series alone. Uniqueness is the
  * caller's check (and the column's unique index).
  *
- * With `digits` (the series' zero-padded serial length) the number must be EXACTLY this series'
- * format (seriesSerial): two registrations can share a prefix — Mumbai INV with 4 digits, Gurugram
- * INV with 3 — and a typed INV/26-27/060 (Gurugram's format) on a Mumbai draft must not move
- * Mumbai's series from 16 to 61. Without `digits`, the original any-digit-count rule applies.
+ * With `digits` (the series' zero-padded serial length): two registrations can share a prefix —
+ * Mumbai INV with 4 digits, Gurugram INV with 3 — and a typed INV/26-27/060 (Gurugram's exact
+ * format) on a Mumbai draft must not move Mumbai's series from 16 to 61. So a number in a
+ * SIBLING's exact format (`siblingDigits`: the serial lengths of the company's other registrations
+ * printing this prefix) leaves the series alone. Any other PREFIX/FY/<digits> — this series' own
+ * format, or an unpadded / over-padded one like DS/26-27/16 on a 4-digit series — still moves it,
+ * or the next automatic number would be DS/26-27/0016: serial 16 twice in one financial year.
+ * Without `digits`, the original any-digit-count rule applies.
  */
-export async function claimManualNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null, number: string, digits?: number): Promise<string> {
+export async function claimManualNumber(tx: Tx, kind: NumberKind, prefix: string, day: string, scope: string | null, number: string, digits?: number, siblingDigits: readonly number[] = []): Promise<string> {
   const fy = financialYear(day);
   const n = number.trim();
   if (GST_NUMBERED.has(kind) && n.length > 16) throw new AppError(422, "NUMBER_TOO_LONG", `${n} is longer than the 16 characters GST allows`);
-  let serial: number | null = null;
-  if (digits !== undefined) {
-    serial = seriesSerial(n, prefix, fy.label, digits);
-  } else {
-    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
-    const m = n.match(new RegExp(`^${esc(prefix)}/${esc(shortFy(fy.label))}/(\\d+)$`, "i"));
-    if (m) serial = Number(m[1]);
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+  const m = n.match(new RegExp(`^${esc(prefix)}/${esc(shortFy(fy.label))}/(\\d+)$`, "i"));
+  const loose = m && Number.isSafeInteger(Number(m[1])) ? Number(m[1]) : null;
+  let serial: number | null = loose;
+  if (digits !== undefined && loose !== null && seriesSerial(n, prefix, fy.label, digits) === null) {
+    // Not this series' exact format: a sibling registration's own number, or this series' serial padded differently.
+    if (siblingDigits.some((d) => seriesSerial(n, prefix, fy.label, d) !== null)) serial = null;
   }
   if (serial !== null) {
     const key = sequenceKey(kind, scope, fy.label);

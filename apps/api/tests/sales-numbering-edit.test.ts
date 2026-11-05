@@ -103,6 +103,25 @@ describe("invoice numbers", () => {
     expect((await issue((await draft(gurugramClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 1, 3));
   });
 
+  // PR 0 review: the series' own prefix with different zero-padding must still move the series,
+  // or the next automatic number repeats the serial (INV/26-27/16 then INV/26-27/0016).
+  it("a number in this series' prefix but padded differently still moves the series", async () => {
+    const short = `${fy().label.slice(2, 4)}-${fy().label.slice(5)}`;
+    const unpadded = await issue((await draft(mumbaiClient)).id, { number: `INV/${short}/16` });
+    expect(unpadded.status, JSON.stringify(unpadded.body)).toBe(200);
+    expect(unpadded.body.data.number).toBe(`INV/${short}/16`);
+    expect((await issue((await draft(mumbaiClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 17, 4));
+    // Over-padded on Mumbai (5 digits: no registration's format) moves Mumbai too.
+    expect((await issue((await draft(mumbaiClient)).id, { number: `INV/${short}/00020` })).status).toBe(200);
+    expect((await issue((await draft(mumbaiClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 21, 4));
+    // Gurugram (3 digits) with an unpadded number: not Mumbai's exact format either, so Gurugram moves.
+    expect((await issue((await draft(gurugramClient)).id, { number: `INV/${short}/7` })).status).toBe(200);
+    expect((await issue((await draft(gurugramClient)).id)).body.data.number).toBe(documentNumber("INV", fy().label, 8, 3));
+    // A proforma (its own PI series, no sibling) typed unpadded.
+    expect((await issue((await draft(mumbaiClient, { kind: "proforma" })).id, { number: `PI/${short}/5` })).status).toBe(200);
+    expect((await issue((await draft(mumbaiClient, { kind: "proforma" })).id)).body.data.number).toBe(`PI/${short}/0006`);
+  });
+
   it("refuses a number already used, an invalid one, and leaves the series alone for another format", async () => {
     const first = (await issue((await draft(mumbaiClient)).id)).body.data.number;
     const dup = await issue((await draft(mumbaiClient)).id, { number: first.toLowerCase() });

@@ -228,4 +228,26 @@ describe("billing follow-ups", () => {
     )).rejects.toMatchObject({ code: "WRONG_COMPANY" });
     expect(await prisma.salesPayment.count()).toBe(0);
   });
+
+  // PR 0 review: import and bank call the core with input built in code, never through Zod.
+  it("recordReceiptTx refuses the receipt-level rules Zod used to be the only check for", async () => {
+    const i = await issued();
+    const half = Math.ceil(i.totalPaise * 0.6);
+    const base = { companyKey: "dspl" as const, clientId: clientMh, tdsPaise: 0, mode: "upi" as const, paidOn: today };
+    const attempt = (input: Parameters<typeof recordReceiptTx>[1], number: string) =>
+      prisma.$transaction((tx) => recordReceiptTx(tx, input, actorId, { number }));
+    // The same invoice twice: each allocation alone fits the balance, together they over-settle it.
+    await expect(attempt({ ...base, amountPaise: half * 2, allocations: [{ invoiceId: i.id, amountPaise: half, tdsPaise: 0 }, { invoiceId: i.id, amountPaise: half, tdsPaise: 0 }] }, "SW-DUP"))
+      .rejects.toMatchObject({ statusCode: 400, code: "INVALID_RECEIPT" });
+    // Allocations above the cash received.
+    await expect(attempt({ ...base, amountPaise: 100, allocations: [{ invoiceId: i.id, amountPaise: 200, tdsPaise: 0 }] }, "SW-OVER"))
+      .rejects.toMatchObject({ statusCode: 400, code: "INVALID_RECEIPT" });
+    // TDS allocated above the TDS withheld; nothing received; paise out of range.
+    await expect(attempt({ ...base, amountPaise: 100, allocations: [{ invoiceId: i.id, amountPaise: 0, tdsPaise: 50 }] }, "SW-TDS"))
+      .rejects.toMatchObject({ code: "INVALID_RECEIPT" });
+    await expect(attempt({ ...base, amountPaise: 0, allocations: [] }, "SW-ZERO")).rejects.toMatchObject({ code: "INVALID_RECEIPT" });
+    await expect(attempt({ ...base, amountPaise: 3_000_000_000, allocations: [] }, "SW-BIG")).rejects.toMatchObject({ code: "INVALID_RECEIPT" });
+    expect(await prisma.salesPayment.count()).toBe(0);
+    expect(await inv(i.id)).toMatchObject({ status: "issued", balancePaise: i.totalPaise });
+  });
 });

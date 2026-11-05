@@ -35,6 +35,9 @@ const FEED_HIDDEN_ACTIONS: Array<{ entityType: string; action: string }> = [
   { entityType: "payment", action: "tally_synced" },
   { entityType: "client", action: "tally_ledger_set" },
   { entityType: "settings", action: "tally_settings_saved" },
+  // Bank: a rematch auto-links many receipts at once (one payment/bank_matched each). A manual
+  // confirm still shows through its payment/recorded event.
+  { entityType: "payment", action: "bank_matched" },
 ];
 
 /** One company's books: every figure below is filtered to its documents. */

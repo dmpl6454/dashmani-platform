@@ -56,6 +56,7 @@ const STATUS_TONE: Record<string, string> = {
   pushed: "border-success text-success",
   synced: "border-success text-success",
   adopted: "border-success text-success",
+  sending: "border-indigo-light text-indigo-light",
   blocked: "border-danger text-danger",
   discarded: "border-border text-ink-3",
   superseded: "border-border text-ink-3",

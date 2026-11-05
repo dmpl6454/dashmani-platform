@@ -55,3 +55,16 @@ export function sha256Hex(buf: Buffer): string {
 }
 
 // smart-invoicing: import (PR 3)
+// The Swipe export (spec-import §3.1): CSV / XLSX / XLS, memory only. The extension is only a first
+// filter — the service sniffs the bytes and refuses a mismatch with 422 FILE_UNREADABLE.
+const importMaxBytes = (() => {
+  const n = Number(process.env.SALES_IMPORT_MAX_BYTES ?? 5 * 1024 * 1024);
+  return Number.isFinite(n) && n > 0 ? n : 5 * 1024 * 1024;
+})();
+export const uploadImportFile = memoryUpload({
+  maxBytes: importMaxBytes,
+  fields: 4,
+  accept: /\.(csv|xlsx|xls)$/i,
+  wrongType: new AppError(400, "INVALID_FILE_TYPE", "Upload the Swipe export as a .csv, .xlsx or .xls file"),
+  tooLarge: new AppError(413, "FILE_TOO_LARGE", "The file is larger than 5 MB — export one financial year at a time from Swipe"),
+});

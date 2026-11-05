@@ -15,7 +15,7 @@ const TRUNCATE_SQL = `
       sales_payment_allocations, sales_payments,
       -- smart-invoicing/bank (PR 4): sales_bank_lines, sales_bank_statements, sales_bank_accounts,
       sales_invoice_items, sales_invoices,
-      -- smart-invoicing/import (PR 3): sales_import_invoices, sales_imports,
+      sales_import_invoices, sales_imports,
       sales_order_items, sales_orders, sales_quote_items, sales_quotes, sales_sequences, client_billing_profiles,
       pipeline_shoots, pipeline_version_comments, pipeline_deliverables, pipeline_reviews, pipeline_versions, pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state,
       meta_deletion_requests, creator_page_prices, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators,

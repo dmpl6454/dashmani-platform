@@ -131,9 +131,11 @@ function InvoiceView() {
   // A proforma converts once; the tax invoice made from it (draft or issued) is its live conversion.
   const liveConversion = inv.conversions?.find((c) => c.status !== "cancelled") ?? null;
   const open = ds === "issued" || ds === "partially_paid" || ds === "overdue";
+  // Imported from Swipe: its figures are as filed — never edited or cancelled here (credit note, or undo the import).
+  const imported = inv.source === "swipe";
   // An issued invoice can still be edited (same number, every change recorded) until money, a
   // credit note, a conversion or a registered e-invoice hangs on it — the server re-checks.
-  const editableIssued = open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && !inv.allocations.some((a) => a.payment.status !== "voided")
+  const editableIssued = !imported && open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && !inv.allocations.some((a) => a.payment.status !== "voided")
     && !inv.creditNotes?.some((c) => c.status !== "cancelled") && !liveConversion && !(inv.einvoice && ["registered", "registering"].includes(inv.einvoice.status));
   const pct = (bp: number) => `${bp / 100}%`;
   return (
@@ -150,7 +152,7 @@ function InvoiceView() {
         {open && advances.length > 0 && <button type="button" className="btn btn-light" onClick={() => setModal("apply")}>Apply a receipt</button>}
         {inv.kind === "proforma" && (open || ds === "paid") && !liveConversion && <button type="button" className="btn" onClick={() => setModal("convert")}>Convert to tax invoice</button>}
         {(open || ds === "paid") && inv.kind === "tax_invoice" && <button type="button" className="btn btn-ghost" onClick={() => setModal("credit")}>Credit note</button>}
-        {open && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("cancel")}>Cancel</button>}
+        {open && !imported && inv.paidPaise + inv.tdsPaise + inv.creditedPaise === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("cancel")}>Cancel</button>}
         {ds === "draft" && <button type="button" className="btn btn-ghost" onClick={() => setModal("delete")}>Delete draft</button>}
       </PageHead>
       {ds === "draft" && <div className="card border-attention p-3 text-sm mb-4">Draft — no number yet. Issuing assigns the next serial of the financial year and freezes the document; after that it can still be edited until a payment or credit note is recorded. Use Preview to see the PDF exactly as it will be issued.</div>}
@@ -160,6 +162,7 @@ function InvoiceView() {
       {liveConversion && <div className="card p-3 text-sm mb-4">Converted to <Link href={`/invoices/view?id=${liveConversion.id}`} className="font-mono hover:text-indigo-light">{liveConversion.number ?? "a draft tax invoice"}</Link>{liveConversion.number ? "" : " — issue it to move this proforma's payments across"}.</div>}
       {ds === "cancelled" && <div className="card border-danger p-3 text-sm mb-4">Cancelled{inv.cancelReason ? ` — ${inv.cancelReason}` : ""}. The number is kept on record and never reused.</div>}
       {/* smart-invoicing: import banner (PR 3) */}
+      {imported && <div className="card border-attention p-3 text-sm mb-4">Imported from Swipe{inv.salesImport ? ` (${inv.salesImport.fileName})` : ""}{inv.salesImport?.appliedAt ? ` on ${fmtDate(inv.salesImport.appliedAt.slice(0, 10))}` : ""}. Its figures are as filed; GST was not recalculated. To correct it, issue a credit note.{inv.importId && <> <Link href={`/invoices/import/view?id=${inv.importId}`} className="underline hover:text-indigo-light">See the import</Link></>}</div>}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 grid gap-4">
           <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -10,7 +10,8 @@ const VISIBLE = ["issued", "paid", "cancelled"];
 
 export async function listClientInvoices(clientId: string, filter: { bookingId?: string } = {}) {
   const rows = await prisma.salesInvoice.findMany({
-    where: { clientId, status: { in: VISIBLE }, ...(filter.bookingId ? { campaignBookingId: filter.bookingId } : {}) },
+    // Imported (Swipe) invoices stay out of the client portal (spec-import §3.7.7).
+    where: { clientId, status: { in: VISIBLE }, source: "portal", ...(filter.bookingId ? { campaignBookingId: filter.bookingId } : {}) },
     select: invoiceSummarySelect,
     orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }],
     take: 500,
@@ -36,7 +37,7 @@ export async function listClientInvoices(clientId: string, filter: { bookingId?:
 
 /** The invoice for the client's own PDF download. */
 export async function getClientInvoice(clientId: string, id: string) {
-  const owned = await prisma.salesInvoice.findFirst({ where: { id, clientId, status: { in: VISIBLE } }, select: { id: true } });
+  const owned = await prisma.salesInvoice.findFirst({ where: { id, clientId, status: { in: VISIBLE }, source: "portal" }, select: { id: true } });
   if (!owned) throw new AppError(404, "NOT_FOUND", "Invoice not found");
   return getInvoice(id);
 }

@@ -52,6 +52,7 @@ function PaymentView() {
         {live && liveRefunds.length === 0 && <button type="button" className="btn btn-danger" onClick={() => setModal("void")}>Void receipt</button>}
       </PageHead>
       {/* smart-invoicing: import banner (PR 3) */}
+      {p.importId && <div className="card border-border p-3 text-sm mb-4">Recorded by a Swipe import. <Link href={`/invoices/import/view?id=${p.importId}`} className="underline hover:text-indigo-light">See the import</Link></div>}
       {!live && <div className="card border-danger p-3 text-sm mb-4">Voided{p.voidedAt ? ` on ${fmtDate(p.voidedAt)}` : ""}{p.voidReason ? ` — ${p.voidReason}` : ""}. The number stays on record; this receipt no longer pays anything.</div>}
       {live && liveRefunds.length > 0 && <p className="text-xs text-ink-3 mb-4">To void this receipt, cancel its refunds first.</p>}
 

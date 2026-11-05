@@ -1,6 +1,7 @@
 "use client";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useInvoices } from "@/lib/hooks";
 import { fmtDate } from "@/lib/format";
 import { Empty, LoadError, Loading, Money, PageHead, StatusPill } from "@/components/sales-ui";
@@ -8,13 +9,20 @@ import { Empty, LoadError, Loading, Money, PageHead, StatusPill } from "@/compon
 const TABS = ["all", "draft", "outstanding", "overdue", "partially_paid", "paid", "cancelled"];
 
 export default function InvoicesPage() {
-  const [status, setStatus] = useState("outstanding");
+  // ?importId= (from a Swipe import's report) is read inside Suspense — static export.
+  return <Suspense fallback={<Loading />}><InvoicesList /></Suspense>;
+}
+
+function InvoicesList() {
+  const importId = useSearchParams().get("importId") ?? undefined;
+  const [status, setStatus] = useState(importId ? "all" : "outstanding");
   const [q, setQ] = useState("");
-  const { data, error, isLoading, mutate } = useInvoices({ status: status === "all" ? undefined : status, q: q.trim() || undefined });
+  const { data, error, isLoading, mutate } = useInvoices({ status: status === "all" ? undefined : status, q: q.trim() || undefined, importId });
   const total = (data ?? []).reduce((s, i) => s + i.balancePaise, 0);
   return (
     <>
-      <PageHead kicker="Invoices" title="Invoices"><Link href="/invoices/edit" className="btn">New invoice</Link><Link href="/payments/record" className="btn btn-light">Record payment</Link></PageHead>
+      <PageHead kicker="Invoices" title="Invoices"><Link href="/invoices/edit" className="btn">New invoice</Link><Link href="/payments/record" className="btn btn-light">Record payment</Link><Link href="/invoices/import" className="btn btn-ghost">Import old invoices</Link></PageHead>
+      {importId && <div className="card border-border p-3 text-sm mb-4">Showing the invoices of one Swipe import — <Link href="/invoices" className="underline hover:text-indigo-light">show all</Link></div>}
       <div className="card p-3 mb-4 flex flex-wrap gap-2 items-center">
         <div className="flex flex-wrap gap-1">{TABS.map((t) => <button key={t} type="button" onClick={() => setStatus(t)} className={`px-3 py-1.5 text-[12px] uppercase tracking-[0.08em] border-2 ${status === t ? "bg-indigo border-indigo text-white font-bold" : "border-transparent text-ink-3 hover:border-border hover:text-white"}`}>{t.replace("_", " ")}</button>)}</div>
         <input className="input flex-1 min-w-[200px]" placeholder="Search number or client" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -26,7 +34,7 @@ export default function InvoicesPage() {
             <tbody>
               {data.map((i) => (
                 <tr key={i.id} className="border-b border-rule hover:bg-muted/60">
-                  <td className="p-3"><Link href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft"}</Link>{i.kind === "proforma" && <span className="text-xs text-ink-3"> · proforma</span>}</td>
+                  <td className="p-3"><Link href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft"}</Link>{i.kind === "proforma" && <span className="text-xs text-ink-3"> · proforma</span>}{i.source === "swipe" && <span className="text-xs text-ink-3"> · Swipe</span>}</td>
                   <td className="p-3">{i.client?.billingProfile?.legalName ?? i.client?.companyName ?? "—"}</td>
                   <td className="p-3">{fmtDate(i.issueDate)}</td><td className="p-3">{fmtDate(i.dueDate)}</td>
                   <td className="p-3"><StatusPill status={i.derivedStatus} /></td>

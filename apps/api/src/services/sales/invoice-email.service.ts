@@ -51,6 +51,8 @@ export async function emailInvoice(
   if (inv.status !== "issued" && inv.status !== "paid") return none(`a ${inv.status} invoice is not emailed`);
   const key = opts.paymentId ? `payment:${opts.paymentId}` : null;
   if (!opts.manual) {
+    // An invoice imported from Swipe went out years ago from Swipe; only a manual "Email invoice" sends it.
+    if (inv.source !== "portal") return none("imported from Swipe — not emailed automatically");
     if (!key) return none("no payment");
     const seller = await getSellerOrDefaults(inv.companyKey as CompanyKey);
     if (!seller.autoEmailInvoices) return none("automatic invoice emails are off");

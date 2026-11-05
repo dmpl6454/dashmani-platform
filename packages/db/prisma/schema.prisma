@@ -3238,6 +3238,14 @@ model SalesInvoice {
   @@index([recurringId])
   @@index([companyKey])
   // smart-invoicing: import (PR 3)
+  /// portal | swipe — where the invoice was made. Imported invoices keep their filed figures and are
+  /// never edited or cancelled here (credit note, or undo the whole import).
+  source      String       @default("portal") @db.VarChar(16)
+  /// The import that created it (null = made in the portal).
+  importId    String?      @map("import_id")
+  salesImport SalesImport? @relation(fields: [importId], references: [id], onDelete: Restrict)
+
+  @@index([importId])
   @@map("sales_invoices")
 }
 
@@ -3290,6 +3298,11 @@ model SalesPayment {
   @@index([clientId, paidOn])
   @@index([companyKey])
   // smart-invoicing: import (PR 3)
+  /// The import that created this receipt ("Swipe import" receipts); null = recorded in the portal.
+  importId    String?      @map("import_id")
+  salesImport SalesImport? @relation(fields: [importId], references: [id], onDelete: Restrict)
+
+  @@index([importId])
 
   // smart-invoicing: bank (PR 4)
   @@map("sales_payments")
@@ -3916,5 +3929,119 @@ model SalesTallyParty {
 }
 
 // ─── smart-invoicing: import (PR 3) ───
+
+/// One upload of another billing app's invoice export (Swipe): upload → check → apply → (maybe) undo.
+/// status: draft | applying | applied | failed | undone   (a discarded draft is deleted)
+/// Never deleted once applied: invoices and receipts reference it (RESTRICT).
+model SalesImport {
+  id               String    @id @default(uuid())
+  /// dspl | dmpl — every invoice and receipt the import makes belongs to this company. Fixed at upload; no DB default (spec-00 §3).
+  companyKey       String    @map("company_key") @db.VarChar(8)
+  /// swipe (the only source today)
+  source           String    @default("swipe") @db.VarChar(16)
+  status           String    @default("draft") @db.VarChar(16)
+  fileName         String    @map("file_name") @db.VarChar(255)
+  /// hex SHA-256 of the uploaded bytes (the same file uploaded again is recognised)
+  fileSha256       String    @map("file_sha256") @db.VarChar(64)
+  fileBytes        Int       @map("file_bytes")
+  /// csv | xlsx | xls
+  fileKind         String    @map("file_kind") @db.VarChar(8)
+  sheetName        String?   @map("sheet_name") @db.VarChar(100)
+  /// string[] — every sheet in the workbook (["CSV"] for a CSV)
+  sheetNames       Json      @map("sheet_names")
+  /// 1-based row of the column headings
+  headerRow        Int       @map("header_row")
+  /// hex SHA-256 of the normalised headings joined by "|"; a later upload with the same columns starts from this mapping
+  headerSignature  String    @map("header_signature") @db.VarChar(64)
+  /// string[][] — every row of the chosen sheet as text (≤200 columns, cells trimmed, ≤500 chars). NEVER returned by the API.
+  grid             Json
+  /// { [ImportField]: columnIndex | null }
+  mapping          Json
+  /// { [ImportField]: "auto" | "check" | "user" | "previous" | "missing" }
+  mappingHow       Json      @map("mapping_how")
+  /// ImportOptions (packages/shared/src/validators/sales.ts)
+  options          Json
+  /// { [groupKey]: clientId | "new" } — a person's client decisions; survive re-checks
+  clientChoices    Json      @map("client_choices")
+  /// { [groupKey]: clientId } — clients created by apply phase 1 (resume never creates twice)
+  createdClients   Json      @map("created_clients")
+  /// ImportSummary of the last check (bounded; no per-invoice array). Apply adds `reconcile`.
+  summary          Json?
+  /// sha256 of the last check's decisive content; Apply must send the hash it was shown
+  planHash         String    @map("plan_hash") @db.VarChar(64)
+  rowsTotal        Int       @default(0) @map("rows_total")
+  invoicesFound    Int       @default(0) @map("invoices_found")
+  /// ready + warning, not left out — what Import would create
+  invoicesReady    Int       @default(0) @map("invoices_ready")
+  invoicesImported Int       @default(0) @map("invoices_imported")
+  invoicesSkipped  Int       @default(0) @map("invoices_skipped")
+  invoicesFailed   Int       @default(0) @map("invoices_failed")
+  clientsMatched   Int       @default(0) @map("clients_matched")
+  clientsCreated   Int       @default(0) @map("clients_created")
+  paymentsCreated  Int       @default(0) @map("payments_created")
+  /// What actually landed (incremented inside each per-invoice transaction). Sums exceed INT.
+  taxablePaise     BigInt    @default(0) @map("taxable_paise")
+  taxPaise         BigInt    @default(0) @map("tax_paise")
+  totalPaise       BigInt    @default(0) @map("total_paise")
+  paidPaise        BigInt    @default(0) @map("paid_paise")
+  tdsPaise         BigInt    @default(0) @map("tds_paise")
+  checkedAt        DateTime? @map("checked_at")
+  applyStartedAt   DateTime? @map("apply_started_at")
+  appliedAt        DateTime? @map("applied_at")
+  appliedById      String?   @map("applied_by_id")
+  lastError        String?   @map("last_error") @db.VarChar(500)
+  undoneAt         DateTime? @map("undone_at")
+  undoneById       String?   @map("undone_by_id")
+  undoReason       String?   @map("undo_reason") @db.VarChar(300)
+  createdById      String    @map("created_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  plan     SalesImportInvoice[]
+  invoices SalesInvoice[]
+  payments SalesPayment[]
+
+  @@index([companyKey, createdAt])
+  @@index([fileSha256])
+  @@index([headerSignature])
+  @@map("sales_imports")
+}
+
+/// One invoice found in an import: the plan the last check made, then what apply did with it.
+/// outcome: ready | warning | error | excluded | duplicate | imported | failed
+model SalesImportInvoice {
+  id            String    @id @default(uuid())
+  importId      String    @map("import_id")
+  /// upper-cased number, whitespace removed
+  invoiceKey    String    @map("invoice_key") @db.VarChar(32)
+  /// as written in Swipe (trimmed, whitespace removed)
+  number        String    @db.VarChar(32)
+  /// number[] — 1-based sheet rows
+  rowNos        Json      @map("row_nos")
+  issueDate     DateTime? @map("issue_date") @db.Date
+  financialYear String?   @map("financial_year") @db.VarChar(7)
+  clientGroup   String    @map("client_group") @db.VarChar(80)
+  sellerGstin   String?   @map("seller_gstin") @db.VarChar(15)
+  outcome       String    @db.VarChar(16)
+  totalPaise    Int?      @map("total_paise")
+  paidPaise     Int       @default(0) @map("paid_paise")
+  tdsPaise      Int       @default(0) @map("tds_paise")
+  /// Array<{ code, level: "error" | "warning" | "info", message }>
+  issues        Json
+  /// PlanInvoice (spec-import §4.9) — everything apply needs; null when the invoice could not be derived
+  plan          Json?
+  /// set by apply; plain text, no FK: undo deletes the invoice, this row keeps the trail
+  invoiceId     String?   @map("invoice_id")
+  paymentId     String?   @map("payment_id")
+  error         String?   @db.VarChar(500)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  salesImport SalesImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, invoiceKey])
+  @@index([importId, outcome])
+  @@map("sales_import_invoices")
+}
 
 // ─── smart-invoicing: bank (PR 4) ───

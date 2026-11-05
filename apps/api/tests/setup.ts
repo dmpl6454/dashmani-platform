@@ -9,7 +9,7 @@ const TRUNCATE_SQL = `
     TRUNCATE TABLE youtube_connections,
       -- smart-invoicing/tally (PR 2): sales_tally_items, sales_tally_runs, sales_tally_parties,
       sales_einvoices, sales_recurring_invoices, sales_refunds, sales_events, sales_credit_notes,
-      -- smart-invoicing/accounts (PR 1): finance_filed_files, finance_filed_years,
+      finance_filed_files, finance_filed_years,
       sales_payment_allocations, sales_payments,
       -- smart-invoicing/bank (PR 4): sales_bank_lines, sales_bank_statements, sales_bank_accounts,
       sales_invoice_items, sales_invoices,

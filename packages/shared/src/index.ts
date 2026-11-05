@@ -79,6 +79,7 @@ export * from "./sales/companies";
 // Smart invoicing (spec-00 §2.7): TDS rules shared by accounts, import and bank.
 export * from "./sales/tds";
 // smart-invoicing: accounts (PR 1)
+export * from "./sales/accounts";
 
 // smart-invoicing: bank (PR 4)
 export * as contentValidators from "./validators/content";

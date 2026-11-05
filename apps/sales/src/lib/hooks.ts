@@ -3,7 +3,7 @@ import useSWR, { type SWRConfiguration } from "swr";
 import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
 import type { ConfirmationsView, GstReconView, LedgerResponse, TdsReconView } from "./sales-types";
-import type { AccountsView, FiledYearView, BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
+import type { AccountsView, FiledYearView, BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, ImportInvoiceRow, ImportListRow, ImportView, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
 // SWR hooks over /v1/sales/*. A null key skips the request (no id yet, or a detail page
 // opened without ?id=). keepPreviousData keeps a list on screen while a filter changes.
@@ -48,7 +48,7 @@ export const useOrders = (f: { status?: string; clientId?: string; q?: string; c
   return useSWR<Order[]>(`/sales/orders${qs({ ...f, company })}`, fetcher, opts);
 };
 export const useOrder = (id: string | null) => useSWR<Order>(id ? `/sales/orders/${id}` : null, fetcher, opts);
-export const useInvoices = (f: { status?: string; clientId?: string; q?: string; company?: CompanyKey }) => {
+export const useInvoices = (f: { status?: string; clientId?: string; q?: string; company?: CompanyKey; importId?: string }) => {
   const { company: current } = useCompany();
   const company = f.company ?? current;
   return useSWR<InvoiceRow[]>(`/sales/invoices${qs({ ...f, company })}`, fetcher, opts);
@@ -135,5 +135,17 @@ export const useTallyDoc = (docType: TallyDocType, docId: string | null) =>
   useSWR<TallyDocStatus>(docId ? `/sales/tally/documents/${docType}/${docId}` : null, fetcher, { ...opts, shouldRetryOnError: false });
 
 // ─── smart-invoicing: import (PR 3) ───
+/** The current company's Swipe imports, newest first. */
+export const useImports = () => {
+  const { company } = useCompany();
+  return useSWR<ImportListRow[]>(`/sales/imports${qs({ company })}`, fetcher, opts);
+};
+/** One import; polls every 2 s while it is applying. */
+export const useImport = (id: string | null) =>
+  useSWR<ImportView>(id ? `/sales/imports/${id}` : null, fetcher, { ...opts, dedupingInterval: 1_000, refreshInterval: (d) => (d?.status === "applying" ? 2000 : 0) });
+/** A page of an import's invoices (the check report). */
+/** `v` (the plan hash / status) is part of the key, so a re-check or a finished run refetches the page. */
+export const useImportInvoices = (id: string | null, f: { outcome?: string; q?: string; from?: number; limit?: number; v?: string }) =>
+  useSWR<{ total: number; rows: ImportInvoiceRow[] }>(id ? `/sales/imports/${id}/invoices${qs({ outcome: f.outcome, q: f.q, from: String(f.from ?? 0), limit: f.limit ? String(f.limit) : undefined, v: f.v })}` : null, fetcher, opts);
 
 // ─── smart-invoicing: bank (PR 4) ───

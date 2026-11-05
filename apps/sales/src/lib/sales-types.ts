@@ -78,11 +78,15 @@ export interface Invoice extends DocumentTotals {
   /** The IRP registration, when this document needs one. */
   einvoice: (EInvoiceBrief & { id: string; docType: string; gstin: string; attempts: number }) | null;
   // smart-invoicing: import (PR 3)
+  /** portal | swipe — an imported (swipe) invoice keeps Swipe's figures and is never edited or cancelled here. */
+  source: InvoiceSource; importId: string | null;
+  salesImport: { id: string; fileName: string; appliedAt: string | null } | null;
 }
 export interface InvoiceRow extends DocumentTotals {
   id: string; companyKey: string; number: string | null; kind: string; status: string; derivedStatus: DerivedInvoiceStatus; issueDate: string | null; dueDate: string | null;
   paidPaise: number; tdsPaise: number; creditedPaise: number; balancePaise: number; clientId: string; client?: { id: string; companyName: string; billingProfile?: { legalName: string } | null };
   // smart-invoicing: import (PR 3)
+  source: InvoiceSource; importId: string | null;
 }
 export interface Refund {
   id: string; number: string; paymentId: string; amountPaise: number; mode: string; reference: string | null; refundedOn: string | null; notes: string | null;
@@ -97,6 +101,8 @@ export interface Payment {
   /** Computed by the API: on invoices, refunded, and what is left to apply or refund. */
   allocatedPaise: number; allocatedTdsPaise: number; refundedPaise: number; unallocatedPaise: number; unallocatedTdsPaise: number;
   // smart-invoicing: import (PR 3)
+  /** The Swipe import that recorded this receipt (SW-<invoice number>), else null. */
+  importId: string | null;
 
   // smart-invoicing: bank (PR 4)
 }
@@ -335,5 +341,60 @@ export interface TallyDocStatus { state: "not_set_up" | "never" | "before_books"
 export interface TallyTestResult { reachable: true; latencyMs: number; server: string | null; openCompanies: string[]; missingCompanies: string[]; ledgers: Array<{ role: string; name: string; found: boolean }> }
 
 // ─── smart-invoicing: import (PR 3) ───
+// Old-invoice import from Swipe (spec-import §3.4) — mirrors apps/api/src/services/sales/imports.service.ts.
+export type InvoiceSource = "portal" | "swipe";
+export type ImportStatus = "draft" | "applying" | "applied" | "failed" | "undone";
+export type ImportOutcome = "ready" | "warning" | "error" | "excluded" | "duplicate" | "imported" | "failed";
+export type IssueLevel = "error" | "warning" | "info";
+export interface ImportIssue { code: string; level: IssueLevel; message: string }
+export type ImportFieldKey =
+  | "number" | "issueDate" | "dueDate" | "docType" | "status" | "sellerGstin" | "placeOfSupply" | "poNumber" | "poDate" | "notes" | "irn"
+  | "customerName" | "customerGstin" | "customerAddress" | "customerCity" | "customerState" | "customerPincode" | "customerEmail"
+  | "itemName" | "itemDescription" | "hsnSac" | "quantity" | "rate" | "lineDiscount" | "gstRate"
+  | "taxable" | "discount" | "cgst" | "sgst" | "igst" | "totalTax" | "cess" | "tcs" | "roundOff" | "total"
+  | "amountPaid" | "tds" | "balance" | "paidOn";
+export type MappingHow = "auto" | "check" | "user" | "previous" | "missing";
+export interface ImportOptions { dateOrder: "auto" | "dmy" | "mdy"; amountLevel: "auto" | "line" | "invoice"; paidIncludesTds: "auto" | "yes" | "no"; registration: string; fillMissingProfiles: boolean; exclude: string[] }
+export interface ImportListRow {
+  id: string; companyKey: "dspl" | "dmpl"; status: ImportStatus; fileName: string; createdAt: string; createdByName: string | null;
+  counts: { rows: number; found: number; ready: number; imported: number; skipped: number; failed: number; clientsMatched: number; clientsCreated: number; payments: number };
+  totalPaise: number; appliedAt: string | null; undoneAt: string | null;
+  undo: { allowed: boolean; blockedBy: string | null } | null;
+}
+export type ClientDecision = { action: "match"; clientId: string; clientName: string; by: "gstin" | "name" | "user" } | { action: "create"; by: "auto" | "user" } | { action: "choose" };
+export interface ImportSummary {
+  generatedAt: string; blockers: ImportIssue[]; notices: ImportIssue[];
+  amountLevels: Partial<Record<string, "line" | "invoice">>; dateOrder: "dmy" | "mdy"; paidIncludesTds: boolean | null;
+  outcomes: Record<"ready" | "warning" | "error" | "excluded" | "duplicate", number>;
+  issueCounts: Array<{ code: string; level: IssueLevel; invoices: number }>;
+  toImport: { invoices: number; cancelled: number; taxablePaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number; totalPaise: number; receipts: number; paidPaise: number; tdsPaise: number; outstandingPaise: number };
+  byFy: Array<{ fy: string; invoices: number; cancelled: number; b2bTaxablePaise: number; b2cTaxablePaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number; totalPaise: number; paidPaise: number; tdsPaise: number; outstandingPaise: number }>;
+  byRegistration: Array<{ gstin: string; label: string; fy: string; invoices: number; taxablePaise: number; taxPaise: number; firstNumber: string | null; lastNumber: string | null; inFormat: number; offFormat: number; sequenceKey: string; nextBefore: string; nextAfter: string; live: boolean; gaps: string[] }>;
+  clientGroups: Array<{ groupKey: string; name: string; gstin: string | null; invoices: number; totalPaise: number; decision: ClientDecision; candidates: Array<{ clientId: string; name: string; gstin: string | null; reason: string }> }>;
+  liveSeriesMoves: Array<{ label: string; from: string; to: string }>;
+  rowsRead: number; firstFy: string | null; lastFy: string | null;
+  reconcile?: { ok: boolean; byFy: Array<{ fy: string; invoices: number; taxablePaise: number; taxPaise: number; totalPaise: number; planTotalPaise: number }> };
+}
+export interface ImportView extends ImportListRow {
+  source: "swipe"; stale: boolean;
+  file: { sha256: string; bytes: number; kind: "csv" | "xlsx" | "xls"; sheet: string | null; sheets: string[]; headerRow: number };
+  columns: Array<{ index: number; header: string; samples: string[] }>;
+  mapping: Partial<Record<ImportFieldKey, number | null>>;
+  mappingHow: Partial<Record<ImportFieldKey, MappingHow>>;
+  options: ImportOptions; summary: ImportSummary | null; planHash: string;
+  landed: { taxablePaise: number; taxPaise: number; totalPaise: number; paidPaise: number; tdsPaise: number };
+  checkedAt: string | null; appliedByName: string | null; undoneByName: string | null; undoReason: string | null;
+  sameFile: Array<{ id: string; status: ImportStatus; createdAt: string }>;
+  lastError: string | null;
+}
+export interface ImportInvoiceRow {
+  key: string; number: string; rowNos: number[]; issueDate: string | null; fy: string | null;
+  customer: { name: string; gstin: string | null; groupKey: string; clientId: string | null; clientName: string | null; decision: "gstin" | "name" | "user" | "new" | "choose" };
+  registration: { gstin: string; label: string; claimSeries: boolean } | null;
+  docStatus: "issued" | "cancelled" | null; swipeStatus: string | null; taxMode: TaxMode | null; gstRateBp: number | null;
+  taxablePaise: number | null; cgstPaise: number | null; sgstPaise: number | null; igstPaise: number | null; roundOffPaise: number | null; totalPaise: number | null;
+  paidPaise: number; tdsPaise: number; outcome: ImportOutcome; issues: ImportIssue[];
+  invoiceId: string | null; paymentId: string | null; error: string | null;
+}
 
 // ─── smart-invoicing: bank (PR 4) ───

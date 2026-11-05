@@ -18,6 +18,7 @@ export const invoiceSummarySelect = {
   subtotalPaise: true, discountPaise: true, taxablePaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, roundOffPaise: true,
   totalPaise: true, paidPaise: true, tdsPaise: true, creditedPaise: true, clientId: true, orderId: true, campaignBookingId: true,
   issuedAt: true, sentAt: true, paidAt: true, cancelledAt: true, createdAt: true,
+  source: true, importId: true,
 } as const;
 
 type InvoiceSummaryRow = Prisma.SalesInvoiceGetPayload<{ select: typeof invoiceSummarySelect }>;
@@ -46,7 +47,7 @@ const clientBrief = {
   },
 };
 
-export async function listInvoices(filter: { status?: string; clientId?: string; q?: string; companyKey?: CompanyKey }) {
+export async function listInvoices(filter: { status?: string; clientId?: string; q?: string; companyKey?: CompanyKey; importId?: string }) {
   const today = todayIST();
   const term = filter.q?.trim();
   const storedStatus =
@@ -56,6 +57,7 @@ export async function listInvoices(filter: { status?: string; clientId?: string;
     where: {
       ...(filter.companyKey ? { companyKey: filter.companyKey } : {}),
       ...(filter.clientId ? { clientId: filter.clientId } : {}),
+      ...(filter.importId ? { importId: filter.importId } : {}),
       ...(storedStatus ? { status: storedStatus } : {}),
       ...(term ? { OR: [{ number: { contains: term, mode: "insensitive" } }, { client: { companyName: { contains: term, mode: "insensitive" } } }] } : {}),
     },
@@ -81,10 +83,11 @@ export async function getInvoice(id: string) {
       einvoice: { select: { id: true, docType: true, gstin: true, status: true, irn: true, ackNo: true, ackDate: true, lastError: true, attempts: true, cancelledAt: true, signedQrCode: true } },
       convertedFrom: { select: { id: true, number: true } },
       conversions: { select: { id: true, number: true, status: true }, orderBy: { createdAt: "asc" } },
+      salesImport: { select: { id: true, fileName: true, appliedAt: true } },
     },
   });
   if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
-  const { client, items, order, allocations, creditNotes, convertedFrom, conversions, einvoice, ...row } = inv;
+  const { client, items, order, allocations, creditNotes, convertedFrom, conversions, einvoice, salesImport, ...row } = inv;
   return {
     ...deriveInvoice(row, todayIST()),
     sellerSnapshot: row.sellerSnapshot,
@@ -105,6 +108,7 @@ export async function getInvoice(id: string) {
     convertedFrom,
     conversions,
     einvoice,
+    salesImport,
     items,
     allocations: allocations.map((a) => ({ ...a, payment: { ...a.payment, paidOn: dateToDay(a.payment.paidOn) } })),
     creditNotes: creditNotes.map((c) => ({ ...c, issueDate: dateToDay(c.issueDate) })),
@@ -183,11 +187,13 @@ export async function createInvoice(input: InvoiceUpsertInput, actorId: string, 
  * TDS allocated to it, a credit note, a proforma already converted, or an e-invoice (IRN) that is
  * registered — those are cancelled or credited instead.
  */
+const IMPORTED_EDIT_BLOCK = "Imported from Swipe — its figures are as filed and can't be edited; issue a credit note, or undo the whole import";
+
 async function issuedEditBlock(db: Tx | typeof prisma, id: string): Promise<string | null> {
   const inv = await db.salesInvoice.findUnique({
     where: { id },
     select: {
-      status: true, paidPaise: true, tdsPaise: true, creditedPaise: true,
+      status: true, paidPaise: true, tdsPaise: true, creditedPaise: true, source: true,
       allocations: { where: { payment: { status: "recorded" } }, select: { id: true }, take: 1 },
       creditNotes: { where: { status: { not: "cancelled" } }, select: { number: true }, take: 1 },
       conversions: { where: { status: { not: "cancelled" } }, select: { number: true }, take: 1 },
@@ -195,6 +201,8 @@ async function issuedEditBlock(db: Tx | typeof prisma, id: string): Promise<stri
     },
   });
   if (!inv) throw new AppError(404, "NOT_FOUND", "Invoice not found");
+  // An imported invoice keeps the figures it was filed with (spec-import §3.7.3).
+  if (inv.source !== "portal") return IMPORTED_EDIT_BLOCK;
   if (inv.status === "cancelled") return "A cancelled invoice can't be edited";
   if (inv.paidPaise || inv.tdsPaise || inv.allocations.length) return "A payment is recorded against this invoice — cancel the receipt first, or use a credit note";
   if (inv.creditedPaise || inv.creditNotes.length) return `Credit note ${inv.creditNotes[0]?.number ?? ""} is issued against this invoice — edit it no further, issue another credit note instead`.replace("  ", " ");
@@ -418,7 +426,7 @@ export async function previewInvoice(id: string): Promise<InvoiceView> {
   };
 }
 
-function buyerSnapshotFor(client: NonNullable<Awaited<ReturnType<typeof getInvoice>>["client"]>) {
+export function buyerSnapshotFor(client: NonNullable<Awaited<ReturnType<typeof getInvoice>>["client"]>) {
   const p = client.billingProfile;
   return {
     legalName: p?.legalName ?? client.companyName,
@@ -440,7 +448,7 @@ function buyerSnapshotFor(client: NonNullable<Awaited<ReturnType<typeof getInvoi
 
 export type BuyerSnapshot = ReturnType<typeof buyerSnapshotFor>;
 
-function sellerSnapshotFor(s: SellerProfile, reg: SellerRegistration) {
+export function sellerSnapshotFor(s: SellerProfile, reg: SellerRegistration) {
   const { invoicePrefix, quotePrefix, orderPrefix, creditNotePrefix, receiptPrefix, defaultSac, defaultGstRateBp, defaultDueDays, roundToRupee, autoEmailInvoices, branches, ...printable } = s;
   // The GSTIN and address printed are those of the registration billing this supply.
   return { ...printable, gstin: reg.gstin, stateCode: reg.stateCode, state: reg.state, addressLine1: reg.addressLine1, addressLine2: reg.addressLine2, city: reg.city, pincode: reg.pincode, registration: reg.label };
@@ -620,7 +628,11 @@ function addDays(day: string, days: number): string {
 export async function cancelInvoice(id: string, reason: string, actorId: string) {
   // A registered IRN is cancelled on the IRP first (24-hour window), and only for an invoice that
   // could be cancelled at all (issued, nothing settled against it).
-  const pre = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true, paidPaise: true, tdsPaise: true, creditedPaise: true } });
+  const pre = await prisma.salesInvoice.findUnique({ where: { id }, select: { status: true, paidPaise: true, tdsPaise: true, creditedPaise: true, source: true, number: true } });
+  // Imported invoices are cancelled in Swipe's books, not here — refused before the e-invoice step.
+  if (pre && pre.source !== "portal") {
+    throw new AppError(409, "INVOICE_IMPORTED", `${pre.number ?? "This invoice"} was imported from Swipe — it can't be cancelled here; issue a credit note, or undo the whole import`);
+  }
   if (pre && pre.status !== "draft" && pre.status !== "cancelled" && pre.paidPaise + pre.tdsPaise + pre.creditedPaise === 0) {
     await cancelEInvoiceFor({ invoiceId: id }, reason, actorId);
   }

@@ -149,6 +149,11 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
     doc.font("Helvetica-Bold").fontSize(9).fillColor("#b00020").text(`PREVIEW OF A DRAFT — not issued. The ${inv.kind === "proforma" ? "proforma" : "invoice"} number is assigned when it is issued; this copy is not a valid ${inv.kind === "proforma" ? "proforma" : "tax invoice"}.`, left, doc.y, { width });
     doc.y += 8;
   }
+  if ((inv as { source?: string }).source === "swipe") {
+    // An invoice imported from Swipe is a reproduction of what was issued there (spec-import §3.7.6).
+    doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(`Copy reproduced from Swipe records — figures as originally issued on ${fmtDay(inv.issueDate)}.`, left, doc.y, { width });
+    doc.y += 8;
+  }
   if (inv.kind === "tax_invoice" && !isDraft) await drawEInvoice(doc, inv.einvoice, left, width);
   // ── Bill to ─────────────────────────────────────────────────────────────────
   doc.font("Helvetica-Bold").fontSize(9).fillColor(MUTED).text("BILL TO", left, doc.y);

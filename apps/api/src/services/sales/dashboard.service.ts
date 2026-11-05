@@ -109,12 +109,14 @@ export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
 
   // Labels for the activity feed: the document numbers behind the event rows, in one query per kind.
   const ids = (t: string) => recent.filter((e) => e.entityType === t).map((e) => e.entityId);
-  const [qn, on, inn, pn, cn] = await Promise.all([
+  const [qn, on, inn, pn, cn, imn] = await Promise.all([
     ids("quote").length ? prisma.salesQuote.findMany({ where: { ...c, id: { in: ids("quote") } }, select: { id: true, number: true, title: true } }) : [],
     ids("order").length ? prisma.salesOrder.findMany({ where: { ...c, id: { in: ids("order") } }, select: { id: true, number: true, title: true } }) : [],
     ids("invoice").length ? prisma.salesInvoice.findMany({ where: { ...c, id: { in: ids("invoice") } }, select: { id: true, number: true } }) : [],
     ids("payment").length ? prisma.salesPayment.findMany({ where: { ...c, id: { in: ids("payment") } }, select: { id: true, number: true } }) : [],
     ids("credit_note").length ? prisma.salesCreditNote.findMany({ where: { invoice: c, id: { in: ids("credit_note") } }, select: { id: true, number: true } }) : [],
+    // A Swipe import's own events (uploaded, applied, undone…) are labelled with its file and kept when it is this company's.
+    ids("import").length ? prisma.salesImport.findMany({ where: { companyKey: company, id: { in: ids("import") } }, select: { id: true, fileName: true } }) : [],
   ]);
   const label = new Map<string, string>();
   for (const r of qn) label.set(`quote:${r.id}`, `${r.number} · ${r.title}`);
@@ -122,6 +124,7 @@ export async function getSalesDashboard(company: CompanyKey = DEFAULT_COMPANY) {
   for (const r of inn) label.set(`invoice:${r.id}`, r.number ?? "Draft invoice");
   for (const r of pn) label.set(`payment:${r.id}`, r.number);
   for (const r of cn) label.set(`credit_note:${r.id}`, r.number);
+  for (const r of imn) label.set(`import:${r.id}`, `Swipe import · ${r.fileName}`);
   // A document event is this company's when its document was found above under the company
   // filter; a settings event when it is this company's profile; client events belong to both.
   const ours = (e: (typeof recent)[number]) =>

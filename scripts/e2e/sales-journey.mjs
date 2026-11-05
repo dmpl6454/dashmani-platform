@@ -535,6 +535,19 @@ await journey("tally-pages", async () => {
 });
 
 // smart-invoicing: import steps
+await journey("swipe-import-check", async () => {
+  // A one-invoice Swipe export, uploaded through the page: the check is built in the same request.
+  const csv = ["Invoice Number,Invoice Date,Customer Name,Customer GSTIN,Taxable Value,CGST,SGST,Total,Amount Paid,Balance",
+    `INV/22-23/${String(Date.now() % 9000 + 1000)},01/10/2022,E2E Swipe ${stamp},,1000.00,90.00,90.00,1180.00,1180.00,0.00`].join("\r\n");
+  await go("/invoices/import"); await ready();
+  await page.locator("input[type=file]").setInputFiles({ name: "swipe-e2e.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await page.getByRole("button", { name: /Upload and check/ }).click();
+  await page.waitForURL(/\/invoices\/import\/view\?id=/, { timeout: 20_000 });
+  await ready(); await settle();
+  ids.swipeImport = new URL(page.url()).searchParams.get("id");
+  check("swipe import: check shows one invoice found", (await page.getByText("Invoices found").count()) > 0, page.url());
+  check("swipe import: import button present", (await page.getByRole("button", { name: /^Import 1 invoices/ }).count()) > 0);
+});
 
 // smart-invoicing: bank steps
 
@@ -554,7 +567,7 @@ await journey("phone-pass", async () => {
 
   pages.push(/* tally (PR 2) */ "/tally", "/tally/view", "/tally/settings", "/tally/parties");
 
-  pages.push(/* import (PR 3) */);
+  pages.push(/* import (PR 3) */ "/invoices/import", ...(ids.swipeImport ? [`/invoices/import/view?id=${ids.swipeImport}`] : []));
 
   pages.push(/* bank (PR 4) */);
   for (const p of pages) { await go(p); await ready(); await page.waitForTimeout(300); await overflowCheck(p); await shot(`phone-${p.replace(/[^a-z]+/g, "-")}`); }

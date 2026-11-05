@@ -635,5 +635,63 @@ export const tallyResolveSchema = z.object({
 export type TallyResolveInput = z.infer<typeof tallyResolveSchema>;
 
 // ─── smart-invoicing: import (PR 3) ───
+// Old-invoice import from Swipe (spec-import §3.3).
+export const INVOICE_SOURCES = ["portal", "swipe"] as const;
+export const IMPORT_STATUSES = ["draft", "applying", "applied", "failed", "undone"] as const;
+export const IMPORT_OUTCOMES = ["ready", "warning", "error", "excluded", "duplicate", "imported", "failed"] as const;
+export const IMPORT_FIELDS = [
+  // invoice
+  "number", "issueDate", "dueDate", "docType", "status", "sellerGstin", "placeOfSupply", "poNumber", "poDate", "notes", "irn",
+  // customer
+  "customerName", "customerGstin", "customerAddress", "customerCity", "customerState", "customerPincode", "customerEmail",
+  // lines
+  "itemName", "itemDescription", "hsnSac", "quantity", "rate", "lineDiscount", "gstRate",
+  // amounts (level per column decided by amountLevels)
+  "taxable", "discount", "cgst", "sgst", "igst", "totalTax", "cess", "tcs", "roundOff", "total",
+  // settlement
+  "amountPaid", "tds", "balance", "paidOn",
+] as const;
+export type ImportField = (typeof IMPORT_FIELDS)[number];
+const importRegistration = z.union([z.literal("auto"), gstinSchema]);
+
+export const importOptionsSchema = z.object({
+  dateOrder: z.enum(["auto", "dmy", "mdy"]).default("auto"),
+  amountLevel: z.enum(["auto", "line", "invoice"]).default("auto"),   // taxable/discount/tax columns
+  paidIncludesTds: z.enum(["auto", "yes", "no"]).default("auto"),
+  registration: importRegistration.default("auto"),                  // "Billed from" for the whole file
+  fillMissingProfiles: z.boolean().default(true),                     // matched client with NO billing profile gets one from the file
+  exclude: z.array(z.string().trim().min(1).max(32)).max(5000).default([]),   // invoice keys left out by hand
+});
+export type ImportOptions = z.infer<typeof importOptionsSchema>;
+
+export const importUploadSchema = z.object({
+  company: z.enum(COMPANY_KEYS),                 // required: no silent default to dspl
+  registration: importRegistration.default("auto"),
+  sheet: optionalText(100),
+});
+const columnIndex = z.number().int().min(0).max(199).nullable();
+export const importMappingSchema = z.object({
+  headerRow: z.number().int().min(1).max(30).optional(),
+  mapping: z.record(z.enum(IMPORT_FIELDS), columnIndex),
+  options: importOptionsSchema,
+}).superRefine((v, ctx) => {
+  const used = Object.values(v.mapping).filter((c): c is number => c !== null && c !== undefined);
+  if (new Set(used).size !== used.length) ctx.addIssue({ code: "custom", path: ["mapping"], message: "Each column can fill one field only" });
+});
+export type ImportMappingInput = z.infer<typeof importMappingSchema>;
+export const importClientsSchema = z.object({
+  choices: z.array(z.object({
+    groupKey: z.string().trim().min(3).max(80),
+    clientId: z.union([z.string().uuid(), z.literal("new"), z.literal("auto")]),   // "auto" clears a choice
+  })).min(1).max(5000),
+});
+export type ImportClientsInput = z.infer<typeof importClientsSchema>;
+export const importApplySchema = z.object({
+  planHash: z.string().regex(/^[0-9a-f]{64}$/),
+  acceptWarnings: z.boolean().default(false),
+  confirmLiveSeries: z.boolean().default(false),
+});
+export type ImportApplyInput = z.infer<typeof importApplySchema>;
+export const importUndoSchema = z.object({ reason: safeString.pipe(z.string().min(3, "Say why in a few words").max(300)) });
 
 // ─── smart-invoicing: bank (PR 4) ───

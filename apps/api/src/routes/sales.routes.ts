@@ -171,7 +171,7 @@ for (const action of ["pause", "resume", "end"] as const) {
 }
 router.post("/sales/recurring/:id/run", ...manage, asyncHandler(async (req, res) => success(res, await recurring.runRecurringNow(req.params.id, staffId(req)))));
 
-router.get("/sales/invoices", ...view, asyncHandler(async (req, res) => success(res, await invoices.listInvoices({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q), companyKey: companyQuery(req) }))));
+router.get("/sales/invoices", ...view, asyncHandler(async (req, res) => success(res, await invoices.listInvoices({ status: str(req.query.status), clientId: str(req.query.clientId), q: str(req.query.q), companyKey: companyQuery(req), importId: str(req.query.importId) }))));
 router.post("/sales/invoices", ...manage, validate(invoiceUpsertSchema), asyncHandler(async (req, res) => success(res, await invoices.createInvoice(req.body, staffId(req)), undefined, 201)));
 router.post("/sales/invoices/from-booking/:bookingId", ...manage, asyncHandler(async (req, res) => success(res, await invoices.createInvoiceFromBooking(req.params.bookingId, staffId(req), companyOf(req)), undefined, 201)));
 // Before /sales/invoices/:id, or Express would read "next-number" as an id.

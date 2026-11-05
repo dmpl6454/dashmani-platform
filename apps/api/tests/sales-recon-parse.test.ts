@@ -35,7 +35,8 @@ describe("Form 26AS text", () => {
   });
 
   it("P-2 PART-II and PART-VI rows are never read (no TCS 7th deductor)", () => {
-    const r = parse26asText(SAMPLE_26AS);
+    // A PART-VI (TCS) block laid out like Part I — heading and transaction rows — must not be read.
+    const r = parse26asText(`${SAMPLE_26AS}\r\n^Sr. No.^Section^Transaction Date^Status of Booking^Date of Booking^Remarks**^Amount Paid / Credited(Rs.)^Tax Deducted##(Rs.)^TDS Deposited(Rs.)\r\n^1^206C^10-Oct-2025^F^-^-^10000.00^10.00^10.00`);
     expect(r.items.some((e) => e.tan === "MUMS00000A")).toBe(false);
     expect(new Set(r.items.map((e) => e.tan)).size).toBe(6);
   });

@@ -23,6 +23,8 @@ const CODES: Record<string, string> = {
   BANK_OFF: "Bank statement matching is switched off on this server",
   IMPORT_OFF: "Importing old invoices is switched off on the server right now",
   PLAN_CHANGED: "Someone changed the columns, clients or invoices after you loaded this check. The new check is below — look at it and press Import again.",
+  // Reconcile (PR 5): a second parse in the process answers 429 — not "too many attempts".
+  RECON_BUSY: "Another file is being read — try again in a few seconds",
 };
 
 /** The sentence to show for any thrown error, with a fallback for the unknown. */

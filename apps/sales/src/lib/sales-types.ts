@@ -31,6 +31,8 @@ export interface InventoryChannel {
 export interface BillingProfile {
   legalName: string; gstin: string | null; pan: string | null; addressLine1: string | null; addressLine2: string | null; city: string | null; state: string | null;
   stateCode: string | null; pincode: string | null; country: string; billingEmail: string | null; billingPhone: string | null; notes: string | null;
+  /** The client's TAN as a TDS deductor (reconcile, PR 5). Learned from Form 26AS or typed. */
+  tan?: string | null;
 }
 export interface ClientRow {
   id: string; companyName: string; contactName: string; email: string; phone: string | null; status: string; createdAt: string;
@@ -186,6 +188,83 @@ export interface AccountsView {
   filed: FiledYearView | null;
   comparison: { state: "current" | "closed_filed" | "closed_not_filed"; filedRevenuePaise: number | null; liveNetTaxablePaise: number; gapPaise: number | null; gapBp: number | null };
 }
+
+// ─── smart-invoicing: reconcile (PR 5) ───
+// GET /sales/reconcile/… (spec-reconcile §6.4). Money = integer paise as JSON numbers; days YYYY-MM-DD.
+export type ReconTodo = { code: string; sentence: string; count: number; paise: number | null; href: string | null };
+export type ReconReason = { code: string; text: string; action: string | null };
+export type TdsGroup = import("@dashmani/shared/src/sales/recon").TdsGroup;
+export type GstStatus = import("@dashmani/shared/src/sales/recon").GstStatus;
+export type TdsCellVerdict = "none" | "matched" | "not_in_26as" | "short" | "extra" | "not_due" | "link_first";
+export interface TdsUploadRow {
+  id: string; format: string; fileName: string; fileSha256: string; fileBytes: number; pan: string | null; asOn: string | null; entryCount: number; deductorCount: number;
+  totals: { amountPaidPaise: number; tdsPaise: number; depositedPaise: number }; warnings: string[]; errorRows: Array<{ ref: string; message: string }>; errorCount: number;
+  current: boolean; uploadedByName: string | null; createdAt: string; currentSince: string;
+}
+export interface TdsUploadResult { upload: TdsUploadRow; duplicate: boolean; madeCurrent: boolean; learned: Array<{ tan: string; clientId: string; clientName: string; where: "profile" | "deductors" }> }
+export interface TdsRow {
+  key: string; group: TdsGroup; reason: ReconReason; flags: string[]; quarter: 1 | 2 | 3 | 4 | null;
+  clientId: string | null; clientName: string | null; tan: string | null; deductorName: string | null;
+  booksPaise: number; form26Paise: number; depositedPaise: number | null; differencePaise: number;
+  items: Array<{ key: string; paymentId: string; receiptNumber: string; paidOn: string; invoiceId: string | null; invoiceNumber: string | null; homeDay: string; tdsPaise: number }>;
+  entries: Array<{ id: string; rowNo: number; section: string | null; txnDate: string; bookingStatus: string | null; amountPaidPaise: number; tdsPaise: number; depositedPaise: number | null }>;
+}
+export interface TdsDeductor {
+  tan: string; name: string; kind: "client" | "non_sales" | "unknown"; clientId: string | null; clientName: string | null; label: string | null;
+  source: "profile" | "manual" | "auto" | null; entries: number; tdsPaise: number; proposal: null | { clientId: string; clientName: string; sure: boolean; why: string[] };
+}
+export interface TdsReconView {
+  company: "dspl" | "dmpl"; fy: { label: string; startDay: string; endDay: string }; pan: { company: string | null; file: string | null };
+  upload: TdsUploadRow | null; history: TdsUploadRow[]; historyCount: number;
+  totals: { booksPaise: number; booksByReceiptDatePaise: number; deductedPaise: number; depositedPaise: number; matchedPaise: number; chasePaise: number; chaseCount: number;
+    extraPaise: number; unknownPaise: number; nonSalesPaise: number; notDuePaise: number; nextYearPaise: number; linkFirstPaise: number };
+  deductors: TdsDeductor[];
+  clients: Array<{ clientId: string; name: string; pan: string | null; tans: string[]; billingEmail: string | null; verdict: TdsGroup;
+    quarters: Array<{ q: 1 | 2 | 3 | 4; booksPaise: number; form26Paise: number; verdict: TdsCellVerdict; pairedFrom: number[] }> }>;
+  rows: TdsRow[]; expectedBy: Array<{ quarter: 1 | 2 | 3 | 4; day: string; due: boolean }>; fyOptions: string[]; todo: ReconTodo[];
+}
+export type GstHeads = { valuePaise: number; taxablePaise: number; igstPaise: number | null; cgstPaise: number | null; sgstPaise: number | null; cessPaise: number | null };
+export interface GstRow {
+  key: string; section: "b2b" | "cdnr"; status: GstStatus; issues: Array<{ code: string; message: string; differencePaise?: number }>;
+  books: null | (GstHeads & { id: string; kind: "invoice" | "credit_note"; number: string; date: string; status: string; buyerGstin: string | null; buyerName: string | null; ratesBp: number[]; pos: string | null; section: string });
+  filed: null | (GstHeads & { id: string; rowRef: string; number: string; date: string | null; ctin: string | null; receiverName: string | null; ratesBp: number[]; pos: string | null; invType: string | null; uploadId: string });
+  diff: GstHeads | null; hint: null | { text: string; invoiceId?: string; companyKey?: string; gstin?: string; period?: string; importable?: boolean }; action: string;
+}
+export interface GstUploadRow { id: string; format: string; fileName: string; fileSha256: string; sections: string[]; counts: Record<string, number>; taxColumns: boolean; warnings: string[]; errorCount: number; current: string[]; uploadedByName: string | null; createdAt: string }
+export interface GstUploadResult { upload: GstUploadRow; duplicate: boolean; madeCurrent: boolean }
+export interface GstReconView {
+  company: "dspl" | "dmpl"; gstin: string; registrationLabel: string; registrations: Array<{ gstin: string; label: string }>;
+  period: { key: string; label: string; from: string; toExclusive: string; fy: string; kind: "month" | "quarter" }; periodOptions: Array<{ key: string; label: string }>;
+  uploads: GstUploadRow[]; periodsWithUploads: string[]; taxColumns: boolean;
+  counts: Record<GstStatus, number> & { cancelledNotFiled: number };
+  sections: Array<{ section: "b2b" | "sez" | "cdnr" | "b2cl" | "b2cs" | "exp"; books: GstHeads; filed: GstHeads | null; comparedItemwise: boolean; differs: boolean; note: string | null }>;
+  rows: GstRow[]; importLink: boolean; todo: ReconTodo[];
+}
+export type LedgerLine = { day: string; kind: "invoice" | "refund" | "credit_note" | "receipt" | "tds"; docId: string; number: string; particulars: string; debitPaise: number; creditPaise: number; balancePaise: number };
+export interface LedgerView {
+  v: 1; company: string; clientId: string; from: string; to: string; generatedAt: string;
+  seller: { legalName: string; gstin: string | null; pan: string | null; addressLines: string[]; email: string | null };
+  client: { name: string; legalName: string; gstin: string | null; pan: string | null; tans: string[]; addressLines: string[] };
+  openingPaise: number; lines: LedgerLine[]; totals: { debitPaise: number; creditPaise: number }; closingPaise: number; side: "Dr" | "Cr";
+  excluded: Array<{ kind: "cancelled_invoice" | "voided_receipt" | "cancelled_credit_note" | "cancelled_refund"; number: string; day: string; changedOn: string | null; reason: string | null; amountPaise: number }>;
+  notes: string[]; checks: { identityOk: boolean | null };
+}
+export interface ConfirmationState {
+  id: string; status: "pending" | "confirmed" | "disputed"; asOf: string; from: string; ourBalancePaise: number; theirBalancePaise: number | null; differencePaise: number | null;
+  sentCount: number; lastSentAt: string | null; lastSentTo: string | null; lastSendError: string | null; sending: boolean;
+  respondedOn: string | null; responseNote: string | null; hasFile: boolean; file: { fileName: string; sizeBytes: number; contentType: string } | null;
+  stale: boolean; overdue: boolean; stuck: boolean; liveBalancePaise: number | null;
+}
+export interface ConfirmationsView {
+  company: "dspl" | "dmpl"; asOf: string; from: string;
+  counts: { clients: number; withBalance: number; notSent: number; pending: number; overdue: number; stale: number; confirmed: number; disputed: number; noEmail: number; drPaise: number; crPaise: number; disputedPaise: number };
+  rows: Array<{ clientId: string; name: string; legalName: string; email: string | null; balancePaise: number; side: "Dr" | "Cr"; docsInRange: number; lastDay: string | null; confirmation: ConfirmationState | null; lastConfirmed: string | null }>;
+  todo: ReconTodo[];
+}
+export interface LedgerResponse { ledger: LedgerView; recipients: { to: string[]; cc: string[] }; confirmation: (ConfirmationState & { ledgerAsSent: LedgerView }) | null }
+export type ReconEmailResult = { sent: boolean; to: string[]; cc: string[] };
+
+// ─── smart-invoicing: reconcile BRS (PR 6) ───
 
 // ─── smart-invoicing: tally (PR 2) ───
 

@@ -5,7 +5,7 @@ import type { BillingProfile } from "@/lib/sales-types";
 import { Field } from "@/components/sales-ui";
 import { GST_STATE_CODES, stateCodeFromGstin } from "@dashmani/shared/src/sales/gst";
 
-export const EMPTY_BILLING: BillingProfile = { legalName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "", pincode: "", country: "IN", billingEmail: "", billingPhone: "", notes: "" };
+export const EMPTY_BILLING: BillingProfile = { legalName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "", pincode: "", country: "IN", billingEmail: "", billingPhone: "", notes: "", tan: "" };
 
 /** The API body for a billing form: blanks become null, country defaults to IN. */
 export function billingBody(form: BillingProfile): Record<string, unknown> {
@@ -21,6 +21,9 @@ export function BillingFields({ form, set, legalNameRequired = true, withNotes =
       <Field label="Legal name"><input className="input" required={legalNameRequired} value={form.legalName} onChange={(e) => set("legalName", e.target.value)} /></Field>
       <Field label="GSTIN" hint="Leave blank for an unregistered client."><input className="input" value={form.gstin ?? ""} onChange={(e) => { const v = e.target.value.toUpperCase(); set("gstin", v); const sc = stateCodeFromGstin(v); if (sc) { set("stateCode", sc); set("state", GST_STATE_CODES[sc] ?? ""); } }} /></Field>
       <Field label="PAN"><input className="input" value={form.pan ?? ""} onChange={(e) => set("pan", e.target.value.toUpperCase())} /></Field>
+      <Field label="TAN (as a TDS deductor)" hint="Their tax deduction account number — it identifies them in Form 26AS. Learned automatically from 26AS.">
+        <input className="input font-mono uppercase" maxLength={10} value={form.tan ?? ""} onChange={(e) => set("tan", e.target.value.toUpperCase().trim())} />
+      </Field>
       <Field label="Address line 1"><input className="input" value={form.addressLine1 ?? ""} onChange={(e) => set("addressLine1", e.target.value)} /></Field>
       <Field label="Address line 2"><input className="input" value={form.addressLine2 ?? ""} onChange={(e) => set("addressLine2", e.target.value)} /></Field>
       <div className="grid grid-cols-2 gap-3">

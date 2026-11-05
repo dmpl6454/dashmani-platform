@@ -32,6 +32,7 @@ function ClientView() {
         <Link href={`/invoices/edit?clientId=${id}`} className="btn btn-light">New invoice</Link>
         <Link href={`/payments/record?clientId=${id}`} className="btn btn-light">Record payment</Link>
         <Link href={`/clients/edit?id=${id}`} className="btn btn-light">Edit profile</Link>
+        <Link href={`/reconcile/ledger?clientId=${id}`} className="btn btn-light">Statement &amp; confirmation</Link>
       </PageHead>
       <p className="text-[11px] uppercase tracking-[0.1em] text-ink-3 mb-2">Account with {info.name} · switch company at the top to see the other</p>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -51,6 +52,7 @@ function ClientView() {
                 <div><dt className="text-ink-4 text-xs">Legal name</dt><dd>{p.legalName}</dd></div>
                 <div><dt className="text-ink-4 text-xs">GSTIN</dt><dd className="font-mono">{p.gstin ?? "Unregistered"}</dd></div>
                 {p.pan && <div><dt className="text-ink-4 text-xs">PAN</dt><dd className="font-mono">{p.pan}</dd></div>}
+                {p.tan && <div><dt className="text-ink-4 text-xs">TAN (TDS deductor)</dt><dd className="font-mono">{p.tan} <span className="text-ink-3 font-sans text-xs">· matched in Form 26AS on Reconcile</span></dd></div>}
                 <div><dt className="text-ink-4 text-xs">Address</dt><dd>{[p.addressLine1, p.addressLine2, p.city, p.state, p.pincode].filter(Boolean).join(", ") || "—"}</dd></div>
                 <div><dt className="text-ink-4 text-xs">Place of supply</dt><dd>{p.stateCode ? `${p.stateCode} · ${GST_STATE_CODES[p.stateCode] ?? ""}` : "—"}{p.country !== "IN" ? ` · ${p.country}` : ""}</dd></div>
                 <div><dt className="text-ink-4 text-xs">Billing contact</dt><dd>{[p.billingEmail, p.billingPhone].filter(Boolean).join(" · ") || client.email}</dd></div>

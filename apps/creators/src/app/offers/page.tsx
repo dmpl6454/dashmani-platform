@@ -31,7 +31,8 @@ export default function OffersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHead kicker="Bookings" title="Paid posts on your pages">
+      <PageHead kicker="Bookings" title="Bookings">
+        Paid posts brands booked on your pages.{" "}
         When a brand books one of your pages, our team checks the content first, then it lands here. Nothing is posted until you accept.
         Your payout is paid by our team after the post is live.
       </PageHead>

@@ -7,7 +7,7 @@ import { apiFetch, fetcher } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
-import type { CreatorMe, CreatorMeWithChecklist } from "@/lib/types";
+import type { CreatorMe, CreatorMeWithChecklist, CreatorOfferList } from "@/lib/types";
 import { Banner, Loading, PageHead } from "@/components/ui";
 
 // Overview: the onboarding checklist from GET /v1/creator/me (verify email → connect Facebook →
@@ -19,6 +19,10 @@ export default function DashboardPage() {
     revalidateOnFocus: true,
     dedupingInterval: 5_000,
   });
+
+  // Bookings waiting on the creator belong on the first screen (before 2026-11-06 the Overview was
+  // only the setup checklist, so an offer could sit unanswered until the creator opened Bookings).
+  const { data: offers } = useSWR<CreatorOfferList>("/creator/offers", fetcher, { revalidateOnFocus: true, dedupingInterval: 5_000 });
 
   // Keep the header's cached name/status in step with the server.
   useEffect(() => {
@@ -46,7 +50,26 @@ export default function DashboardPage() {
         Finish the steps below and our team will review your profile.
       </PageHead>
       <StatusBanner me={me} />
+      <WaitingOnYou counts={offers?.counts} />
       <Checklist me={me} onChange={(next) => (next ? mutate({ ...me, ...next }, { revalidate: true }) : mutate())} />
+    </div>
+  );
+}
+
+function WaitingOnYou({ counts }: { counts?: CreatorOfferList["counts"] }) {
+  if (!counts || (!counts.waiting && !counts.toPost)) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      {counts.waiting > 0 && (
+        <Banner tone="warn" title={`${counts.waiting} booking${counts.waiting === 1 ? " is" : "s are"} waiting for your answer.`} action={<Link href="/offers" className="btn btn-sm">Open bookings</Link>}>
+          A brand booked a post on one of your pages. Accept or decline it before the time shown — nothing is posted until you do.
+        </Banner>
+      )}
+      {counts.toPost > 0 && (
+        <Banner tone="info" title={`${counts.toPost} accepted post${counts.toPost === 1 ? "" : "s"} to post yourself.`} action={<Link href="/offers" className="btn btn-sm">Open bookings</Link>}>
+          Post them on your page, then paste the link so we can pay you.
+        </Banner>
+      )}
     </div>
   );
 }

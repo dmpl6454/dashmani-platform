@@ -887,6 +887,10 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 - `creator-meta-oauth` covers the review fixes: wrong account, staff refusal, identity release, page take-over, inconclusive probe, the daily duplicate re-check, 190 → NEEDS_REAUTH, idempotent reminders and the purge.
 - `creator-auth` covers Google pre-account hijack and the email cap.
 
+## Creator portal: bookings waiting on the Overview, labels that match the nav, per-page titles (2026-11-06, `feat/creators-portal-ux`, no DDL)
+
+From the 2026-11-06 UX review (PR E). The Overview (`dashboard/page.tsx`) also reads `GET /creator/offers` and shows `WaitingOnYou` banners — "N bookings are waiting for your answer" / "N accepted posts to post yourself", each linking to Bookings — because before this the first screen was only the setup checklist and an offer could sit unanswered until the creator happened to open Bookings. Page headings now match the nav ("Bookings" for /offers, "Pages" for /connect; the old wording moved into the lede). The offer page's load-error banner has Try again beside Back. `lib/use-page-title.ts` (same as the sales portal's) is called by `PageHead`, so the tab reads "<Page> · Digital Sukoon Creators". Verified by typecheck and the static build; no creator account exists locally, so not driven in a browser.
+
 ## Creator marketplace — creator portal Phase B/C (2026-11-04, `feat/creator-marketplace`; ⚠️ apply `scripts/creator-marketplace-ddl.sql` with `bash scripts/apply-creator-marketplace-ddl.sh` on prod BEFORE merging)
 
 **What it is.** A client books a creator's page beside our own accounts; the creator accepts each paid post before anything is posted; the accepted post goes out through the creator's OWN Facebook Login grant.

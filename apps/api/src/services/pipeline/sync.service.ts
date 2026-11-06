@@ -38,6 +38,7 @@ import { MESSAGE_COLUMNS, isoUtc, toWireMessage, type MessageRow, type PipelineA
 import { warnThrottled } from "../../utils/throttled-warn";
 import { plnId, plnIdSql } from "./notify";
 import { pipelineStats } from "./stats";
+import { canReadSql } from "./access";
 
 const NOW = Prisma.sql`timezone('utc', now())`;
 
@@ -195,13 +196,18 @@ interface R1Row {
 }
 
 function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: string, limit: number) {
-  const live = Prisma.sql`EXISTS (SELECT 1 FROM pipeline_projects h WHERE h.id = ${p.id} AND h.deleted_at IS NULL)`;
+  // A private channel or DM I am not in reads exactly like a deleted project (status
+  // "deleted", nothing else): the client already handles that, and it leaks nothing.
+  const readable = canReadSql("h", me);
+  const live = Prisma.sql`EXISTS (SELECT 1 FROM pipeline_projects h WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND ${readable})`;
   const headerMoved = Prisma.sql`EXISTS (SELECT 1 FROM pipeline_projects h
-                                          WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND h.header_rev <> ${p.hv}::int)`;
+                                          WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND ${readable}
+                                            AND h.header_rev <> ${p.hv}::int)`;
   return Prisma.sql`,
     (SELECT json_build_object('threadRev', h.thread_rev, 'headerRev', h.header_rev,
                               'lastMessageSeq', h.last_message_seq,
-                              'archived', h.archived_at IS NOT NULL, 'deleted', h.deleted_at IS NOT NULL)
+                              'archived', h.archived_at IS NOT NULL,
+                              'deleted', h.deleted_at IS NOT NULL OR NOT ${readable})
        FROM pipeline_projects h WHERE h.id = ${p.id}) AS head,
     (SELECT COALESCE(json_agg(d ORDER BY d.rev), '[]'::json) FROM (
         SELECT ${MESSAGE_COLUMNS} FROM pipeline_messages m
@@ -223,9 +229,11 @@ function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: stri
               'createdAt', h.created_at, 'updatedAt', h.updated_at,
               'linkedClient', CASE WHEN h.linked_client_id IS NULL THEN NULL
                                    ELSE json_build_object('id', h.linked_client_id, 'companyName',
-                                          (SELECT c.company_name FROM clients c WHERE c.id = h.linked_client_id)) END)
+                                          (SELECT c.company_name FROM clients c WHERE c.id = h.linked_client_id)) END,
+              'kind', h.kind, 'isPrivate', h.is_private, 'parentProjectId', h.parent_project_id,
+              'parentTitle', (SELECT t.title FROM pipeline_projects t WHERE t.id = h.parent_project_id))
        FROM pipeline_projects h
-      WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND h.header_rev <> ${p.hv}::int) AS header,
+      WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND ${readable} AND h.header_rev <> ${p.hv}::int) AS header,
     (SELECT COALESCE(json_agg(json_build_object('userId', x.user_id, 'role', x.role,
                                                 'memberAddedById', x.member_added_by_id,
                                                 'memberAddedAt', x.member_added_at, 'createdAt', x.created_at)
@@ -279,16 +287,18 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
     const holdStart = performance.now();
     const rows = await db.$queryRaw<R1Row[]>`
       WITH mine AS (
-        SELECT pp.project_id, pp.role, pp.notify,
+        SELECT pp.project_id, pp.role, pp.notify, pr.kind,
                GREATEST(pr.last_message_seq - pp.last_read_seq, 0)::int AS unread
           FROM pipeline_participants pp
           JOIN pipeline_projects pr ON pr.id = pp.project_id
          WHERE pp.user_id = ${me} AND pr.archived_at IS NULL AND pr.deleted_at IS NULL
-         ORDER BY pp.project_id
+         -- Projects first: sales-portal channels and DMs never push a project out of the cap.
+         ORDER BY (pr.kind <> 'project'), pp.project_id
          LIMIT ${MINE_LIMIT}::int)
       SELECT (SELECT bs.seq FROM pipeline_board_state bs WHERE bs.id = 1) AS v,
              (SELECT COALESCE(json_agg(json_build_object('projectId', mine.project_id, 'role', mine.role,
-                                                         'notify', mine.notify, 'unread', mine.unread)
+                                                         'notify', mine.notify, 'unread', mine.unread,
+                                                         'kind', mine.kind)
                                        ORDER BY mine.project_id), '[]'::json)
                 FROM mine) AS mine
              ${p ? projectPartSql(p, me, limit) : Prisma.empty}`;

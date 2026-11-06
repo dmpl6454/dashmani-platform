@@ -151,6 +151,8 @@ export interface PipelineMineEntry {
   notify: boolean;
   /** `last_message_seq − last_read_seq`, clamped at 0. */
   unread: number;
+  /** "project" | "channel" | "dm" (sales-portal chat sidebar). Optional: older API builds omit it. */
+  kind?: PipelineConversationKind;
 }
 
 // ── Project header, participants, permissions (§3.4 route #6, §3.5) ─────────────────
@@ -182,7 +184,16 @@ export interface PipelineHeader {
   updatedAt: PipelineTimestamp;
   /** The client the project is for, or null. Optional: older API builds omit it. */
   linkedClient?: PipelineClientRef | null;
+  /** "project" (the board), "channel" or "dm" — sales-portal chat. Optional: older API builds omit it. */
+  kind?: PipelineConversationKind;
+  /** Private channels and DMs are readable by their participants only. */
+  isPrivate?: boolean;
+  /** A campaign channel's campaign (project) id and title; null for a team-wide channel. */
+  parentProjectId?: string | null;
+  parentTitle?: string | null;
 }
+
+export type PipelineConversationKind = "project" | "channel" | "dm";
 
 /**
  * Another participant as everyone sees them. `notify`, `lastReadSeq` and `seenAt` are
@@ -252,7 +263,8 @@ export interface PipelineMessage {
   createdAt: PipelineTimestamp;
 }
 
-export type PipelineNotNotifiedReason = "inactive" | "not_in_pilot" | "unknown";
+/** `not_member`: mentioned in a channel or DM they are not in (sales-portal chat). */
+export type PipelineNotNotifiedReason = "inactive" | "not_in_pilot" | "unknown" | "not_member";
 
 export interface PipelineNotNotified {
   id: string;
@@ -609,4 +621,77 @@ export interface PipelineNotificationMetadata {
   path: string;
   /** Absolute HR URL built from HR_APP_URL (the internal bell's new-tab link). */
   url: string;
+}
+
+// ── Sales-portal chat: channels and DMs ──────────────────────────────────────────────
+
+export interface PipelineChannelEntry {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  /** Shows the owner's "Delete channel" (admins see it too; the server re-checks). */
+  ownerId?: string;
+  unread: number;
+  lastMessageAt: PipelineTimestamp | null;
+}
+
+export interface PipelineDmEntry {
+  id: string;
+  /** The other person (yourself for the self-DM). */
+  userId: string;
+  isSelf: boolean;
+  unread: number;
+  lastMessageAt: PipelineTimestamp | null;
+}
+
+/** GET /pipeline/conversations — the sidebar: channels I'm in, my DMs (newest first). */
+export interface PipelineConversations {
+  channels: PipelineChannelEntry[];
+  dms: PipelineDmEntry[];
+  /** Campaign channels I'm in: they live in each campaign's sidebar, not in this list. */
+  campaignChannelIds?: string[];
+  /** DMs I deleted (hidden) and nothing new has been said since: not in `dms`. */
+  hiddenDmIds?: string[];
+}
+
+/** One channel in a campaign's sidebar (GET /pipeline/projects/:id/channels). */
+export interface PipelineCampaignChannel {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  ownerId?: string;
+  joined: boolean;
+  /** 0 when I'm not in it (a public channel I can open and join). */
+  unread: number;
+  memberCount: number;
+}
+
+export interface PipelineCampaignChannelsResponse {
+  channels: PipelineCampaignChannel[];
+}
+
+export interface PipelineBrowseChannel {
+  id: string;
+  name: string;
+  description: string;
+  isPrivate: boolean;
+  memberCount: number;
+  joined: boolean;
+  ownerId: string;
+}
+
+export interface PipelineBrowseChannelsResponse {
+  channels: PipelineBrowseChannel[];
+}
+
+/** Create / open / join / edit answer: the conversation's id and its header. */
+export interface PipelineConversationResponse {
+  id: string;
+  header: PipelineHeader;
+  participants: PipelineParticipant[];
+}
+
+/** GET /pipeline/presence — users seen in the last minute. */
+export interface PipelinePresenceResponse {
+  online: string[];
 }

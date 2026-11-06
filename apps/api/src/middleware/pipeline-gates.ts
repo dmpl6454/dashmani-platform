@@ -33,6 +33,7 @@ import { ensurePipelineSchemaChecked } from "../services/pipeline/self-check";
 import { healPendingBoardBump } from "../services/pipeline/board";
 import { PipelineError } from "../services/pipeline/errors";
 import type { PipelineTx } from "../services/pipeline/db";
+import { touchPresence } from "../services/pipeline/live";
 
 /** ⚠️ Must remain an ALLOWLIST: `type` is undefined on client-portal refresh tokens. */
 export const PIPELINE_TOKEN_TYPES: readonly string[] = ["hr", "employee"];
@@ -111,6 +112,8 @@ export const requirePipelineAccess: RequestHandler = asyncHandler(async (req, re
     return;
   }
   req.pipeline = result.ctx;
+  // Sales-portal chat presence (in memory, no statement): an open Pipeline tab polls sync.
+  touchPresence(result.ctx.userId);
   next();
 });
 

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useOrders } from "@/lib/hooks";
 import { fmtDate } from "@/lib/format";
@@ -9,6 +9,11 @@ const TABS = ["all", "draft", "confirmed", "in_progress", "delivered", "closed",
 
 export default function OrdersPage() {
   const [status, setStatus] = useState("all");
+  // Opened from a dashboard tile: start on its tab (read once; no useSearchParams in a static export page).
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get("status");
+    if (s && TABS.includes(s)) setStatus(s);
+  }, []);
   const [q, setQ] = useState("");
   const { data, error, isLoading, mutate } = useOrders({ status: status === "all" ? undefined : status, q: q.trim() || undefined });
   return (

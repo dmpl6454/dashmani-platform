@@ -30,10 +30,10 @@ export default function DashboardPage() {
         </div>
       )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <Stat label="Invoiced this FY" value={fmtInr(d.invoicedFyPaise, { whole: true })} sub={`${d.invoicedFyCount} tax invoices · ${fmtInr(d.invoicedMonthPaise, { whole: true })} this month`} />
-        <Stat label="Collected this FY" value={fmtInr(d.collectedFyPaise, { whole: true })} sub={`${fmtInr(d.collectedMonthPaise, { whole: true })} this month${d.tdsFyPaise ? ` · TDS ${fmtInr(d.tdsFyPaise, { whole: true })}` : ""}`} tone="success" />
-        <Stat label="Outstanding" value={fmtInr(d.outstandingPaise, { whole: true })} sub={`${d.outstandingCount} open invoice${d.outstandingCount === 1 ? "" : "s"}`} tone={d.outstandingPaise ? "attention" : undefined} />
-        <Stat label="Overdue" value={fmtInr(d.overduePaise, { whole: true })} sub={`${d.overdueCount} past due date`} tone={d.overdueCount ? "danger" : undefined} />
+        <Link href="/invoices?status=all" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Invoiced this FY" value={fmtInr(d.invoicedFyPaise, { whole: true })} sub={`${d.invoicedFyCount} tax invoices · ${fmtInr(d.invoicedMonthPaise, { whole: true })} this month`} /></Link>
+        <Link href="/payments" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Collected this FY" value={fmtInr(d.collectedFyPaise, { whole: true })} sub={`${fmtInr(d.collectedMonthPaise, { whole: true })} this month${d.tdsFyPaise ? ` · TDS ${fmtInr(d.tdsFyPaise, { whole: true })}` : ""}`} tone="success" /></Link>
+        <Link href="/invoices?status=outstanding" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Outstanding" value={fmtInr(d.outstandingPaise, { whole: true })} sub={`${d.outstandingCount} open invoice${d.outstandingCount === 1 ? "" : "s"}`} tone={d.outstandingPaise ? "attention" : undefined} /></Link>
+        <Link href="/invoices?status=overdue" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Overdue" value={fmtInr(d.overduePaise, { whole: true })} sub={`${d.overdueCount} past due date`} tone={d.overdueCount ? "danger" : undefined} /></Link>
       </div>
       {d.bank && (() => {
         const bank = d.bank;
@@ -47,10 +47,10 @@ export default function DashboardPage() {
         );
       })()}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
-        <Stat label="Open quotes" value={d.openQuotes.count} sub={fmtInr(d.openQuotes.totalPaise, { whole: true })} />
-        <Stat label="Accepted, not ordered" value={d.acceptedQuotes.count} sub={fmtInr(d.acceptedQuotes.totalPaise, { whole: true })} />
-        <Stat label="Active orders" value={d.activeOrders.count} sub={fmtInr(d.activeOrders.totalPaise, { whole: true })} />
-        <Stat label="Delivered, awaiting close" value={d.deliveredOrders.count} sub={fmtInr(d.deliveredOrders.totalPaise, { whole: true })} />
+        <Link href="/quotes" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Open quotes" value={d.openQuotes.count} sub={fmtInr(d.openQuotes.totalPaise, { whole: true })} /></Link>
+        <Link href="/quotes?status=accepted" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Accepted, not ordered" value={d.acceptedQuotes.count} sub={fmtInr(d.acceptedQuotes.totalPaise, { whole: true })} /></Link>
+        <Link href="/orders" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Active orders" value={d.activeOrders.count} sub={fmtInr(d.activeOrders.totalPaise, { whole: true })} /></Link>
+        <Link href="/orders?status=delivered" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Delivered, awaiting close" value={d.deliveredOrders.count} sub={fmtInr(d.deliveredOrders.totalPaise, { whole: true })} /></Link>
       </div>
       {d.bookings && (
         <section className="card p-4 mb-8">

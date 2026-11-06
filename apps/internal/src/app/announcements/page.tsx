@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
@@ -240,6 +241,7 @@ function AnnouncementModal({
 }
 
 export default function AnnouncementsPage() {
+  usePageTitle("Announcements");
   const { announcements, isLoading, isError, mutate } = useAnnouncements();
   const [modalOpen, setModalOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);

@@ -1,4 +1,5 @@
 "use client";
+import { titleText, usePageTitle } from "@/lib/use-page-title";
 import { type ReactNode, useEffect, useState } from "react";
 import { fmtInr, toPaise } from "@/lib/format";
 import { formatFiledAmount, parseFiledAmount, type EntryUnit } from "@dashmani/shared/src/sales/accounts";
@@ -187,6 +188,7 @@ export function Toast({ message, tone = "ok", onDone }: { message: string; tone?
 }
 
 export function PageHead({ kicker, title, children }: { kicker: string; title: ReactNode; children?: ReactNode }) {
+  usePageTitle(titleText(title) ?? kicker);
   return (
     <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
       <div className="min-w-0">

@@ -10,7 +10,7 @@ export default function CompanyProfilePage() {
 
   return (
     <>
-      <Topstrip title="Company Profile" sub="About Dashmani Media & Digital Sukoon" />
+      <Topstrip title="About Company" sub="About Dashmani Media & Digital Sukoon" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
 
         {/* Hero */}

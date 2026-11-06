@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import { useState, useRef } from "react";
 import { apiFetch, apiUpload } from "@/lib/api";
 import useSWR, { mutate } from "swr";
@@ -20,8 +21,8 @@ const fieldCls = "w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg bord
 const selectCls = fieldCls + " appearance-none pr-8";
 
 export default function LeavePage() {
-  const { data: balance } = useSWR<LeaveBalance>("/hr/leave-balance", fetcher);
-  const { data: requests } = useSWR<LeaveRequest[]>("/hr/leave-requests", fetcher);
+  const { data: balance, error: balanceError } = useSWR<LeaveBalance>("/hr/leave-balance", fetcher);
+  const { data: requests, error: requestsError, mutate: refetchRequests } = useSWR<LeaveRequest[]>("/hr/leave-requests", fetcher);
 
   const [form, setForm] = useState({ type: "CASUAL", startDate: "", endDate: "", reason: "" });
   const [submitting, setSubmitting] = useState(false);
@@ -105,7 +106,7 @@ export default function LeavePage() {
 
   return (
     <>
-      <Topstrip title="Leave Request" sub="Manage your time off" />
+      <Topstrip title="Leave" sub="Manage your time off" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
         <div className="space-y-5 anim-fade-up d1">
 
@@ -127,7 +128,7 @@ export default function LeavePage() {
                       <div className="h-full rounded-full bg-current" style={{ width: `${(c.data.balance / c.data.total) * 100}%`, color: "inherit" }} />
                     </div>
                   </>
-                ) : <div className="h-10 bg-muted rounded-lg animate-pulse" />}
+                ) : balanceError ? <p className="text-[12px] font-semibold text-danger">Couldn&apos;t load</p> : <div className="h-10 bg-muted rounded-lg animate-pulse" />}
               </div>
             ))}
           </div>
@@ -229,7 +230,9 @@ export default function LeavePage() {
             <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
               <h3 className="text-[14px] font-bold text-ink">Your Leave Requests</h3>
             </div>
-            {!requests ? (
+            {!requests && requestsError ? (
+              <div className="p-5"><LoadError what="leave requests" onRetry={() => refetchRequests()} /></div>
+            ) : !requests ? (
               <div className="p-5 space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-muted rounded-lg animate-pulse" />)}</div>
             ) : requests.length === 0 ? (
               <div className="px-5 py-10 text-center">

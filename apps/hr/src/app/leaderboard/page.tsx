@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 import { Flame, Trophy } from "lucide-react";
@@ -18,7 +19,7 @@ function avatarGrad(name: string) {
 }
 
 export default function LeaderboardPage() {
-  const { data, isLoading } = useSWR("/hr/leaderboard", (url) => apiFetch(url));
+  const { data, isLoading, error, mutate } = useSWR("/hr/leaderboard", (url) => apiFetch(url));
   const entries: any[] = (data as any)?.data ?? [];
 
   return (
@@ -52,6 +53,8 @@ export default function LeaderboardPage() {
           {/* Full list */}
           {isLoading ? (
             <div className="v3-card px-5 py-10 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo mx-auto" /></div>
+          ) : error && !data ? (
+            <LoadError what="leaderboard" onRetry={() => mutate()} />
           ) : entries.length === 0 ? (
             <div className="v3-card px-5 py-10 text-center"><Trophy size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No leaderboard data yet</p></div>
           ) : (

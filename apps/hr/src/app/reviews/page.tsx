@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
@@ -6,15 +7,17 @@ import { Topstrip } from "@/components/portal-shell";
 import { Award, Star } from "lucide-react";
 
 export default function ReviewsPage() {
-  const { data } = useSWR("/hr/performance-reviews", apiFetch);
+  const { data, error, mutate } = useSWR("/hr/performance-reviews", apiFetch);
   const reviews = (data as any)?.data || [];
 
   return (
     <>
-      <Topstrip title="Performance Reviews" sub="View your performance evaluations and feedback" />
+      <Topstrip title="My Reviews" sub="View your performance evaluations and feedback" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
 
-        {reviews.length === 0 ? (
+        {!data && error ? (
+          <LoadError what="performance reviews" onRetry={() => mutate()} />
+        ) : reviews.length === 0 ? (
           <div className="v3-card p-12 text-center">
             <Award className="h-9 w-9 mx-auto mb-3 text-ink-4" />
             <h3 className="text-[14px] font-semibold text-ink mb-1">No reviews yet</h3>

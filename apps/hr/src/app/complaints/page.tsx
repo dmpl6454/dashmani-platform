@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
@@ -15,7 +16,7 @@ const statusBadge: Record<string, string> = {
 };
 
 export default function ComplaintsPage() {
-  const { data, mutate } = useSWR("/hr/complaints", (url: string) => apiFetch<any>(url));
+  const { data, mutate, error } = useSWR("/hr/complaints", (url: string) => apiFetch<any>(url));
   const complaints = data?.data || [];
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ subject: "", description: "", category: "GENERAL" });
@@ -107,7 +108,9 @@ export default function ComplaintsPage() {
           </form>
         )}
 
-        {complaints.length === 0 ? (
+        {!data && error ? (
+          <LoadError what="complaints" onRetry={() => mutate()} />
+        ) : complaints.length === 0 ? (
           <div className="v3-card p-12 text-center">
             <MessageSquare className="h-9 w-9 mx-auto mb-3 text-ink-4" />
             <p className="text-[13px] text-ink-3 font-medium">No complaints submitted yet</p>

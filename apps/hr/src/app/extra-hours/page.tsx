@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
@@ -16,7 +17,7 @@ export default function ExtraHoursPage() {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ date: "", hours: "", description: "" });
 
-  const { data, mutate } = useSWR("/hr/extra-hours", apiFetch);
+  const { data, mutate, error } = useSWR("/hr/extra-hours", apiFetch);
   const hours = (data as any)?.data ?? [];
   const totalApproved = hours.filter((h: any) => h.status === "APPROVED").reduce((s: number, h: any) => s + h.hours, 0);
 
@@ -80,7 +81,9 @@ export default function ExtraHoursPage() {
               <h3 className="text-[14px] font-bold text-ink">History</h3>
               <span className="text-[12px] font-bold text-success">{totalApproved}h approved</span>
             </div>
-            {hours.length === 0 ? (
+            {!data && error ? (
+              <div className="p-4"><LoadError what="extra hours" onRetry={() => mutate()} /></div>
+            ) : hours.length === 0 ? (
               <div className="px-5 py-10 text-center"><Timer size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No extra hours logged yet</p></div>
             ) : (
               <ul>{hours.map((h: any, i: number) => {

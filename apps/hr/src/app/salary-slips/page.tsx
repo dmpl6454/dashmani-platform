@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
@@ -48,7 +49,7 @@ function handleDownload(slip: SalarySlip) {
 }
 
 export default function SalarySlipsPage() {
-  const { data, isLoading } = useSWR<any>("/hr/salary-slips", apiFetch);
+  const { data, isLoading, error, mutate } = useSWR<any>("/hr/salary-slips", apiFetch);
   const slips: SalarySlip[] = data?.data ?? [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -59,6 +60,8 @@ export default function SalarySlipsPage() {
         <div className="space-y-3 anim-fade-up d1">
           {isLoading ? (
             <div className="v3-card overflow-hidden">{[1,2,3].map(i => <div key={i} className="px-5 py-4 border-b border-ink/5"><div className="h-5 bg-muted rounded-lg animate-pulse w-64" /></div>)}</div>
+          ) : error && !data ? (
+            <LoadError what="salary slips" onRetry={() => mutate()} />
           ) : slips.length === 0 ? (
             <div className="v3-card px-5 py-10 text-center"><FileText size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No salary slips yet</p></div>
           ) : (

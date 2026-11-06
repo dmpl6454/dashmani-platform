@@ -1,11 +1,12 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 import { Users, Check, X } from "lucide-react";
 import { Topstrip } from "@/components/portal-shell";
 
 export default function TeamPage() {
-  const { data, isLoading } = useSWR("/hr/team", (url) => apiFetch(url));
+  const { data, isLoading, error, mutate } = useSWR("/hr/team", (url) => apiFetch(url));
   const dashboard = (data as any)?.data;
   const members: any[] = dashboard?.members ?? [];
 
@@ -17,6 +18,8 @@ export default function TeamPage() {
 
           {isLoading ? (
             <div className="v3-card px-5 py-10 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo mx-auto" /></div>
+          ) : error && !data ? (
+            <LoadError what="team" onRetry={() => mutate()} />
           ) : !dashboard?.teamName ? (
             <div className="v3-card px-5 py-10 text-center"><Users size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">You are not assigned to any team</p></div>
           ) : (

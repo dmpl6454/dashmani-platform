@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import { useState } from "react";
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
@@ -10,7 +11,7 @@ const statusCls: Record<string, string> = { TODO: "bg-attention-bg text-attentio
 const priorityCls: Record<string, string> = { CRITICAL: "bg-danger-bg text-danger border-danger/20", HIGH: "bg-danger-bg text-danger border-danger/20", MEDIUM: "bg-attention-bg text-attention border-attention/20", LOW: "bg-muted text-ink-3 border-ink/10" };
 
 export default function TasksPage() {
-  const { data, mutate } = useSWR("/hr/tasks", (url) => apiFetch<any>(url), { refreshInterval: 30000 });
+  const { data, error, mutate } = useSWR("/hr/tasks", (url) => apiFetch<any>(url), { refreshInterval: 30000 });
   const tasks = (data as any)?.data ?? [];
   const [filter, setFilter] = useState("ALL");
   const [commentForm, setCommentForm] = useState<{ taskId: string; content: string } | null>(null);
@@ -55,7 +56,11 @@ export default function TasksPage() {
 
           {/* Task list */}
           <div className="v3-card overflow-hidden">
-            {filtered.length === 0 ? (
+            {!data && error ? (
+              <div className="p-4"><LoadError what="tasks" onRetry={() => mutate()} /></div>
+            ) : !data ? (
+              <div className="p-5 space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-muted rounded-lg animate-pulse" />)}</div>
+            ) : filtered.length === 0 ? (
               <div className="px-5 py-10 text-center"><ListTodo size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No tasks here</p></div>
             ) : filtered.map((task: any, i: number) => (
               <div key={task.id} className="group" style={i < filtered.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}}>

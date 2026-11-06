@@ -48,12 +48,22 @@ export default function ApprovalsPage() {
     } catch { Actions.toast({ kind: "danger", text: "Could not approve. Please try again." }); }
   }
 
+  // Revise asks for changes (REVISION_REQUESTED, as the Home card sends); Reject is REJECTED.
+  // Before 2026-11-06 both sent REJECTED here while Home sent REVISION_REQUESTED.
   async function handleRevise(id: string, note: string) {
     try {
-      await apiFetch(`/client/content/${id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REJECTED", clientNote: note }) });
+      await apiFetch(`/client/content/${id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REVISION_REQUESTED", clientNote: note }) });
       mutate(PENDING_APPROVALS_KEY);
       Actions.toast({ kind: "success", text: "Revision requested." });
     } catch { Actions.toast({ kind: "danger", text: "Could not request revision." }); }
+  }
+
+  async function handleReject(id: string, note: string) {
+    try {
+      await apiFetch(`/client/content/${id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REJECTED", clientNote: note }) });
+      mutate(PENDING_APPROVALS_KEY);
+      Actions.toast({ kind: "success", text: "Rejected. The team has been told." });
+    } catch { Actions.toast({ kind: "danger", text: "Could not reject. Please try again." }); }
   }
 
   async function handleBulkApprove(ids: string[]) {
@@ -68,7 +78,7 @@ export default function ApprovalsPage() {
 
   async function handleBulkRevise(note: string) {
     try {
-      await Promise.all(selectedArray.map(p => apiFetch(`/client/content/${p.id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REJECTED", clientNote: note }) })));
+      await Promise.all(selectedArray.map(p => apiFetch(`/client/content/${p.id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REVISION_REQUESTED", clientNote: note }) })));
       mutate(PENDING_APPROVALS_KEY);
       setSelectedIds(new Set());
       setModal(null);
@@ -171,6 +181,8 @@ export default function ApprovalsPage() {
                     divider={i < pending.length - 1}
                     delay={`d${Math.min(i + 1, 8)}`}
                     compact={compact}
+                    onApprove={() => handleApprove(p.id)}
+                    onRevise={() => { setFocusId(p.id); setModal("revise"); }}
                   />
                 );
               })}
@@ -200,7 +212,7 @@ export default function ApprovalsPage() {
       <ReasonModal open={modal === "revise"} kind="revise" post={focusPost} onClose={() => setModal(null)}
         onConfirm={(note) => { setModal(null); if (focusPost) handleRevise(focusPost.id, note); }} />
       <ReasonModal open={modal === "reject"} kind="reject" post={focusPost} onClose={() => setModal(null)}
-        onConfirm={(note) => { setModal(null); if (focusPost) handleRevise(focusPost.id, note); }} />
+        onConfirm={(note) => { setModal(null); if (focusPost) handleReject(focusPost.id, note); }} />
 
       <Modal open={modal === "bulk-confirm"} onClose={() => setModal(null)} title="Confirm bulk approval" size="lg"
         footer={<>
@@ -237,10 +249,10 @@ export default function ApprovalsPage() {
   );
 }
 
-function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, onOpen, divider, delay, compact }: {
+function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, onOpen, divider, delay, compact, onApprove, onRevise }: {
   post: any; project: any | null; selected: boolean; focused: boolean;
   onSelect: (e: React.MouseEvent) => void; onFocus: () => void; onOpen: () => void; divider: boolean; delay: string;
-  compact: boolean;
+  compact: boolean; onApprove: () => void; onRevise: () => void;
 }) {
   const overdue = post.overdue ?? (post.scheduledAt && new Date(post.scheduledAt) < new Date() && post.status === "PENDING_APPROVAL");
   const due = fmt.date(post.scheduledAt ?? post.scheduled);
@@ -278,6 +290,14 @@ function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, 
           </span>
         )}
       </div>
+      {/* One pane on a phone: approve or ask for changes from the row itself, without opening the post
+          (that path was menu → Approvals → row → Approve, four taps, while Home does it in one). */}
+      {compact && (
+        <div className="px-3 pb-3 -mt-1 flex gap-2" onClick={(e) => e.stopPropagation()}>
+          <Button variant="primary" size="sm" onClick={onApprove}>Approve</Button>
+          <Button variant="default" size="sm" onClick={onRevise}>Revise</Button>
+        </div>
+      )}
     </li>
   );
 }

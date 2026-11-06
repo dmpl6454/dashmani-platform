@@ -135,6 +135,12 @@ export default function EmployeesPage() {
             ))}
           </div>
 
+          {/* Sign-ups waiting for approval live on their own page; the sidebar badge counts them but nothing here linked to it. */}
+          {viewTab === "active" && (
+            <Link href="/employees/pending" className="ml-auto inline-flex items-center h-[26px] px-3 rounded-[13px] border border-ds-line2 text-[11px] font-semibold text-ds-t2 hover:text-ds-text hover:border-ds-line3 whitespace-nowrap">
+              Pending registrations{rosterData && rosterCount("ONBOARDING") ? ` · ${rosterCount("ONBOARDING")}` : ""} →
+            </Link>
+          )}
           {viewTab === "active" && (
             <div className="flex flex-wrap gap-1.5">
               {(["ALL", "ACTIVE", "ONBOARDING", "INACTIVE"] as StatusKey[]).map((k) => {

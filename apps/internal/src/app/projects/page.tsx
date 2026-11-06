@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -261,6 +262,7 @@ function ProjectsInner() {
 }
 
 export default function ProjectsPage() {
+  usePageTitle("Projects");
   return (
     <Suspense fallback={null}>
       <ProjectsInner />

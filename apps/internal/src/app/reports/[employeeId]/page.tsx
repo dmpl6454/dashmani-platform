@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { safeHref } from "@/lib/safe-href";
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -83,6 +84,7 @@ function ChartTooltip({ active, payload, label }: any) {
 }
 
 export default function EmployeeReportsPage({ params }: { params: { employeeId: string } }) {
+  usePageTitle("Employee Reports");
   const { employeeId } = params;
 
   useEffect(() => {

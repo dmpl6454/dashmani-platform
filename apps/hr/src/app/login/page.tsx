@@ -990,7 +990,8 @@ export default function LoginPage() {
           </div>
 
           {/* ── Auth card ── */}
-          <div className="auth-reveal relative mt-10" ref={formRef} id="auth-form">
+          {/* Phones: the sign-in card comes FIRST (it used to start 789 px down, under the hero). */}
+          <div className="auth-reveal relative order-first lg:order-none mb-10 lg:mb-0 lg:mt-10" ref={formRef} id="auth-form">
             <div className="absolute inset-[-24px] rounded-[32px] opacity-0 pointer-events-none transition-opacity duration-700 auth-reveal-glow"
               style={{ background: "radial-gradient(circle at 30% 0%,rgba(245,213,71,.20),transparent 60%),radial-gradient(circle at 70% 100%,rgba(93,95,239,.18),transparent 60%)", filter: "blur(20px)", zIndex: -1 }}
             />

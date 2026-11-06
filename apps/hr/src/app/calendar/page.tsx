@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
@@ -47,7 +48,7 @@ export default function CalendarPage() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
 
-  const { data: calendar } = useSWR<CalendarData>(
+  const { data: calendar, error: calendarError, mutate: refetchCalendar } = useSWR<CalendarData>(
     `/hr/calendar?year=${year}&month=${month}`,
     fetcher
   );
@@ -125,8 +126,9 @@ export default function CalendarPage() {
 
   return (
     <>
-      <Topstrip title="Work Calendar" sub="Your monthly schedule at a glance" />
+      <Topstrip title="Calendar" sub="Your monthly schedule at a glance" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
+        {calendarError && !calendar && <div className="mb-6"><LoadError what="calendar" onRetry={() => refetchCalendar()} /></div>}
 
         {/* Working Days Stat */}
         <div className="flex flex-wrap items-center gap-4 mb-6">

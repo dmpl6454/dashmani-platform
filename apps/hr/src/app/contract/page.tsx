@@ -103,7 +103,7 @@ export default function ContractPage() {
   if (isLoading) {
     return (
       <>
-        <Topstrip title="Employment Contract" sub="Review and manage your employment agreement" />
+        <Topstrip title="My Contract" sub="Review and manage your employment agreement" />
         <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
           <div className="v3-card p-6 space-y-3">
             <div className="h-5 bg-muted rounded-xl animate-pulse w-1/3" />
@@ -118,7 +118,7 @@ export default function ContractPage() {
   if (hasNoContract && !contractToShow) {
     return (
       <>
-        <Topstrip title="Employment Contract" sub="Review and manage your employment agreement" />
+        <Topstrip title="My Contract" sub="Review and manage your employment agreement" />
         <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
           <div className="v3-card p-12 text-center">
             <FileText className="w-9 h-9 mx-auto mb-3 text-ink-4" />
@@ -135,7 +135,7 @@ export default function ContractPage() {
   if (pending && !agreed) {
     return (
       <>
-        <Topstrip title="Employment Contract" sub="Please review and sign your contract" />
+        <Topstrip title="My Contract" sub="Please review and sign your contract" />
         <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-4">
 
           {success && (
@@ -213,7 +213,7 @@ export default function ContractPage() {
   const contract = contractToShow!;
   return (
     <>
-      <Topstrip title="Employment Contract" sub="Your current employment agreement" />
+      <Topstrip title="My Contract" sub="Your current employment agreement" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-4">
 
         {success && (

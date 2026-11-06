@@ -106,7 +106,7 @@ export default function SOPPage() {
   if (loading) {
     return (
       <>
-        <Topstrip title="Company SOPs & Terms" sub="Standard Operating Procedures and Terms of Employment" />
+        <Topstrip title="SOPs & Terms" sub="Standard Operating Procedures and Terms of Employment" />
         <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] flex justify-center pt-16">
           <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-indigo" />
         </div>
@@ -117,7 +117,7 @@ export default function SOPPage() {
   return (
     <>
       <Topstrip
-        title="Company SOPs & Terms"
+        title="SOPs & Terms"
         sub="Standard Operating Procedures and Terms of Employment"
         right={
           accepted ? (

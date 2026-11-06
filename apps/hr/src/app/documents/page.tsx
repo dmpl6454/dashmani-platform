@@ -1,4 +1,5 @@
 "use client";
+import { LoadError } from "@/components/load-error";
 import { useState, useRef } from "react";
 import { apiFetch, apiUpload } from "@/lib/api";
 import useSWR from "swr";
@@ -35,7 +36,7 @@ function fmtSize(b: number) {
 }
 
 export default function DocumentsPage() {
-  const { data, isLoading, mutate } = useSWR<any>("/hr/documents", apiFetch);
+  const { data, isLoading, mutate, error } = useSWR<any>("/hr/documents", apiFetch);
   const docs: HrDocument[] = data?.data ?? [];
 
   const [docType, setDocType] = useState(""); const [file, setFile] = useState<File | null>(null);
@@ -108,6 +109,8 @@ export default function DocumentsPage() {
           {/* Document list */}
           {isLoading ? (
             <div className="v3-card overflow-hidden">{[1,2,3].map(i => <div key={i} className="px-5 py-4 border-b border-ink/5"><div className="h-5 bg-muted rounded-lg animate-pulse w-48" /></div>)}</div>
+          ) : error && !data ? (
+            <LoadError what="documents" onRetry={() => mutate()} />
           ) : docs.length === 0 ? (
             <div className="v3-card px-5 py-10 text-center">
               <FileText size={24} className="mx-auto mb-3 text-ink-4" />

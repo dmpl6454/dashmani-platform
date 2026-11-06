@@ -1,4 +1,5 @@
 "use client";
+import { NotificationBell } from "@/components/notification-bell";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -935,12 +936,14 @@ export default function ReportPage() {
             <div className="h-9 w-9 rounded-xl bg-[#FFF3C4] flex items-center justify-center shadow-[0_2px_8px_rgba(245,213,71,0.2)]">
               <FileText className="h-4.5 w-4.5 text-[#B8960C]" />
             </div>
-            <h1 className="text-3xl font-light text-[#1A1A1A] font-serif">Link Report</h1>
+            <h1 className="text-3xl font-light text-[#1A1A1A] font-serif">Submit Links</h1>
           </div>
           <p className="text-[#7A7A7A] text-sm">{todayFormatted}</p>
         </div>
         <div className="text-left sm:text-right space-y-1">
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {/* The bell lives in Topstrip on every other page; this page draws its own header. */}
+            <NotificationBell />
             {liveCount > 0 && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-[#FFF3C4] text-[#1A1A1A] border border-[#F5D547]/20">
                 <Hash className="h-3.5 w-3.5" />

@@ -8,7 +8,7 @@ import {
   Wallet, FolderOpen, Calendar, PlaneTakeoff, Home, Gift, ListTodo, Receipt,
   Presentation, ClipboardList, Timer, Award, AlertCircle, Building2, ScrollText,
   FileCheck, Bug, Mail, ChevronLeft, ChevronRight, ChevronDown, Grid3x3,
-  LogOut, Menu, X as CloseIcon, SquareKanban, Inbox, Camera, Gauge,
+  LogOut, Menu, X as CloseIcon, SquareKanban, Inbox, Camera, Gauge, CalendarCheck,
 } from "lucide-react";
 import { usePipelineBootstrap } from "@/lib/pipeline-swr";
 import { PortalSwitcherRail } from "./portal-switcher";
@@ -31,7 +31,7 @@ const NAV_MAIN: NavItem[] = [
   { href: "/history",      label: "Link History",   icon: Clock },
   { href: "/leaderboard",  label: "Leaderboard",    icon: Trophy },
   { href: "/team",         label: "My Team",        icon: Users,           group: "People" },
-  { href: "/leave",        label: "Leave Request",  icon: PlaneTakeoff,    group: "Time Off" },
+  { href: "/leave",        label: "Leave",          icon: PlaneTakeoff,    group: "Time Off" },
   { href: "/wfh",          label: "Work from Home", icon: Home },
   { href: "/comp-off",     label: "Comp Off",       icon: Gift },
   { href: "/salary-slips", label: "Salary Slips",   icon: Wallet,          group: "Money" },
@@ -51,10 +51,11 @@ const NAV_MORE: NavItem[] = [
   { href: "/company",       label: "About Company",  icon: Building2 },
   { href: "/sop",           label: "SOPs & Terms",   icon: ScrollText },
   { href: "/contract",      label: "My Contract",    icon: FileCheck },
+  { href: "/joining-date",  label: "Joining Date",   icon: CalendarCheck },
   { href: "/bug-report",    label: "Report Bug",     icon: Bug },
 ];
 
-function MoreGrid({ expanded, pathname }: { expanded: boolean; pathname: string }) {
+function MoreGrid({ expanded, pathname, onExpand }: { expanded: boolean; pathname: string; onExpand?: () => void }) {
   const [open, setOpen] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("hr.moreOpen") === "1";
@@ -67,13 +68,15 @@ function MoreGrid({ expanded, pathname }: { expanded: boolean; pathname: string 
   const hasActive = NAV_MORE.some(i => pathname.startsWith(i.href));
 
   if (!expanded) {
+    // Collapsed rail: the More icon opens the rail with the grid showing (it used to link to /calendar).
     return (
-      <Link href="/calendar" title="More"
+      <button type="button" title="More" aria-label="More"
+        onClick={() => { setOpen(true); onExpand?.(); }}
         className={`w-full flex justify-center items-center h-10 rounded-xl transition-all mb-0.5 ${
           hasActive ? "nav-active" : "text-ink-3 hover:bg-muted/80 hover:text-ink"
         }`}>
         <Grid3x3 size={16} strokeWidth={1.8} />
-      </Link>
+      </button>
     );
   }
 
@@ -196,7 +199,7 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
         })}
 
         <div className="mx-3 my-2" style={{ borderTop: "1px dashed rgba(26,26,26,0.1)" }} />
-        <MoreGrid expanded={expanded} pathname={pathname} />
+        <MoreGrid expanded={expanded} pathname={pathname} onExpand={collapsed ? onCollapse : undefined} />
       </nav>
 
       {/* Footer */}
@@ -226,13 +229,11 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
           )}
         </div>
 
-        {expanded && (
-          <button onClick={onLogout}
-            className="w-full flex items-center gap-2 px-3 h-9 rounded-xl text-[12px] font-medium text-ink-3 hover:bg-muted/80 hover:text-ink transition-colors">
-            <LogOut size={14} />
-            <span>Log out</span>
-          </button>
-        )}
+        <button onClick={onLogout} title={expanded ? undefined : "Log out"} aria-label="Log out"
+          className={`w-full flex items-center ${expanded ? "gap-2 px-3" : "justify-center px-0"} h-9 rounded-xl text-[12px] font-medium text-ink-3 hover:bg-muted/80 hover:text-ink transition-colors`}>
+          <LogOut size={14} />
+          {expanded && <span>Log out</span>}
+        </button>
       </div>
     </>
   );

@@ -581,7 +581,6 @@ router.get(
 
 router.get("/admin/employees/:id/profile-data", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { prisma } = require("@dashmani/db");
     const profile = await prisma.employeeProfile.findUnique({ where: { userId: req.params.id } });
     return success(res, profile);
   } catch (err) { next(err); }
@@ -589,7 +588,6 @@ router.get("/admin/employees/:id/profile-data", authenticate, requirePermission(
 
 router.put("/admin/employees/:id/profile-data", authenticate, requirePermission("employees", "edit"), guardTargetUser("id"), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { prisma } = require("@dashmani/db");
     const {
       designation, salary, joinDate,
       bankName, bankAccountNumber, bankAccountHolderName, bankBranch, ifscCode,
@@ -630,7 +628,6 @@ router.put("/admin/employees/:id/profile-data", authenticate, requirePermission(
 
 router.get("/admin/documents", authenticate, requirePermission("employees", "view"), requireAdminOrHrRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { prisma } = require("@dashmani/db");
     const where: any = {};
     if (req.query.employeeId) where.employeeId = req.query.employeeId;
     const docs = await prisma.employeeDocument.findMany({ where, orderBy: { createdAt: "desc" }, include: { employee: { select: { id: true, name: true } } } });
@@ -766,7 +763,6 @@ router.delete("/admin/jobs/:id", authenticate, requirePermission("employees", "e
 
 router.put("/admin/employees/:id/job-description", authenticate, requirePermission("employees", "edit"), guardTargetUser("id"), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { prisma } = require("@dashmani/db");
     const profile = await prisma.employeeProfile.upsert({
       where: { userId: req.params.id },
       update: { jobDescription: req.body.jobDescription },

@@ -161,25 +161,24 @@ await journey("inventory", async () => {
 // ── 4. Client + billing profile ───────────────────────────────────────────────────
 await journey("client", async () => {
   await go("/clients");
-  await page.getByRole("button", { name: "Add client" }).click();
+  // Since #244 "Add client" is a link to the full New client page, which takes the billing
+  // profile on the same form and opens the new client when saved.
+  await page.getByRole("link", { name: "Add client" }).first().click();
+  await page.waitForURL(/\/clients\/new/); await settle();
   await page.getByLabel("Company", { exact: true }).fill(`E2E Brand ${stamp}`);
   await page.getByLabel("Contact person").fill("Asha Rao");
-  await page.getByLabel("Email", { exact: true }).fill(`e2e-${stamp}@brand.test`);
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await settle();
-  await page.getByRole("link", { name: new RegExp(`E2E Brand ${stamp}`) }).first().click();
-  await page.waitForURL(/\/clients\/view\?id=/); await settle();
-  ids.client = new URL(page.url()).searchParams.get("id");
-  check("client created and opened", !!ids.client, page.url());
-  const add = page.getByRole("button", { name: /^(Add|Edit)$/ }).first();
-  await add.click();
+  // The Email field's label also holds its hint ("Also the address they would sign in with…").
+  await page.getByLabel(/^Email/).first().fill(`e2e-${stamp}@brand.test`);
   await page.getByLabel("Legal name").fill(`E2E Brand ${stamp} Private Limited`);
   await page.getByLabel("GSTIN").fill("27AABCU9603R1ZX");
   await page.getByLabel("Address line 1").fill("12 Film City Road");
   await page.getByLabel("City").fill("Mumbai");
   await page.getByLabel("PIN").fill("400065");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await settle(); await page.waitForTimeout(500);
+  await page.getByRole("button", { name: "Create client" }).click();
+  await page.waitForURL(/\/clients\/view\?id=/); await settle();
+  ids.client = new URL(page.url()).searchParams.get("id");
+  check("client created and opened", !!ids.client, page.url());
+  await page.waitForTimeout(500);
   check("billing profile saved", (await text()).includes("27AABCU9603R1ZX"), (await text()).slice(0, 300));
 });
 
@@ -546,7 +545,8 @@ await journey("swipe-import-check", async () => {
   await ready(); await settle();
   ids.swipeImport = new URL(page.url()).searchParams.get("id");
   check("swipe import: check shows one invoice found", (await page.getByText("Invoices found").count()) > 0, page.url());
-  check("swipe import: import button present", (await page.getByRole("button", { name: /^Import 1 invoices/ }).count()) > 0);
+  // The count is the invoices READY to import; a row for a client staff have not confirmed yet is not.
+  check("swipe import: import button present", (await page.getByRole("button", { name: /^Import \d+ invoices/ }).count()) > 0);
 });
 
 // smart-invoicing: bank steps

@@ -193,7 +193,7 @@ export async function getWorkload(dir: PipelineDirectory): Promise<W.PipelineWor
         SELECT p.owner_id AS user_id, count(*)::int AS n,
                count(*) FILTER (WHERE p.due_date IS NOT NULL AND p.due_date < ${today}::date)::int AS overdue
           FROM pipeline_projects p JOIN pipeline_phases ph ON ph.id = p.phase_id
-         WHERE ${live} AND ph.is_terminal = false
+         WHERE ${live} AND p.kind = 'project' AND ph.is_terminal = false
          GROUP BY p.owner_id`;
       const leave = await db.$queryRaw<Array<{ user_id: string; start: Date }>>`
         SELECT l.employee_id AS user_id, min(l.start_date) AS start

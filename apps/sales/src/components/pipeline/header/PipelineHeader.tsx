@@ -13,7 +13,8 @@ export function PipelineHeader({
   actions,
   status,
 }: {
-  title: string;
+  /** Text, or a small node (the chat page puts the # / 🔒 / avatar before the name). */
+  title: React.ReactNode;
   sub?: React.ReactNode;
   left?: React.ReactNode;
   actions?: React.ReactNode;

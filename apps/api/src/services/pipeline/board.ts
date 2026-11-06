@@ -165,7 +165,7 @@ async function buildBoardSnapshot(): Promise<PipelineBoardSnapshot> {
                           ${CARD_CLIENT_COLS},
                           count(*) OVER ()::int AS phase_total
                      FROM pipeline_projects p
-                    WHERE p.phase_id = ph.id AND p.archived_at IS NULL AND p.deleted_at IS NULL
+                    WHERE p.phase_id = ph.id AND p.kind = 'project' AND p.archived_at IS NULL AND p.deleted_at IS NULL
                     ORDER BY p.rank COLLATE "C", p.id
                     LIMIT ${cap + 1}) cards
                  WHERE ph.archived_at IS NULL

@@ -89,7 +89,7 @@ export async function lockProject(tx: PipelineTx, projectId: string, actorId: st
            (SELECT (u.status = 'ACTIVE' AND u.deleted_at IS NULL) FROM users u WHERE u.id = ${actorId}) AS actor_active,
            timezone('utc', now()) AS db_now
       FROM pipeline_projects p
-     WHERE p.id = ${projectId}
+     WHERE p.id = ${projectId} AND p.kind = 'project'
        FOR UPDATE OF p`;
   return rows[0] ?? null;
 }
@@ -160,7 +160,7 @@ export async function createProject(
                (SELECT count(*)::int FROM users u
                  WHERE u.id = ANY(${memberIds}::text[]) AND u.status = 'ACTIVE' AND u.deleted_at IS NULL) AS active_members,
                (SELECT p.rank FROM pipeline_projects p
-                 WHERE p.phase_id = ph.id AND p.archived_at IS NULL AND p.deleted_at IS NULL
+                 WHERE p.phase_id = ph.id AND p.kind = 'project' AND p.archived_at IS NULL AND p.deleted_at IS NULL
                  ORDER BY p.rank COLLATE "C", p.id LIMIT 1) AS first_rank
           FROM (SELECT 1) one
           LEFT JOIN ph ON true`;
@@ -179,7 +179,7 @@ export async function createProject(
         // The top of the phase is exhausted (vanishingly rare): place it at the bottom instead.
         const [last] = await tx.$queryRaw<Array<{ rank: string }>>`
           SELECT rank FROM pipeline_projects
-           WHERE phase_id = ${targetPhase} AND archived_at IS NULL AND deleted_at IS NULL
+           WHERE phase_id = ${targetPhase} AND kind = 'project' AND archived_at IS NULL AND deleted_at IS NULL
            ORDER BY rank COLLATE "C" DESC, id DESC LIMIT 1`;
         rank = keyBetween(last?.rank ?? null, null);
       }
@@ -274,7 +274,7 @@ export async function listClientProjects(clientId: string): Promise<ClientProjec
              p.due_date, p.archived_at, p.updated_at
         FROM pipeline_projects p
         JOIN pipeline_phases ph ON ph.id = p.phase_id
-       WHERE p.linked_client_id = ${clientId} AND p.deleted_at IS NULL
+       WHERE p.linked_client_id = ${clientId} AND p.kind = 'project' AND p.deleted_at IS NULL
        ORDER BY (p.archived_at IS NOT NULL), p.updated_at DESC, p.id
        LIMIT 100`,
   );
@@ -311,7 +311,7 @@ export async function listProjects(actor: PipelineActor, input: ListProjectsInpu
                         ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS},
                  p.archived_at, p.archived_by_admin, p.deleted_at, p.deleted_by_admin
             FROM pipeline_projects p
-           WHERE p.archived_at IS NOT NULL AND p.deleted_at IS NULL
+           WHERE p.archived_at IS NOT NULL AND p.deleted_at IS NULL AND p.kind = 'project'
              AND (${at}::timestamptz IS NULL
                   OR (p.archived_at, p.id) < ((${at}::timestamptz AT TIME ZONE 'UTC'), ${cid}::text))
            ORDER BY p.archived_at DESC, p.id DESC
@@ -323,7 +323,7 @@ export async function listProjects(actor: PipelineActor, input: ListProjectsInpu
                         ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS},
                  p.archived_at, p.archived_by_admin, p.deleted_at, p.deleted_by_admin
             FROM pipeline_projects p
-           WHERE p.deleted_at IS NOT NULL
+           WHERE p.deleted_at IS NOT NULL AND p.kind = 'project'
              AND p.deleted_at > timezone('utc', now()) - make_interval(days => ${PIPELINE_LIMITS.restoreWindowDays}::int)
              AND (${actor.isAdminHint}::boolean OR p.owner_id = ${actor.userId})
              AND (${at}::timestamptz IS NULL
@@ -376,7 +376,9 @@ export async function getProjectDetail(
   const rows = await pipelineRead((db) =>
     db.$queryRaw<DetailRow[]>`
       WITH p AS (
-        SELECT pr.*, (SELECT c.company_name FROM clients c WHERE c.id = pr.linked_client_id) AS linked_client_name
+        SELECT pr.*, (SELECT c.company_name FROM clients c WHERE c.id = pr.linked_client_id) AS linked_client_name,
+               (SELECT t.title FROM pipeline_projects t WHERE t.id = pr.parent_project_id) AS parent_title,
+               (SELECT t.deleted_at IS NOT NULL FROM pipeline_projects t WHERE t.id = pr.parent_project_id) AS parent_deleted
           FROM pipeline_projects pr WHERE pr.id = ${projectId}),
       me AS (
         SELECT role, notify, last_read_seq FROM pipeline_participants
@@ -431,7 +433,14 @@ export async function getProjectDetail(
   );
   const d = rows[0];
   if (!d?.project) throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");
-  if (d.project.deleted_at) throw new PipelineError(404, "PROJECT_DELETED", "This project was deleted");
+  // A channel of a deleted campaign is gone with it (access.ts parentLiveSql).
+  if (d.project.deleted_at || d.project.parent_deleted === true) {
+    throw new PipelineError(404, "PROJECT_DELETED", "This project was deleted");
+  }
+  // A private channel or DM is visible to its participants only (sales-portal chat).
+  if ((d.project.kind === "dm" || d.project.is_private === true) && !d.me) {
+    throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");
+  }
   let aroundMissing = false;
   if (aroundId !== null) {
     if (d.around_project === null) aroundMissing = true;
@@ -645,7 +654,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
       await tx.$queryRaw`
         SELECT id FROM pipeline_projects
          WHERE id = ${projectId}
-            OR (phase_id = ${toPhaseId} AND archived_at IS NULL AND deleted_at IS NULL)
+            OR (phase_id = ${toPhaseId} AND kind = 'project' AND archived_at IS NULL AND deleted_at IS NULL)
          ORDER BY id
            FOR UPDATE`;
     }
@@ -680,11 +689,11 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
         SELECT id, name, archived_at, is_terminal FROM pipeline_phases WHERE id = ${toPhaseId}),
       aft AS (
         SELECT rank FROM pipeline_projects
-         WHERE id = ${afterId}::text AND phase_id = ${toPhaseId}
+         WHERE id = ${afterId}::text AND phase_id = ${toPhaseId} AND kind = 'project'
            AND archived_at IS NULL AND deleted_at IS NULL AND id <> ${projectId}),
       lst AS (
         SELECT rank FROM pipeline_projects
-         WHERE phase_id = ${toPhaseId} AND archived_at IS NULL AND deleted_at IS NULL AND id <> ${projectId}
+         WHERE phase_id = ${toPhaseId} AND kind = 'project' AND archived_at IS NULL AND deleted_at IS NULL AND id <> ${projectId}
          ORDER BY rank COLLATE "C" DESC, id DESC LIMIT 1),
       a AS (
         SELECT CASE WHEN ${afterId}::text IS NULL THEN NULL
@@ -693,7 +702,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
                (${afterId}::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM aft)) AS adjusted),
       b AS (
         SELECT q.rank FROM pipeline_projects q, a
-         WHERE q.phase_id = ${toPhaseId} AND q.archived_at IS NULL AND q.deleted_at IS NULL AND q.id <> ${projectId}
+         WHERE q.phase_id = ${toPhaseId} AND q.kind = 'project' AND q.archived_at IS NULL AND q.deleted_at IS NULL AND q.id <> ${projectId}
            AND (a.rank IS NULL OR q.rank COLLATE "C" > a.rank COLLATE "C")
          ORDER BY q.rank COLLATE "C", q.id LIMIT 1)
       SELECT ph.id AS phase_id, ph.name AS phase_name, ph.archived_at AS phase_archived_at,
@@ -780,7 +789,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
 async function rebalancePhase(tx: PipelineTx, phaseId: string, projectId: string, afterId: string | null): Promise<string> {
   const locked = await tx.$queryRaw<Array<{ id: string; rank: string }>>`
     SELECT id, rank FROM pipeline_projects
-     WHERE phase_id = ${phaseId} AND archived_at IS NULL AND deleted_at IS NULL
+     WHERE phase_id = ${phaseId} AND kind = 'project' AND archived_at IS NULL AND deleted_at IS NULL
      ORDER BY id
        FOR UPDATE`;
   const others = locked
@@ -815,7 +824,7 @@ async function relocationFor(tx: PipelineTx, row: Row): Promise<{ phaseId: strin
     SELECT (SELECT archived_at IS NOT NULL FROM pipeline_phases WHERE id = ${String(row.phase_id)}) AS phase_archived,
            (SELECT id FROM first) AS first_id,
            (SELECT p.rank FROM pipeline_projects p
-             WHERE p.phase_id = (SELECT id FROM first) AND p.archived_at IS NULL AND p.deleted_at IS NULL
+             WHERE p.phase_id = (SELECT id FROM first) AND p.kind = 'project' AND p.archived_at IS NULL AND p.deleted_at IS NULL
              ORDER BY p.rank COLLATE "C", p.id LIMIT 1) AS first_rank`;
   if (r.phase_archived !== true || !r.first_id) {
     return { phaseId: String(row.phase_id), rank: String(row.rank), adjusted: false };

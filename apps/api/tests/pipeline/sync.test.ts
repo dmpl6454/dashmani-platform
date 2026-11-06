@@ -202,14 +202,14 @@ describe("pipeline sync", () => {
       data: { lastReadSeq: 1 },
     });
     const a = (await sync(bob.id, {})).body.data;
-    expect(a.mine).toEqual([{ projectId: project.id, role: "MEMBER", notify: true, unread: 2 }]);
+    expect(a.mine).toEqual([{ projectId: project.id, role: "MEMBER", notify: true, unread: 2, kind: "project" }]);
     expect(a.project).toBeNull();
     const b = (await sync(bob.id, { mineH: a.mineH })).body.data;
     expect(b.mine).toBeNull();
     expect(b.mineH).toBe(a.mineH);
     await post(owner.id, project.id, "one more");
     const c = (await sync(bob.id, { mineH: a.mineH })).body.data;
-    expect(c.mine).toEqual([{ projectId: project.id, role: "MEMBER", notify: true, unread: 3 }]);
+    expect(c.mine).toEqual([{ projectId: project.id, role: "MEMBER", notify: true, unread: 3, kind: "project" }]);
     expect(c.mineH).not.toBe(a.mineH);
   });
 

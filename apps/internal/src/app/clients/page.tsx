@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useClients } from "@/lib/hooks/use-clients";
@@ -35,6 +36,7 @@ const EMPTY_FORM = { companyName: "", contactName: "", email: "", password: "", 
 const BTN_GHOST = "h-9 px-3.5 rounded-[6px] border border-ds-line2 text-ds-t2 text-[12px] font-semibold hover:text-ds-text hover:border-ds-line4 disabled:opacity-50";
 
 export default function ClientsPage() {
+  usePageTitle("Clients");
   const [search, setSearch] = useState("");
   const { data, isLoading, error, mutate } = useClients({ search });
   const clients = (data as any)?.data || [];

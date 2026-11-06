@@ -719,7 +719,7 @@ export default function DashboardPage() {
                 { label: "↳ Documents to verify", n: stats.pendingDocuments ?? 0, c: "var(--hx-33506A)", sub: true, href: "/approvals" },
                 { label: "↳ Profile pictures", n: stats.pendingProfilePictures ?? 0, c: "var(--hx-33506A)", sub: true, href: "/approvals" },
                 { label: "New joiners to review", n: pendingEmployees, c: C.pink, sub: false, href: "/employees/pending" },
-                { label: "Not submitted today", n: notSubmitted, c: C.blue, sub: false, href: "/reports", note: isSundayIST ? "Sunday — no submissions expected" : undefined },
+                { label: "Not submitted today", n: notSubmitted, c: C.blue, sub: false, href: "/reports/links?range=1", note: isSundayIST ? "Sunday — no submissions expected" : undefined },
               ].map((q) => (
                 <Link key={q.label} href={q.href} className={`flex items-center gap-2.5 py-[9px] pr-1 border-b border-ds-grid text-[11.5px] hover:bg-ds-hover min-w-0 ${q.sub ? "pl-[18px]" : "pl-1"}`}>
                   <span className="h-[7px] w-[7px] rounded-full shrink-0" style={{ background: q.c }} />

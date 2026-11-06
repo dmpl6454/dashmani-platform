@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 import { Check, X, Clock, ArrowLeft } from "lucide-react";
@@ -16,6 +17,7 @@ interface PendingEmployee {
 }
 
 export default function PendingEmployeesPage() {
+  usePageTitle("Pending Registrations");
   const [employees, setEmployees] = useState<PendingEmployee[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);

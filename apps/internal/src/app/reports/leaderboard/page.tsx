@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useState, type ReactNode } from "react";
 import type React from "react";
 import Link from "next/link";
@@ -109,6 +110,7 @@ function MobileRankCard({
 }
 
 export default function AdminLeaderboardPage() {
+  usePageTitle("Leaderboard");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 

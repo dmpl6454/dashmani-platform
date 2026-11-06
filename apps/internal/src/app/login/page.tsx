@@ -437,7 +437,7 @@ function SubmitBtn({ state }: { state: "idle" | "loading" | "success" }) {
       className="btn-3d w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-ink text-white font-semibold text-[14.5px] tracking-tight disabled:opacity-70 disabled:cursor-not-allowed"
       aria-live="polite"
     >
-      {state === "idle" && (<><span>Sign in to portal</span><ArrowRight size={16} /></>)}
+      {state === "idle" && (<><span>Sign in</span><ArrowRight size={16} /></>)}
       {state === "loading" && (<><span className="auth-spinner" aria-hidden /><span>Signing you in…</span></>)}
       {state === "success" && (<><Check size={20} color="#F5D547" strokeWidth={3} /><span>Welcome back</span></>)}
     </button>

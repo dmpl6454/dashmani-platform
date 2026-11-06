@@ -84,7 +84,7 @@ function NotForRole({ name, onLogout }: { name: string; onLogout: () => void }) 
         <p className="text-ink-3 text-sm mb-6">
           {name}, your account doesn&apos;t carry the Sales role. Ask an admin to add it on the staff portal, or sign in with another account.
         </p>
-        <button type="button" className="btn" onClick={onLogout}>Sign out</button>
+        <button type="button" className="btn" onClick={onLogout}>Log out</button>
       </div>
     </main>
   );

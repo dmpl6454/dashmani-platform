@@ -44,6 +44,7 @@ import { ClientLinkPanel } from "./ClientLinkPanel";
 import { MembersPanel } from "./MembersPanel";
 import { WorkPanel } from "./WorkPanel";
 import { PhasePill, PhaseSelect, ProjectMenu } from "./ProjectHeader";
+import { CampaignChannelList } from "../chat/CampaignSidebar";
 
 const RETRY_MS = [10_000, 20_000, 40_000];
 
@@ -90,7 +91,7 @@ export function ProjectPage({ id }: { id: string }) {
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   // ?tab=work (work notices in the bell) opens the Work tab on a phone and in the side column.
   const wantWork = sp.get("tab") === "work";
-  const [tab, setTab] = useState<"conversation" | "work" | "details">(wantWork ? "work" : "conversation");
+  const [tab, setTab] = useState<"conversation" | "channels" | "work" | "details">(wantWork ? "work" : "conversation");
   // Desktop side column: project details, or the work (versions, approval, pages).
   const [sideTab, setSideTab] = useState<"details" | "work">(wantWork ? "work" : "details");
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -330,7 +331,7 @@ export function ProjectPage({ id }: { id: string }) {
         </div>
         {header && (
           <div className="shrink-0 flex gap-1 px-2 pt-1 border-b border-rule" role="tablist" aria-label="Project">
-            {(["conversation", "work", "details"] as const).map((k) => (
+            {(["conversation", "channels", "work", "details"] as const).map((k) => (
               <button
                 key={k}
                 type="button"
@@ -339,7 +340,7 @@ export function ProjectPage({ id }: { id: string }) {
                 onClick={() => setTab(k)}
                 className={`h-11 px-3 text-[13.5px] font-semibold border-b-2 ${tab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
               >
-                {k === "conversation" ? "Conversation" : k === "work" ? "Work" : "Details"}
+                {k === "conversation" ? "Conversation" : k === "channels" ? "Channels" : k === "work" ? "Work" : "Details"}
               </button>
             ))}
           </div>
@@ -349,6 +350,11 @@ export function ProjectPage({ id }: { id: string }) {
         {header &&
           (tab === "conversation" ? (
             thread
+          ) : tab === "channels" ? (
+            // Phones: the campaign's channels (desktop has them in the left column).
+            <div className="pl-scroll flex-1 py-2">
+              <CampaignChannelList campaignId={id} campaignTitle={header.title} onOpenGeneral={() => setTab("conversation")} />
+            </div>
           ) : tab === "work" ? (
             <div className="pl-scroll flex-1">
               <WorkPanel projectId={id} readOnly={readOnly} />

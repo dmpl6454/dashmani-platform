@@ -35,10 +35,13 @@ const COLUMNS: Record<string, string[]> = {
     "deleted_by_id", "deleted_by_admin", "created_at", "updated_at",
     // The client company the project is for (scripts/pipeline-client-ddl.sql, 2026-11-02).
     "linked_client_id",
+    // Channels and DMs (scripts/pipeline-chat-ddl.sql, 2026-11-03).
+    "kind", "is_private", "dm_key", "parent_project_id",
   ],
   pipeline_participants: [
     "project_id", "user_id", "role", "notify", "last_read_seq", "seen_at", "engaged_at",
     "member_added_by_id", "member_added_at", "created_at", "updated_at",
+    "hidden_seq",
   ],
   pipeline_messages: [
     "id", "client_id", "project_id", "seq", "rev", "parent_id", "author_id", "body", "mention_ids",
@@ -64,6 +67,8 @@ const INDEXES: Record<string, string[]> = {
     "pipeline_projects_archived_at_id_idx",
     "pipeline_projects_deleted_at_idx",
     "pipeline_projects_linked_client_id_idx",
+    "pipeline_projects_dm_key_key",
+    "pipeline_projects_parent_project_id_idx",
   ],
   pipeline_participants: ["pipeline_participants_pkey", "pipeline_participants_user_id_idx"],
   pipeline_messages: [
@@ -97,6 +102,8 @@ const FOREIGN_KEYS = [
   "pipeline_projects.linked_client_id -> clients : n",
   "pipeline_projects.owner_id -> users : r",
   "pipeline_projects.phase_id -> pipeline_phases : r",
+  // A campaign's channels go with it (scripts/pipeline-chat-ddl.sql).
+  "pipeline_projects.parent_project_id -> pipeline_projects : c",
   // Work tracking (scripts/pipeline-work-ddl.sql): rows belong to a project; people ids
   // (created_by_id, reviewer_id, assignee_id…) deliberately have NO FK into users.
   "pipeline_deliverables.project_id -> pipeline_projects : c",

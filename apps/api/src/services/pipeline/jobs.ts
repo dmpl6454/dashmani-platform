@@ -159,7 +159,11 @@ async function purgeProject(pid: string, onChunk?: (c: PurgeChunk) => void): Pro
     onChunk?.({ phase: "notifications", rows: value, ms });
   }
 
-  // 4. Replies, then roots, 1,000 per transaction, each re-checking the project lock.
+  // 4. Replies, then roots, 1,000 per transaction, each re-checking the project lock. A
+  // campaign's sales-portal channels go with it (step 5 cascades them), so their messages are
+  // deleted here in the same chunks — never in one cascading statement.
+  const threads = Prisma.sql`(SELECT ${pid}::text UNION ALL
+                              SELECT c.id FROM pipeline_projects c WHERE c.parent_project_id = ${pid})`;
   for (const phase of ["replies", "roots"] as const) {
     const which = phase === "replies" ? Prisma.sql`parent_id IS NOT NULL` : Prisma.sql`parent_id IS NULL`;
     for (;;) {
@@ -169,7 +173,7 @@ async function purgeProject(pid: string, onChunk?: (c: PurgeChunk) => void): Pro
           return tx.$executeRaw`
             DELETE FROM pipeline_messages
              WHERE id IN (SELECT id FROM pipeline_messages
-                           WHERE project_id = ${pid} AND ${which} LIMIT ${PURGE_CHUNK}::int)`;
+                           WHERE project_id IN ${threads} AND ${which} LIMIT ${PURGE_CHUNK}::int)`;
         }),
       );
       if (value < 0) return false;
@@ -178,7 +182,7 @@ async function purgeProject(pid: string, onChunk?: (c: PurgeChunk) => void): Pro
     }
   }
 
-  // 5. The project row (cascades its participants).
+  // 5. The project row (cascades its participants, and its now-empty campaign channels).
   return pipelineWrite(async (tx) => {
     if (!(await lockPurgeable(tx, pid))) return false;
     await tx.$executeRaw`DELETE FROM pipeline_projects WHERE id = ${pid}`;

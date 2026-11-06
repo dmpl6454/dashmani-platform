@@ -34,7 +34,7 @@ function OfferView() {
   if (isLoading && !o) return <Loading label="Loading the post…" />;
   if (error && !o) {
     return (
-      <Banner tone="danger" role="alert" title="We couldn't load this post." action={<Link href="/offers" className="btn btn-sm btn-ghost">Back to bookings</Link>}>
+      <Banner tone="danger" role="alert" title="We couldn't load this post." action={<><button className="btn btn-sm" onClick={() => mutate()}>Try again</button><Link href="/offers" className="btn btn-sm btn-ghost">Back to bookings</Link></>}>
         {errorSentence(error)}
       </Banner>
     );

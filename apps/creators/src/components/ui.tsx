@@ -1,4 +1,5 @@
 "use client";
+import { titleText, usePageTitle } from "@/lib/use-page-title";
 import { useEffect, useRef, type ReactNode } from "react";
 import { AlertCircle, CheckCircle2, Info, TriangleAlert, X } from "lucide-react";
 
@@ -29,6 +30,7 @@ export function Banner({ tone = "info", title, children, action, role }: {
 }
 
 export function PageHead({ kicker, title, children }: { kicker: string; title: ReactNode; children?: ReactNode }) {
+  usePageTitle(titleText(title) ?? kicker);
   return (
     <div className="mb-8">
       <p className="kicker">{kicker}</p>

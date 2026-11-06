@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
@@ -46,6 +47,7 @@ function Icon({ d, className = "h-4 w-4", sw = 2 }: { d: string; className?: str
 }
 
 export default function AutoTeamsPage() {
+  usePageTitle("Auto Teams");
   const { data, isLoading, error, mutate } = useSWR("/admin/auto-teams", (url: string) => apiFetch<any>(url));
   const sharedAccounts = data?.data || [];
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});

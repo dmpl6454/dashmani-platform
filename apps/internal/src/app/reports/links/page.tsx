@@ -3,7 +3,7 @@
 // UI only: the same hooks, the same requests, the same links. Every figure comes from the
 // API; nothing here is mock data, and a missing figure renders "—", never a fabricated 0.
 import { safeHref } from "@/lib/safe-href";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef , useEffect} from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
@@ -259,6 +259,11 @@ export default function LinksAnalyticsPage() {
   // Default to last 30 days; pills + custom range drive every chart/stat on the page.
   const [startDate, setStartDate] = useState(() => presetStart(30));
   const [endDate, setEndDate] = useState(() => todayISO());
+  // Opened from the dashboard's "Not submitted today" row (?range=1): start on that preset.
+  useEffect(() => {
+    const r = Number(new URLSearchParams(window.location.search).get("range"));
+    if (RANGE_PRESETS.some((p) => p.days === r)) { setStartDate(presetStart(r)); setEndDate(todayISO()); }
+  }, []);
 
   const windowLabel = rangeLabel(startDate, endDate);
   const [tab, setTab] = useState<Tab>("overview");

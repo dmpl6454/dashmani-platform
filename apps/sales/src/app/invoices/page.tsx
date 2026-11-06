@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useInvoices } from "@/lib/hooks";
@@ -14,8 +14,14 @@ export default function InvoicesPage() {
 }
 
 function InvoicesList() {
-  const importId = useSearchParams().get("importId") ?? undefined;
+  const params = useSearchParams();
+  const importId = params.get("importId") ?? undefined;
   const [status, setStatus] = useState(importId ? "all" : "outstanding");
+  // Opened from a dashboard tile (?status=overdue …): start on that tab.
+  const wanted = params.get("status");
+  useEffect(() => {
+    if (wanted && TABS.includes(wanted)) setStatus(wanted);
+  }, [wanted]);
   const [q, setQ] = useState("");
   const { data, error, isLoading, mutate } = useInvoices({ status: status === "all" ? undefined : status, q: q.trim() || undefined, importId });
   const total = (data ?? []).reduce((s, i) => s + i.balancePaise, 0);

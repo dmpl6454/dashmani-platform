@@ -130,7 +130,8 @@ function ConnectInner() {
 
   return (
     <div className="flex flex-col gap-8">
-      <PageHead kicker="Pages" title="Connect your pages.">
+      <PageHead kicker="Pages" title="Pages">
+        Connect your Facebook Pages and Instagram accounts.{" "}
         Sign in with Facebook to share the Facebook Pages and Instagram professional accounts you manage. Facebook&apos;s window
         will show the name of our Meta app, <span className="text-white font-semibold">“Post Automation 2”</span> — that&apos;s us.
       </PageHead>

@@ -252,15 +252,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="fade-up d7">
-              <div className="v3-card overflow-hidden">
-                <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
-                  <h3 className="text-[14px] font-bold text-ink">Recent activity</h3>
-                  <span className="text-[11px] text-ink-3 font-medium">last 12h</span>
-                </div>
-                <div className="px-5 py-6 text-[12.5px] text-ink-4 text-center font-medium">No recent activity.</div>
-              </div>
-            </div>
           </div>
 
         </div>

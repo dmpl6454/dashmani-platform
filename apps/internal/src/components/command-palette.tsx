@@ -1,48 +1,20 @@
 "use client";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  Search, LayoutDashboard, Users, Building2, Clock, CheckSquare, Globe,
-  BarChart3, Briefcase, FolderOpen, FileEdit, TrendingUp, FileText,
-  UserPlus, Megaphone, Wallet, FileSignature, Calendar, BriefcaseBusiness,
-  Bug, Sparkles, Laptop, GraduationCap, AlertCircle, Settings, ArrowRight, X,
-} from "lucide-react";
+import { Search, LayoutDashboard, LayoutGrid, ArrowRight, X } from "lucide-react";
+import { primaryNav, moreNav } from "@/components/sidebar";
 import { cn } from "@dashmani/ui";
 import { isDsRoute } from "@/lib/ds-routes";
 import { useAuth } from "@/lib/auth";
 import { canAccessPath, isHrOnly } from "@/lib/roles";
 
-/* ── All navigable pages ── */
+/* ── All navigable pages: derived from the sidebar's own data, so the two can never list
+   different pages under different names (before 2026-11-06 this was a hand-kept copy that
+   missed seven pages and renamed five). ── */
 const SEARCH_ITEMS = [
-  /* Main nav */
-  { id: "dashboard",     label: "Dashboard",     group: "Pages", icon: LayoutDashboard,   href: "/dashboard"     },
-  { id: "employees",     label: "Employees",     group: "Pages", icon: Users,             href: "/employees"     },
-  { id: "teams",         label: "Teams",         group: "Pages", icon: Building2,         href: "/teams"         },
-  { id: "tasks",         label: "Tasks",         group: "Pages", icon: CheckSquare,       href: "/tasks"         },
-  { id: "content",       label: "Content",       group: "Pages", icon: FileEdit,          href: "/content"       },
-  { id: "accounts",      label: "Accounts",      group: "Pages", icon: Globe,             href: "/accounts"      },
-  { id: "account-growth", label: "Account Growth", group: "Pages", icon: TrendingUp,      href: "/accounts/growth" },
-  { id: "workload",      label: "Workload",      group: "Pages", icon: BarChart3,         href: "/workload"      },
-  { id: "clients",       label: "Clients",       group: "Pages", icon: Briefcase,         href: "/clients"       },
-  { id: "projects",      label: "Projects",      group: "Pages", icon: FolderOpen,        href: "/projects"      },
-  { id: "attendance",    label: "Attendance",    group: "Pages", icon: Clock,             href: "/attendance"    },
-  { id: "approvals",     label: "Approvals",     group: "Pages", icon: CheckSquare,       href: "/approvals"     },
-  { id: "analytics",     label: "Analytics",     group: "Pages", icon: TrendingUp,        href: "/analytics"     },
-  { id: "reports",       label: "Reports",       group: "Pages", icon: FileText,          href: "/reports"       },
-  { id: "announcements", label: "Announcements", group: "Pages", icon: Megaphone,         href: "/announcements" },
-  /* More */
-  { id: "ai-assistant",  label: "AI Assistant",  group: "Tools", icon: Sparkles,          href: "/ai-assistant"  },
-  { id: "salary-slips",  label: "Salary Slips",  group: "Tools", icon: Wallet,            href: "/salary-slips"  },
-  { id: "offer-letters", label: "Offer Letters", group: "Tools", icon: FileSignature,     href: "/offer-letters" },
-  { id: "holidays",      label: "Holidays",      group: "Tools", icon: Calendar,          href: "/holidays"      },
-  { id: "jobs",          label: "Job Listings",  group: "Tools", icon: BriefcaseBusiness, href: "/jobs"          },
-  { id: "expenses",      label: "Expenses",      group: "Tools", icon: Wallet,            href: "/expenses"      },
-  { id: "devices",       label: "Devices",       group: "Tools", icon: Laptop,            href: "/devices"       },
-  { id: "auto-teams",    label: "Auto Teams",    group: "Tools", icon: UserPlus,          href: "/auto-teams"    },
-  { id: "internships",   label: "Internships",   group: "Tools", icon: GraduationCap,     href: "/internships"   },
-  { id: "complaints",    label: "Complaints",    group: "Tools", icon: AlertCircle,       href: "/complaints"    },
-  { id: "bug-reports",   label: "Bug Reports",   group: "Tools", icon: Bug,               href: "/bug-reports"   },
-  { id: "settings",      label: "Settings",      group: "Tools", icon: Settings,          href: "/settings"      },
+  { id: "overview", label: "Overview", group: "Pages", icon: LayoutGrid, href: "/overview" },
+  ...primaryNav.map((n) => ({ id: n.href.replace(/^\//, "").replace(/\//g, "-"), label: n.label, group: "Pages", icon: n.icon, href: n.href })),
+  ...moreNav.map((n) => ({ id: n.href.replace(/^\//, ""), label: n.label, group: "Tools", icon: n.icon, href: n.href })),
 ];
 
 const KBD_DARK = "!bg-ds-inset !border-ds-line2 !text-ds-t2 !shadow-none";
@@ -60,7 +32,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const { user } = useAuth();
   const items = useMemo(() => {
     if (!isHrOnly(user)) return SEARCH_ITEMS;
-    const hrHome = { ...SEARCH_ITEMS[0], id: "hr-home", label: "HR Home", href: "/hr" };
+    const hrHome = { id: "hr-home", label: "HR Home", group: "Pages", icon: LayoutDashboard, href: "/hr" };
     return [hrHome, ...SEARCH_ITEMS.filter((i) => canAccessPath(user, i.href))];
   }, [user]);
   const [query, setQuery]   = useState("");

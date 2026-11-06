@@ -198,7 +198,8 @@ export default function LoginPage() {
           </div>
 
           {/* Auth card */}
-          <div ref={formRef} id="auth" className="v3-card-auth p-6 sm:p-8 mt-12 auth-pop-in d7 relative">
+          {/* Phones: the sign-in card comes FIRST (before 2026-11-06 it started 870 px down, under the hero). */}
+          <div ref={formRef} id="auth" className="v3-card-auth p-6 sm:p-8 order-first lg:order-none mb-10 lg:mb-0 lg:mt-12 auth-pop-in d2 lg:d7 relative">
             <div className="mb-6">
               <h2 className="font-display text-[24px] font-semibold text-ink leading-tight">Welcome back.</h2>
               <p className="text-[13px] text-ink-3 mt-1 font-medium">

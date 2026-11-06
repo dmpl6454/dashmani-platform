@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
@@ -55,6 +56,7 @@ const BLANK = {
 };
 
 export default function OfferLettersPage() {
+  usePageTitle("Offer Letters");
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);

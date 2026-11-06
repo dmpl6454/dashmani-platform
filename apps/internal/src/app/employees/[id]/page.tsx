@@ -1,4 +1,5 @@
 "use client";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { safeHref } from "@/lib/safe-href";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -70,6 +71,7 @@ function formatCurrency(n: number) {
 }
 
 export default function EmployeeDetailPage() {
+  usePageTitle("Employee");
   const { id } = useParams();
   const router = useRouter();
   const { user: currentUser } = useAuth();

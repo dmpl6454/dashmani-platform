@@ -48,15 +48,19 @@ export default function ContentDetailPage() {
     } catch { Actions.toast({ kind: "danger", text: "Could not approve. Please try again." }); }
   }
 
-  async function handleRevise(note: string) {
+  // Revise = REVISION_REQUESTED (as on Home), Reject = REJECTED; both sent REJECTED before 2026-11-06.
+  async function respond(status: "REVISION_REQUESTED" | "REJECTED", note: string) {
     try {
-      await apiFetch(`/client/content/${post.id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REJECTED", clientNote: note }) });
+      await apiFetch(`/client/content/${post.id}/respond`, { method: "PUT", body: JSON.stringify({ status, clientNote: note }) });
       mutate(post?.id ? `/client/content/${post.id}` : null);
       mutate(PENDING_APPROVALS_KEY);
-      Actions.toast({ kind: "success", text: "Revision requested." });
+      Actions.toast({ kind: "success", text: status === "REJECTED" ? "Rejected. The team has been told." : "Revision requested." });
       advance();
-    } catch { Actions.toast({ kind: "danger", text: "Could not request revision. Please try again." }); }
+    } catch { Actions.toast({ kind: "danger", text: status === "REJECTED" ? "Could not reject. Please try again." : "Could not request revision. Please try again." }); }
   }
+  const handleRevise = (note: string) => respond("REVISION_REQUESTED", note);
+  const handleReject = (note: string) => respond("REJECTED", note);
+
 
   useEffect(() => {
     if (!post || !isPending) return;
@@ -243,7 +247,7 @@ export default function ContentDetailPage() {
       <ReasonModal open={modal === "revise"} kind="revise" post={post} onClose={() => setModal(null)}
         onConfirm={(note) => { setModal(null); handleRevise(note); }} />
       <ReasonModal open={modal === "reject"} kind="reject" post={post} onClose={() => setModal(null)}
-        onConfirm={(note) => { setModal(null); handleRevise(note); }} />
+        onConfirm={(note) => { setModal(null); handleReject(note); }} />
     </>
   );
 }

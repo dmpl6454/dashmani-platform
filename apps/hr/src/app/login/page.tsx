@@ -1059,7 +1059,7 @@ export default function LoginPage() {
                       className="btn-3d w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-[#1A1A1A] text-white font-bold text-[14px] relative overflow-visible"
                       aria-live="polite"
                     >
-                      {submitState === "idle" && (<><span>Sign in & clock in</span><IcArrow /></>)}
+                      {submitState === "idle" && (<><span>Sign in</span><IcArrow /></>)}
                       {submitState === "loading" && (<><span className="h-[18px] w-[18px] border-[2.5px] border-white/35 border-t-white rounded-full" style={{ animation: "auth-spin .7s linear infinite" }} /><span>One moment…</span></>)}
                       {submitState === "success" && (
                         <>

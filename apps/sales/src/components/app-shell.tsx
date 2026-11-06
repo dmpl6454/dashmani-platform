@@ -110,8 +110,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="hidden sm:inline">{menuOpen ? "Close" : current?.label ?? "Menu"}</span>
             </button>
             <PortalSwitcher />
-            <button type="button" onClick={logout} className="btn btn-ghost btn-sm" aria-label="Sign out">
-              <LogOut size={14} aria-hidden /> <span className="hidden sm:inline">Sign out</span>
+            <button type="button" onClick={logout} className="btn btn-ghost btn-sm" aria-label="Log out">
+              <LogOut size={14} aria-hidden /> <span className="hidden sm:inline">Log out</span>
             </button>
           </div>
         </div>

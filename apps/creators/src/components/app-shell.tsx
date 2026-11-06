@@ -47,8 +47,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-sm font-bold truncate max-w-[220px]">{creator?.name}</span>
               {status && <span className="text-[11px] uppercase tracking-[0.1em] text-ink-3">{CREATOR_STATUS_LABELS[status] ?? status}</span>}
             </div>
-            <button type="button" onClick={logout} className="btn btn-ghost btn-sm" aria-label="Sign out">
-              <LogOut size={14} aria-hidden /> <span className="hidden sm:inline">Sign out</span>
+            <button type="button" onClick={logout} className="btn btn-ghost btn-sm" aria-label="Log out">
+              <LogOut size={14} aria-hidden /> <span className="hidden sm:inline">Log out</span>
             </button>
           </div>
         </div>

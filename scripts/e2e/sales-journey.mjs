@@ -91,7 +91,7 @@ async function signIn(who) {
   await settle();
 }
 async function signOut() {
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Log out" }).click();
   await page.waitForURL(/\/login/);
 }
 const setCompany = async (label) => { await page.getByRole("radio", { name: new RegExp(label) }).click(); await settle(); };

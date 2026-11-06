@@ -442,6 +442,7 @@ Why this method exists: hero pages are the most visible surface, the most tempti
 
 ## Key Conventions
 
+- **One word for leaving: "Log out"; one word for entering: "Sign in"** (2026-11-06 wording sweep, PR F of the UX review). Every portal's sign-out control reads "Log out" (sales and creators said "Sign out"; the staff Overview's user menu too) and every sign-in submit button reads "Sign in" (staff "Sign in to portal", HR "Sign in & clock in", client "Enter the portal" are gone). The staff login hero's scroll-to-form button still says "Sign in to portal" on purpose — it is a call to action, not the submit. `scripts/e2e/sales-journey.mjs` clicks the button by its new name. Do not reintroduce a third wording.
 - API versioning prefix: `/v1/`
 - Shared Zod schemas in `packages/shared/src/validators/` are used on both API (input validation) and frontends (form validation) — don't duplicate validators in app code.
 - Use `safeString` from `packages/shared/src/utils/sanitize.ts` instead of `z.string()` for any free-text user input field (name, title, description, etc.) — strips HTML tags at the API boundary.

@@ -105,7 +105,7 @@ function LoginForm() {
           {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
           <p className="auth-fine">Trouble signing in? <a href={whatsappSupportUrl("signing in to the client portal")} target="_blank" rel="noopener noreferrer" className="auth-link">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a></p>
           <button type="submit" disabled={submitState !== "idle" || !hydrated} className="auth-btn" aria-live="polite">
-            {submitState === "idle" && (<><span>Enter the portal</span><ArrowRight size={17} /></>)}
+            {submitState === "idle" && (<><span>Sign in</span><ArrowRight size={17} /></>)}
             {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>One moment…</span></>)}
             {submitState === "success" && (<><Check size={18} strokeWidth={3} /><span>Opening…</span></>)}
           </button>

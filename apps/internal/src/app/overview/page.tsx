@@ -1188,7 +1188,7 @@ export default function OverviewPage() {
                   <MenuItem onClick={() => router.push("/settings")}>Profile &amp; settings</MenuItem>
                   <MenuItem onClick={() => router.push("/dashboard")}>Classic dashboard</MenuItem>
                   <MenuItem onClick={() => mutate()}>Refresh data</MenuItem>
-                  <MenuItem onClick={logout} danger>Sign out</MenuItem>
+                  <MenuItem onClick={logout} danger>Log out</MenuItem>
                 </Menu>
               )}
             </div>

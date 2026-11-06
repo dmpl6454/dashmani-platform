@@ -43,10 +43,14 @@ export const PIPELINE_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>>
     "move_started_at", "move_last_at", "move_from_phase_id", "due_soon_notified_for",
     "overdue_notified_for", "archived_at", "archived_by_id", "archived_by_admin", "deleted_at",
     "deleted_by_id", "deleted_by_admin", "created_at", "updated_at",
+    // Channels and DMs (scripts/pipeline-chat-ddl.sql): the board and every thread read filter
+    // on these, so a missing column must pause the feature, not 500 it.
+    "kind", "is_private", "dm_key", "parent_project_id",
   ],
   pipeline_participants: [
     "project_id", "user_id", "role", "notify", "last_read_seq", "seen_at", "engaged_at",
     "member_added_by_id", "member_added_at", "created_at", "updated_at",
+    "hidden_seq", // DMs hidden from a sidebar (scripts/pipeline-chat-ddl.sql)
   ],
   pipeline_messages: [
     "id", "client_id", "project_id", "seq", "rev", "parent_id", "author_id", "body", "mention_ids",

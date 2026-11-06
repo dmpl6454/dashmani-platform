@@ -2217,24 +2217,37 @@ model PipelineProject {
   /// The client company this project is for (optional). NOT `clientId`, which is the create
   /// idempotency key. SetNull: deleting a client never deletes a project.
   linkedClientId     String?   @map("linked_client_id")
+  /// "project" (the board) | "channel" | "dm" — sales-portal chat (scripts/pipeline-chat-ddl.sql).
+  /// Channels and DMs reuse the thread machinery but never appear on any project surface.
+  kind               String    @default("project") @db.VarChar(8)
+  /// Private channels and DMs are readable by participants only.
+  isPrivate          Boolean   @default(false) @map("is_private")
+  /// DMs only: the two user ids sorted and joined with ":" (a self-DM is "me:me"). One DM per pair.
+  dmKey              String?   @unique @map("dm_key")
+  /// Channels only: the campaign (project) the channel belongs to, or null for a team-wide
+  /// channel. A campaign's channels show in its own sidebar; purging the campaign removes them.
+  parentProjectId    String?   @map("parent_project_id")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  linkedClient Client?                  @relation(fields: [linkedClientId], references: [id], onDelete: SetNull)
-  owner        User                     @relation("PipelineOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  createdBy    User                     @relation("PipelineCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  phase        PipelinePhase            @relation(fields: [phaseId], references: [id], onDelete: Restrict)
-  participants PipelineParticipant[]
-  messages     PipelineMessage[]
-  emailOutbox  PipelineEmailOutbox[]
-  versions     PipelineVersion[]
-  reviews      PipelineReview[]
-  deliverables PipelineDeliverable[]
-  comments     PipelineVersionComment[]
-  shoots       PipelineShoot[]
+  linkedClient     Client?                  @relation(fields: [linkedClientId], references: [id], onDelete: SetNull)
+  parentProject    PipelineProject?         @relation("PipelineCampaignChannels", fields: [parentProjectId], references: [id], onDelete: Cascade)
+  campaignChannels PipelineProject[]        @relation("PipelineCampaignChannels")
+  owner            User                     @relation("PipelineOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy        User                     @relation("PipelineCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  phase            PipelinePhase            @relation(fields: [phaseId], references: [id], onDelete: Restrict)
+  participants     PipelineParticipant[]
+  messages         PipelineMessage[]
+  emailOutbox      PipelineEmailOutbox[]
+  versions         PipelineVersion[]
+  reviews          PipelineReview[]
+  deliverables     PipelineDeliverable[]
+  comments         PipelineVersionComment[]
+  shoots           PipelineShoot[]
 
   @@unique([createdById, clientId])
   @@index([linkedClientId])
+  @@index([parentProjectId])
   @@index([phaseId])
   @@index([ownerId])
   @@index([dueDate])
@@ -2254,6 +2267,8 @@ model PipelineParticipant {
   engagedAt       DateTime? @map("engaged_at") // first post/reply/mention/explicit follow
   memberAddedById String?   @map("member_added_by_id") // set ONLY by create / add-members
   memberAddedAt   DateTime? @map("member_added_at")
+  /// DMs: "deleted" (hidden) from my sidebar at this last_message_seq; a newer message brings it back.
+  hiddenSeq       Int?      @map("hidden_seq")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 

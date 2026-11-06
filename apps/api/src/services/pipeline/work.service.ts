@@ -911,7 +911,7 @@ export async function getMyWork(
         take: max,
       });
       const due = await db.pipelineProject.findMany({
-        where: { ownerId: userId, ...LIVE_PROJECT, dueDate: { not: null }, phase: { isTerminal: false } },
+        where: { ownerId: userId, ...LIVE_PROJECT, kind: "project", dueDate: { not: null }, phase: { isTerminal: false } },
         select: { id: true, title: true, dueDate: true, phase: { select: { name: true } } },
         orderBy: [{ dueDate: "asc" }, { id: "asc" }],
         take: max,

@@ -27,7 +27,9 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The full API suite now takes ~30 min on a runner (main's last green run: 29m45s),
+    # so 30 cancelled most PRs mid-suite. 45 leaves headroom without hiding a hang.
+    timeout-minutes: 45
 
     services:
       postgres:

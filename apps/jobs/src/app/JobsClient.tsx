@@ -312,7 +312,7 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
           ) : visibleJobs.length === 0 ? (
             <li className="ds-roles-empty">
               <img src="/illustrations/no-data.svg" alt="" aria-hidden="true" />
-              <div className="msg">No roles match that search — try another word.</div>
+              <div className="msg">{jobs.length === 0 ? "No open roles right now — check back soon, or write to careers@digitalsukoon.com." : "No roles match that search — try another word."}</div>
             </li>
           ) : (
             visibleJobs.map((job) => (

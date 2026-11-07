@@ -83,7 +83,7 @@ export default function InternshipPage() {
           style={{ display: "block", width: "100%", maxWidth: 460, height: "auto", margin: "0 auto 26px" }}
         />
         <span className="ds-program-pill">Internship Program</span>
-        <h2>6-Month Internship</h2>
+        <h1>6-Month Internship</h1>
         <p>
           Join Digital Sukoon as an intern and gain hands-on experience in digital marketing,
           content creation, and social media management. Mentored by senior craft — paid stipend — convert to full-time.

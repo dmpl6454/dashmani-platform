@@ -1,16 +1,16 @@
 "use client";
 import { useState } from "react";
 import useSWR from "swr";
-import { ArrowUpRight, Briefcase, ExternalLink, LayoutGrid } from "lucide-react";
+import { ArrowUpRight, Briefcase, ExternalLink, LayoutGrid, Receipt } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
 // Connecting the portals: the HR, staff and sales portals sign in the same account, so an entry
 // here asks the API for a one-time handoff code and lands the user on the other portal already
 // signed in (POST /auth/handoff → <portal>/login#handoff=<code> → POST /auth/handoff/exchange).
-// GET /auth/portals says which portals this account may enter (Sales needs the Sales or Admin
-// role). Rendered in the sidebar footer (hr-sidebar.tsx), above Collapse; icons only when collapsed.
+// GET /auth/portals says which portals this account may enter (Sales and Billing need the Sales
+// or Admin role). Rendered in the sidebar footer (hr-sidebar.tsx), above Collapse; icons only when collapsed.
 
-interface Entry { key: "internal" | "hr" | "sales"; name: string; blurb: string; url: string; access: boolean }
+interface Entry { key: "internal" | "hr" | "sales" | "billing"; name: string; blurb: string; url: string; access: boolean }
 interface Directory { portals: Entry[]; links: Array<{ key: string; name: string; blurb: string; url: string }> }
 
 const unwrap = <T,>(r: any): T => (r && typeof r === "object" && "data" in r ? r.data : r);
@@ -47,7 +47,7 @@ export function PortalSwitcherRail({ expanded }: { expanded: boolean }) {
           title={expanded ? p.blurb : `${p.name} — opens signed in`}
           className={`w-full flex items-center ${expanded ? "gap-2 px-3" : "justify-center px-0"} h-9 rounded-xl text-[12.5px] font-medium text-ink-2 hover:bg-muted/80 hover:text-ink transition-colors disabled:opacity-60`}
         >
-          {p.key === "sales" ? <Briefcase size={15} /> : <LayoutGrid size={15} />}
+          {p.key === "sales" ? <Briefcase size={15} /> : p.key === "billing" ? <Receipt size={15} /> : <LayoutGrid size={15} />}
           {expanded && <span className="flex-1 text-left truncate">{busy === p.key ? "Opening…" : p.name}</span>}
           {expanded && <ArrowUpRight size={13} className="text-ink-4" />}
         </button>

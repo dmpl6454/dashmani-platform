@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { PortalLink } from "@/components/portal-link";
 import { useDashboard } from "@/lib/hooks";
 import { useCreators } from "@/lib/creators";
 import { daysBetween, fmtInr, fmtDate, todayIST } from "@/lib/format";
@@ -15,7 +16,7 @@ export default function DashboardPage() {
     <>
       <PageHead kicker={`Financial year ${d.financialYear} · ${fmtDate(d.today)}`} title="Sales at a glance">
         <Link href="/quotes/edit" className="btn">New quote</Link>
-        <Link href="/invoices/edit" className="btn btn-light">New invoice</Link>
+        <PortalLink portal="billing" href="/invoices/edit" className="btn btn-light">New invoice</PortalLink>
       </PageHead>
       {!!d.bookings?.review.count && (
         <Link href="/bookings?stage=review" className="card p-3 mb-4 flex items-center justify-between gap-3 text-sm hover:border-indigo">
@@ -30,10 +31,10 @@ export default function DashboardPage() {
         </div>
       )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <Link href="/invoices?status=all" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Invoiced this FY" value={fmtInr(d.invoicedFyPaise, { whole: true })} sub={`${d.invoicedFyCount} tax invoices · ${fmtInr(d.invoicedMonthPaise, { whole: true })} this month`} /></Link>
-        <Link href="/payments" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Collected this FY" value={fmtInr(d.collectedFyPaise, { whole: true })} sub={`${fmtInr(d.collectedMonthPaise, { whole: true })} this month${d.tdsFyPaise ? ` · TDS ${fmtInr(d.tdsFyPaise, { whole: true })}` : ""}`} tone="success" /></Link>
-        <Link href="/invoices?status=outstanding" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Outstanding" value={fmtInr(d.outstandingPaise, { whole: true })} sub={`${d.outstandingCount} open invoice${d.outstandingCount === 1 ? "" : "s"}`} tone={d.outstandingPaise ? "attention" : undefined} /></Link>
-        <Link href="/invoices?status=overdue" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Overdue" value={fmtInr(d.overduePaise, { whole: true })} sub={`${d.overdueCount} past due date`} tone={d.overdueCount ? "danger" : undefined} /></Link>
+        <PortalLink portal="billing" href="/invoices?status=all" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Invoiced this FY" value={fmtInr(d.invoicedFyPaise, { whole: true })} sub={`${d.invoicedFyCount} tax invoices · ${fmtInr(d.invoicedMonthPaise, { whole: true })} this month`} /></PortalLink>
+        <PortalLink portal="billing" href="/payments" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Collected this FY" value={fmtInr(d.collectedFyPaise, { whole: true })} sub={`${fmtInr(d.collectedMonthPaise, { whole: true })} this month${d.tdsFyPaise ? ` · TDS ${fmtInr(d.tdsFyPaise, { whole: true })}` : ""}`} tone="success" /></PortalLink>
+        <PortalLink portal="billing" href="/invoices?status=outstanding" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Outstanding" value={fmtInr(d.outstandingPaise, { whole: true })} sub={`${d.outstandingCount} open invoice${d.outstandingCount === 1 ? "" : "s"}`} tone={d.outstandingPaise ? "attention" : undefined} /></PortalLink>
+        <PortalLink portal="billing" href="/invoices?status=overdue" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Overdue" value={fmtInr(d.overduePaise, { whole: true })} sub={`${d.overdueCount} past due date`} tone={d.overdueCount ? "danger" : undefined} /></PortalLink>
       </div>
       {d.bank && (() => {
         const bank = d.bank;
@@ -42,7 +43,7 @@ export default function DashboardPage() {
         const month = new Date(`${d.today}T00:00:00Z`).toLocaleString("en-IN", { month: "short", timeZone: "UTC" });
         return (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-            <Link href="/bank" className="min-w-0"><Stat label={`Unmatched credits · ${month}`} value={fmtInr(bank.unmatchedMonthPaise, { whole: true })} sub={stale != null && stale > 10 ? `No statement for ${stale} days` : `${bank.unmatchedMonthCount} credits · ${bank.sureCount} sure`} tone={bank.unmatchedMonthCount ? "attention" : "success"} /></Link>
+            <PortalLink portal="billing" href="/bank" className="min-w-0"><Stat label={`Unmatched credits · ${month}`} value={fmtInr(bank.unmatchedMonthPaise, { whole: true })} sub={stale != null && stale > 10 ? `No statement for ${stale} days` : `${bank.unmatchedMonthCount} credits · ${bank.sureCount} sure`} tone={bank.unmatchedMonthCount ? "attention" : "success"} /></PortalLink>
           </div>
         );
       })()}

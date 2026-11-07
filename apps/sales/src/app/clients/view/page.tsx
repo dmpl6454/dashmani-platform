@@ -1,6 +1,7 @@
 "use client";
 import { Suspense, useState } from "react";
 import Link from "next/link";
+import { PortalLink } from "@/components/portal-link";
 import { useSearchParams } from "next/navigation";
 import { useClient, useStatement } from "@/lib/hooks";
 import { useCompany } from "@/lib/company";
@@ -29,10 +30,10 @@ function ClientView() {
     <>
       <PageHead kicker={<Link href="/clients" className="hover:text-white">Clients</Link> as unknown as string} title={client.companyName}>
         <Link href={`/quotes/edit?clientId=${id}`} className="btn">New quote</Link>
-        <Link href={`/invoices/edit?clientId=${id}`} className="btn btn-light">New invoice</Link>
-        <Link href={`/payments/record?clientId=${id}`} className="btn btn-light">Record payment</Link>
+        <PortalLink portal="billing" href={`/invoices/edit?clientId=${id}`} className="btn btn-light">New invoice</PortalLink>
+        <PortalLink portal="billing" href={`/payments/record?clientId=${id}`} className="btn btn-light">Record payment</PortalLink>
         <Link href={`/clients/edit?id=${id}`} className="btn btn-light">Edit profile</Link>
-        <Link href={`/reconcile/ledger?clientId=${id}`} className="btn btn-light">Statement &amp; confirmation</Link>
+        <PortalLink portal="billing" href={`/reconcile/ledger?clientId=${id}`} className="btn btn-light">Statement &amp; confirmation</PortalLink>
       </PageHead>
       <p className="text-[11px] uppercase tracking-[0.1em] text-ink-3 mb-2">Account with {info.name} · switch company at the top to see the other</p>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -72,7 +73,7 @@ function ClientView() {
               <tbody>
                 {statement.invoices.map((i) => (
                   <tr key={i.id} className="border-b border-rule">
-                    <td className="p-2"><Link href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft"}</Link>{i.kind === "proforma" && <span className="text-xs text-ink-3"> · proforma</span>}</td>
+                    <td className="p-2"><PortalLink portal="billing" href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft"}</PortalLink>{i.kind === "proforma" && <span className="text-xs text-ink-3"> · proforma</span>}</td>
                     <td className="p-2">{fmtDate(i.issueDate)}</td><td className="p-2">{fmtDate(i.dueDate)}</td>
                     <td className="p-2"><StatusPill status={i.derivedStatus} /></td>
                     <td className="p-2 text-right"><Money paise={i.totalPaise} /></td>
@@ -89,7 +90,7 @@ function ClientView() {
                 <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left"><tr className="border-b-2 border-border"><th className="p-2">Receipt</th><th className="p-2">Date</th><th className="p-2">Mode</th><th className="p-2">Reference</th><th className="p-2 text-right">Received</th><th className="p-2 text-right">TDS</th></tr></thead>
                 <tbody>
                   {statement.payments.map((p) => (
-                    <tr key={p.id} className={`border-b border-rule ${p.status === "voided" ? "line-through text-ink-3" : ""}`}><td className="p-2 font-mono"><Link href={`/payments/view?id=${p.id}`} className="hover:text-indigo-light">{p.number}</Link>{p.status === "voided" ? " (voided)" : ""}</td><td className="p-2">{fmtDate(p.paidOn)}</td><td className="p-2">{titleCase(p.mode)}</td><td className="p-2 font-mono text-xs">{p.reference ?? "—"}</td><td className="p-2 text-right"><Money paise={p.amountPaise} /></td><td className="p-2 text-right"><Money paise={p.tdsPaise} className={p.tdsPaise ? "" : "text-ink-3"} /></td></tr>
+                    <tr key={p.id} className={`border-b border-rule ${p.status === "voided" ? "line-through text-ink-3" : ""}`}><td className="p-2 font-mono"><PortalLink portal="billing" href={`/payments/view?id=${p.id}`} className="hover:text-indigo-light">{p.number}</PortalLink>{p.status === "voided" ? " (voided)" : ""}</td><td className="p-2">{fmtDate(p.paidOn)}</td><td className="p-2">{titleCase(p.mode)}</td><td className="p-2 font-mono text-xs">{p.reference ?? "—"}</td><td className="p-2 text-right"><Money paise={p.amountPaise} /></td><td className="p-2 text-right"><Money paise={p.tdsPaise} className={p.tdsPaise ? "" : "text-ink-3"} /></td></tr>
                   ))}
                 </tbody>
               </table></div>

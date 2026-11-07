@@ -1,0 +1,62 @@
+# Billing portal (2026-11-07) — apps/billing, a Next.js static export (`output: "export"`): the
+# invoicing and finance half of what was the sales portal. turbo build (scripts/deploy.sh) writes
+# it to apps/billing/out; nginx serves the files directly, so there is no Node process or pm2
+# entry for this site. Every page talks to the API at https://api.digitalsukoon.com/v1 (baked in
+# at build time from apps/billing/.env.local). A copy of nginx/sales.digitalsukoon.com.
+# Install once with scripts/setup-billing.sh.
+
+server {
+    listen 443 ssl;
+    server_name billing.digitalsukoon.com;
+    ssl_certificate /etc/ssl/cloudflare-cert.pem;
+    ssl_certificate_key /etc/ssl/cloudflare-key.pem;
+
+    root /opt/dashmani-platform/apps/billing/out;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml text/plain application/xml;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+    server_tokens off;
+    # Never serve dotfiles (.env, .git) or source maps from the export directory.
+    location ~ /\. { return 404; }
+    location ~ \.map$ { return 404; }
+
+    # Hashed build assets never change under the same name.
+    location /_next/static/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        # An add_header here replaces the server-level set, so repeat it.
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        try_files $uri =404;
+    }
+
+    location / {
+        # HTML must be re-fetched after each deploy so it points at the new asset hashes, and the
+        # signed-in pages must never sit in a shared cache. (An `add_header` inside a location
+        # replaces the server-level ones, so they are repeated here.)
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+        # /login → login.html, /connect?error=denied → connect.html (static export, no dynamic routes).
+        try_files $uri $uri.html $uri/ =404;
+    }
+
+    error_page 404 /404.html;
+}
+
+server {
+    listen 80;
+    server_name billing.digitalsukoon.com;
+    return 301 https://billing.digitalsukoon.com$request_uri;
+}

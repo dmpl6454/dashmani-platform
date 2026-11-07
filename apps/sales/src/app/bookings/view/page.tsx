@@ -1,8 +1,10 @@
 "use client";
 import { Suspense, useState } from "react";
 import Link from "next/link";
+import { PortalLink } from "@/components/portal-link";
 import useSWR, { mutate as mutateGlobal } from "swr";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { openPortal } from "@/lib/portals";
 import { ExternalLink } from "lucide-react";
 import { useBooking } from "@/lib/hooks";
 import { apiFetch, fetcher } from "@/lib/api";
@@ -28,7 +30,6 @@ function projectHref(b: BookingDetail): string {
 
 function BookingView() {
   const id = useSearchParams().get("id");
-  const router = useRouter();
   const { company, info } = useCompany();
   const { data: b, error, isLoading, mutate } = useBooking(id);
   const { data: portals } = useSWR<PortalDirectory>("/auth/portals", fetcher, { revalidateOnFocus: false, dedupingInterval: 300_000 });
@@ -46,7 +47,8 @@ function BookingView() {
     try {
       const res = await apiFetch<Invoice>(`/sales/invoices/from-booking/${b!.id}?company=${company}`, { method: "POST" });
       await mutateGlobal((key) => typeof key === "string" && (key.startsWith("/sales/bookings") || key.startsWith("/sales/invoices") || key.startsWith("/sales/dashboard")), undefined, { revalidate: true });
-      router.push(`/invoices/view?id=${res.data.id}`);
+      // The draft opens on the billing portal (invoices live there since 2026-11-07), already signed in.
+      await openPortal("billing", `/invoices/view?id=${res.data.id}`);
     } catch (err) {
       setToast({ message: errorSentence(err), tone: "err" });
       setBusy(false);
@@ -81,7 +83,7 @@ function BookingView() {
             <ul className="divide-y divide-rule">
               {b.invoices.map((i) => (
                 <li key={i.id} className="py-2 flex flex-wrap justify-between gap-2">
-                  <span><Link href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft invoice"}</Link> <StatusPill status={i.status} /> <span className="text-ink-4 text-xs">{companyName(i.companyKey)}{i.kind === "proforma" ? " · proforma" : ""}</span></span>
+                  <span><PortalLink portal="billing" href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft invoice"}</PortalLink> <StatusPill status={i.status} /> <span className="text-ink-4 text-xs">{companyName(i.companyKey)}{i.kind === "proforma" ? " · proforma" : ""}</span></span>
                   <Money paise={i.totalPaise} />
                 </li>
               ))}

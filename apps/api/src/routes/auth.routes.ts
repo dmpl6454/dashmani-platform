@@ -126,7 +126,11 @@ function requireStaffToken(req: Request, res: Response, next: NextFunction) {
   if (type !== "employee" && type !== "hr") return error(res, "FORBIDDEN", "Staff access only", 403);
   next();
 }
-const handoffTargetSchema = z.object({ target: z.enum(["internal", "hr", "sales"]) });
+// `next`: the page to open on the target (a same-site path, re-checked in safeHandoffNext); used by the sales ↔ billing links.
+const handoffTargetSchema = z.object({
+  target: z.enum(["internal", "hr", "sales", "billing"]),
+  next: z.string().max(2048).regex(/^\/(?!\/)[\w\-/?=&.%]*$/, "next must be a path").optional(),
+});
 const handoffCodeSchema = z.object({ code: z.string().regex(/^[0-9a-f]{64}$/, "Invalid code") });
 
 // GET /auth/portals — the switcher's directory: which staff portals this account may enter, and the public sites.
@@ -138,10 +142,10 @@ router.get("/auth/portals", authenticate, requireStaffToken, async (req: Request
   }
 });
 
-// POST /auth/handoff { target } — a one-time 60 s code, returned as the target's /login#handoff= URL.
+// POST /auth/handoff { target, next? } — a one-time 60 s code, returned as the target's /login[?next=]#handoff= URL.
 router.post("/auth/handoff", authenticate, requireStaffToken, validate(handoffTargetSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    return success(res, await handoff.createHandoff(req.user!, req.body.target));
+    return success(res, await handoff.createHandoff(req.user!, req.body.target, req.body.next));
   } catch (err) {
     next(err);
   }

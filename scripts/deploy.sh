@@ -34,7 +34,7 @@ echo "==> Writing production .env.local files for frontends"
 # it tries to connect to the user's own machine, not the server. Always
 # overwrite on every deploy so the prod build is self-healing even after a
 # fresh server provision or accidental local override.
-for app in client internal hr jobs web creators sales; do
+for app in client internal hr jobs web creators sales billing; do
   echo "NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1" > "$APP_DIR/apps/$app/.env.local"
 done
 
@@ -55,7 +55,7 @@ npm run db:generate
 # The static exports (STATIC_APPS) are served by nginx from out/, which the build replaces
 # only at its final export step; their .next is a build cache that nothing serves.
 SERVED_APPS="internal client hr jobs"
-STATIC_APPS="web creators sales"
+STATIC_APPS="web creators sales billing"
 
 # Every build starts from an empty build dir. Next.js 14's collectBuildTraces step fails with
 # `ENOENT: ... page.js.nft.json` when a partial dir from an interrupted/OOM-killed build is on
@@ -103,13 +103,15 @@ swap_build() {
   mv "apps/$1/.next-build" "apps/$1/.next"
 }
 
-# apps/web (digitalsukoon.com) and apps/creators (creators.digitalsukoon.com) are static
-# exports: the build above rewrote apps/web/out and apps/creators/out, which nginx serves
+# apps/web (digitalsukoon.com), apps/creators (creators.digitalsukoon.com), apps/sales (sales.digitalsukoon.com)
+# and apps/billing (billing.digitalsukoon.com, 2026-11-07) are static
+# exports: the build above rewrote each one's out/, which nginx serves
 # directly — they have no pm2 process and need no restart (so neither is in the loop below).
 # The exports are world-readable so nginx (www-data) can serve them.
 chmod -R o+rX apps/web/out 2>/dev/null || true
 chmod -R o+rX apps/creators/out 2>/dev/null || true
 chmod -R o+rX apps/sales/out 2>/dev/null || true
+chmod -R o+rX apps/billing/out 2>/dev/null || true
 
 echo "==> Restarting processes"
 # Restart the platform's own processes ONE NAME PER INVOCATION — never `pm2 restart all`,

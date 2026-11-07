@@ -14,6 +14,6 @@ export interface StaffSession {
 }
 
 /** GET /auth/portals — the portal switcher's directory. */
-export interface PortalEntry { key: "internal" | "hr" | "sales"; name: string; blurb: string; url: string; access: boolean }
+export interface PortalEntry { key: "internal" | "hr" | "sales" | "billing"; name: string; blurb: string; url: string; access: boolean }
 export interface PortalLink { key: "client" | "creators" | "jobs" | "web"; name: string; blurb: string; url: string }
 export interface PortalDirectory { portals: PortalEntry[]; links: PortalLink[] }

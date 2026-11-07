@@ -17,12 +17,18 @@ import { issueHrSession } from "./hr-auth.service";
  * a code lost to a restart is a code the user re-requests with one click.
  *
  * GET /auth/portals is the directory every portal's switcher renders: which staff portals this
- * account may enter (the staff and HR portals take every active employee; Sales needs the
- * `sales:view` permission — the same DB check the /sales routes make) plus the public sites.
+ * account may enter (the staff and HR portals take every active employee; Sales and Billing need
+ * the `sales:view` permission — the same DB check the /sales routes make) plus the public sites.
+ *
+ * Billing (2026-11-07): billing.digitalsukoon.com holds the invoicing and finance half of what was
+ * the sales portal (apps/billing, an `employee` token like sales). The two link to each other's
+ * pages, so a handoff may carry a destination: `next` is a same-site path that rides in the
+ * query (`/login?next=<path>#handoff=<code>`) and the target's login page opens it once the code
+ * is exchanged — the code itself stays in the fragment.
  */
 
-export type StaffPortal = "internal" | "hr" | "sales";
-export const STAFF_PORTALS: readonly StaffPortal[] = ["internal", "hr", "sales"] as const;
+export type StaffPortal = "internal" | "hr" | "sales" | "billing";
+export const STAFF_PORTALS: readonly StaffPortal[] = ["internal", "hr", "sales", "billing"] as const;
 
 const HANDOFF_TTL_MS = 60_000;
 const trim = (u: string) => u.replace(/\/+$/, "");
@@ -34,6 +40,7 @@ export function portalUrls() {
     internal: trim(process.env.INTERNAL_APP_URL || "http://localhost:3000"),
     hr: trim(process.env.HR_APP_URL || "http://localhost:3002"),
     sales: trim(process.env.SALES_APP_URL || "http://localhost:3006"),
+    billing: trim(process.env.BILLING_APP_URL || "http://localhost:3007"),
     client: trim(process.env.CLIENT_APP_URL || "http://localhost:3001"),
     creators: trim(process.env.CREATORS_APP_URL || "http://localhost:3005"),
     jobs: trim(process.env.JOBS_APP_URL || (prod() ? "https://jobs.digitalsukoon.com" : "http://localhost:3003")),
@@ -59,7 +66,8 @@ export async function listPortals(user: Pick<JwtPayload, "userId">): Promise<Por
     portals: [
       { key: "internal", name: "Staff portal", blurb: "People, accounts, campaigns, reports", url: u.internal, access: true },
       { key: "hr", name: "HR portal", blurb: "Attendance, leave, salary slips, documents", url: u.hr, access: true },
-      { key: "sales", name: "Sales portal", blurb: "Inventory, quotes, orders, invoices", url: u.sales, access: sales },
+      { key: "sales", name: "Sales portal", blurb: "Inventory, clients, quotes, orders, bookings", url: u.sales, access: sales },
+      { key: "billing", name: "Billing portal", blurb: "Invoices, payments, bank, accounts, Tally", url: u.billing, access: sales },
     ],
     links: [
       { key: "client", name: "Client portal", blurb: "Where clients book campaigns", url: u.client },
@@ -76,8 +84,17 @@ function sweep(now = Date.now()) {
   for (const [code, p] of pending) if (p.expiresAt <= now) pending.delete(code);
 }
 
-/** A one-time code for `target`, as the URL the browser should be sent to. */
-export async function createHandoff(user: Pick<JwtPayload, "userId">, target: StaffPortal) {
+/** A same-site destination on the target portal: a path, never `//host` or an absolute URL (the route schema checks the shape; this is the belt). */
+export function safeHandoffNext(next: string | undefined): string | null {
+  if (!next || next.length > 2048 || !/^\/(?!\/)[\w\-/?=&.%]*$/.test(next)) return null;
+  let u: URL;
+  try { u = new URL(next, "http://next.invalid"); } catch { return null; }
+  if (u.origin !== "http://next.invalid" || u.pathname.startsWith("//")) return null;
+  return `${u.pathname}${u.search}`;
+}
+
+/** A one-time code for `target`, as the URL the browser should be sent to (with `next` as the page to open there). */
+export async function createHandoff(user: Pick<JwtPayload, "userId">, target: StaffPortal, next?: string) {
   const dir = await listPortals(user);
   const entry = dir.portals.find((p) => p.key === target);
   if (!entry) throw new AppError(400, "VALIDATION_ERROR", "Unknown portal");
@@ -85,7 +102,9 @@ export async function createHandoff(user: Pick<JwtPayload, "userId">, target: St
   sweep();
   const code = crypto.randomBytes(32).toString("hex");
   pending.set(code, { userId: user.userId, target, expiresAt: Date.now() + HANDOFF_TTL_MS });
-  return { target, url: `${entry.url}/login#handoff=${code}`, expiresInSeconds: HANDOFF_TTL_MS / 1000 };
+  const dest = safeHandoffNext(next);
+  const query = dest ? `?next=${encodeURIComponent(dest)}` : "";
+  return { target, url: `${entry.url}/login${query}#handoff=${code}`, expiresInSeconds: HANDOFF_TTL_MS / 1000 };
 }
 
 /** The target portal's login page turns the code into that portal's own session. */

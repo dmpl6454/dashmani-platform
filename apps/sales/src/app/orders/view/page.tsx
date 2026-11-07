@@ -1,7 +1,9 @@
 "use client";
 import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { PortalLink } from "@/components/portal-link";
+import { useSearchParams } from "next/navigation";
+import { openPortal } from "@/lib/portals";
 import { useEvents, useOrder } from "@/lib/hooks";
 import { companyName } from "@/lib/company";
 import { apiFetch } from "@/lib/api";
@@ -40,7 +42,6 @@ function LineDelivery({ orderId, item, locked, onDone }: { orderId: string; item
 
 function OrderView() {
   const id = useSearchParams().get("id");
-  const router = useRouter();
   const { data: o, error, isLoading, mutate } = useOrder(id);
   const { data: events, mutate: mutateEvents } = useEvents("order", id);
   const [confirm, setConfirm] = useState<null | "cancel" | "invoice">(null);
@@ -53,7 +54,8 @@ function OrderView() {
     try { await apiFetch(`/sales/orders/${id}/${path}`, { method: "POST" }); await refresh(); setToast({ message: ok, tone: "ok" }); } catch (err) { setToast({ message: errorSentence(err), tone: "err" }); }
   }
   async function invoice() {
-    try { const res = await apiFetch<Invoice>(`/sales/orders/${id}/invoice`, { method: "POST" }); router.push(`/invoices/view?id=${res.data.id}`); } catch (err) { setToast({ message: errorSentence(err), tone: "err" }); setConfirm(null); }
+    // The draft opens on the billing portal (invoices live there since 2026-11-07), already signed in.
+    try { const res = await apiFetch<Invoice>(`/sales/orders/${id}/invoice`, { method: "POST" }); await openPortal("billing", `/invoices/view?id=${res.data.id}`); } catch (err) { setToast({ message: errorSentence(err), tone: "err" }); setConfirm(null); }
   }
   const locked = o.status === "closed" || o.status === "cancelled";
   return (
@@ -77,7 +79,7 @@ function OrderView() {
           <section className="card p-4 text-sm">
             <h2 className="font-bold mb-2">Invoices</h2>
             {o.invoices.length === 0 ? <p className="text-ink-3">Not invoiced yet.</p> : (
-              <ul className="divide-y divide-rule">{o.invoices.map((i) => <li key={i.id} className="py-2 flex justify-between gap-3"><span><Link href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft"}</Link> <StatusPill status={i.status} /></span><Money paise={i.totalPaise} /></li>)}</ul>
+              <ul className="divide-y divide-rule">{o.invoices.map((i) => <li key={i.id} className="py-2 flex justify-between gap-3"><span><PortalLink portal="billing" href={`/invoices/view?id=${i.id}`} className="font-mono hover:text-indigo-light">{i.number ?? "Draft"}</PortalLink> <StatusPill status={i.status} /></span><Money paise={i.totalPaise} /></li>)}</ul>
             )}
           </section>
           {o.notes && <section className="card p-4 text-sm whitespace-pre-wrap">{o.notes}</section>}

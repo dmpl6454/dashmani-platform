@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { PortalLink } from "@/components/portal-link";
 import { useBookings } from "@/lib/hooks";
 import { fmtDate } from "@/lib/format";
 import { companyName } from "@/lib/company";
@@ -54,7 +55,7 @@ export default function BookingsPage() {
                   <td className="p-3">{b.liveCount}/{b.itemCount}</td>
                   <td className="p-3">
                     {b.invoices.filter((i) => i.status !== "cancelled").length
-                      ? b.invoices.filter((i) => i.status !== "cancelled").map((i) => <Link key={i.id} href={`/invoices/view?id=${i.id}`} className="font-mono text-xs hover:text-indigo-light block" title={companyName(i.companyKey)}>{i.number ?? "draft"}</Link>)
+                      ? b.invoices.filter((i) => i.status !== "cancelled").map((i) => <PortalLink portal="billing" key={i.id} href={`/invoices/view?id=${i.id}`} className="font-mono text-xs hover:text-indigo-light block" title={companyName(i.companyKey)}>{i.number ?? "draft"}</PortalLink>)
                       : b.billable ? <span className="text-attention text-xs">Not invoiced</span> : <span className="text-ink-4">—</span>}
                   </td>
                   <td className="p-3 text-right">{b.billable ? <Money paise={b.billablePaise} /> : <span className="text-ink-4">—</span>}</td>

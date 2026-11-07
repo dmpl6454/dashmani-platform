@@ -37,6 +37,13 @@
       "cwd": "apps/sales"
     },
     {
+      "name": "billing",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--port", "3007"],
+      "port": 3007,
+      "cwd": "apps/billing"
+    },
+    {
       "name": "client",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["next", "dev", "--port", "3001"],

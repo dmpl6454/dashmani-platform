@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import useSWR from "swr";
-import { ArrowUpRight, Briefcase, ExternalLink, Users } from "lucide-react";
+import { ArrowUpRight, Briefcase, ExternalLink, Receipt, Users } from "lucide-react";
 import { cn } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
 
@@ -9,14 +9,14 @@ import { apiFetch } from "@/lib/api";
 // here asks the API for a one-time handoff code and lands the user on the other portal already
 // signed in (POST /auth/handoff → <portal>/login#handoff=<code> → POST /auth/handoff/exchange).
 // The public sites are plain links. The directory comes from GET /auth/portals, which also says
-// which portals this account may enter (Sales needs the Sales or Admin role). Rendered at the
-// foot of the DS rail (components/ds/ds-sidebar.tsx), above Collapse; icons only when collapsed.
+// which portals this account may enter (Sales and Billing need the Sales or Admin role). Rendered
+// at the foot of the DS rail (components/ds/ds-sidebar.tsx), above Collapse; icons only when collapsed.
 
-interface Entry { key: "internal" | "hr" | "sales"; name: string; blurb: string; url: string; access: boolean }
+interface Entry { key: "internal" | "hr" | "sales" | "billing"; name: string; blurb: string; url: string; access: boolean }
 interface Directory { portals: Entry[]; links: Array<{ key: string; name: string; blurb: string; url: string }> }
 
 const fetcher = (p: string) => apiFetch<{ data: Directory }>(p).then((r) => r.data);
-const ICONS = { hr: Users, sales: Briefcase, internal: ArrowUpRight } as const;
+const ICONS = { hr: Users, sales: Briefcase, billing: Receipt, internal: ArrowUpRight } as const;
 
 export function PortalSwitcher({ collapsed }: { collapsed: boolean }) {
   const { data } = useSWR<Directory>("/auth/portals", fetcher, { revalidateOnFocus: false, dedupingInterval: 300_000 });

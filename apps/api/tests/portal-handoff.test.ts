@@ -56,13 +56,15 @@ describe("GET /auth/portals", () => {
     const forSales = await request(app).get("/v1/auth/portals").set(auth(salesToken));
     expect(forSales.status).toBe(200);
     expect(forSales.body.data.portals.map((p: { key: string; access: boolean }) => [p.key, p.access])).toEqual([
-      ["internal", true], ["hr", true], ["sales", true],
+      ["internal", true], ["hr", true], ["sales", true], ["billing", true],
     ]);
     expect(forSales.body.data.links.map((l: { key: string }) => l.key)).toEqual(["client", "creators", "jobs", "web"]);
     expect(forSales.body.data.portals.every((p: { url: string }) => /^https?:\/\/[^/]+$/.test(p.url))).toBe(true);
 
     const forEmployee = await request(app).get("/v1/auth/portals").set(auth(employeeToken));
     expect(forEmployee.body.data.portals.find((p: { key: string }) => p.key === "sales").access).toBe(false);
+    // Billing is gated by the same permission as sales.
+    expect(forEmployee.body.data.portals.find((p: { key: string }) => p.key === "billing").access).toBe(false);
 
     // An HR token is a staff token too; a client token is not; no token is not.
     expect((await request(app).get("/v1/auth/portals").set(auth(generateHrToken(employee.id, employee.email)))).status).toBe(200);
@@ -89,6 +91,25 @@ describe("handoff between the staff portals", () => {
     const again = await request(app).post("/v1/auth/handoff/exchange").send({ code: codeOf(h.body.data.url) });
     expect(again.status).toBe(410);
     expect(again.body.error.code).toBe("HANDOFF_INVALID");
+  });
+
+  it("hands off to the billing portal with a destination page, and never with a foreign one", async () => {
+    const h = await request(app).post("/v1/auth/handoff").set(auth(salesToken)).send({ target: "billing", next: "/invoices/view?id=abc" });
+    expect(h.status).toBe(200);
+    expect(h.body.data.url).toMatch(/^http:\/\/localhost:3007\/login\?next=%2Finvoices%2Fview%3Fid%3Dabc#handoff=[0-9a-f]{64}$/);
+    const ex = await request(app).post("/v1/auth/handoff/exchange").send({ code: codeOf(h.body.data.url) });
+    expect(ex.status).toBe(200);
+    expect(ex.body.data.target).toBe("billing");
+    expect(decode(ex.body.data.accessToken)).toMatchObject({ type: "employee", userId: salesUser.id });
+    // Without a destination the URL is the plain one; a host-shaped or absolute `next` is refused by the schema.
+    const plain = await request(app).post("/v1/auth/handoff").set(auth(salesToken)).send({ target: "billing" });
+    expect(plain.body.data.url).toMatch(/^http:\/\/localhost:3007\/login#handoff=[0-9a-f]{64}$/);
+    for (const next of ["//evil.com/x", "https://evil.com", "invoices", "/a b"]) {
+      expect((await request(app).post("/v1/auth/handoff").set(auth(salesToken)).send({ target: "billing", next })).status).toBe(400);
+    }
+    // An account without the Sales permission cannot enter billing either.
+    const denied = await request(app).post("/v1/auth/handoff").set(auth(employeeToken)).send({ target: "billing" });
+    expect(denied.status).toBe(403);
   });
 
   it("mints an HR session for the HR portal, and a staff session back from an HR token", async () => {

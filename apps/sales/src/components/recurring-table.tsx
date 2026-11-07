@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { PortalLink } from "@/components/portal-link";
 import { fmtDate } from "@/lib/format";
 import { useRecurringList } from "@/lib/hooks";
 import type { Recurring } from "@/lib/sales-types";
@@ -27,7 +28,7 @@ export function RecurringTable({ rows, showClient = true }: { rows: Recurring[];
           {rows.map((r) => (
             <tr key={r.id} className="border-b border-rule hover:bg-muted/60 align-top">
               <td className="p-3">
-                <Link href={`/recurring/view?id=${r.id}`} className="font-bold hover:text-indigo-light">{r.title}</Link>
+                <PortalLink portal="billing" href={`/recurring/view?id=${r.id}`} className="font-bold hover:text-indigo-light">{r.title}</PortalLink>
                 {r.lastError && <p className="text-xs text-danger mt-1">Last run failed — open it for details.</p>}
               </td>
               {showClient && <td className="p-3">{r.client.companyName}</td>}
@@ -35,7 +36,7 @@ export function RecurringTable({ rows, showClient = true }: { rows: Recurring[];
               <td className="p-3">{r.status === "ended" ? "—" : <>{fmtDate(r.nextRunDate)}<span className="block text-xs text-ink-3">{r.nextPeriodLabel}</span></>}</td>
               <td className="p-3">{MODE_LABEL[r.mode] ?? r.mode}</td>
               <td className="p-3"><StatusPill status={r.status} /></td>
-              <td className="p-3">{r.lastInvoice ? <Link href={`/invoices/view?id=${r.lastInvoice.id}`} className="font-mono hover:text-indigo-light">{r.lastInvoice.number ?? "Draft"}</Link> : <span className="text-ink-3">None yet</span>}</td>
+              <td className="p-3">{r.lastInvoice ? <PortalLink portal="billing" href={`/invoices/view?id=${r.lastInvoice.id}`} className="font-mono hover:text-indigo-light">{r.lastInvoice.number ?? "Draft"}</PortalLink> : <span className="text-ink-3">None yet</span>}</td>
               <td className="p-3 text-right"><Money paise={recurringTaxable(r)} /></td>
             </tr>
           ))}
@@ -50,11 +51,11 @@ export function ClientRecurring({ clientId }: { clientId: string }) {
   const { data, error } = useRecurringList({ clientId });
   return (
     <section className="card p-4 mt-5">
-      <div className="flex items-center justify-between gap-3 mb-3"><h2 className="font-bold">Recurring invoices</h2><Link href={`/recurring/edit?clientId=${clientId}`} className="btn btn-ghost btn-sm">New</Link></div>
+      <div className="flex items-center justify-between gap-3 mb-3"><h2 className="font-bold">Recurring invoices</h2><PortalLink portal="billing" href={`/recurring/edit?clientId=${clientId}`} className="btn btn-ghost btn-sm">New</PortalLink></div>
       {error ? <p className="text-sm text-danger">Couldn&apos;t load recurring invoices.</p> : !data ? <p className="text-sm text-ink-3">Loading…</p> : !data.length ? <p className="text-sm text-ink-3">None set up for this client.</p> : (
         <ul className="text-sm grid gap-2">{data.map((r) => (
           <li key={r.id} className="flex flex-wrap justify-between gap-2">
-            <Link href={`/recurring/view?id=${r.id}`} className="font-bold hover:text-indigo-light">{r.title}</Link>
+            <PortalLink portal="billing" href={`/recurring/view?id=${r.id}`} className="font-bold hover:text-indigo-light">{r.title}</PortalLink>
             <span className="text-ink-3">{FREQUENCY_LABEL[r.frequency] ?? r.frequency} · {r.status === "active" ? `next ${fmtDate(r.nextRunDate)}` : r.status}</span>
           </li>
         ))}</ul>

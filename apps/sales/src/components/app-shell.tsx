@@ -2,17 +2,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut, Menu, X } from "lucide-react";
+import { ArrowUpRight, LogOut, Menu, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PortalSwitcher } from "./portal-switcher";
 import { CompanySwitcher } from "./company-switcher";
+import { PortalLink } from "./portal-link";
 import { COMPANY_LOGO, useCompany } from "@/lib/company";
 
 // The signed-in frame: brand, the billing company, the sections, the portal switcher and sign-out.
-// The sixteen sections are grouped by what the person is doing (sell → bill → finance → more).
-// From `lg` up the groups sit on one row under the brand; below `lg` they fold behind a Menu
-// button on EVERY page (before 2026-11-06 only the Pipeline folded, and the open list took
-// 415 of a phone's 812 px on every page).
+// Since 2026-11-07 the sales portal is the SELLING half: the Bill and Finance groups (invoices,
+// recurring, payments, bank, accounts, reconcile, Tally, the seller settings) moved to the
+// billing portal (apps/billing, billing.digitalsukoon.com), which the "Billing" entry opens
+// already signed in (a handoff, components/portal-link.tsx). The eight links fit one row from
+// `lg` up; below `lg` they fold behind a Menu button on every page.
 type NavItem = { href: string; label: string };
 type NavGroup = { label: string; items: NavItem[] };
 const NAV_GROUPS: NavGroup[] = [
@@ -28,37 +30,14 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Bill",
-    items: [
-      { href: "/invoices", label: "Invoices" },
-      { href: "/recurring", label: "Recurring" },
-      { href: "/payments", label: "Payments" },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
-      // smart-invoicing: bank (PR 4)
-      { href: "/bank", label: "Bank" },
-      // smart-invoicing: accounts (PR 1)
-      { href: "/accounts", label: "Accounts" },
-      // smart-invoicing: reconcile (PR 5)
-      { href: "/reconcile", label: "Reconcile" },
-      // smart-invoicing: tally (PR 2)
-      { href: "/tally", label: "Tally" },
-    ],
-  },
-  {
     label: "More",
     items: [
       { href: "/pipeline", label: "Pipeline" },
       { href: "/creators", label: "Creators" },
-      { href: "/settings", label: "Settings" },
     ],
   },
 ];
 const NAV = NAV_GROUPS.flatMap((g) => g.items);
-const NAV_ROWS: NavGroup[][] = [NAV_GROUPS.slice(0, 2), NAV_GROUPS.slice(2)];
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -122,33 +101,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           className={`mx-auto max-w-7xl px-4 sm:px-6 ${menuOpen ? "block" : "hidden"} lg:block pb-3 lg:pb-0`}
         >
           <div className="md:hidden pt-1 pb-3 lg:hidden"><CompanySwitcher /></div>
-          {/* Two rows from lg up (Sell + Bill, then Finance + More): sixteen links never fit one 1280 px row,
-              so the break is chosen here rather than left to wrapping. On phones every group stacks. */}
-          <div className="flex flex-col gap-3 lg:gap-0 lg:border-t lg:border-border lg:py-1.5">
-            {NAV_ROWS.map((row, r) => (
-              <div key={r} className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-x-6 lg:gap-y-1 lg:flex-wrap">
-                {row.map((g) => (
-                  <div key={g.label} className="flex flex-col gap-1 lg:flex-row lg:items-center lg:gap-1.5">
-                    <span className="text-[10px] uppercase tracking-[0.14em] text-ink-3 font-bold lg:w-14">{g.label}</span>
-                    <div className="flex flex-wrap gap-1">
-                      {g.items.map((n) => {
-                        const active = isActive(pathname, n.href);
-                        return (
-                          <Link
-                            key={n.href}
-                            href={n.href}
-                            aria-current={active ? "page" : undefined}
-                            className={`px-2.5 py-1.5 text-[12px] uppercase tracking-[0.06em] border-2 ${active ? "bg-indigo border-indigo text-white font-bold" : "border-transparent text-ink-3 hover:text-white hover:border-border"}`}
-                          >
-                            {n.label}
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-x-6 lg:gap-y-1 lg:flex-wrap lg:border-t lg:border-border lg:py-1.5">
+            {NAV_GROUPS.map((g) => (
+              <div key={g.label} className="flex flex-col gap-1 lg:flex-row lg:items-center lg:gap-1.5">
+                <span className="text-[10px] uppercase tracking-[0.14em] text-ink-3 font-bold lg:w-14">{g.label}</span>
+                <div className="flex flex-wrap gap-1">
+                  {g.items.map((n) => {
+                    const active = isActive(pathname, n.href);
+                    return (
+                      <Link
+                        key={n.href}
+                        href={n.href}
+                        aria-current={active ? "page" : undefined}
+                        className={`px-2.5 py-1.5 text-[12px] uppercase tracking-[0.06em] border-2 ${active ? "bg-indigo border-indigo text-white font-bold" : "border-transparent text-ink-3 hover:text-white hover:border-border"}`}
+                      >
+                        {n.label}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             ))}
+            {/* Invoices, payments and the finance pages: the billing portal, opened signed in. */}
+            <div className="flex flex-col gap-1 lg:flex-row lg:items-center lg:gap-1.5">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-ink-3 font-bold lg:w-14">Bill</span>
+              <div className="flex flex-wrap gap-1">
+                <PortalLink portal="billing" href="/dashboard" className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[12px] uppercase tracking-[0.06em] border-2 border-transparent text-ink-3 hover:text-white hover:border-border" title="Invoices, payments, bank, accounts, Tally — opens signed in">
+                  Billing portal <ArrowUpRight size={12} aria-hidden />
+                </PortalLink>
+              </div>
+            </div>
           </div>
         </nav>
       </header>

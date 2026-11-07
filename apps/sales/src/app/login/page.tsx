@@ -27,11 +27,12 @@ function LoginForm() {
   const [state, setState] = useState<"idle" | "loading" | "success">("idle");
 
   useEffect(() => {
-    // Arriving from the staff or HR portal with a one-time handoff code (#handoff=): exchange it
-    // for a sales session and go straight in. A used or expired code falls back to the form.
+    // Arriving from the billing, staff or HR portal with a one-time handoff code (#handoff=):
+    // exchange it for a sales session and go straight in — to ?next= when the link named a page
+    // (a billing page's client name). A used or expired code falls back to the form.
     const code = new URLSearchParams(window.location.hash.slice(1)).get("handoff") ?? new URLSearchParams(window.location.search).get("handoff");
     if (code) {
-      window.history.replaceState(null, "", "/login");
+      window.history.replaceState(null, "", `/login${window.location.search}`);
       setState("loading");
       apiFetch<StaffSession>("/auth/handoff/exchange", { method: "POST", body: JSON.stringify({ code }) })
         .then((res) => { setState("success"); adoptSession(res.data); })

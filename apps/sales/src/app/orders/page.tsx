@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { PortalLink } from "@/components/portal-link";
 import { useOrders } from "@/lib/hooks";
 import { fmtDate } from "@/lib/format";
 import { Empty, LoadError, Loading, Money, PageHead, StatusPill } from "@/components/sales-ui";
@@ -34,7 +35,7 @@ export default function OrdersPage() {
                   <td className="p-3">{o.client.companyName}</td>
                   <td className="p-3"><StatusPill status={o.status} /></td>
                   <td className="p-3">{o.deliveredCount ?? 0}/{o.itemCount ?? 0} lines</td>
-                  <td className="p-3">{o.invoices.length ? o.invoices.map((i) => <Link key={i.id} href={`/invoices/view?id=${i.id}`} className="font-mono text-xs hover:text-indigo-light block">{i.number ?? "draft"}</Link>) : <span className="text-ink-4">none</span>}</td>
+                  <td className="p-3">{o.invoices.length ? o.invoices.map((i) => <PortalLink portal="billing" key={i.id} href={`/invoices/view?id=${i.id}`} className="font-mono text-xs hover:text-indigo-light block">{i.number ?? "draft"}</PortalLink>) : <span className="text-ink-4">none</span>}</td>
                   <td className="p-3 text-right"><Money paise={o.totalPaise} /></td>
                 </tr>
               ))}

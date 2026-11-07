@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * Drives every sales-portal journey in a real browser and reports what happened (LOCAL ONLY):
+ * Drives every sales-portal journey in a real browser and reports what happened (LOCAL ONLY).
+ * Since 2026-11-07 the invoicing and finance pages live on the billing portal (apps/billing) and
+ * their steps in billing-journey.mjs; this script covers the selling half and the handoff across:
  *
- *   sign-in (deep link, wrong password) → company switch → settings for both companies →
- *   inventory (views, search, CSV) → add a client + billing profile → quote from the inventory →
- *   send / accept / convert → order lines delivered → invoice → issue → PDF → partial payment →
- *   credit note → advance receipt → refund → void → proforma → convert → issue → campaign
- *   booking → invoice for Dashmani Media → dashboard → a Sales-role (non-admin) user →
- *   a 390 px pass over every page → sign out.
+ *   sign-in (deep link, wrong password) → company switch → inventory (views, search, CSV) →
+ *   add a client + billing profile → quote from the inventory → send / accept / convert →
+ *   order lines delivered → Create invoice lands on the BILLING portal signed in → campaign
+ *   booking → invoice for Dashmani Media (lands on billing) → dashboard (tiles link to billing) →
+ *   portal switcher → quote decline/delete → cancel an order → the client statement →
+ *   a Sales-role (non-admin) user → a 390 px pass over every page → sign out.
  *
  * Needs: the API on :4000, the built portal served on :3006 (`npx serve apps/sales/out -l 3006`),
+ * the built billing portal on :3007 (`npx serve apps/billing/out -l 3007`) for the handoff steps,
  * the seeded admin, scripts/dev-seed-campaigns.ts loaded, a Sales-role user (E2E_SALES_EMAIL /
  * E2E_SALES_PASSWORD), at least one campaign booking that can be invoiced (optional), and
  * playwright-core + Chromium (PLAYWRIGHT_MODULE / CHROMIUM_PATH).
@@ -22,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const BASE = process.env.SALES_URL ?? "http://localhost:3006";
+const BILLING_BASE = process.env.BILLING_URL ?? "http://localhost:3007";
 const API = process.env.API_URL ?? "http://localhost:4000/v1";
 const OUT = process.env.OUT_DIR ?? path.resolve("e2e-shots/sales");
 const ADMIN = { email: process.env.ADMIN_EMAIL ?? "admin@digitalsukoon.com", password: process.env.ADMIN_PASSWORD ?? "Admin@123456" };
@@ -101,9 +105,9 @@ const ids = {};
 // ── 1. Sign-in ────────────────────────────────────────────────────────────────────
 await journey("sign-in", async () => {
   await ctx.clearCookies();
-  await go("/invoices");
+  await go("/clients");
   await page.waitForURL(/\/login\?next=/);
-  check("signed-out deep link goes to /login?next=", page.url().includes("next=%2Finvoices"), page.url());
+  check("signed-out deep link goes to /login?next=", page.url().includes("next=%2Fclients"), page.url());
   await page.getByLabel("Work email").fill(ADMIN.email);
   await page.getByLabel("Password", { exact: true }).fill("wrong-password-123");
   expected.add("POST /v1/auth/login 401");
@@ -112,34 +116,19 @@ await journey("sign-in", async () => {
   check("wrong password shows an error and stays", page.url().includes("/login") && /invalid|incorrect|wrong|don.t match|do not match/i.test(await page.locator("body").innerText()), await page.locator("body").innerText().then((t) => t.slice(0, 200)));
   await page.getByLabel("Password", { exact: true }).fill(ADMIN.password);
   await page.getByRole("button", { name: /sign in/i }).click();
-  await page.waitForURL(/\/invoices/, { timeout: 15_000 });
-  check("sign-in returns to the deep link", page.url().includes("/invoices"), page.url());
+  await page.waitForURL(/\/clients/, { timeout: 15_000 });
+  check("sign-in returns to the deep link", page.url().includes("/clients"), page.url());
 });
 
-// ── 2. Company switch + settings ──────────────────────────────────────────────────
-const profile = {
-  dspl: { legalName: "Digital Sukoon Private Limited", gstin: "27AAKCD3352K1ZF", pan: "AAKCD3352K", addressLine1: "702, Parinee I, Andheri West", city: "Mumbai", pincode: "400053" },
-  dmpl: { legalName: "Dashmani Media Private Limited", gstin: "27AAJCD7425L1Z8", pan: "AAJCD7425L", addressLine1: "Off-702, Parinee I, Plot No 7/A", city: "Mumbai", pincode: "400053" },
-};
-await journey("company-and-settings", async () => {
-  await go("/settings");
-  for (const [key, label] of [["dspl", "Digital Sukoon"], ["dmpl", "Dashmani Media"]]) {
+// ── 2. Company switch (the seller settings are on the billing portal) ────────────
+await journey("company-switch", async () => {
+  await go("/dashboard"); await ready();
+  for (const label of ["Digital Sukoon", "Dashmani Media"]) {
     await setCompany(label);
-    await page.getByRole("heading", { name: `${label} billing profile` }).waitFor();
-    check(`header brand follows ${label}`, (await page.locator("header").innerText()).includes(`${label}`), "");
-    const p = profile[key];
-    for (const [l, v] of [["Legal name", p.legalName], ["GSTIN", p.gstin], ["PAN", p.pan], ["Address line 1", p.addressLine1], ["City", p.city], ["PIN code", p.pincode]]) {
-      // A field's hint sits inside its <label>, so match the label by its start.
-      const loc = page.getByLabel(new RegExp(`^${l}`)).first();
-      const ok = await loc.fill(v, { timeout: 5000 }).then(() => true).catch((e) => e.message.split("\n").slice(0, 3).join(" "));
-      if (ok !== true) { check(`settings field "${l}" is fillable (${label})`, false, ok); throw new Error(`field ${l}`); }
-    }
-    await page.getByRole("button", { name: "Save profile" }).click();
-    const toast = page.getByRole("status").filter({ hasText: /Saved/ });
-    check(`settings save for ${label}`, await toast.waitFor({ timeout: 8000 }).then(() => true).catch(() => false), await text().then((t) => t.slice(0, 300)));
+    check(`header brand follows ${label}`, (await page.locator("header").innerText()).includes(label), "");
   }
   await page.reload({ waitUntil: "domcontentloaded" }); await settle();
-  check("company choice survives a reload", await page.getByRole("heading", { name: "Dashmani Media billing profile" }).isVisible().catch(() => false), "");
+  check("company choice survives a reload", (await page.locator("header").innerText()).includes("Dashmani Media"), "");
   await setCompany("Digital Sukoon");
 });
 
@@ -211,7 +200,7 @@ await journey("quote-to-order", async () => {
   check("quote converts to an SO order", /SO\/\d\d-\d\d\/\d{4}/.test(await text()), (await text()).slice(0, 200));
 });
 
-// ── 6. Order delivery → invoice → issue → PDF ─────────────────────────────────────
+// ── 6. Order delivery → invoice (the draft opens on the billing portal) ──────────
 await journey("order-to-invoice", async () => {
   await go(`/orders/view?id=${ids.order}`);
   const rows = page.locator("tbody tr").filter({ has: page.locator("select") });
@@ -227,89 +216,15 @@ await journey("order-to-invoice", async () => {
   check("every line delivered moves the order to delivered", /delivered/i.test(await page.locator("h1").innerText()), await page.locator("h1").innerText());
   await page.getByRole("button", { name: "Create invoice" }).click();
   await page.getByRole("button", { name: "Create draft" }).click();
-  await page.waitForURL(/\/invoices\/view\?id=/); await settle();
-  ids.invoice = new URL(page.url()).searchParams.get("id");
-  await page.getByRole("button", { name: "Issue" }).first().click();
-  await page.getByRole("dialog").getByRole("button", { name: "Issue" }).click();
-  await settle(); await page.waitForTimeout(800);
-  const h = await page.locator("h1").innerText();
-  check("invoice issues with a DS number", /DS\/\d\d-\d\d\/\d{4}/.test(h), h);
-  const pdfBtn = page.getByRole("button", { name: /PDF/ }).first();
-  const dl = await Promise.all([page.waitForEvent("download", { timeout: 10_000 }).catch(() => null), pdfBtn.click()]).then(([d]) => d);
-  check("invoice PDF downloads", !!dl, "no download");
-  if (dl) { const f = path.join(OUT, "invoice.pdf"); await dl.saveAs(f); check("PDF is a real PDF", fs.readFileSync(f).subarray(0, 4).toString() === "%PDF", ""); }
-  await page.getByRole("button", { name: "Mark sent" }).click(); await settle();
-  check("mark sent", /sent/i.test(await text()), "");
-});
-
-// ── 7. Payment, credit note ───────────────────────────────────────────────────────
-await journey("payment-and-credit", async () => {
-  await go(`/invoices/view?id=${ids.invoice}`);
-  await page.getByRole("link", { name: "Record payment" }).click();
-  await page.waitForURL(/\/payments\/record/); await settle(); await ready(); await page.getByText("Received by").waitFor().catch(() => {});
-  check("payment form names the receiving company", /digital sukoon private limited/i.test(await text()), (await text()).slice(0, 200));
-  await page.getByLabel("Amount received").fill("1000");
-  // the preset allocation follows the balance; set it to what we received
-  const alloc = page.locator("tbody tr").first().locator("input[inputmode=decimal]").first();
-  await alloc.fill("1000");
-  await page.getByLabel(/Reference/).fill(`UTR${stamp}`);
-  await page.getByRole("button", { name: "Record payment" }).click();
-  await page.waitForURL(/\/invoices\/view\?id=/, { timeout: 15_000 }); await settle();
-  check("invoice is partially paid after a part payment", /partially paid/i.test(await page.locator("h1").innerText()), await page.locator("h1").innerText());
-  await page.getByRole("button", { name: "Credit note" }).click();
-  await page.getByLabel("Reason").fill("One post was not delivered");
-  await page.getByLabel("Taxable amount to credit").fill("500");
-  await page.getByRole("button", { name: "Issue credit note" }).click();
-  await settle(); await page.waitForTimeout(800);
-  check("credit note issued (CN number shown)", /CN\/\d\d-\d\d\/\d{4}/.test(await text()), (await text()).slice(0, 400));
-});
-
-// ── 8. Advance, refund, void ──────────────────────────────────────────────────────
-await journey("advance-refund-void", async () => {
-  await go(`/payments/record?clientId=${ids.client}`);
-  await page.getByLabel("Amount received").fill("3000");
-  // leave everything unallocated → an advance
-  for (const inp of await page.locator("tbody input[inputmode=decimal]").all()) await inp.fill("0");
-  await page.getByRole("button", { name: "Record payment" }).click();
-  await page.waitForURL(/\/payments(\?|$|\/)/); await settle();
-  await page.getByRole("link", { name: /RCPT\// }).first().click();
-  await page.waitForURL(/\/payments\/view\?id=/); await settle(); await ready();
-  ids.receipt = new URL(page.url()).searchParams.get("id");
-  check("advance shows unallocated money", /unallocated/i.test(await text()), (await text()).slice(0, 300));
-  await page.getByRole("button", { name: "Refund" }).click();
-  await page.getByLabel("Amount refunded").fill("500");
-  await page.getByLabel(/Reference/).fill(`RF${stamp}`);
-  await page.getByRole("dialog").getByRole("button", { name: /refund/i }).last().click();
-  await settle(); await page.waitForTimeout(600);
-  check("refund numbered RF/", /RF\/\d\d-\d\d\/\d{4}/.test(await text()), (await text()).slice(0, 300));
-  await page.getByRole("button", { name: "Cancel", exact: true }).first().click(); await settle(); await page.waitForTimeout(400);
-  await page.getByRole("button", { name: "Void receipt" }).click();
-  await page.getByLabel("Reason").fill("Recorded twice by mistake");
-  await page.getByRole("dialog").getByRole("button", { name: "Void receipt" }).click();
-  await settle(); await page.waitForTimeout(600);
-  check("receipt voided", /voided/i.test(await page.locator("h1").innerText()), await page.locator("h1").innerText());
-});
-
-// ── 9. Proforma → tax invoice ─────────────────────────────────────────────────────
-await journey("proforma", async () => {
-  await go(`/invoices/edit?clientId=${ids.client}`);
-  await page.getByLabel("Kind").selectOption("proforma");
-  const row = page.locator("tbody tr").first();
-  await row.locator("input").first().fill("Advance for festive campaign");
-  await row.locator("input[inputmode=decimal]").first().fill("10000");
-  await page.getByRole("button", { name: /Save draft/ }).click();
-  await page.waitForURL(/\/invoices\/view\?id=/); await settle();
-  await page.getByRole("button", { name: "Issue" }).first().click();
-  await page.getByRole("dialog").getByRole("button", { name: "Issue" }).click();
-  await settle(); await page.waitForTimeout(800);
-  check("proforma numbered PI/", /PI\/\d\d-\d\d\/\d{4}/.test(await page.locator("h1").innerText()), await page.locator("h1").innerText());
-  await page.getByRole("button", { name: "Convert to tax invoice" }).click();
-  await page.getByRole("button", { name: "Create draft tax invoice" }).click();
-  await page.waitForURL(/\/invoices\/view\?id=/); await settle(); await page.waitForTimeout(500);
-  await page.getByRole("button", { name: "Issue" }).first().click();
-  await page.getByRole("dialog").getByRole("button", { name: "Issue" }).click();
-  await settle(); await page.waitForTimeout(800);
-  check("converted invoice issues as DS/", /DS\/\d\d-\d\d\/\d{4}/.test(await page.locator("h1").innerText()), await page.locator("h1").innerText());
+  // The draft is made here, then a handoff opens it on the billing portal, already signed in.
+  const landed = await page.waitForURL((u) => u.href.startsWith(BILLING_BASE) && u.pathname.startsWith("/invoices/view"), { timeout: 20_000 }).then(() => true).catch(() => false);
+  await settle();
+  ids.invoice = landed ? new URL(page.url()).searchParams.get("id") : null;
+  check("Create invoice lands on the billing portal, signed in, on the new draft", landed && !page.url().includes("/login"), page.url());
+  if (landed) { await page.locator("h1").filter({ hasText: /Draft invoice/ }).waitFor({ timeout: 10_000 }).catch(() => {}); check("billing shows the draft", /Draft invoice/.test(await page.locator("h1").innerText().catch(() => "")), ""); }
+  await go("/orders"); await ready();
+  const link = page.locator("main a[href*='/invoices/view?id=']").first();
+  if (await link.count()) check("the order's invoice number links to the billing portal", (await link.getAttribute("href") ?? "").startsWith(BILLING_BASE), await link.getAttribute("href"));
 });
 
 // ── 10. Campaign booking → invoice for Dashmani Media ─────────────────────────────
@@ -321,9 +236,11 @@ await journey("booking-invoice", async () => {
   await first.click(); await page.waitForURL(/\/bookings\/view/); await settle();
   await setCompany("Dashmani Media");
   await page.getByRole("button", { name: /Create invoice \(Dashmani Media\)/ }).click();
-  await page.waitForURL(/\/invoices\/view\?id=/); await settle();
-  await page.locator("h1").filter({ hasText: /Draft invoice/ }).waitFor();
-  check("booking invoice belongs to Dashmani Media", /dashmani media/i.test(await text()), (await text()).slice(0, 200));
+  const landed = await page.waitForURL((u) => u.href.startsWith(BILLING_BASE) && u.pathname.startsWith("/invoices/view"), { timeout: 20_000 }).then(() => true).catch(() => false);
+  await settle();
+  check("the booking's invoice opens on the billing portal", landed, page.url());
+  if (landed) { await page.locator("h1").filter({ hasText: /Draft invoice/ }).waitFor(); check("booking invoice belongs to Dashmani Media", /dashmani media/i.test(await text()), (await text()).slice(0, 200)); }
+  await go("/dashboard"); await ready();
   await setCompany("Digital Sukoon");
 });
 
@@ -334,6 +251,8 @@ await journey("dashboard", async () => {
   const t = await text();
   check("dashboard shows invoiced amount", /Invoiced this FY\s*₹[1-9]/i.test(t), t.slice(0, 300));
   check("dashboard shows the bookings block", t.includes("Campaign bookings"), "");
+  const invoiced = page.locator("main a[href*='/invoices?status=all']").first();
+  check("the invoiced tile links to the billing portal", (await invoiced.getAttribute("href").catch(() => "") ?? "").startsWith(BILLING_BASE), await invoiced.getAttribute("href").catch(() => ""));
   await page.locator("a[href='/bookings?stage=to_invoice']").click();
   await page.waitForURL(/\/bookings/).catch(() => {}); await settle();
   await page.locator("main button.bg-indigo").filter({ hasText: /To invoice/i }).waitFor({ timeout: 5000 }).catch(() => {});
@@ -345,6 +264,7 @@ await journey("portal-switcher", async () => {
   await go("/dashboard");
   await page.getByRole("button", { name: /Portals/ }).click();
   check("switcher lists the staff portal", await page.getByText(/Staff portal|portal\.digitalsukoon|Internal/i).first().isVisible().catch(() => false), "");
+  check("switcher lists the billing portal", await page.getByRole("menuitem", { name: /Billing portal/ }).first().isVisible().catch(() => false), "");
   await page.keyboard.press("Escape");
 });
 
@@ -358,19 +278,6 @@ async function newClient(name, stateCode, gstin) {
     return c.data.id;
   }, { API, name, stateCode, gstin });
   return r;
-}
-async function draftInvoice(clientId, amount, label = "Reel") {
-  await go(`/invoices/edit?clientId=${clientId}`); await ready();
-  const row = page.locator("tbody tr").first();
-  await row.locator("input").first().fill(label);
-  await row.locator("input[inputmode=decimal]").first().fill(String(amount));
-  await page.getByRole("button", { name: /Save draft/ }).click();
-  await page.waitForURL(/\/invoices\/view\?id=/); await settle(); await ready();
-  return new URL(page.url()).searchParams.get("id");
-}
-async function issueOpen() {
-  await page.getByRole("button", { name: "Issue" }).first().click();
-  await page.getByRole("dialog").waitFor();
 }
 
 await journey("quote-decline-delete", async () => {
@@ -393,73 +300,8 @@ await journey("quote-decline-delete", async () => {
   check("draft quote deletes and returns to the list", /\/quotes$|\/quotes\?/.test(page.url()) || page.url().endsWith("/quotes/"), page.url());
 });
 
-await journey("inter-state-igst", async () => {
-  const ka = await newClient(`E2E Karnataka ${stamp}`, "29", "29AAACB1234F1Z9");
-  ids.ka = ka;
-  ids.kaInv = await draftInvoice(ka, 10000);
-  await issueOpen(); await page.getByRole("dialog").getByRole("button", { name: "Issue" }).click(); await settle(); await ready(); await page.waitForTimeout(500);
-  const t = await text();
-  check("other-state client is billed IGST", /IGST/.test(t) && !/CGST @/.test(t), t.slice(0, 400));
-});
-
-await journey("gst-changed-before-issue", async () => {
-  const c = await newClient(`E2E Late profile ${stamp}`);
-  const inv = await draftInvoice(c, 5000);
-  // the client's billing state is added after the draft was saved
-  await page.evaluate(async ({ API, c }) => {
-    const h = { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("accessToken")}` };
-    await fetch(`${API}/sales/clients/${c}/billing`, { method: "PUT", headers: h, body: JSON.stringify({ legalName: "Late Pvt Ltd", gstin: "29AAACB1234F1Z9", stateCode: "29", addressLine1: "2 Road", city: "Bengaluru", pincode: "560001" }) });
-  }, { API, c });
-  await go(`/invoices/view?id=${inv}`); await ready();
-  expected.add("POST /v1/sales/invoices/:id/issue 409");
-  await issueOpen(); await page.getByRole("dialog").getByRole("button", { name: "Issue" }).click(); await settle(); await page.waitForTimeout(600);
-  const dlg = await page.getByRole("dialog").innerText().catch(() => "");
-  check("issue asks to update or keep a changed GST", /Update|keep/i.test(dlg), dlg.slice(0, 300) || (await toastText()));
-  const upd = page.getByRole("dialog").getByRole("button", { name: /update/i }).first();
-  if (await upd.count()) { await upd.click(); await settle(); await page.waitForTimeout(600); }
-  check("issuing with the updated GST gives IGST", /IGST/.test(await text()) && /DS\//.test(await page.locator("h1").innerText()), (await page.locator("h1").innerText()));
-});
-
-await journey("over-payment-and-over-credit", async () => {
-  await go(`/invoices/view?id=${ids.kaInv}`); await ready();
-  await page.getByRole("button", { name: "Credit note" }).click();
-  await page.getByLabel("Reason").fill("Too much");
-  await page.getByLabel("Taxable amount to credit").fill("999999");
-  expected.add("POST /v1/sales/credit-notes 409");
-  await page.getByRole("button", { name: "Issue credit note" }).click(); await page.waitForTimeout(800);
-  const msg = (await page.getByRole("dialog").innerText().catch(() => "")) + " " + (await toastText());
-  check("over-credit is refused with a readable message", /can still be credited|Only/i.test(msg), msg.slice(0, 300));
-  await page.keyboard.press("Escape");
-  await go(`/payments/record?clientId=${ids.ka}&invoiceId=${ids.kaInv}&company=dspl`); await ready(); await page.getByText("Received by").waitFor();
-  await page.getByLabel("Amount received").fill("999999");
-  const alloc = page.locator("tbody tr").first().locator("input[inputmode=decimal]").first();
-  await alloc.fill("999999");
-  await page.getByRole("button", { name: "Record payment" }).click(); await page.waitForTimeout(800);
-  check("over-allocation is stopped before saving (no request sent)", page.url().includes("/payments/record") && /outstanding/i.test(await toastText()) && !out.badResponses.some((b) => b.key.startsWith("POST /v1/sales/payments ")), (await toastText()));
-});
-
-await journey("apply-advance-to-invoice", async () => {
-  // advance for the Karnataka client, then apply it from the invoice
-  await go(`/payments/record?clientId=${ids.ka}`); await ready(); await page.getByText("Received by").waitFor();
-  await page.getByLabel("Amount received").fill("2000");
-  for (const inp of await page.locator("tbody input[inputmode=decimal]").all()) await inp.fill("0");
-  await page.getByRole("button", { name: "Record payment" }).click();
-  await page.waitForURL(/\/payments(\?|$|\/)/); await settle();
-  await go(`/invoices/view?id=${ids.kaInv}`); await ready();
-  await page.getByRole("button", { name: "Apply a receipt" }).click();
-  await page.getByLabel("Amount to apply").fill("2000");
-  await page.getByRole("dialog").getByRole("button", { name: /apply/i }).last().click(); await settle(); await page.waitForTimeout(800);
-  check("advance applied to the invoice", /partially paid/i.test(await page.locator("h1").innerText()), await page.locator("h1").innerText() + " " + (await toastText()));
-});
-
-await journey("cancel-invoice-and-order", async () => {
+await journey("cancel-order", async () => {
   const c = await newClient(`E2E Cancel ${stamp}`, "27", "27AABCU9603R1ZX");
-  const inv = await draftInvoice(c, 3000);
-  await issueOpen(); await page.getByRole("dialog").getByRole("button", { name: "Issue" }).click(); await settle(); await ready(); await page.waitForTimeout(400);
-  await page.getByRole("button", { name: "Cancel", exact: true }).first().click();
-  await page.getByLabel("Reason").fill("Raised in error");
-  await page.getByRole("button", { name: "Cancel invoice" }).click(); await settle(); await page.waitForTimeout(500);
-  check("issued, unpaid invoice cancels and keeps its number", /cancelled/i.test(await page.locator("h1").innerText()) && /DS\//.test(await page.locator("h1").innerText()), await page.locator("h1").innerText());
   await go(`/orders/edit?clientId=${c}`); await ready();
   await page.getByLabel("Title").fill(`Cancel me ${stamp}`);
   const row = page.locator("tbody tr").first();
@@ -472,87 +314,16 @@ await journey("cancel-invoice-and-order", async () => {
   check("order cancels", /cancelled/i.test(await page.locator("h1").innerText()), await page.locator("h1").innerText());
 });
 
-await journey("client-statement-and-search", async () => {
+await journey("client-statement", async () => {
   await go(`/clients/view?id=${ids.client}`); await ready();
   const t = await text();
-  check("statement lists the client's invoices and payments", /DS\//.test(t) && /RCPT\//.test(t), t.slice(0, 300));
-  await go("/invoices"); await ready();
-  await page.getByPlaceholder(/Search/).fill(`E2E Brand ${stamp}`); await page.waitForTimeout(700); await settle();
-  const rows = await page.locator("tbody tr").count();
-  check("invoice search narrows to the client", rows > 0 && rows < 10, rows);
+  check("statement lists the client's invoice", /DS\/|Draft/.test(t), t.slice(0, 300));
+  const pay = page.locator("main a[href*='/payments/record?clientId=']").first();
+  check("Record payment links to the billing portal", (await pay.getAttribute("href").catch(() => "") ?? "").startsWith(BILLING_BASE), await pay.getAttribute("href").catch(() => ""));
 });
-
-// smart-invoicing: accounts steps
-await journey("accounts-page", async () => {
-  await go("/accounts"); await ready(); await page.getByRole("heading", { name: "Accounts", exact: true, level: 1 }).waitFor();
-  check("accounts page shows the live figures", /Invoiced/.test(await text()) && /GST output/.test(await text()), (await text()).slice(0, 200));
-  const pills = page.getByRole("radiogroup", { name: "Financial year" }).getByRole("radio");
-  const n = await pills.count();
-  check("financial-year pills listed", n >= 4, n);
-  // The whole year's sales register: header line first.
-  const fyLabel = (await pills.first().innerText()).slice(0, 7);
-  await page.getByLabel("Return period").selectOption(fyLabel);
-  const register = page.getByRole("button", { name: /Sales register CSV/ });
-  if (await register.isEnabled()) {
-    const [dl] = await Promise.all([page.waitForEvent("download"), register.click()]);
-    const body = await (await import("node:fs/promises")).readFile(await dl.path(), "utf8");
-    check("register CSV starts with its header", body.replace(/^\uFEFF/, "").startsWith("Seller GSTIN,Section,Document"), body.slice(0, 80));
-  }
-  // A closed year's filed figures, typed in lakhs with a loss.
-  await pills.nth(1).click(); await settle(); await page.waitForTimeout(500);
-  const closed = (await pills.nth(1).innerText()).slice(0, 7);
-  await go(`/accounts/filed?fy=${closed}&company=dspl`); await ready();
-  await page.getByLabel("Typing figures in").selectOption("lakhs");
-  // exact: the sign toggle's group is labelled "Profit after tax: Profit or Loss".
-  const revenue = page.getByRole("textbox", { name: "Revenue from operations", exact: true });
-  const pat = page.getByRole("textbox", { name: "Profit after tax", exact: true });
-  await revenue.fill("48.2153");
-  await pat.fill("12");
-  await page.getByRole("group", { name: /Profit after tax/ }).getByRole("button", { name: "Loss" }).click();
-  // A red box blocks Save; fixing it unblocks it.
-  await pat.fill("12.3.4");
-  await page.getByText("Fix the figures marked in red first.").waitFor({ timeout: 3_000 }).catch(() => {});
-  check("an invalid figure disables Save", await page.getByRole("button", { name: "Save filed figures" }).isDisabled(), "enabled");
-  await pat.fill("12");
-  await page.locator("input[type=file]").setInputFiles({ name: "signed.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\n%e2e\n") });
-  await page.waitForTimeout(1200);
-  check("signed PDF attached", /signed\.pdf/.test(await text()), await toastText());
-  check("the first attach keeps the typed figures", (await revenue.inputValue()) === "48.2153" && (await page.getByLabel("Typing figures in").inputValue()) === "lakhs", await revenue.inputValue());
-  await page.getByRole("button", { name: "Save filed figures" }).click();
-  await page.waitForURL(/\/accounts\?fy=/); await settle(); await ready();
-  check("the save is confirmed on /accounts", /Filed figures for .* saved\.|Nothing changed\./.test(await toastText()), await toastText()); // a re-run saves the same figures
-  check("filed row shows in Filed accounts vs the portal", /48,21,530/.test(await text()), (await text()).slice(-400));
-});
-
-// smart-invoicing: tally steps
-await journey("tally-pages", async () => {
-  for (const p of ["/tally", "/tally/settings", "/tally/parties"]) {
-    await go(p); await ready(); await page.waitForTimeout(400);
-    const body = await page.locator("main").innerText().catch(() => "");
-    check(`${p} renders`, /Tally|Party ledgers/.test(body), body.slice(0, 120));
-  }
-});
-
-// smart-invoicing: import steps
-await journey("swipe-import-check", async () => {
-  // A one-invoice Swipe export, uploaded through the page: the check is built in the same request.
-  const csv = ["Invoice Number,Invoice Date,Customer Name,Customer GSTIN,Taxable Value,CGST,SGST,Total,Amount Paid,Balance",
-    `INV/22-23/${String(Date.now() % 9000 + 1000)},01/10/2022,E2E Swipe ${stamp},,1000.00,90.00,90.00,1180.00,1180.00,0.00`].join("\r\n");
-  await go("/invoices/import"); await ready();
-  await page.locator("input[type=file]").setInputFiles({ name: "swipe-e2e.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
-  await page.getByRole("button", { name: /Upload and check/ }).click();
-  await page.waitForURL(/\/invoices\/import\/view\?id=/, { timeout: 20_000 });
-  await ready(); await settle();
-  ids.swipeImport = new URL(page.url()).searchParams.get("id");
-  check("swipe import: check shows one invoice found", (await page.getByText("Invoices found").count()) > 0, page.url());
-  // The count is the invoices READY to import; a row for a client staff have not confirmed yet is not.
-  check("swipe import: import button present", (await page.getByRole("button", { name: /^Import \d+ invoices/ }).count()) > 0);
-});
-
-// smart-invoicing: bank steps
 
 await journey("desktop-screens", async () => {
-  for (const [n, p] of [["dashboard", "/dashboard"], ["inventory", "/inventory"], ["clients", "/clients"], ["client", `/clients/view?id=${ids.client}`], ["quotes", "/quotes"], ["quote", `/quotes/view?id=${ids.quote}`], ["order", `/orders/view?id=${ids.order}`], ["invoices", "/invoices"], ["invoice", `/invoices/view?id=${ids.invoice}`], ["invoice-ka", `/invoices/view?id=${ids.kaInv}`], ["payments", "/payments"], ["receipt", `/payments/view?id=${ids.receipt}`], ["bookings", "/bookings"], ["quote-edit", `/quotes/edit?clientId=${ids.client}`], ["pay-record", `/payments/record?clientId=${ids.client}`]]) {
+  for (const [n, p] of [["dashboard", "/dashboard"], ["inventory", "/inventory"], ["clients", "/clients"], ["client", `/clients/view?id=${ids.client}`], ["quotes", "/quotes"], ["quote", `/quotes/view?id=${ids.quote}`], ["order", `/orders/view?id=${ids.order}`], ["bookings", "/bookings"], ["quote-edit", `/quotes/edit?clientId=${ids.client}`], ["creators", "/creators"]]) {
     await go(p); await ready(); await page.waitForTimeout(300); await shot(`desk-${n}`);
   }
 });
@@ -560,16 +331,7 @@ await journey("desktop-screens", async () => {
 // ── 13. Phone pass ────────────────────────────────────────────────────────────────
 await journey("phone-pass", async () => {
   await page.setViewportSize({ width: 390, height: 844 });
-  const pages = ["/dashboard", "/inventory", "/clients", `/clients/view?id=${ids.client}`, "/quotes", `/quotes/view?id=${ids.quote}`, "/orders", `/orders/view?id=${ids.order}`, "/invoices", `/invoices/view?id=${ids.invoice}`, "/payments", `/payments/view?id=${ids.receipt}`, "/bookings", "/settings", `/quotes/edit?clientId=${ids.client}`, `/orders/edit?clientId=${ids.client}`, `/invoices/edit?clientId=${ids.client}`, `/payments/record?clientId=${ids.client}`, `/payments/record?clientId=${ids.ka}`, `/invoices/view?id=${ids.kaInv}`];
-  pages.push(/* accounts (PR 1) */ "/accounts", "/accounts/filed?fy=2025-26&company=dspl");
-  pages.push(/* reconcile (PR 5) */ "/reconcile", "/reconcile?tab=gst", "/reconcile?tab=balances", `/reconcile/ledger?clientId=${ids.client}`);
-  pages.push(/* reconcile BRS (PR 6) */ "/reconcile?tab=bank", "/reconcile/brs");
-
-  pages.push(/* tally (PR 2) */ "/tally", "/tally/view", "/tally/settings", "/tally/parties");
-
-  pages.push(/* import (PR 3) */ "/invoices/import", ...(ids.swipeImport ? [`/invoices/import/view?id=${ids.swipeImport}`] : []));
-
-  pages.push(/* bank (PR 4) */ "/bank", "/bank/upload", ...(ids.bankLine ? [`/bank/line?id=${ids.bankLine}`] : []), ...(ids.bankStatement ? [`/bank/statement?id=${ids.bankStatement}`] : []));
+  const pages = ["/dashboard", "/inventory", "/clients", `/clients/view?id=${ids.client}`, `/clients/edit?id=${ids.client}`, "/clients/new", "/quotes", `/quotes/view?id=${ids.quote}`, "/orders", `/orders/view?id=${ids.order}`, "/bookings", "/creators", `/quotes/edit?clientId=${ids.client}`, `/orders/edit?clientId=${ids.client}`];
   for (const p of pages) { await go(p); await ready(); await page.waitForTimeout(300); await overflowCheck(p); await shot(`phone-${p.replace(/[^a-z]+/g, "-")}`); }
   check("no page scrolls sideways at 390 px", out.overflow.length === 0, JSON.stringify(out.overflow));
   await shot("phone-dashboard");
@@ -581,10 +343,8 @@ await journey("sales-role-user", async () => {
   await signOut();
   check("sign out lands on /login", page.url().includes("/login"), page.url());
   await signIn(SALES);
-  await go("/settings");
-  check("non-admin sees the read-only notice", /Only an Admin or Super Admin/.test(await text()), (await text()).slice(0, 300));
-  check("non-admin cannot edit settings", await page.getByRole("button", { name: "Save profile" }).isDisabled().catch(() => false), "save enabled");
-  await go("/invoices"); check("sales user can open invoices", (await page.locator("h1").innerText()).includes("Invoices"), "");
+  await go("/clients"); check("sales user can open clients", (await page.locator("h1").innerText()).includes("Clients"), "");
+  check("sales user sees the Billing portal entry", (await page.locator("header").innerText()).includes("Billing portal"), "");
   await signOut();
 });
 

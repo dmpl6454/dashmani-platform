@@ -29,7 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     # The full API suite now takes ~30 min on a runner (main's last green run: 29m45s),
     # so 30 cancelled most PRs mid-suite. 45 leaves headroom without hiding a hang.
-    timeout-minutes: 45
+    # Measured 2026-11-06: the whole job takes ~41 min (test suite ~35), so 45 was one slow runner
+    # away from killing vitest again. 60 leaves headroom without hiding a real hang.
+    timeout-minutes: 60
 
     services:
       postgres:

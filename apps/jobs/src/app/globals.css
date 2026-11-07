@@ -1319,6 +1319,7 @@
   margin-bottom: 22px;
 }
 .ds-intern-hero { text-align: center; margin-bottom: 44px; }
+.ds-intern-hero h1,
 .ds-intern-hero h2 {
   font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;

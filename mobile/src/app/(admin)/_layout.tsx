@@ -63,7 +63,7 @@ export default function AdminTabsLayout() {
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: "Dashboard", tabBarIcon: ICONS.index }} />
+      <Tabs.Screen name="index" options={{ title: "Home", tabBarIcon: ICONS.index }} />
       <Tabs.Screen name="reports" options={{ title: "Reports", tabBarIcon: ICONS.reports }} />
       <Tabs.Screen
         name="approvals"

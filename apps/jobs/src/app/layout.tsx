@@ -177,7 +177,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="ds-colophon-row fine">
               <span className="contact">
                 <img src="/illustrations/contact-us.svg" alt="" aria-hidden="true" width={22} height={11} />
-                Help · <a href="mailto:careers@digitalsukoon.com">careers@digitalsukoon.com</a>
+                <Link href="/privacy">Privacy</Link> · Help · <a href="mailto:careers@digitalsukoon.com">careers@digitalsukoon.com</a>
               </span>
               <span>© {new Date().getFullYear()} Digital Sukoon</span>
             </div>

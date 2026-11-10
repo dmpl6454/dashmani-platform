@@ -14,9 +14,6 @@ import { BoxesLoader } from "@/components/boxes-loader";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
-/** Minimum time the startup loader stays visible (ms). */
-const MIN_LOADER_MS = 2500;
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -41,11 +38,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         localStorage.removeItem("user");
       }
     }
-    // Keep the boxes loader on screen for a minimum time so it is visible
-    // instead of flashing for a few milliseconds. Auth is resolved above
-    // immediately; only the reveal of the page is held back.
-    const t = setTimeout(() => setIsLoading(false), MIN_LOADER_MS);
-    return () => clearTimeout(t);
+    // Reveal the page as soon as the stored session has been read. (Until 2026-11-10 the
+    // boxes loader was held for a 2.5 s minimum on every full page load, which made every
+    // staff page take ~4.3 s to show anything on a mid-range phone; removed at the owner's
+    // request.)
+    setIsLoading(false);
   }, []);
 
   // Redirect to login once loading is done and there's no authenticated user.

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import healthRoutes from "./health.routes";
+import webVitalsRoutes from "./web-vitals.routes";
 import authRoutes from "./auth.routes";
 import roleRoutes from "./role.routes";
 import employeeRoutes from "./employee.routes";
@@ -44,6 +45,7 @@ import metaPlatformRoutes from "./meta-platform.routes";
 const router = Router();
 
 router.use(healthRoutes);
+router.use(webVitalsRoutes);
 router.use(authRoutes);
 router.use(roleRoutes);
 router.use(employeeRoutes);

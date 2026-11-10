@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { WebVitalsReporter } from "@/components/web-vitals";
 import "./globals.css";
 import { AuthContext, type ClientSession } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
@@ -67,6 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
       </head>
       <body>
+        <WebVitalsReporter />
         <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>
           {isPublicPage ? children : <PortalShell>{children}</PortalShell>}
         </AuthContext.Provider>

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { WebVitalsReporter } from "@/components/web-vitals";
 import { AuthContext, type InternalSession } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { clearSwrCache } from "@/lib/swr-cache";
@@ -154,6 +155,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <title>Dashmani Portal</title>
       </head>
       <body className="bg-bg">
+        <WebVitalsReporter />
         <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>
           {isPublicPage ? (
             children

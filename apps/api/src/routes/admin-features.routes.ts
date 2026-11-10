@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requireInternalUser } from "../middleware/require-internal-user";
+import { AppError } from "../middleware/error-handler";
 import { requirePermission, GLOBAL_ONLY } from "../middleware/rbac";
 import { guardRoleAssignment, guardTargetUser, requireAdminOrHrRole, assertSuperAdminBoundary, actorIsAdmin } from "../middleware/role-guard";
 import { success } from "../utils/response";
@@ -811,6 +812,40 @@ router.post("/admin/ai/salary-slip/preview", authenticate, requirePermission("em
 // the same secret — without this, client and HR logins could spend our AI budget.
 router.post("/admin/ai/assist", authenticate, requireInternalUser, async (req: Request, res: Response, next: NextFunction) => {
   try { return success(res, await aiService.aiAssist(req.body)); } catch (err) { next(err); }
+});
+
+// The chat, streamed as server-sent events: `data: {"t":"…"}` per piece of text, then
+// `data: {"done":true}`, or `data: {"error":"…"}` if the model fails part-way. Anything that
+// fails before the first byte (no task, AI not configured) is a normal JSON error.
+router.post("/admin/ai/assist/stream", authenticate, requireInternalUser, async (req: Request, res: Response, next: NextFunction) => {
+  const task = typeof req.body?.task === "string" ? req.body.task.trim() : "";
+  if (!task) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "Type a question first" } });
+  if (!process.env.ANTHROPIC_API_KEY) return next(new AppError(500, "AI_NOT_CONFIGURED", "AI service is not configured. Set ANTHROPIC_API_KEY."));
+  const abort = new AbortController();
+  // "close" on the response fires when the client goes away (or after we end it).
+  res.on("close", () => abort.abort());
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  // nginx buffers proxied responses by default, which would deliver the whole answer at once.
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+  try {
+    await aiService.aiAssistStream(
+      { task, employeeId: typeof req.body?.employeeId === "string" ? req.body.employeeId : undefined, context: typeof req.body?.context === "string" ? req.body.context : undefined },
+      (t) => send({ t }),
+      abort.signal,
+    );
+    send({ done: true });
+  } catch (err) {
+    if (!abort.signal.aborted) {
+      console.error("[ai-assist-stream]", err instanceof Error ? err.message : err);
+      send({ error: "The AI service failed while answering. Please try again." });
+    }
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
 });
 
 // ===== Expense Claims (Admin) =====

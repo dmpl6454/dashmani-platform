@@ -98,20 +98,25 @@ export function NotificationBell() {
     }
     setSelectedNotif(n);
     if (!n.read) {
+      // Shown as read at once; re-read from the server either way, so a failure puts it back.
+      mutateNotifs((cur: any) => (cur && Array.isArray(cur.data) ? { ...cur, data: cur.data.map((r: any) => (r.id === n.id ? { ...r, read: true } : r)) } : cur), { revalidate: false });
+      mutateCount((cur: any) => (cur?.data ? { ...cur, data: { ...cur.data, count: Math.max(0, (cur.data.count ?? 0) - 1) } } : cur), { revalidate: false });
       try {
         await apiFetch(`/hr/notifications/${n.id}/read`, { method: "PUT" });
-        mutateNotifs();
-        mutateCount();
       } catch { /* ignore */ }
+      mutateNotifs();
+      mutateCount();
     }
   }
 
   async function handleMarkAllRead() {
+    mutateNotifs((cur: any) => (cur && Array.isArray(cur.data) ? { ...cur, data: cur.data.map((r: any) => ({ ...r, read: true })) } : cur), { revalidate: false });
+    mutateCount((cur: any) => (cur?.data ? { ...cur, data: { ...cur.data, count: 0 } } : cur), { revalidate: false });
     try {
       await apiFetch("/hr/notifications/read-all", { method: "PUT" });
-      mutateNotifs();
-      mutateCount();
     } catch { /* ignore */ }
+    mutateNotifs();
+    mutateCount();
   }
 
   function timeAgo(date: string) {

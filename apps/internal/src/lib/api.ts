@@ -69,6 +69,55 @@ export async function apiUpload<T>(path: string, formData: FormData, _retried = 
 }
 
 /**
+ * POSTs to an endpoint that answers with server-sent events (`data: {...}` lines) and calls
+ * `onEvent` for each one as it arrives. Errors before the stream starts come back as the usual
+ * JSON envelope and are thrown; a 401 refreshes the session once, like apiFetch.
+ */
+export async function apiStream(
+  path: string,
+  body: unknown,
+  onEvent: (event: any) => void,
+  signal?: AbortSignal,
+  _retried = false,
+): Promise<void> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+    signal,
+  });
+  const type = res.headers.get("Content-Type") || "";
+  if (!res.ok || !type.includes("text/event-stream") || !res.body) {
+    if (res.status === 401 && typeof window !== "undefined" && !_retried) {
+      if (await tryRefresh()) return apiStream(path, body, onEvent, signal, true);
+      clearAuthAndRedirect();
+      throw new Error("Session expired");
+    }
+    let message = "Request failed";
+    try { message = (await res.json())?.error?.message || message; } catch { /* not JSON */ }
+    throw new Error(message);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let cut: number;
+    while ((cut = buf.indexOf("\n\n")) !== -1) {
+      const chunk = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      for (const line of chunk.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        try { onEvent(JSON.parse(line.slice(5).trim())); } catch { /* ignore a malformed line */ }
+      }
+    }
+  }
+}
+
+/**
  * Fetches a binary file download (e.g. an .xlsx export). On success returns the
  * Blob plus the server-suggested filename (parsed from Content-Disposition).
  * On 401 it retries once after a token refresh, mirroring apiFetch. On any

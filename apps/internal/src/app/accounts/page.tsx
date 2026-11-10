@@ -922,7 +922,7 @@ function AccountsPageInner() {
                     const first = asg[0]?.employee?.name ? toTitleCase(asg[0].employee.name).split(" ")[0] : "";
                     const href = safeProfileHref(acc.profileUrl, acc.platform, acc.handle);
                     return (
-                      <div key={acc.id} role="row" className={`${GRID} group h-[60px] px-6 border-b border-[color:var(--hx-101E29)] last:border-b-0 text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
+                      <div key={acc.id} role="row" className={`${GRID} group h-[60px] px-6 [content-visibility:auto] [contain-intrinsic-size:auto_60px] border-b border-[color:var(--hx-101E29)] last:border-b-0 text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
                         <span role="cell" className="flex items-center gap-3 min-w-0">
                           <PlatformTile platform={acc.platform} />
                           <span className="min-w-0 leading-[1.3]">

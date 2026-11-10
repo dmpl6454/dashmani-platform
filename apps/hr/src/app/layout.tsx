@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { HrAuthProvider } from "@/components/auth-provider";
 import "./globals.css";
+import { WebVitalsReporter } from "@/components/web-vitals";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <head />
       <body className="font-sans antialiased">
+        <WebVitalsReporter />
         <HrAuthProvider>
           {children}
         </HrAuthProvider>

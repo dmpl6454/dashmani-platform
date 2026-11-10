@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import { WebVitalsReporter } from "@/components/web-vitals";
 
 export const metadata: Metadata = {
   title: { default: "Digital Sukoon Sales", template: "%s · Digital Sukoon Sales" },
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <WebVitalsReporter />
         <Providers>{children}</Providers>
       </body>
     </html>

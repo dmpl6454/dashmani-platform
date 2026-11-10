@@ -95,6 +95,13 @@ const HEAD = "h-[50px] px-5 bg-ds-inset border-b border-ds-line2 text-[10.5px] f
 const DOC_GRID = "grid gap-x-3.5 items-center [grid-template-columns:36px_minmax(160px,24fr)_minmax(110px,15fr)_minmax(130px,22fr)_minmax(96px,13fr)_minmax(196px,12fr)]";
 const LEAVE_GRID = "grid gap-x-3.5 items-center [grid-template-columns:36px_minmax(160px,24fr)_minmax(120px,16fr)_minmax(76px,10fr)_minmax(110px,20fr)_minmax(196px,12fr)]";
 
+// SWR updaters for a `{ data: rows }` envelope. Passed to mutate(), the change shows at once and
+// SWR then re-reads the list from the server, so the screen always ends on the real state.
+const dropRows = (ids: string[]) => (cur: any) =>
+  cur && Array.isArray(cur.data) ? { ...cur, data: cur.data.filter((r: any) => !ids.includes(r.id)) } : cur;
+const setLeaveStatus = (ids: string[], status: string) => (cur: any) =>
+  cur && Array.isArray(cur.data) ? { ...cur, data: cur.data.map((r: any) => (ids.includes(r.id) ? { ...r, status } : r)) } : cur;
+
 export default function ApprovalsPage() {
   usePageTitle("Approvals");
   const { user } = useAuth();
@@ -133,21 +140,22 @@ export default function ApprovalsPage() {
     run(id, async () => {
       await apiFetch(`/admin/documents/${id}/review`, { method: "POST", body: JSON.stringify({ status }) });
       setSelectedDocs((s) => { const n = new Set(s); n.delete(id); return n; });
-      mutateDocs();
+      // Drop the row now (one round trip, not two), then confirm with a background re-read.
+      mutateDocs(dropRows([id]));
     }, "Failed to review document");
 
   const reviewPicture = (id: string, action: "approve" | "reject") =>
     run(id, async () => {
       await apiFetch(`/admin/profile-pictures/${id}/${action}`, { method: "POST" });
       setSelectedPics((s) => { const n = new Set(s); n.delete(id); return n; });
-      mutatePics();
+      mutatePics(dropRows([id]));
     }, "Failed to review picture");
 
   const reviewLeave = (id: string, action: "approve" | "reject") =>
     run(id, async () => {
       await apiFetch(`/admin/leave-requests/${id}/${action}`, { method: "POST" });
       setSelectedLeaves((s) => { const n = new Set(s); n.delete(id); return n; });
-      mutateLeave();
+      mutateLeave(setLeaveStatus([id], action === "approve" ? "APPROVED" : "REJECTED"));
     }, "Failed to review leave request");
 
   async function bulkAction(tab: Tab, action: "APPROVE" | "REJECT") {
@@ -155,17 +163,20 @@ export default function ApprovalsPage() {
     setActionError("");
     try {
       if (tab === "documents") {
-        await apiFetch("/admin/documents/bulk-review", { method: "POST", body: JSON.stringify({ ids: Array.from(selectedDocs), action }) });
+        const ids = Array.from(selectedDocs);
+        await apiFetch("/admin/documents/bulk-review", { method: "POST", body: JSON.stringify({ ids, action }) });
         setSelectedDocs(new Set());
-        mutateDocs();
+        mutateDocs(dropRows(ids));
       } else if (tab === "pictures") {
-        await apiFetch("/admin/profile-pictures/bulk-review", { method: "POST", body: JSON.stringify({ ids: Array.from(selectedPics), action }) });
+        const ids = Array.from(selectedPics);
+        await apiFetch("/admin/profile-pictures/bulk-review", { method: "POST", body: JSON.stringify({ ids, action }) });
         setSelectedPics(new Set());
-        mutatePics();
+        mutatePics(dropRows(ids));
       } else {
-        await apiFetch("/admin/leave-requests/bulk", { method: "POST", body: JSON.stringify({ ids: Array.from(selectedLeaves), action }) });
+        const ids = Array.from(selectedLeaves);
+        await apiFetch("/admin/leave-requests/bulk", { method: "POST", body: JSON.stringify({ ids, action }) });
         setSelectedLeaves(new Set());
-        mutateLeave();
+        mutateLeave(setLeaveStatus(ids, action === "APPROVE" ? "APPROVED" : "REJECTED"));
       }
     } catch (e: any) {
       setActionError(e.message || "Bulk action failed");

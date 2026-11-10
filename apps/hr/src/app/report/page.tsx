@@ -1172,7 +1172,7 @@ export default function ReportPage() {
             <div
               key={i}
               id={`link-row-${i}`}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${hasRowError ? "border-red-300 border-l-red-500 bg-red-50/30" : isDuplicate ? "border-red-200 border-l-red-500 bg-red-50/40" : isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden`}
+              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${hasRowError ? "border-red-300 border-l-red-500 bg-red-50/30" : isDuplicate ? "border-red-200 border-l-red-500 bg-red-50/40" : isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden [content-visibility:auto] [contain-intrinsic-size:auto_260px]`}
               style={{ animation: "crx-slideUp 0.3s ease-out" }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">

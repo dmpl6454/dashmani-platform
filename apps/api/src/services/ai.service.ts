@@ -567,7 +567,7 @@ Generate the complete Marp markdown with frontmatter. Use theme: default with da
 
 // ===== General AI Assistant =====
 
-export async function aiAssist(input: {
+async function buildAssistPrompt(input: {
   task: string;
   context?: string;
   employeeId?: string;
@@ -587,5 +587,43 @@ export async function aiAssist(input: {
 
   const prompt = `${input.task}${employeeContext}${input.context ? `\n\nAdditional context: ${input.context}` : ""}`;
 
+  return { system, prompt };
+}
+
+export async function aiAssist(input: { task: string; context?: string; employeeId?: string }) {
+  const { system, prompt } = await buildAssistPrompt(input);
   return { response: await askClaude(system, prompt) };
+}
+
+/**
+ * The same answer as aiAssist, streamed: `onText` gets each piece of text as the model writes
+ * it, so the chat shows words within a second or two instead of after the whole reply.
+ * Throws AI_NOT_CONFIGURED before anything is streamed, so the route can still answer with
+ * a normal JSON error. `signal` stops generation when the person leaves the page.
+ */
+export async function aiAssistStream(
+  input: { task: string; context?: string; employeeId?: string },
+  onText: (text: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const client = getClient();
+  const { system, prompt } = await buildAssistPrompt(input);
+  const stream = client.messages.stream(
+    {
+      model: AI_SERVICE_MODEL,
+      max_tokens: 4096,
+      system,
+      messages: [{ role: "user", content: prompt }],
+    },
+    { signal },
+  );
+  stream.on("text", (delta) => onText(delta));
+  const msg = await stream.finalMessage();
+  recordApiUsage({
+    provider: "anthropic",
+    operation: "ai-assist-stream",
+    model: AI_SERVICE_MODEL,
+    inputTokens: msg.usage?.input_tokens ?? 0,
+    outputTokens: msg.usage?.output_tokens ?? 0,
+  });
 }

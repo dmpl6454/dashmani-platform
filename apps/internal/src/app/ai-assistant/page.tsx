@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiStream } from "@/lib/api";
 import useSWR from "swr";
 import DOMPurify from "dompurify";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -712,10 +712,17 @@ function AIChat({ loading, setLoading, employees }: any) {
   const [employeeId, setEmployeeId] = useState("");
   const [employeeError, setEmployeeError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Stops a streaming reply when the person leaves the page, so the API stops generating too.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    abortRef.current = new AbortController();
+    return () => abortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [messages]);
+    // Instant while text streams in (a smooth scroll per piece of text would lag behind).
+    messagesEndRef.current?.scrollIntoView({ behavior: loading ? "auto" : "smooth", block: "nearest" });
+  }, [messages, loading]);
 
   async function send() {
     if (!input.trim()) return;
@@ -726,15 +733,36 @@ function AIChat({ loading, setLoading, employees }: any) {
     setEmployeeError("");
     const userMsg = input;
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+    // The reply is streamed: an empty assistant bubble is added, then filled as text arrives.
+    setMessages((prev) => [...prev, { role: "user", content: userMsg }, { role: "assistant", content: "" }]);
     setLoading(true);
-    try {
-      const res = await apiFetch<any>("/admin/ai/assist", {
-        method: "POST", body: JSON.stringify({ task: userMsg, employeeId }),
+    const appendToReply = (text: string) =>
+      setMessages((prev) => {
+        const next = prev.slice();
+        const last = next[next.length - 1];
+        next[next.length - 1] = { ...last, content: last.content + text };
+        return next;
       });
-      setMessages((prev) => [...prev, { role: "assistant", content: res.data.response }]);
+    const replaceReply = (text: string) =>
+      setMessages((prev) => {
+        const next = prev.slice();
+        next[next.length - 1] = { ...next[next.length - 1], content: text };
+        return next;
+      });
+    let got = "";
+    try {
+      await apiStream("/admin/ai/assist/stream", { task: userMsg, employeeId }, (ev) => {
+        if (typeof ev?.t === "string") { got += ev.t; appendToReply(ev.t); }
+        else if (typeof ev?.error === "string") {
+          const note = got ? `\n\n[The answer stopped early: ${ev.error}]` : `Error: ${ev.error}`;
+          got += note; appendToReply(note);
+        }
+      }, abortRef.current?.signal);
+      if (!got) replaceReply("Error: no answer came back. Please try again.");
     } catch (e: any) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${e.message}` }]);
+      if (e?.name === "AbortError") return;
+      if (got) appendToReply(`\n\n[The answer stopped early: ${e.message}]`);
+      else replaceReply(`Error: ${e.message}`);
     }
     finally { setLoading(false); }
   }
@@ -782,6 +810,7 @@ function AIChat({ loading, setLoading, employees }: any) {
           )}
           {messages.map((msg, i) => {
             const user = msg.role === "user";
+            if (!user && !msg.content) return null; // the reply bubble appears with its first words
             return (
               <div key={i} className={`flex gap-2.5 items-start ${user ? "justify-end" : "justify-start"}`}>
                 {!user && <AiBadge />}
@@ -795,7 +824,7 @@ function AIChat({ loading, setLoading, employees }: any) {
               </div>
             );
           })}
-          {loading && (
+          {loading && !messages[messages.length - 1]?.content && (
             <div className="flex items-center gap-2.5 text-ds-t3 text-[13px]"><AiBadge />Thinking...</div>
           )}
           <div ref={messagesEndRef} />

@@ -7,6 +7,7 @@ import {
 import { useCostSheet, useOpenAiBilling, type ProviderCost, type OpenAiBilling } from "@/lib/hooks/use-cost-sheet";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { apiFetch } from "@/lib/api";
+import { PageSpeedCard } from "./_page-speed";
 
 const usd = (n: number) =>
   n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(4)}` : "$0.00";
@@ -557,6 +558,8 @@ export default function ApiCostsPage() {
           )}
         </>
       )}
+
+      <PageSpeedCard />
     </div>
   );
 }

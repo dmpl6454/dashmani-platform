@@ -338,7 +338,7 @@ export default function ChannelSurf() {
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="" width={32} height={32} />
+          <img src="/logo-64.webp" alt="" width={32} height={32} />
           Digital Sukoon
         </a>
         <span className="on-air">

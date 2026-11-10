@@ -2,7 +2,7 @@
 // Accounts — premium dark redesign ("ds"), built to the Accounts.dc.html mockup.
 // UI only: same endpoints (/accounts, /accounts/:id, /accounts/:id/assign,
 // /accounts/sync-followers), same handlers and the same ?tab= deep links as before.
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef, memo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAccounts, usePlatforms } from "@/lib/hooks/use-accounts";
 import { useEmployees } from "@/lib/hooks/use-employees";
@@ -510,6 +510,131 @@ function DeleteModal({ target, onCancel, onConfirm, deleting }: {
 }
 
 /* ── Small pieces ── */
+type RowActions = {
+  unassign: (accountId: string, employeeId: string) => void;
+  assign: (opts?: { employeeId?: string; accountId?: string }) => void;
+  editFollowers: (accountId: string, currentValue: number | null | undefined, name?: string) => void;
+  edit: (acc: any) => void;
+  remove: (acc: any) => void;
+};
+
+/**
+ * One row of the All Accounts table. Memoised: the page re-renders on every key press in the
+ * search box, and redrawing ~500 of these each time made typing lag ~200 ms on a slow phone.
+ * A row now redraws only when its own account object changes (SWR keeps unchanged rows identical).
+ */
+const AccountRow = memo(function AccountRow({ acc, actions }: { acc: any; actions: RowActions }) {
+    const ps = platStyle(acc.platform);
+    const st = STATUS[acc.status] ?? { label: formatStatus(acc.status ?? ""), color: "var(--hx-738395)" };
+    const sync = syncAge(acc.lastSyncedAt);
+    const asg: any[] = acc.assignments ?? [];
+    const first = asg[0]?.employee?.name ? toTitleCase(asg[0].employee.name).split(" ")[0] : "";
+    const href = safeProfileHref(acc.profileUrl, acc.platform, acc.handle);
+    return (
+      <div key={acc.id} role="row" className={`${GRID} group h-[60px] px-6 [content-visibility:auto] [contain-intrinsic-size:auto_60px] border-b border-[color:var(--hx-101E29)] last:border-b-0 text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
+        <span role="cell" className="flex items-center gap-3 min-w-0">
+          <PlatformTile platform={acc.platform} />
+          <span className="min-w-0 leading-[1.3]">
+            <span className="block font-semibold text-ds-text truncate">{acc.displayName}</span>
+            <span className="block text-[10.5px] text-ds-t3 truncate">{fmtHandle(acc.handle)}</span>
+          </span>
+        </span>
+        <span role="cell" className="flex justify-center">
+          {acc.platform?.name ? (
+            <span className="inline-flex items-center h-[22px] px-[9px] rounded-[11px] border text-[10.5px] font-semibold whitespace-nowrap" style={{ background: rgba(ps.color, 0.12), borderColor: rgba(ps.color, 0.3), color: ps.color }}>
+              {acc.platform.name}
+            </span>
+          ) : <span className="text-ds-t4">—</span>}
+        </span>
+        <span role="cell" title={acc.clientName || undefined} className="text-ds-t2 truncate text-center">{acc.clientName || "—"}</span>
+        <span role="cell" className="flex items-center justify-center gap-2 min-w-0">
+          {asg.length > 0 ? (
+            <>
+              <span className="flex flex-wrap max-w-[132px] gap-y-1 shrink-0">
+                {asg.map((a: any) => {
+                  const name = toTitleCase(a.employee?.name ?? "");
+                  const av = avatar(name);
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      title={`${name} — click to remove this assignment`}
+                      aria-label={`Remove ${name} from this account`}
+                      onClick={() => { if (a.employee?.id && window.confirm(`Remove ${name} from ${acc.displayName}?`)) actions.unassign(acc.id, a.employee.id); }}
+                      className="relative -mr-1.5 h-6 w-6 rounded-full border-2 border-ds-card grid place-items-center text-[9.5px] font-bold transition-transform hover:z-10 hover:scale-110 group/face"
+                      style={{ background: av.bg, color: av.fg }}
+                    >
+                      <span className="group-hover/face:hidden">{name[0]?.toUpperCase()}</span>
+                      <UserMinus className="hidden group-hover/face:block h-3 w-3 text-ds-redsoft" />
+                    </button>
+                  );
+                })}
+              </span>
+              <span className="ml-2 text-ds-t5 truncate">{asg.length > 1 ? `${first} +${asg.length - 1}` : first}</span>
+              <button
+                type="button"
+                onClick={() => actions.assign({ accountId: acc.id })}
+                title="Assign another employee to this account"
+                aria-label="Assign another employee"
+                className="shrink-0 h-5 w-5 rounded-full border border-dashed border-ds-line4 text-ds-t3 grid place-items-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:border-ds-teal hover:text-ds-teal"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => actions.assign({ accountId: acc.id })}
+              className="h-[22px] px-[9px] rounded-[11px] border border-dashed border-ds-line4 bg-transparent text-ds-t2 text-[10.5px] font-semibold whitespace-nowrap transition-colors hover:border-ds-teal hover:text-ds-teal"
+            >
+              + Assign
+            </button>
+          )}
+        </span>
+        <span role="cell" className="relative flex items-center justify-center font-semibold text-ds-text">
+          <button
+            type="button"
+            onClick={() => actions.editFollowers(acc.id, acc.followerCount, acc.displayName)}
+            title="Edit follower count manually"
+            aria-label="Edit follower count"
+            className="absolute left-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ds-t3 hover:text-ds-gold transition-opacity"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <span title={acc.followerCount != null ? acc.followerCount.toLocaleString() : undefined}>{fmtK(acc.followerCount)}</span>
+        </span>
+        <span role="cell" className={`text-center text-[11.5px] whitespace-nowrap ${sync.never ? "text-ds-t4" : sync.stale ? "text-[color:var(--hx-FBBF24)]" : "text-ds-t2"}`}>
+          {sync.label}
+        </span>
+        <span role="cell" className="flex justify-center">
+          <span className="inline-flex items-center gap-1.5 h-[22px] px-[9px] rounded-[11px] border text-[10.5px] font-semibold whitespace-nowrap" style={{ background: rgba(st.color, 0.1), borderColor: rgba(st.color, 0.28), color: st.color }}>
+            <i className="h-[5px] w-[5px] rounded-full" style={{ background: st.color }} />
+            {st.label}
+          </span>
+        </span>
+        <span role="cell" className="flex justify-center gap-1">
+          {href ? (
+            <a href={href} target="_blank" rel="noopener noreferrer" title="Open profile" aria-label="Open profile"
+              className="h-[26px] w-[26px] rounded-[6px] border border-ds-line2 text-ds-t2 grid place-items-center transition-colors hover:border-ds-line4 hover:text-ds-text">
+              <ExternalLink className="h-3 w-3" strokeWidth={1.8} />
+            </a>
+          ) : (
+            // Keeps edit/delete in the same position on every row when there is no profile link.
+            <span aria-hidden="true" className="h-[26px] w-[26px]" />
+          )}
+          <button type="button" onClick={() => actions.edit(acc)} title="Edit" aria-label="Edit account"
+            className="h-[26px] w-[26px] rounded-[6px] border border-ds-line2 text-ds-t2 grid place-items-center transition-colors hover:border-ds-gold/55 hover:text-ds-gold">
+            <Pencil className="h-3 w-3" strokeWidth={1.8} />
+          </button>
+          <button type="button" onClick={() => actions.remove(acc)} title="Delete" aria-label="Delete account"
+            className="h-[26px] w-[26px] rounded-[6px] border border-ds-line2 text-ds-t2 grid place-items-center transition-colors hover:border-ds-red/60 hover:text-ds-redsoft">
+            <Trash2 className="h-3 w-3" strokeWidth={1.8} />
+          </button>
+        </span>
+      </div>
+    );
+});
+
 function PlatformTile({ platform, size = 34 }: { platform?: any; size?: number }) {
   const s = platStyle(platform);
   return (
@@ -553,9 +678,9 @@ function AccountsPageInner() {
   // We surface it so the list can never silently hide accounts again.
   const accountsTruncated = (data as any)?.meta?.has_more === true;
   const platforms = (platformData as any)?.data ?? [];
-  const employees = ((employeeData as any)?.data ?? []).slice().sort((a: any, b: any) =>
+  const employees = useMemo(() => ((employeeData as any)?.data ?? []).slice().sort((a: any, b: any) =>
     (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
-  );
+  ), [employeeData]);
 
   function refresh() { mutate(); mutateAll(); }
 
@@ -674,6 +799,17 @@ function AccountsPageInner() {
       alert(err?.message || "Failed to unassign");
     }
   }
+
+  // Stable identity for the memoised rows, always calling the latest handlers.
+  const latestActions = useRef<RowActions | null>(null);
+  latestActions.current = { unassign: handleUnassign, assign: openAssign, editFollowers: handleManualFollowerEdit, edit: setEditTarget, remove: setDeleteTarget };
+  const rowActions = useMemo<RowActions>(() => ({
+    unassign: (a, e) => latestActions.current!.unassign(a, e),
+    assign: (o) => latestActions.current!.assign(o),
+    editFollowers: (a, v, n) => latestActions.current!.editFollowers(a, v, n),
+    edit: (acc) => latestActions.current!.edit(acc),
+    remove: (acc) => latestActions.current!.remove(acc),
+  }), []);
 
   /* ── Derived figures (whole estate) ── */
   const kpiReady = !!allData;
@@ -914,117 +1050,7 @@ function AccountsPageInner() {
                 ) : accounts.length === 0 ? (
                   <div className="px-5 py-12 text-center text-[12.5px] text-ds-t3">No accounts found</div>
                 ) : (
-                  accounts.map((acc: any) => {
-                    const ps = platStyle(acc.platform);
-                    const st = STATUS[acc.status] ?? { label: formatStatus(acc.status ?? ""), color: "var(--hx-738395)" };
-                    const sync = syncAge(acc.lastSyncedAt);
-                    const asg: any[] = acc.assignments ?? [];
-                    const first = asg[0]?.employee?.name ? toTitleCase(asg[0].employee.name).split(" ")[0] : "";
-                    const href = safeProfileHref(acc.profileUrl, acc.platform, acc.handle);
-                    return (
-                      <div key={acc.id} role="row" className={`${GRID} group h-[60px] px-6 [content-visibility:auto] [contain-intrinsic-size:auto_60px] border-b border-[color:var(--hx-101E29)] last:border-b-0 text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
-                        <span role="cell" className="flex items-center gap-3 min-w-0">
-                          <PlatformTile platform={acc.platform} />
-                          <span className="min-w-0 leading-[1.3]">
-                            <span className="block font-semibold text-ds-text truncate">{acc.displayName}</span>
-                            <span className="block text-[10.5px] text-ds-t3 truncate">{fmtHandle(acc.handle)}</span>
-                          </span>
-                        </span>
-                        <span role="cell" className="flex justify-center">
-                          {acc.platform?.name ? (
-                            <span className="inline-flex items-center h-[22px] px-[9px] rounded-[11px] border text-[10.5px] font-semibold whitespace-nowrap" style={{ background: rgba(ps.color, 0.12), borderColor: rgba(ps.color, 0.3), color: ps.color }}>
-                              {acc.platform.name}
-                            </span>
-                          ) : <span className="text-ds-t4">—</span>}
-                        </span>
-                        <span role="cell" title={acc.clientName || undefined} className="text-ds-t2 truncate text-center">{acc.clientName || "—"}</span>
-                        <span role="cell" className="flex items-center justify-center gap-2 min-w-0">
-                          {asg.length > 0 ? (
-                            <>
-                              <span className="flex flex-wrap max-w-[132px] gap-y-1 shrink-0">
-                                {asg.map((a: any) => {
-                                  const name = toTitleCase(a.employee?.name ?? "");
-                                  const av = avatar(name);
-                                  return (
-                                    <button
-                                      key={a.id}
-                                      type="button"
-                                      title={`${name} — click to remove this assignment`}
-                                      aria-label={`Remove ${name} from this account`}
-                                      onClick={() => { if (a.employee?.id && window.confirm(`Remove ${name} from ${acc.displayName}?`)) handleUnassign(acc.id, a.employee.id); }}
-                                      className="relative -mr-1.5 h-6 w-6 rounded-full border-2 border-ds-card grid place-items-center text-[9.5px] font-bold transition-transform hover:z-10 hover:scale-110 group/face"
-                                      style={{ background: av.bg, color: av.fg }}
-                                    >
-                                      <span className="group-hover/face:hidden">{name[0]?.toUpperCase()}</span>
-                                      <UserMinus className="hidden group-hover/face:block h-3 w-3 text-ds-redsoft" />
-                                    </button>
-                                  );
-                                })}
-                              </span>
-                              <span className="ml-2 text-ds-t5 truncate">{asg.length > 1 ? `${first} +${asg.length - 1}` : first}</span>
-                              <button
-                                type="button"
-                                onClick={() => openAssign({ accountId: acc.id })}
-                                title="Assign another employee to this account"
-                                aria-label="Assign another employee"
-                                className="shrink-0 h-5 w-5 rounded-full border border-dashed border-ds-line4 text-ds-t3 grid place-items-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity hover:border-ds-teal hover:text-ds-teal"
-                              >
-                                <Plus className="h-3 w-3" />
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => openAssign({ accountId: acc.id })}
-                              className="h-[22px] px-[9px] rounded-[11px] border border-dashed border-ds-line4 bg-transparent text-ds-t2 text-[10.5px] font-semibold whitespace-nowrap transition-colors hover:border-ds-teal hover:text-ds-teal"
-                            >
-                              + Assign
-                            </button>
-                          )}
-                        </span>
-                        <span role="cell" className="relative flex items-center justify-center font-semibold text-ds-text">
-                          <button
-                            type="button"
-                            onClick={() => handleManualFollowerEdit(acc.id, acc.followerCount, acc.displayName)}
-                            title="Edit follower count manually"
-                            aria-label="Edit follower count"
-                            className="absolute left-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-ds-t3 hover:text-ds-gold transition-opacity"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                          <span title={acc.followerCount != null ? acc.followerCount.toLocaleString() : undefined}>{fmtK(acc.followerCount)}</span>
-                        </span>
-                        <span role="cell" className={`text-center text-[11.5px] whitespace-nowrap ${sync.never ? "text-ds-t4" : sync.stale ? "text-[color:var(--hx-FBBF24)]" : "text-ds-t2"}`}>
-                          {sync.label}
-                        </span>
-                        <span role="cell" className="flex justify-center">
-                          <span className="inline-flex items-center gap-1.5 h-[22px] px-[9px] rounded-[11px] border text-[10.5px] font-semibold whitespace-nowrap" style={{ background: rgba(st.color, 0.1), borderColor: rgba(st.color, 0.28), color: st.color }}>
-                            <i className="h-[5px] w-[5px] rounded-full" style={{ background: st.color }} />
-                            {st.label}
-                          </span>
-                        </span>
-                        <span role="cell" className="flex justify-center gap-1">
-                          {href ? (
-                            <a href={href} target="_blank" rel="noopener noreferrer" title="Open profile" aria-label="Open profile"
-                              className="h-[26px] w-[26px] rounded-[6px] border border-ds-line2 text-ds-t2 grid place-items-center transition-colors hover:border-ds-line4 hover:text-ds-text">
-                              <ExternalLink className="h-3 w-3" strokeWidth={1.8} />
-                            </a>
-                          ) : (
-                            // Keeps edit/delete in the same position on every row when there is no profile link.
-                            <span aria-hidden="true" className="h-[26px] w-[26px]" />
-                          )}
-                          <button type="button" onClick={() => setEditTarget(acc)} title="Edit" aria-label="Edit account"
-                            className="h-[26px] w-[26px] rounded-[6px] border border-ds-line2 text-ds-t2 grid place-items-center transition-colors hover:border-ds-gold/55 hover:text-ds-gold">
-                            <Pencil className="h-3 w-3" strokeWidth={1.8} />
-                          </button>
-                          <button type="button" onClick={() => setDeleteTarget(acc)} title="Delete" aria-label="Delete account"
-                            className="h-[26px] w-[26px] rounded-[6px] border border-ds-line2 text-ds-t2 grid place-items-center transition-colors hover:border-ds-red/60 hover:text-ds-redsoft">
-                            <Trash2 className="h-3 w-3" strokeWidth={1.8} />
-                          </button>
-                        </span>
-                      </div>
-                    );
-                  })
+                  accounts.map((acc: any) => <AccountRow key={acc.id} acc={acc} actions={rowActions} />)
                 )}
               </div>
             </div>

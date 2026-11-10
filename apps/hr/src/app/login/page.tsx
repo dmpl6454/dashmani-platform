@@ -758,10 +758,16 @@ export default function LoginPage() {
   const segRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
+  // The clock shows hours and minutes only, so it ticks on each minute boundary: ticking every
+  // second redrew this whole page (the sign-in form included) 60 times a minute for nothing.
   useEffect(() => {
     setLiveT(new Date());
-    const id = setInterval(() => setLiveT(new Date()), 1000);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | undefined;
+    const first = setTimeout(() => {
+      setLiveT(new Date());
+      id = setInterval(() => setLiveT(new Date()), 60_000);
+    }, 60_000 - (Date.now() % 60_000) + 50);
+    return () => { clearTimeout(first); if (id) clearInterval(id); };
   }, []);
 
   /* scroll progress */

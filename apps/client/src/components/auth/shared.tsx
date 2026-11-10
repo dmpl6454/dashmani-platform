@@ -45,6 +45,17 @@ function TileWall() {
 
 const istClock = () => new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" });
 
+/** The header's IST clock in its own component, so its once-a-second tick redraws only itself. */
+function AuthClock() {
+  const [clock, setClock] = useState("");
+  useEffect(() => {
+    setClock(istClock());
+    const t = setInterval(() => setClock(istClock()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="auth-clock" suppressHydrationWarning>{clock}</span>;
+}
+
 export function AuthShell({
   kicker, title, lines, children, ticker,
 }: {
@@ -54,12 +65,6 @@ export function AuthShell({
   children: ReactNode;
   ticker?: string[];
 }) {
-  const [clock, setClock] = useState("");
-  useEffect(() => {
-    setClock(istClock());
-    const t = setInterval(() => setClock(istClock()), 1000);
-    return () => clearInterval(t);
-  }, []);
   // Magnetic submit buttons, delegated so every auth page gets the site's .btn feel.
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -87,7 +92,7 @@ export function AuthShell({
         </Link>
         <span className="auth-onair"><i aria-hidden /> On air</span>
         <span className="auth-chcount">Client portal</span>
-        <span className="auth-clock" suppressHydrationWarning>{clock}</span>
+        <AuthClock />
         <a className="auth-site" href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer">digitalsukoon.com ↗</a>
       </header>
 

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch, clearSession, isPrivatePath, readStoredUser, storeSession } from "@/lib/api";
@@ -34,18 +34,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  function adoptSession(session: StaffSession) {
+  const adoptSession = useCallback((session: StaffSession) => {
     storeSession(session);
     setUser(session.user);
     router.replace(safeNext() ?? "/dashboard");
-  }
+  }, [router]);
 
-  async function login(email: string, password: string) {
+  const login = useCallback(async (email: string, password: string) => {
     const res = await apiFetch<StaffSession>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
     adoptSession(res.data);
-  }
+  }, [adoptSession]);
 
-  function logout() {
+  const logout = useCallback(() => {
     let refreshToken: string | null = null;
     try { refreshToken = localStorage.getItem("refreshToken"); } catch { /* storage blocked */ }
     if (refreshToken) {
@@ -54,7 +54,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
     clearSession();
     setUser(null);
     router.push("/login");
-  }
+  }, [router]);
+
+  // Stable while the user is unchanged: this provider re-renders on every page change.
+  const auth = useMemo(() => ({ user, login, adoptSession, logout, isLoading }), [user, login, adoptSession, logout, isLoading]);
 
   let content: React.ReactNode;
   if (isPublic) content = children;
@@ -62,7 +65,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   else if (!isSalesUser(user)) content = <NotForRole onLogout={logout} name={user.name} />;
   else content = <CompanyProvider><AppShell>{children}</AppShell></CompanyProvider>;
 
-  return <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>{content}</AuthContext.Provider>;
+  return <AuthContext.Provider value={auth}>{content}</AuthContext.Provider>;
 }
 
 function GuardPlaceholder() {

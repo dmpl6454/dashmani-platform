@@ -44,6 +44,41 @@ async function askClaude(systemPrompt: string, userPrompt: string): Promise<stri
   return block ? block.text : "";
 }
 
+/**
+ * The same three letters, streamed: the prompt is built first (an unknown employee or a
+ * missing key still throws before a byte is sent), then each piece of HTML is passed to
+ * `onText` as it arrives. `signal` stops generation when the person leaves the page.
+ */
+export const STREAMABLE_DOCUMENTS = {
+  "offer-letter": (input: any) => buildOfferLetterPrompt(input),
+  "appointment-letter": (input: any) => buildAppointmentLetterPrompt(input),
+  contract: (input: any) => buildContractPrompt(input),
+} as const;
+export type StreamableDocument = keyof typeof STREAMABLE_DOCUMENTS;
+
+export async function prepareDocumentStream(kind: StreamableDocument, input: unknown) {
+  const client = getClient();
+  const { system, prompt, employeeName } = await STREAMABLE_DOCUMENTS[kind](input);
+  return {
+    employeeName,
+    run: async (onText: (text: string) => void, signal?: AbortSignal) => {
+      const stream = client.messages.stream(
+        { model: AI_SERVICE_MODEL, max_tokens: 4096, system, messages: [{ role: "user", content: prompt }] },
+        { signal },
+      );
+      stream.on("text", (delta) => onText(delta));
+      const msg = await stream.finalMessage();
+      recordApiUsage({
+        provider: "anthropic",
+        operation: "ai-generate-stream",
+        model: AI_SERVICE_MODEL,
+        inputTokens: msg.usage?.input_tokens ?? 0,
+        outputTokens: msg.usage?.output_tokens ?? 0,
+      });
+    },
+  };
+}
+
 // ===== Job Vacancy AI =====
 
 export async function generateJobDescription(input: {
@@ -79,7 +114,7 @@ Return ONLY valid JSON with keys: description, requirements, responsibilities, b
 
 // ===== Offer Letter AI =====
 
-export async function generateOfferLetterContent(input: {
+type OfferLetterInput = {
   employeeId: string;
   designation: string;
   department?: string;
@@ -88,7 +123,10 @@ export async function generateOfferLetterContent(input: {
   probationMonths?: number;
   location?: string;
   specialTerms?: string;
-}) {
+};
+
+/** The prompt for one generateOfferLetterContent call; throws 404 before anything is sent to the model. */
+async function buildOfferLetterPrompt(input: OfferLetterInput) {
   const employee = await prisma.user.findUnique({
     where: { id: input.employeeId },
     select: { name: true, email: true, profile: { select: { designation: true } } },
@@ -124,12 +162,17 @@ Generate a complete, ready-to-print HTML document with:
 
 Return ONLY the complete HTML document, no explanation.`;
 
-  return { html: await askClaude(system, prompt), employeeName: employee.name };
+  return { system, prompt, employeeName: employee.name };
+}
+
+export async function generateOfferLetterContent(input: OfferLetterInput) {
+  const { system, prompt, employeeName } = await buildOfferLetterPrompt(input);
+  return { html: await askClaude(system, prompt), employeeName };
 }
 
 // ===== Appointment Letter AI =====
 
-export async function generateAppointmentLetter(input: {
+type AppointmentLetterInput = {
   employeeId: string;
   designation: string;
   department?: string;
@@ -139,7 +182,10 @@ export async function generateAppointmentLetter(input: {
   noticePeriod?: number;
   location?: string;
   specialClauses?: string;
-}) {
+};
+
+/** The prompt for one generateAppointmentLetter call; throws 404 before anything is sent to the model. */
+async function buildAppointmentLetterPrompt(input: AppointmentLetterInput) {
   const employee = await prisma.user.findUnique({
     where: { id: input.employeeId },
     select: { name: true, email: true, phone: true, profile: { select: { designation: true, panNumber: true, aadhaarNumber: true } } },
@@ -186,7 +232,12 @@ Generate a comprehensive appointment letter HTML document including:
 
 Return ONLY the complete HTML document.`;
 
-  return { html: await askClaude(system, prompt), employeeName: employee.name };
+  return { system, prompt, employeeName: employee.name };
+}
+
+export async function generateAppointmentLetter(input: AppointmentLetterInput) {
+  const { system, prompt, employeeName } = await buildAppointmentLetterPrompt(input);
+  return { html: await askClaude(system, prompt), employeeName };
 }
 
 // ===== Salary Slip AI =====
@@ -450,7 +501,7 @@ export async function generateSalarySlipPreviewHtml(input: {
 
 // ===== Employment Contract AI =====
 
-export async function generateContractContent(input: {
+type ContractInput = {
   employeeId: string;
   designation: string;
   department?: string;
@@ -459,7 +510,10 @@ export async function generateContractContent(input: {
   probationMonths?: number;
   noticePeriod?: number;
   specialClauses?: string;
-}) {
+};
+
+/** The prompt for one generateContractContent call; throws 404 before anything is sent to the model. */
+async function buildContractPrompt(input: ContractInput) {
   const employee = await prisma.user.findUnique({
     where: { id: input.employeeId },
     select: { name: true, email: true, phone: true, profile: { select: { designation: true, panNumber: true, aadhaarNumber: true, mailingAddress: true } } },
@@ -508,7 +562,12 @@ Generate a legally sound employment contract HTML with:
 
 Return ONLY the complete HTML document.`;
 
-  return { html: await askClaude(system, prompt), employeeName: employee.name };
+  return { system, prompt, employeeName: employee.name };
+}
+
+export async function generateContractContent(input: ContractInput) {
+  const { system, prompt, employeeName } = await buildContractPrompt(input);
+  return { html: await askClaude(system, prompt), employeeName };
 }
 
 // ===== AI Presentation Generator =====

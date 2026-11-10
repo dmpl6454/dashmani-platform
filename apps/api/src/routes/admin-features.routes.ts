@@ -821,6 +821,45 @@ router.post("/admin/ai/assist/stream", authenticate, requireInternalUser, async 
   const task = typeof req.body?.task === "string" ? req.body.task.trim() : "";
   if (!task) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "Type a question first" } });
   if (!process.env.ANTHROPIC_API_KEY) return next(new AppError(500, "AI_NOT_CONFIGURED", "AI service is not configured. Set ANTHROPIC_API_KEY."));
+  const sse = openSse(res);
+  try {
+    await aiService.aiAssistStream(
+      { task, employeeId: typeof req.body?.employeeId === "string" ? req.body.employeeId : undefined, context: typeof req.body?.context === "string" ? req.body.context : undefined },
+      (t) => sse.send({ t }),
+      sse.signal,
+    );
+    sse.send({ done: true });
+  } catch (err) {
+    sse.fail("ai-assist-stream", err, "The AI service failed while answering. Please try again.");
+  } finally {
+    sse.end();
+  }
+});
+
+// The offer letter, appointment letter and contract, streamed the same way so the preview fills
+// in as it is written. First event `{"meta":{"employeeName":…}}`, then `{"t":…}` pieces, then
+// `{"done":true}` or `{"error":…}`. An unknown employee or a missing key is a normal JSON error.
+router.post("/admin/ai/generate-:kind/stream", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  const kind = req.params.kind;
+  if (!Object.prototype.hasOwnProperty.call(aiService.STREAMABLE_DOCUMENTS, kind)) {
+    return next(new AppError(404, "NOT_FOUND", "Unknown document type"));
+  }
+  let job: Awaited<ReturnType<typeof aiService.prepareDocumentStream>>;
+  try { job = await aiService.prepareDocumentStream(kind as aiService.StreamableDocument, req.body); } catch (err) { return next(err); }
+  const sse = openSse(res);
+  sse.send({ meta: { employeeName: job.employeeName } });
+  try {
+    await job.run((t) => sse.send({ t }), sse.signal);
+    sse.send({ done: true });
+  } catch (err) {
+    sse.fail("ai-document-stream", err, "The AI service failed while writing the document. Please try again.");
+  } finally {
+    sse.end();
+  }
+});
+
+/** Starts a server-sent-events reply. The signal aborts when the client goes away. */
+function openSse(res: Response) {
   const abort = new AbortController();
   // "close" on the response fires when the client goes away (or after we end it).
   res.on("close", () => abort.abort());
@@ -831,22 +870,17 @@ router.post("/admin/ai/assist/stream", authenticate, requireInternalUser, async 
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
   const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
-  try {
-    await aiService.aiAssistStream(
-      { task, employeeId: typeof req.body?.employeeId === "string" ? req.body.employeeId : undefined, context: typeof req.body?.context === "string" ? req.body.context : undefined },
-      (t) => send({ t }),
-      abort.signal,
-    );
-    send({ done: true });
-  } catch (err) {
-    if (!abort.signal.aborted) {
-      console.error("[ai-assist-stream]", err instanceof Error ? err.message : err);
-      send({ error: "The AI service failed while answering. Please try again." });
-    }
-  } finally {
-    if (!res.writableEnded) res.end();
-  }
-});
+  return {
+    signal: abort.signal,
+    send,
+    fail(tag: string, err: unknown, message: string) {
+      if (abort.signal.aborted) return;
+      console.error(`[${tag}]`, err instanceof Error ? err.message : err);
+      send({ error: message });
+    },
+    end() { if (!res.writableEnded) res.end(); },
+  };
+}
 
 // ===== Expense Claims (Admin) =====
 

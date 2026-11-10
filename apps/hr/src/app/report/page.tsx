@@ -1,6 +1,6 @@
 "use client";
 import { NotificationBell } from "@/components/notification-bell";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
@@ -247,6 +247,161 @@ function TodaySubmittedPanel({ existing, accounts }: {
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
+
+// Always empty (cross-row duplicate flags were retired); kept so the row renders as before.
+const NO_DUPLICATES = new Set<string>();
+
+type LinkRowActions = {
+  update: (i: number, field: keyof LinkEntry, value: string) => void;
+  remove: (i: number) => void;
+};
+
+/**
+ * One link card. Memoised: typing in any field used to redraw every card (each with a dropdown of
+ * every assigned account) — 280–500 ms per key press on a slow phone with 300 links. A card now
+ * redraws only when its own link, its errors, the account list or "can remove" change.
+ */
+const LinkRow = memo(function LinkRow({ link, i, accounts, rowErr, canRemove, actions }: {
+  link: LinkEntry; i: number; accounts: any[]; rowErr: Record<string, string> | undefined; canRemove: boolean; actions: LinkRowActions;
+}) {
+  const acc = accounts.find((a: any) => a.id === link.accountId);
+  const platform = ((acc?.platformSlug || acc?.platform) || "").toLowerCase();
+  const accentClass = PLATFORM_ACCENT[platform] || "border-l-[#E8E0D0]";
+  const isUnmatched = link.matchStatus === "unmatched" && !link.accountId;
+  const isDuplicate = !!link.url.trim() && NO_DUPLICATES.has(link.url.trim().toLowerCase());
+  const hasRowError = !!rowErr && Object.keys(rowErr).length > 0;
+  const updateLink = actions.update;
+  const removeLink = actions.remove;
+
+
+  return (
+    <div
+      key={i}
+      id={`link-row-${i}`}
+      className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${hasRowError ? "border-red-300 border-l-red-500 bg-red-50/30" : isDuplicate ? "border-red-200 border-l-red-500 bg-red-50/40" : isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden [content-visibility:auto] [contain-intrinsic-size:auto_260px]`}
+      style={{ animation: "crx-slideUp 0.3s ease-out" }}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <span className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center text-xs font-semibold text-[#7A7A7A] shrink-0">{i + 1}</span>
+          <h3 className="font-medium text-[#1A1A1A] text-sm">Link #{i + 1}</h3>
+          {link.matchStatus === "auto" && !isDuplicate && (
+            <span className="text-[10px] text-green-600 font-medium flex items-center gap-0.5">
+              <CheckCircle2 className="h-3 w-3" /> auto-matched
+            </span>
+          )}
+          {isDuplicate && (
+            <span className="text-[10px] text-red-600 font-semibold flex items-center gap-0.5 bg-red-100 px-1.5 py-0.5 rounded-full">
+              <XCircle className="h-3 w-3" /> Duplicate URL
+            </span>
+          )}
+          {hasRowError && !isDuplicate && (
+            <span className="text-[10px] text-red-600 font-semibold flex items-center gap-0.5 bg-red-100 px-1.5 py-0.5 rounded-full">
+              <AlertTriangle className="h-3 w-3" /> Fix required
+            </span>
+          )}
+          {isUnmatched && !isDuplicate && !hasRowError && (
+            <span className="text-[10px] text-orange-600 font-medium flex items-center gap-0.5">
+              <XCircle className="h-3 w-3" /> needs account
+            </span>
+          )}
+          {platform && !isUnmatched && !isDuplicate && (
+            <span className="text-[10px] uppercase tracking-wider text-[#B0B0B0] font-medium">{platform}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Scheduled toggle */}
+          <button
+            type="button"
+            onClick={() => updateLink(i, "isScheduled", String(!link.isScheduled))}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-all ${link.isScheduled ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-[#F7ECD5] border-[#E8E0D0] text-[#7A7A7A] hover:border-amber-200"}`}
+          >
+            <Clock className="h-3 w-3" />
+            {link.isScheduled ? "Scheduled" : "Scheduled?"}
+          </button>
+          {canRemove && (
+            <button
+              type="button"
+              onClick={() => removeLink(i)}
+              className="text-[#B0B0B0] hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50"
+              title="Remove this link"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {link.isScheduled && (
+        <input
+          type="datetime-local"
+          value={link.scheduledFor}
+          onChange={(e) => updateLink(i, "scheduledFor", e.target.value)}
+          className="border border-amber-200 bg-amber-50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-300 transition-all w-full sm:w-auto"
+        />
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-3">
+        <div className="relative min-w-0">
+          <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Account</label>
+          <select
+            value={link.accountId}
+            onChange={(e) => {
+              updateLink(i, "accountId", e.target.value);
+              // clear unmatched flag once user picks manually
+              if (link.matchStatus === "unmatched") updateLink(i, "matchStatus", "manual");
+            }}
+            className={selectClass + (isUnmatched ? " border-orange-300 focus:ring-orange-300" : rowErr?.accountId ? " border-red-400 focus:ring-red-300" : "")}
+          >
+            <option value="">Select account...</option>
+            {accounts.map((acc: any) => (
+              <option key={acc.id} value={acc.id}>{accountOptionLabel(acc)}</option>
+            ))}
+          </select>
+          {rowErr?.accountId && (
+            <p className="text-xs text-red-600 mt-1">{rowErr.accountId}</p>
+          )}
+        </div>
+        <div className="min-w-0">
+          <label className="block text-xs font-medium text-[#7A7A7A] mb-1">
+            URL {link.isScheduled ? "(optional — fill when live)" : "*"}
+          </label>
+          <input
+            type="url"
+            value={link.url}
+            onChange={(e) => {
+              updateLink(i, "url", e.target.value);
+              // Auto-select account when URL gives a clear platform match and no account picked yet
+              if (!link.accountId) {
+                const p = detectPlatformFromUrl(e.target.value);
+                if (p) {
+                  const matches = accounts.filter((a: any) => (a.platformSlug || a.platform || "").toLowerCase() === p);
+                  if (matches.length === 1) {
+                    updateLink(i, "accountId", matches[0].id);
+                    updateLink(i, "matchStatus", "auto");
+                  }
+                }
+              }
+            }}
+            placeholder="https://instagram.com/p/..."
+            required={!link.isScheduled}
+            className={inputClass + (rowErr?.url ? " border-red-400 focus:ring-red-300" : "")}
+          />
+          {rowErr?.url && (
+            <p className="text-xs text-red-600 mt-1">{rowErr.url}</p>
+          )}
+        </div>
+      </div>
+
+      {(() => {
+        const igSrc = igEmbedFor(link.url);
+        return igSrc ? <InstagramPreview key={igSrc} src={igSrc} /> : null;
+      })()}
+
+      <MetricsRow link={link} onChange={(f, v) => updateLink(i, f, v)} />
+    </div>
+  );
+});
 
 export default function ReportPage() {
   const router = useRouter();
@@ -557,7 +712,6 @@ export default function ReportPage() {
   }
 
   // (No longer a passive computed set — auto-dedupe handles duplicates reactively)
-  const duplicateUrlSet = new Set<string>(); // always empty; kept so row render stays unchanged
   const duplicateUrls: string[] = [];
 
 
@@ -567,7 +721,10 @@ export default function ReportPage() {
   ).length;
 
   function updateLink(i: number, field: keyof LinkEntry, value: string) {
-    setLinks((prev) => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l));
+    // The Scheduled toggle passes "true"/"false": store a real boolean. Storing the string left
+    // "false" truthy, so a link could never be un-scheduled once the toggle had been clicked.
+    const v = field === "isScheduled" ? value === "true" : value;
+    setLinks((prev) => prev.map((l, idx) => idx === i ? { ...l, [field]: v } : l));
     setSubmitSummary(null); // any edit invalidates the last submit's summary
     // Clear per-row errors for this row when user starts editing
     if (rowErrors[i]) {
@@ -589,10 +746,13 @@ export default function ReportPage() {
     setSubmitSummary(null);
   }
 
-  function getAccountPlatform(accountId: string): string {
-    const acc = accounts.find((a: any) => a.id === accountId);
-    return ((acc?.platformSlug || acc?.platform) || "").toLowerCase();
-  }
+  // Stable identity for the memoised cards, always calling the latest handlers.
+  const latestRowActions = useRef<LinkRowActions | null>(null);
+  latestRowActions.current = { update: updateLink, remove: removeLink };
+  const linkRowActions = useMemo<LinkRowActions>(() => ({
+    update: (i, f, v) => latestRowActions.current!.update(i, f, v),
+    remove: (i) => latestRowActions.current!.remove(i),
+  }), []);
 
   // Smart paste: parse URLs, auto-match to accounts, append to list.
   // LENIENT parsing (2026-07-09): the old filter used strict `new URL(l)`, which
@@ -1160,142 +1320,9 @@ export default function ReportPage() {
         </div>
 
         {/* ── Individual link cards ─────────────────────────────────────── */}
-        {links.map((link, i) => {
-          const platform = getAccountPlatform(link.accountId);
-          const accentClass = PLATFORM_ACCENT[platform] || "border-l-[#E8E0D0]";
-          const isUnmatched = link.matchStatus === "unmatched" && !link.accountId;
-          const isDuplicate = !!link.url.trim() && duplicateUrlSet.has(link.url.trim().toLowerCase());
-          const rowErr = rowErrors[i];
-          const hasRowError = !!rowErr && Object.keys(rowErr).length > 0;
-
-          return (
-            <div
-              key={i}
-              id={`link-row-${i}`}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${hasRowError ? "border-red-300 border-l-red-500 bg-red-50/30" : isDuplicate ? "border-red-200 border-l-red-500 bg-red-50/40" : isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden [content-visibility:auto] [contain-intrinsic-size:auto_260px]`}
-              style={{ animation: "crx-slideUp 0.3s ease-out" }}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                  <span className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center text-xs font-semibold text-[#7A7A7A] shrink-0">{i + 1}</span>
-                  <h3 className="font-medium text-[#1A1A1A] text-sm">Link #{i + 1}</h3>
-                  {link.matchStatus === "auto" && !isDuplicate && (
-                    <span className="text-[10px] text-green-600 font-medium flex items-center gap-0.5">
-                      <CheckCircle2 className="h-3 w-3" /> auto-matched
-                    </span>
-                  )}
-                  {isDuplicate && (
-                    <span className="text-[10px] text-red-600 font-semibold flex items-center gap-0.5 bg-red-100 px-1.5 py-0.5 rounded-full">
-                      <XCircle className="h-3 w-3" /> Duplicate URL
-                    </span>
-                  )}
-                  {hasRowError && !isDuplicate && (
-                    <span className="text-[10px] text-red-600 font-semibold flex items-center gap-0.5 bg-red-100 px-1.5 py-0.5 rounded-full">
-                      <AlertTriangle className="h-3 w-3" /> Fix required
-                    </span>
-                  )}
-                  {isUnmatched && !isDuplicate && !hasRowError && (
-                    <span className="text-[10px] text-orange-600 font-medium flex items-center gap-0.5">
-                      <XCircle className="h-3 w-3" /> needs account
-                    </span>
-                  )}
-                  {platform && !isUnmatched && !isDuplicate && (
-                    <span className="text-[10px] uppercase tracking-wider text-[#B0B0B0] font-medium">{platform}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {/* Scheduled toggle */}
-                  <button
-                    type="button"
-                    onClick={() => updateLink(i, "isScheduled", String(!link.isScheduled))}
-                    className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-all ${link.isScheduled ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-[#F7ECD5] border-[#E8E0D0] text-[#7A7A7A] hover:border-amber-200"}`}
-                  >
-                    <Clock className="h-3 w-3" />
-                    {link.isScheduled ? "Scheduled" : "Scheduled?"}
-                  </button>
-                  {(links.length > 1 || !!existing) && (
-                    <button
-                      type="button"
-                      onClick={() => removeLink(i)}
-                      className="text-[#B0B0B0] hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50"
-                      title="Remove this link"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {link.isScheduled && (
-                <input
-                  type="datetime-local"
-                  value={link.scheduledFor}
-                  onChange={(e) => updateLink(i, "scheduledFor", e.target.value)}
-                  className="border border-amber-200 bg-amber-50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-300 transition-all w-full sm:w-auto"
-                />
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-3">
-                <div className="relative min-w-0">
-                  <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Account</label>
-                  <select
-                    value={link.accountId}
-                    onChange={(e) => {
-                      updateLink(i, "accountId", e.target.value);
-                      // clear unmatched flag once user picks manually
-                      if (link.matchStatus === "unmatched") updateLink(i, "matchStatus", "manual");
-                    }}
-                    className={selectClass + (isUnmatched ? " border-orange-300 focus:ring-orange-300" : rowErr?.accountId ? " border-red-400 focus:ring-red-300" : "")}
-                  >
-                    <option value="">Select account...</option>
-                    {accounts.map((acc: any) => (
-                      <option key={acc.id} value={acc.id}>{accountOptionLabel(acc)}</option>
-                    ))}
-                  </select>
-                  {rowErr?.accountId && (
-                    <p className="text-xs text-red-600 mt-1">{rowErr.accountId}</p>
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <label className="block text-xs font-medium text-[#7A7A7A] mb-1">
-                    URL {link.isScheduled ? "(optional — fill when live)" : "*"}
-                  </label>
-                  <input
-                    type="url"
-                    value={link.url}
-                    onChange={(e) => {
-                      updateLink(i, "url", e.target.value);
-                      // Auto-select account when URL gives a clear platform match and no account picked yet
-                      if (!link.accountId) {
-                        const p = detectPlatformFromUrl(e.target.value);
-                        if (p) {
-                          const matches = accounts.filter((a: any) => (a.platformSlug || a.platform || "").toLowerCase() === p);
-                          if (matches.length === 1) {
-                            updateLink(i, "accountId", matches[0].id);
-                            updateLink(i, "matchStatus", "auto");
-                          }
-                        }
-                      }
-                    }}
-                    placeholder="https://instagram.com/p/..."
-                    required={!link.isScheduled}
-                    className={inputClass + (rowErr?.url ? " border-red-400 focus:ring-red-300" : "")}
-                  />
-                  {rowErr?.url && (
-                    <p className="text-xs text-red-600 mt-1">{rowErr.url}</p>
-                  )}
-                </div>
-              </div>
-
-              {(() => {
-                const igSrc = igEmbedFor(link.url);
-                return igSrc ? <InstagramPreview key={igSrc} src={igSrc} /> : null;
-              })()}
-
-              <MetricsRow link={link} onChange={(f, v) => updateLink(i, f, v)} />
-            </div>
-          );
-        })}
+        {links.map((link, i) => (
+          <LinkRow key={i} link={link} i={i} accounts={accounts} rowErr={rowErrors[i]} canRemove={links.length > 1 || !!existing} actions={linkRowActions} />
+        ))}
 
         <button
           type="button"

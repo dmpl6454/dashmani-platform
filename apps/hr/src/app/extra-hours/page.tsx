@@ -1,5 +1,6 @@
 "use client";
 import { LoadError } from "@/components/load-error";
+import { SkeletonRows } from "@/components/skeleton";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
@@ -83,6 +84,8 @@ export default function ExtraHoursPage() {
             </div>
             {!data && error ? (
               <div className="p-4"><LoadError what="extra hours" onRetry={() => mutate()} /></div>
+            ) : !data ? (
+              <SkeletonRows />
             ) : hours.length === 0 ? (
               <div className="px-5 py-10 text-center"><Timer size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No extra hours logged yet</p></div>
             ) : (

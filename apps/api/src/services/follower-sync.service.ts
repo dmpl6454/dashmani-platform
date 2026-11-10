@@ -222,6 +222,11 @@ function parseYouTubeSubscribers(text: string): number | null {
   return Math.round(num);
 }
 
+// Every outside fetch here is bounded: without a signal a stalled server keeps the whole
+// hourly sync (and its overlap guard) waiting for undici's ~5-minute default. The signal
+// also covers reading the body. A timeout throws, which each caller already turns into null.
+const EXTERNAL_FETCH_TIMEOUT_MS = 15_000;
+
 let igRateLimited = false;
 
 async function fetchInstagramFollowers(username: string): Promise<number | null> {
@@ -237,6 +242,7 @@ async function fetchInstagramFollowers(username: string): Promise<number | null>
             "User-Agent": "Instagram 275.0.0.27.98",
             "X-IG-App-ID": "936619743392459",
           },
+          signal: AbortSignal.timeout(EXTERNAL_FETCH_TIMEOUT_MS),
         },
       );
       if (res.status === 429 || res.status === 401) {
@@ -264,6 +270,7 @@ async function fetchYouTubeSubscribers(profileUrl: string): Promise<number | nul
   try {
     const res = await fetch(profileUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+      signal: AbortSignal.timeout(EXTERNAL_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const html = await res.text();
@@ -346,9 +353,10 @@ async function fetchPageHtml(url: string, userAgent?: string): Promise<string | 
         "User-Agent": userAgent || "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
       },
+      signal: AbortSignal.timeout(EXTERNAL_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
-    return res.text();
+    return await res.text();
   } catch {
     return null;
   }

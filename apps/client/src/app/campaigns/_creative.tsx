@@ -164,7 +164,7 @@ function MediaPreview({ media, renderPending }: { media: CampaignMedia; renderPe
           <video src={url} controls playsInline preload="metadata" className="w-full h-full object-contain" onError={() => setFailed(true)} />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt={media.originalName} className="w-full h-full object-contain" onError={() => setFailed(true)} />
+          <img loading="lazy" decoding="async" src={url} alt={media.originalName} className="w-full h-full object-contain" onError={() => setFailed(true)} />
         )
       ) : (
         <span className="text-white/70 text-[12px]">{failed ? "Preview unavailable" : "Loading…"}</span>

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CalendarDays, Plus, Search, X } from "lucide-react";
 import { useContentPosts } from "@/lib/hooks/use-content";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { useProjects } from "@/lib/hooks/use-projects";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
@@ -41,14 +42,15 @@ export default function ContentListPage() {
   usePageTitle("Content");
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim());
   const [status, setStatus] = useState(searchParams.get("status") || "");
   const [projectId, setProjectId] = useState("");
   // The list is filtered by the SERVER, exactly as before the redesign (the endpoint pages at
   // 100 rows, so filtering locally would silently drop older posts of the chosen status).
   // A second, unfiltered request feeds the status counts; with no status chosen both share
   // one SWR key, so there is no extra request in that case.
-  const { data, isLoading, error } = useContentPosts({ search, status, projectId });
-  const { data: allData, isLoading: countsLoading } = useContentPosts({ search, projectId });
+  const { data, isLoading, error } = useContentPosts({ search: debouncedSearch, status, projectId });
+  const { data: allData, isLoading: countsLoading } = useContentPosts({ search: debouncedSearch, projectId });
   const { data: projectsData } = useProjects();
   const listed: any[] = (data as any)?.data || [];
   const hasMore: boolean = !!(data as any)?.meta?.has_more;

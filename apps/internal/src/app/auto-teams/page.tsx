@@ -189,7 +189,7 @@ export default function AutoTeamsPage() {
                       <div key={member.id} className="flex items-center gap-3 p-2.5 rounded-[12px] hover:bg-ds-inset transition-colors">
                         {member.profileImageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={imgSrc(member.profileImageUrl)} alt="" className="h-9 w-9 rounded-full object-cover shrink-0" />
+                          <img loading="lazy" decoding="async" src={imgSrc(member.profileImageUrl)} alt="" className="h-9 w-9 rounded-full object-cover shrink-0" />
                         ) : (
                           <span
                             className="h-9 w-9 rounded-full grid place-items-center text-[12px] font-extrabold shrink-0"

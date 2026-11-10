@@ -3,6 +3,8 @@ import { useState } from "react";
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 import { Topstrip } from "@/components/portal-shell";
+import { SkeletonRows } from "@/components/skeleton";
+import { LoadError } from "@/components/load-error";
 import { Receipt, Plus, Clock, CheckCircle, XCircle, IndianRupee } from "lucide-react";
 
 const CATEGORIES = ["TRAVEL", "FOOD", "EQUIPMENT", "SOFTWARE", "OFFICE_SUPPLIES", "COMMUNICATION", "OTHER"];
@@ -14,7 +16,7 @@ const STATUS_STYLES: Record<string, { badge: string; icon: any }> = {
 };
 
 export default function ExpensesPage() {
-  const { data, mutate } = useSWR("/hr/expenses", (url) => apiFetch<any>(url).then((r) => r.data), { refreshInterval: 30000 });
+  const { data, mutate, error: loadError } = useSWR("/hr/expenses", (url) => apiFetch<any>(url).then((r) => r.data), { refreshInterval: 30000 });
   const expenses = data ?? [];
 
   const [showForm, setShowForm] = useState(false);
@@ -148,7 +150,11 @@ export default function ExpensesPage() {
         )}
 
         {/* List */}
-        {expenses.length === 0 ? (
+        {!data && loadError ? (
+          <LoadError what="expense claims" onRetry={() => mutate()} />
+        ) : !data ? (
+          <SkeletonRows card />
+        ) : expenses.length === 0 ? (
           <div className="v3-card p-12 text-center">
             <IndianRupee className="h-9 w-9 mx-auto mb-3 text-ink-4" />
             <p className="text-[13px] text-ink-3 font-medium">No expense claims yet</p>

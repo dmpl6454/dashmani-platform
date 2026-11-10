@@ -37,7 +37,7 @@ function Avatar({ name, url, size }: { name: string; url?: string | null; size: 
   const src = url ? (url.startsWith("http") ? url : `${API_BASE}${url}`) : null;
   const dim = { width: size, height: size };
   return src ? (
-    <img src={src} alt="" style={dim} className="rounded-full object-cover border border-ds-line2 shrink-0" />
+    <img loading="lazy" decoding="async" src={src} alt="" style={dim} className="rounded-full object-cover border border-ds-line2 shrink-0" />
   ) : (
     <span style={{ ...dim, background: AV_BG[h % 5], color: AV_FG[h % 5], fontSize: size * 0.4 }} className="rounded-full border border-ds-line2 grid place-items-center font-bold shrink-0">
       {(name || "?").charAt(0).toUpperCase()}

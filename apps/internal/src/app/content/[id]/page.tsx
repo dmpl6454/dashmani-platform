@@ -203,7 +203,7 @@ export default function ContentDetailPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {post.mediaUrls.map((url: string, i: number) => (
                   <div key={i} className="border border-ds-line2 rounded-[8px] overflow-hidden bg-ds-inset">
-                    <img
+                    <img loading="lazy" decoding="async"
                       src={url}
                       alt={`Media ${i + 1}`}
                       className="w-full h-40 object-cover"

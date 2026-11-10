@@ -117,7 +117,7 @@ export default function InventoryPage() {
                   <tr key={`${c.targetType}:${c.targetId}`} className="border-b border-rule hover:bg-muted/60">
                     <td className="p-3 min-w-[220px]">
                       <div className="flex items-center gap-2 min-w-0">
-                        {c.pictureUrl ? <img src={c.pictureUrl} alt="" className="w-7 h-7 rounded-full shrink-0" /> : <span className="w-7 h-7 rounded-full bg-muted shrink-0" aria-hidden />}
+                        {c.pictureUrl ? <img loading="lazy" decoding="async" src={c.pictureUrl} alt="" className="w-7 h-7 rounded-full shrink-0" /> : <span className="w-7 h-7 rounded-full bg-muted shrink-0" aria-hidden />}
                         <div className="min-w-0">
                           <div className="font-bold truncate">{c.name} {c.profileUrl && <a href={c.profileUrl} target="_blank" rel="noreferrer" className="text-ink-3 hover:text-white inline-block align-middle" aria-label="Open profile"><ExternalLink size={12} /></a>}</div>
                           <div className="text-xs text-ink-3 truncate">{c.handle ? `@${c.handle}` : ""}{c.category ? ` · ${c.category}` : ""}{!c.inCatalogue ? (c.bookable ? " · not in client catalogue" : " · tracked only") : ""}</div>

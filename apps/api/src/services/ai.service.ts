@@ -11,7 +11,9 @@ function getClient(): Anthropic {
     throw new AppError(500, "AI_NOT_CONFIGURED", "AI service is not configured. Set ANTHROPIC_API_KEY.");
   }
   if (!_client) {
-    _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // The SDK default is a 10-minute timeout with 2 retries; these calls run on a user's
+    // request, so a stuck one would hold it for half an hour. 90 s fits a 4k-token answer.
+    _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 90_000, maxRetries: 1 });
   }
   return _client;
 }

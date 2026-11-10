@@ -46,7 +46,7 @@ export function BookingContent({ b }: { b: BookingDetail }) {
                       ) : m.kind === "video" ? (
                         <video src={apiAbsolute(u.preview)} controls playsInline preload="metadata" className="w-full h-full object-contain" />
                       ) : (
-                        <img src={apiAbsolute(u.preview)} alt={m.originalName} className="w-full h-full object-contain" />
+                        <img loading="lazy" decoding="async" src={apiAbsolute(u.preview)} alt={m.originalName} className="w-full h-full object-contain" />
                       )}
                     </div>
                     <figcaption className="text-[11px] text-ink-4 mt-1 break-all">

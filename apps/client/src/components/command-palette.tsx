@@ -6,6 +6,7 @@ import { Icon } from "./portal-icons";
 import { KbdRow } from "./portal-shared";
 import { useClientProjects } from "@/lib/hooks/use-projects";
 import { useInputDevice } from "@/lib/hooks/use-input-device";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { apiFetch } from "@/lib/api";
 
 interface PaletteItem {
@@ -57,15 +58,17 @@ export function CommandPalette() {
   const { data: projectsData } = useClientProjects();
   const projects: any[] = projectsData?.items ?? [];
   const [posts, setPosts] = useState<any[]>([]);
+  // One request when typing pauses, not one per keystroke.
+  const debouncedQuery = useDebouncedValue(query.trim(), 250);
 
   useEffect(() => {
-    if (query.trim().length < 2) { setPosts([]); return; }
+    if (debouncedQuery.length < 2) { setPosts([]); return; }
     let cancelled = false;
-    apiFetch<any>(`/client/content?search=${encodeURIComponent(query.trim())}&limit=10`)
+    apiFetch<any>(`/client/content?search=${encodeURIComponent(debouncedQuery)}&limit=10`)
       .then((res) => { if (!cancelled) setPosts(res?.data?.items ?? res?.data ?? []); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [query]);
+  }, [debouncedQuery]);
 
   useEffect(() => {
     const l: Listener = (next) => setLocalOpen(next);

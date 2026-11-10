@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useProjects } from "@/lib/hooks/use-projects";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Plus, Search, FolderOpen, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { ModalPortal } from "@/components/modal-portal";
@@ -31,8 +32,9 @@ function ProjectsInner() {
   const searchParams = useSearchParams();
   const initialStatus = searchParams.get("status") || "ACTIVE";
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim());
   const [status, setStatus] = useState<string>(initialStatus);
-  const { data, isLoading, error, mutate } = useProjects({ search, status: status || undefined });
+  const { data, isLoading, error, mutate } = useProjects({ search: debouncedSearch, status: status || undefined });
   const projects = (data as any)?.data || [];
 
   const [newOpen, setNewOpen] = useState(false);

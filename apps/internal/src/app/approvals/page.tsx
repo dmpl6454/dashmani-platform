@@ -51,7 +51,7 @@ const typeLabel = (t?: string) => (!t ? "—" : t.length <= 3 ? t : formatStatus
 function Pic({ src, alt, fallback }: { src: string | null; alt: string; fallback: React.ReactNode }) {
   const [failed, setFailed] = useState<string | null>(null);
   if (!src || failed === src) return <>{fallback}</>;
-  return <img src={src} alt={alt} onError={() => setFailed(src)} className="h-full w-full object-cover" />;
+  return <img loading="lazy" decoding="async" src={src} alt={alt} onError={() => setFailed(src)} className="h-full w-full object-cover" />;
 }
 
 function Box({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {

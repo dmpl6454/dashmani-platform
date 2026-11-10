@@ -69,19 +69,25 @@ export function DsTopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const notifView = bellListView<any>(notifsData, notifsError);
   const notifications = notifView.rows;
 
+  // Read marks show at once (the badge and the row change on click), then both lists are
+  // re-read from the server whether the request worked or not, so a failure puts the truth back.
   async function markAllRead() {
+    mutateNotifs((cur: any) => (cur && Array.isArray(cur.data) ? { ...cur, data: cur.data.map((r: any) => ({ ...r, read: true })) } : cur), { revalidate: false });
+    mutateCount((cur: any) => (cur?.data ? { ...cur, data: { ...cur.data, count: 0 } } : cur), { revalidate: false });
     try {
       await apiFetch("/admin/notifications/read-all", { method: "PUT" });
-      mutateCount(); mutateNotifs();
     } catch {}
+    mutateCount(); mutateNotifs();
   }
   async function openNotif(n: any) {
     setSelectedNotif(n);
     if (!n.read) {
+      mutateNotifs((cur: any) => (cur && Array.isArray(cur.data) ? { ...cur, data: cur.data.map((r: any) => (r.id === n.id ? { ...r, read: true } : r)) } : cur), { revalidate: false });
+      mutateCount((cur: any) => (cur?.data ? { ...cur, data: { ...cur.data, count: Math.max(0, (cur.data.count ?? 0) - 1) } } : cur), { revalidate: false });
       try {
         await apiFetch(`/admin/notifications/${n.id}/read`, { method: "PUT" });
-        mutateCount(); mutateNotifs();
       } catch {}
+      mutateCount(); mutateNotifs();
     }
   }
 

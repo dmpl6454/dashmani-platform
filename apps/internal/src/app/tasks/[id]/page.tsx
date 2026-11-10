@@ -55,11 +55,15 @@ export default function TaskDetailPage() {
   if (!task) return <div className="mt-[26px] px-5 py-14 text-center rounded-[8px] bg-ds-card border border-dashed border-ds-line2 text-[12.5px] text-ds-t3">Task not found</div>;
 
   async function handleStatusChange(status: string) {
+    // The new status shows at once; the task is then re-read from the server either way, so a
+    // refused change (e.g. a status this task can't move to) snaps back to the real one.
+    mutate((cur: any) => (cur?.data ? { ...cur, data: { ...cur.data, status } } : cur), { revalidate: false });
     try {
       await apiFetch(`/tasks/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) });
-      mutate();
     } catch (err: any) {
       alert(err.message);
+    } finally {
+      mutate();
     }
   }
 

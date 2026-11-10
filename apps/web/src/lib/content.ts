@@ -65,7 +65,8 @@ export const STEPS = [
 // To add a reel: paste its Instagram link into `reelUrl` (reel, post or tv links all work,
 // e.g. "https://www.instagram.com/reel/ABC123xyz/"). Leave it "" and the card shows the
 // placeholder until a link is added. `results` is optional — only add real, verified numbers.
-// To play our own copy of the campaign video instead, put the .mp4 and a poster frame (.jpg)
+// To play our own copy of the campaign video instead, put the .mp4 and a poster frame (.webp —
+// convert a .jpg with `cwebp -q 80`, about a third of the size)
 // in apps/web/public/work/ and fill `video` (`landscape: true` for a wide clip). A video
 // wins over `reelUrl` when both are set.
 export type CaseStudy = {
@@ -83,70 +84,70 @@ export const CASE_STUDIES: CaseStudy[] = [
     campaign: "Event amplification",
     tag: "Event",
     reelUrl: "",
-    video: { src: "/work/helios-luxe.mp4", poster: "/work/helios-luxe.jpg" },
+    video: { src: "/work/helios-luxe.mp4", poster: "/work/helios-luxe.webp" },
   },
   {
     brand: "SKF",
     campaign: "Entertainment",
     tag: "Film",
     reelUrl: "",
-    video: { src: "/work/skf.mp4", poster: "/work/skf.jpg", landscape: true },
+    video: { src: "/work/skf.mp4", poster: "/work/skf.webp", landscape: true },
   },
   {
     brand: "Titan Eye+",
     campaign: "Brand integration",
     tag: "Brand",
     reelUrl: "",
-    video: { src: "/work/titan-eye.mp4", poster: "/work/titan-eye.jpg" },
+    video: { src: "/work/titan-eye.mp4", poster: "/work/titan-eye.webp" },
   },
   {
     brand: "Bonkers Corner",
     campaign: "Brand integration",
     tag: "Brand",
     reelUrl: "",
-    video: { src: "/work/bonkers-corner.mp4", poster: "/work/bonkers-corner.jpg" },
+    video: { src: "/work/bonkers-corner.mp4", poster: "/work/bonkers-corner.webp" },
   },
   {
     brand: "Crocs",
     campaign: "Brand integration",
     tag: "Brand",
     reelUrl: "",
-    video: { src: "/work/crocs.mp4", poster: "/work/crocs.jpg" },
+    video: { src: "/work/crocs.mp4", poster: "/work/crocs.webp" },
   },
   {
     brand: "U.S. Polo Assn.",
     campaign: "Event amplification",
     tag: "Event",
     reelUrl: "",
-    video: { src: "/work/us-polo-assn.mp4", poster: "/work/us-polo-assn.jpg" },
+    video: { src: "/work/us-polo-assn.mp4", poster: "/work/us-polo-assn.webp" },
   },
   {
     brand: "Nutella",
     campaign: "Brand integration",
     tag: "Brand",
     reelUrl: "",
-    video: { src: "/work/nutella.mp4", poster: "/work/nutella.jpg" },
+    video: { src: "/work/nutella.mp4", poster: "/work/nutella.webp" },
   },
   {
     brand: "Rungta Steel",
     campaign: "Brand integration",
     tag: "Brand",
     reelUrl: "",
-    video: { src: "/work/rungta-steel.mp4", poster: "/work/rungta-steel.jpg", landscape: true },
+    video: { src: "/work/rungta-steel.mp4", poster: "/work/rungta-steel.webp", landscape: true },
   },
   {
     brand: "Denver",
     campaign: "Brand integration",
     tag: "Brand",
     reelUrl: "",
-    video: { src: "/work/denver.mp4", poster: "/work/denver.jpg", landscape: true },
+    video: { src: "/work/denver.mp4", poster: "/work/denver.webp", landscape: true },
   },
   {
     brand: "Candere",
     campaign: "Brand integration",
     tag: "Brand",
     reelUrl: "",
-    video: { src: "/work/candere.mp4", poster: "/work/candere.jpg" },
+    video: { src: "/work/candere.mp4", poster: "/work/candere.webp" },
   },
 ];
 
@@ -163,7 +164,7 @@ export function instagramEmbedUrl(url: string): string | null {
 }
 
 // CH 05 Clients — brands we have worked with, shown as a logo wall.
-// To add one: put the logo file in apps/web/public/clients/ (SVG best, else a PNG with a
+// To add one: put the logo file in apps/web/public/clients/ (SVG best, else a WebP (lossless) with a
 // transparent background, ideally 400px+ wide) and add a row here with its file name.
 // Logos are shown in white so the wall reads as one set on the black screen; set
 // `mono: false` for a logo that must keep its own colours (e.g. a multi-colour mark that
@@ -187,13 +188,13 @@ export type Client = {
 export const CLIENTS: Client[] = [
   { name: "adidas", logo: "/clients/adidas.svg", sector: "Sportswear", colour: "#4d7cff", via: "direct" },
   { name: "Crocs", logo: "/clients/crocs.svg", sector: "Footwear", colour: "#7cc242", via: "direct" },
-  { name: "Rungta Steel", logo: "/clients/rungta-steel.png", sector: "Steel", colour: "#e4252c", via: "direct" },
+  { name: "Rungta Steel", logo: "/clients/rungta-steel.webp", sector: "Steel", colour: "#e4252c", via: "direct" },
   { name: "T-Series", logo: "/clients/t-series.svg", sector: "Music", colour: "#ff3b3b", via: "direct", tall: true, mono: false },
-  { name: "U.S. Polo Assn.", logo: "/clients/us-polo-assn.png", sector: "Apparel", colour: "#5b7fd6", via: "direct", wide: true },
+  { name: "U.S. Polo Assn.", logo: "/clients/us-polo-assn.webp", sector: "Apparel", colour: "#5b7fd6", via: "direct", wide: true },
   { name: "Nutella", logo: "/clients/nutella.svg", sector: "Food", colour: "#d8343a", via: "direct" },
-  { name: "Denver", logo: "/clients/denver.png", sector: "Grooming", colour: "#d4ab62", via: "direct" },
-  { name: "Bonkers Corner", logo: "/clients/bonkers-corner.png", sector: "Fashion", colour: "#ff6b3d", via: "direct" },
-  { name: "Reliance", logo: "/clients/reliance.png", sector: "Conglomerate", colour: "#c9a24b", via: "direct", wide: true },
+  { name: "Denver", logo: "/clients/denver.webp", sector: "Grooming", colour: "#d4ab62", via: "direct" },
+  { name: "Bonkers Corner", logo: "/clients/bonkers-corner.webp", sector: "Fashion", colour: "#ff6b3d", via: "direct" },
+  { name: "Reliance", logo: "/clients/reliance.webp", sector: "Conglomerate", colour: "#c9a24b", via: "direct", wide: true },
   { name: "Candere", logo: "/clients/candere.svg", sector: "Jewellery", colour: "#19b6c9", via: "direct", wide: true },
   { name: "Jio", logo: "/clients/jio.svg", sector: "Telecom", colour: "#3d6bff", via: "agency", mono: false, tall: true },
   { name: "Adani", logo: "/clients/adani.svg", sector: "Infrastructure", colour: "#8e44ad", via: "agency" },

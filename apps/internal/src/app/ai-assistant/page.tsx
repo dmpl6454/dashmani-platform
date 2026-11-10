@@ -79,17 +79,53 @@ function Notice({ tone, children }: { tone: "error" | "ok"; children: React.Reac
 
 const GHOST_BTN = "inline-flex items-center gap-[7px] h-10 px-[15px] rounded-full border text-[12.5px] font-semibold whitespace-nowrap";
 
+/** Claude sometimes wraps the document in a ```html fence; the preview wants the HTML itself. */
+function stripFence(text: string) {
+  return text.replace(/^\s*```(?:html)?\s*\n?/i, "").replace(/\n?```\s*$/, "");
+}
+
+/**
+ * Streams one of the letters into `setResult`, so the preview fills in as Claude writes instead of
+ * after the whole document (often 30–60 s). The preview is redrawn at most every 400 ms — each
+ * redraw reloads the iframe. Resolves when the document is complete; throws on failure.
+ */
+async function streamDocument(kind: "offer-letter" | "appointment-letter" | "contract", body: unknown, setResult: (r: any) => void) {
+  let employeeName = "";
+  let text = "";
+  let failed: string | null = null;
+  let last = 0;
+  const show = (writing: boolean) => setResult({ html: stripFence(text), employeeName, writing });
+  await apiStream(`/admin/ai/generate-${kind}/stream`, body, (ev) => {
+    if (ev.meta) employeeName = ev.meta.employeeName;
+    if (typeof ev.t === "string") {
+      text += ev.t;
+      const now = Date.now();
+      if (now - last > 400) { last = now; show(true); }
+    }
+    if (ev.error) failed = ev.error;
+  });
+  if (failed) throw new Error(failed);
+  if (!text.trim()) throw new Error("The AI service returned an empty document. Please try again.");
+  show(false);
+}
+
 /** Result block for the four document generators: heading, Send / Open & Print, notice and the real AI preview. */
-function DocResult({ heading, html, title, sentAt, saving, onSend, openHtml, notice, error }: {
+function DocResult({ heading, html, title, sentAt, saving, onSend, openHtml, notice, error, writing }: {
   heading: string; html: string; title: string; sentAt: string | null; saving: boolean;
   onSend: () => void; openHtml: (html: string, title: string) => void; notice: React.ReactNode; error?: string | null;
+  /** True while the document is still streaming in: no sending or printing a half-written letter. */
+  writing?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3.5 pt-[22px] border-t border-[color:var(--hx-1A2C38)]">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <span className="text-[15px] font-semibold text-ds-text">{heading}</span>
         <div className="flex gap-2 flex-wrap">
-          {sentAt ? (
+          {writing ? (
+            <span className={`${GHOST_BTN} border-ds-line2 text-ds-t2`} role="status">
+              <Loader2 size={14} className="animate-spin" />Writing…
+            </span>
+          ) : sentAt ? (
             <span className={`${GHOST_BTN} border-[rgba(0,215,160,.4)] bg-[rgba(0,215,160,.1)] text-ds-teal`}>
               <Check size={14} />Sent to employee at {sentAt}
             </span>
@@ -98,9 +134,11 @@ function DocResult({ heading, html, title, sentAt, saving, onSend, openHtml, not
               {saving ? <><Loader2 size={14} className="animate-spin" />Sending...</> : <><Send size={14} />Send to Employee</>}
             </button>
           )}
-          <button type="button" onClick={() => openHtml(html, title)} className={`${GHOST_BTN} border-[rgba(233,189,98,.45)] text-ds-gold hover:bg-[rgba(233,189,98,.1)]`}>
-            <ExternalLink size={14} />Open &amp; Print
-          </button>
+          {!writing && (
+            <button type="button" onClick={() => openHtml(html, title)} className={`${GHOST_BTN} border-[rgba(233,189,98,.45)] text-ds-gold hover:bg-[rgba(233,189,98,.1)]`}>
+              <ExternalLink size={14} />Open &amp; Print
+            </button>
+          )}
         </div>
       </div>
       {error && <Notice tone="error">{error}</Notice>}
@@ -323,11 +361,8 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
     setResult(null);
     setSentAt(null);
     try {
-      const res = await apiFetch<any>("/admin/ai/generate-offer-letter", {
-        method: "POST", body: JSON.stringify({ ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths) }),
-      });
-      setResult(res.data);
-    } catch (e: any) { setError(e.message || "Generation failed"); }
+      await streamDocument("offer-letter", { ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths) }, setResult);
+    } catch (e: any) { setResult(null); setError(e.message || "Generation failed"); }
     finally { setLoading(false); }
   }
 
@@ -381,6 +416,7 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
           onSend={sendToEmployee}
           error={error}
           openHtml={openHtml}
+          writing={!!result.writing}
           notice={<>Preview only — click <strong>Send to Employee</strong> to save this offer letter so they can view it in the HR portal.</>}
         />
       )}
@@ -402,11 +438,8 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
     setResult(null);
     setSentAt(null);
     try {
-      const res = await apiFetch<any>("/admin/ai/generate-appointment-letter", {
-        method: "POST", body: JSON.stringify({ ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths), noticePeriod: parseInt(form.noticePeriod) }),
-      });
-      setResult(res.data);
-    } catch (e: any) { setError(e.message || "Generation failed"); }
+      await streamDocument("appointment-letter", { ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths), noticePeriod: parseInt(form.noticePeriod) }, setResult);
+    } catch (e: any) { setResult(null); setError(e.message || "Generation failed"); }
     finally { setLoading(false); }
   }
 
@@ -463,6 +496,7 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
           onSend={sendToEmployee}
           error={error}
           openHtml={openHtml}
+          writing={!!result.writing}
           notice={<>Preview only — click <strong>Send to Employee</strong> to save this appointment letter so they can view it in the HR portal.</>}
         />
       )}
@@ -484,11 +518,8 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
     setResult(null);
     setSentAt(null);
     try {
-      const res = await apiFetch<any>("/admin/ai/generate-contract", {
-        method: "POST", body: JSON.stringify({ ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths), noticePeriod: parseInt(form.noticePeriod) }),
-      });
-      setResult(res.data);
-    } catch (e: any) { setError(e.message || "Generation failed"); }
+      await streamDocument("contract", { ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths), noticePeriod: parseInt(form.noticePeriod) }, setResult);
+    } catch (e: any) { setResult(null); setError(e.message || "Generation failed"); }
     finally { setLoading(false); }
   }
 
@@ -541,6 +572,7 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
           onSend={sendToEmployee}
           error={error}
           openHtml={openHtml}
+          writing={!!result.writing}
           notice={<>Preview only — click <strong>Send to Employee</strong> to save this contract so they can review and sign it in the HR portal.</>}
         />
       )}

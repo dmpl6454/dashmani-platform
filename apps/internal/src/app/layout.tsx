@@ -115,6 +115,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Applies the remembered light/dark theme before first paint — see lib/theme.ts. */}
           <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
+          {/* The body font, fetched alongside the CSS instead of after it (self-hosted, public/fonts). */}
+          <link rel="preload" href="/fonts/InstagramSans-Regular.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         </head>
         <body>
           <div className={`flex items-center justify-center min-h-screen ${isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
@@ -133,6 +135,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Applies the remembered light/dark theme before first paint — see lib/theme.ts. */}
           <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
+          {/* The body font, fetched alongside the CSS instead of after it (self-hosted, public/fonts). */}
+          <link rel="preload" href="/fonts/InstagramSans-Regular.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         </head>
         <body>
           <div className={`flex items-center justify-center min-h-screen ${isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
@@ -149,6 +153,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Applies the remembered light/dark theme before first paint — see lib/theme.ts. */}
           <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+          {/* The body font, fetched alongside the CSS instead of after it (self-hosted, public/fonts). */}
+          <link rel="preload" href="/fonts/InstagramSans-Regular.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         <title>Dashmani Portal</title>
       </head>
       <body className="bg-bg">

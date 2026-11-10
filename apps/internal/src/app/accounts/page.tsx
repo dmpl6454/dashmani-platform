@@ -6,6 +6,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAccounts, usePlatforms } from "@/lib/hooks/use-accounts";
 import { useEmployees } from "@/lib/hooks/use-employees";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { formatStatus, toTitleCase } from "@dashmani/shared";
 import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -536,10 +537,11 @@ function AccountsPageInner() {
   );
 
   const [search, setSearch]               = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim());
   const [platformFilter, setPlatformFilter] = useState("");
   const [employeeSearch, setEmployeeSearch] = useState("");
 
-  const { data, isLoading, mutate }       = useAccounts({ search, platformId: platformFilter });
+  const { data, isLoading, mutate }       = useAccounts({ search: debouncedSearch, platformId: platformFilter });
   // The unfiltered list feeds the KPIs, tab counts, By Employee and Platforms views, so
   // they describe the whole estate rather than whatever the table search narrowed to.
   const { data: allData, mutate: mutateAll } = useAccounts({});

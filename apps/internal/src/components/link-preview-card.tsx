@@ -194,7 +194,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
             rel="noopener noreferrer"
             className="shrink-0 w-[120px] h-[100px] bg-gray-50 overflow-hidden relative"
           >
-            <img
+            <img loading="lazy" decoding="async"
               src={thumbnail}
               alt=""
               className="w-full h-full object-cover group-hover:scale-105 transition-transform"
@@ -202,7 +202,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
             />
             {faviconUrl && (
               <div className="absolute bottom-1.5 left-1.5 h-5 w-5 rounded bg-white/90 shadow-sm flex items-center justify-center">
-                <img src={faviconUrl} alt="" className="h-3 w-3" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                <img loading="lazy" decoding="async" src={faviconUrl} alt="" className="h-3 w-3" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
               </div>
             )}
           </a>
@@ -214,7 +214,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
             className="shrink-0 w-[60px] flex items-center justify-center bg-gray-50 border-r border-[#F0EAD8]"
           >
             {faviconUrl ? (
-              <img src={faviconUrl} alt="" className="h-6 w-6 opacity-60" onError={(e) => { (e.target as HTMLImageElement).replaceWith(Object.assign(document.createElement("div"), { className: "h-6 w-6" })); }} />
+              <img loading="lazy" decoding="async" src={faviconUrl} alt="" className="h-6 w-6 opacity-60" onError={(e) => { (e.target as HTMLImageElement).replaceWith(Object.assign(document.createElement("div"), { className: "h-6 w-6" })); }} />
             ) : (
               <ImageIcon className="h-5 w-5 text-[#D0D0D0]" />
             )}

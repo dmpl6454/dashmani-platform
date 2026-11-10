@@ -3,6 +3,7 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useClients } from "@/lib/hooks/use-clients";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { formatStatus, pluralize } from "@dashmani/shared";
 import { Plus, Search, Building2, Send, X, Check, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -38,7 +39,8 @@ const BTN_GHOST = "h-9 px-3.5 rounded-[6px] border border-ds-line2 text-ds-t2 te
 export default function ClientsPage() {
   usePageTitle("Clients");
   const [search, setSearch] = useState("");
-  const { data, isLoading, error, mutate } = useClients({ search });
+  const debouncedSearch = useDebouncedValue(search.trim());
+  const { data, isLoading, error, mutate } = useClients({ search: debouncedSearch });
   const clients = (data as any)?.data || [];
   const { user: currentUser } = useAuth();
   const callerRoles = (currentUser?.roles ?? []).map((r) => r.toLowerCase());

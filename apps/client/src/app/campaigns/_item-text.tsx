@@ -156,7 +156,7 @@ export function ItemPreview({ campaign: c, item }: { campaign: Campaign; item: C
               <video src={`${API_ORIGIN}${f.url}`} playsInline muted preload="metadata" className="w-full h-full object-contain" />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={`${API_ORIGIN}${f.url}`} alt="" className="w-full h-full object-contain" />
+              <img loading="lazy" decoding="async" src={`${API_ORIGIN}${f.url}`} alt="" className="w-full h-full object-contain" />
             )
           ) : (
             <span className="text-white/60 text-[11px]">{f.status === "failed" ? "Couldn't prepare" : "Preparing…"}</span>

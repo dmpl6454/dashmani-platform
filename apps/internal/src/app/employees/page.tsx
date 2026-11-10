@@ -8,6 +8,7 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useAuth } from "@/lib/auth";
 import { isAdminUser } from "@/lib/roles";
 import { useEmployees } from "@/lib/hooks/use-employees";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { API_BASE } from "@/lib/api";
 import { toTitleCase } from "@dashmani/shared";
 
@@ -38,11 +39,12 @@ export default function EmployeesPage() {
   usePageTitle("Employees");
   const { user } = useAuth();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim());
   const [statusFilter, setStatusFilter] = useState<StatusKey>("ALL");
   const [viewTab, setViewTab] = useState<ViewTab>("active");
 
   const { data, isLoading, error } = useEmployees(
-    viewTab === "archived" ? { search, includeDeleted: true, limit: 500 } : { search, limit: 500 },
+    viewTab === "archived" ? { search: debouncedSearch, includeDeleted: true, limit: 500 } : { search: debouncedSearch, limit: 500 },
   );
   // KPI cards always describe the active (non-archived) roster, independent of the search box.
   const { data: rosterData } = useEmployees({ limit: 500 });
@@ -208,7 +210,7 @@ export default function EmployeesPage() {
                   <div key={emp.id} role="row" className={`${GRID} items-center px-5 py-[11px] border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
                     <Link href={`/employees/${emp.id}`} role="cell" className="flex items-center gap-2.5 min-w-0 text-ds-text hover:text-ds-gold">
                       {img ? (
-                        <img src={img} alt="" className="h-8 w-8 rounded-full object-cover border border-ds-line2 shrink-0" />
+                        <img loading="lazy" decoding="async" src={img} alt="" className="h-8 w-8 rounded-full object-cover border border-ds-line2 shrink-0" />
                       ) : (
                         <span className="h-8 w-8 rounded-full border border-ds-line2 grid place-items-center text-[12px] font-bold shrink-0" style={{ background: AV_BG[h % 5], color: AV_FG[h % 5] }}>
                           {(emp.name || "?").charAt(0).toUpperCase()}

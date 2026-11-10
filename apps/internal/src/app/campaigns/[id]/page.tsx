@@ -127,7 +127,7 @@ export default function CampaignBookingDetail() {
                           <video src={`${API_BASE}${u.preview}`} controls playsInline preload="metadata" className="w-full h-full object-contain" />
                         ) : (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={`${API_BASE}${u.preview}`} alt={m.originalName} className="w-full h-full object-contain" />
+                          <img loading="lazy" decoding="async" src={`${API_BASE}${u.preview}`} alt={m.originalName} className="w-full h-full object-contain" />
                         )
                       ) : (
                         <span className="text-ds-t3 text-[12px]">Loading…</span>

@@ -50,7 +50,7 @@ export function UserAvatar({
   if (imageUrl) {
     const src = imageUrl.startsWith("http") ? imageUrl : `${API_BASE}${imageUrl}`;
     return (
-      <img
+      <img loading="lazy" decoding="async"
         src={src}
         alt={name ?? ""}
         className={`${sizeClass} rounded-full object-cover shrink-0 ${className}`}

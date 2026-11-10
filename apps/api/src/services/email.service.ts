@@ -14,6 +14,12 @@ async function createTransporter() {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    // nodemailer's defaults are 2 min to connect and 10 min of socket silence; a stalled
+    // SMTP server would hold a request (e.g. forgot-password) open for minutes. Same
+    // bounds as the pooled Pipeline transport.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
 }
 

@@ -167,7 +167,7 @@ export default function JobDetailPage({
           {submitted ? (
             <div className="ds-jd-form-card">
               <div className="ds-jd-illustration" aria-hidden="true">
-                <img src="/illustrations/resume.svg" alt="" />
+                <img loading="lazy" decoding="async" src="/illustrations/resume.svg" alt="" />
               </div>
               <div className="ds-success-banner">
                 <img
@@ -206,7 +206,7 @@ export default function JobDetailPage({
             /* Application form — wrapped in <form> so required/type="email" validation is active */
             <div className="ds-jd-form-card">
               <div className="ds-jd-illustration" aria-hidden="true">
-                <img src="/illustrations/resume.svg" alt="" />
+                <img loading="lazy" decoding="async" src="/illustrations/resume.svg" alt="" />
               </div>
               <div className="ds-jd-eyebrow">Apply for this role</div>
                 <form onSubmit={handleSubmit} noValidate={false}>

@@ -203,7 +203,7 @@ export function Avatar({ url, name, size = 20, tile }: { url: string | null | un
   const ini = name.replace(/^@/, "").slice(0, 2).toUpperCase();
   return url ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={url} alt="" width={size} height={size} className="ov-avatar" style={{ width: size, height: size }} referrerPolicy="no-referrer" />
+    <img loading="lazy" decoding="async" src={url} alt="" width={size} height={size} className="ov-avatar" style={{ width: size, height: size }} referrerPolicy="no-referrer" />
   ) : (
     <span className="ov-avatar ov-avatar-ini" style={{ width: size, height: size, background: tile, fontSize: size * 0.4 }}>{ini}</span>
   );

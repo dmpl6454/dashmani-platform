@@ -36,6 +36,10 @@ export function aesDecrypt(key: Buffer, b64: string): Buffer {
   return Buffer.concat([d.update(Buffer.from(b64, "base64")), d.final()]);
 }
 const istToMs = (s: string) => Date.parse(`${s.replace(" ", "T")}+05:30`);
+// A stalled IRP must not hold an invoice's "registering" claim open: the call fails, the row
+// is marked failed with the reason, and Retry asks getByDocument first, so an IRN created
+// behind a lost answer is adopted rather than registered twice.
+const IRP_TIMEOUT_MS = 30_000;
 
 export class NicIrp implements IrpProvider {
   readonly name = "NIC IRP";
@@ -79,6 +83,7 @@ export class NicIrp implements IrpProvider {
       method: "POST",
       headers: { "Content-Type": "application/json", client_id: clientId, client_secret: clientSecret, gstin },
       body: JSON.stringify({ Data: data }),
+      signal: AbortSignal.timeout(IRP_TIMEOUT_MS),
     });
     const body = (await res.json().catch(() => ({}))) as { Status?: number | string; Data?: { AuthToken: string; Sek: string; TokenExpiry: string }; ErrorDetails?: Array<{ ErrorCode: string; ErrorMessage: string }> };
     if (String(body.Status) !== "1" || !body.Data) {
@@ -96,6 +101,7 @@ export class NicIrp implements IrpProvider {
       method,
       headers: { "Content-Type": "application/json", client_id: s.clientId, client_secret: s.clientSecret, gstin, user_name: s.user, AuthToken: s.token },
       ...(payload !== undefined ? { body: JSON.stringify({ Data: aesEncrypt(s.sek, Buffer.from(JSON.stringify(payload))) }) } : {}),
+      signal: AbortSignal.timeout(IRP_TIMEOUT_MS),
     });
     const body = (await res.json().catch(() => ({}))) as {
       Status?: number | string; Data?: string;

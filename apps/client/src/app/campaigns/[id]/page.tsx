@@ -501,7 +501,7 @@ function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
               <video src={urls[m.id]} controls playsInline preload="metadata" className="w-full h-full object-contain" />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={urls[m.id]} alt={m.originalName} className="w-full h-full object-contain" />
+              <img loading="lazy" decoding="async" src={urls[m.id]} alt={m.originalName} className="w-full h-full object-contain" />
             )
           ) : (
             <span className="text-white/60 text-[12px]">{m.renderStatus === "done" ? "Loading…" : m.renderStatus === "failed" ? "" : "Preparing…"}</span>

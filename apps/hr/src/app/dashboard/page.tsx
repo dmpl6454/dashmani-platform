@@ -7,6 +7,7 @@ import { useHrAuth } from "@/lib/auth";
 import { useAssignedAccounts } from "@/lib/hooks/use-accounts";
 import { useTodayReport } from "@/lib/hooks/use-reports";
 import { Topstrip } from "@/components/portal-shell";
+import { SkeletonRows } from "@/components/skeleton";
 import { ArrowRight, Check, Edit2, ChevronRight } from "lucide-react";
 
 const PLATFORM_COLORS: Record<string, { bg: string; text: string; border: string; label: string }> = {
@@ -33,7 +34,7 @@ const TIPS = [
 
 export default function DashboardPage() {
   const { user } = useHrAuth();
-  const { data: accountsData } = useAssignedAccounts();
+  const { data: accountsData, error: accountsError } = useAssignedAccounts();
   const { data: reportData } = useTodayReport();
   const { data: attendanceData } = useSWR("/hr/attendance", (url: string) => apiFetch<any>(url).catch(() => null));
 
@@ -159,9 +160,15 @@ export default function DashboardPage() {
               <div className="v3-card overflow-hidden">
                 <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
                   <h3 className="text-[14px] font-bold text-ink">Your Accounts</h3>
-                  <span className="text-[11px] text-ink-3 font-medium">{accounts.length} assigned</span>
+                  <span className="text-[11px] text-ink-3 font-medium">{accountsData ? `${accounts.length} assigned` : ""}</span>
                 </div>
-                {accounts.length === 0 ? (
+                {!accountsData && accountsError ? (
+                  <div className="px-5 py-8 text-center">
+                    <p className="text-[13px] text-ink-3 font-medium">Couldn&apos;t load your accounts. Refresh the page to try again.</p>
+                  </div>
+                ) : !accountsData ? (
+                  <SkeletonRows rows={2} />
+                ) : accounts.length === 0 ? (
                   <div className="px-5 py-8 text-center">
                     <p className="text-[13px] text-ink-3 font-medium">No accounts assigned yet.</p>
                   </div>

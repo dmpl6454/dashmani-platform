@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Plus, Search, LayoutGrid, List, ListChecks, CalendarDays, AlertCircle, CheckSquare, MessageSquare } from "lucide-react";
 import { useTasks } from "@/lib/hooks/use-tasks";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUS: Record<string, { label: string; color: string }> = {
@@ -68,9 +69,10 @@ const LIST_GRID = "grid [grid-template-columns:minmax(260px,2.4fr)_120px_100px_m
 export default function TasksPage() {
   usePageTitle("Tasks");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim());
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [prio, setPrio] = useState<string>("ALL");
-  const { data, isLoading, error } = useTasks({ search });
+  const { data, isLoading, error } = useTasks({ search: debouncedSearch });
   const tasks: any[] = (data as any)?.data || [];
   const hasMore: boolean = !!(data as any)?.meta?.has_more;
 

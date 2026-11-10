@@ -4,6 +4,8 @@ import { apiFetch } from "@/lib/api";
 import useSWR, { mutate } from "swr";
 import { Gift, Check, X } from "lucide-react";
 import { Topstrip } from "@/components/portal-shell";
+import { SkeletonRows } from "@/components/skeleton";
+import { LoadError } from "@/components/load-error";
 
 const fetcher = (url: string) => apiFetch<any>(url).then(r => r.data);
 const statusCfg: Record<string, string> = {
@@ -14,7 +16,7 @@ const statusCfg: Record<string, string> = {
 const fieldCls = "w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none";
 
 export default function CompOffPage() {
-  const { data: requests } = useSWR("/hr/leave-requests?type=COMP_OFF", fetcher);
+  const { data: requests, error: requestsError, mutate: reloadRequests } = useSWR("/hr/leave-requests?type=COMP_OFF", fetcher);
   const compOffRequests = requests || [];
 
   const [form, setForm] = useState({ startDate: "", endDate: "", reason: "" });
@@ -58,7 +60,11 @@ export default function CompOffPage() {
 
           <div className="v3-card overflow-hidden">
             <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}><h3 className="text-[14px] font-bold text-ink">Comp Off History</h3></div>
-            {compOffRequests.length === 0 ? (
+            {!requests && requestsError ? (
+              <div className="p-4"><LoadError what="comp off requests" onRetry={() => reloadRequests()} /></div>
+            ) : !requests ? (
+              <SkeletonRows />
+            ) : compOffRequests.length === 0 ? (
               <div className="px-5 py-10 text-center"><Gift size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No comp off requests yet</p></div>
             ) : (
               <ul>{compOffRequests.map((r: any, i: number) => {

@@ -128,7 +128,7 @@ function OfferView() {
                 <video key={n} src={`${API_ORIGIN}${f.url}`} controls playsInline preload="metadata" poster={cover?.ready ? `${API_ORIGIN}${cover.url}` : undefined} className="w-full bg-black max-h-[480px]" />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img key={n} src={`${API_ORIGIN}${f.url}`} alt={`File ${n + 1}`} className="w-full bg-black object-contain max-h-[480px]" />
+                <img loading="lazy" decoding="async" key={n} src={`${API_ORIGIN}${f.url}`} alt={`File ${n + 1}`} className="w-full bg-black object-contain max-h-[480px]" />
               ),
             )}
           </div>

@@ -1,5 +1,6 @@
 "use client";
 import { LoadError } from "@/components/load-error";
+import { SkeletonRows } from "@/components/skeleton";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
@@ -110,6 +111,8 @@ export default function ComplaintsPage() {
 
         {!data && error ? (
           <LoadError what="complaints" onRetry={() => mutate()} />
+        ) : !data ? (
+          <SkeletonRows card />
         ) : complaints.length === 0 ? (
           <div className="v3-card p-12 text-center">
             <MessageSquare className="h-9 w-9 mx-auto mb-3 text-ink-4" />

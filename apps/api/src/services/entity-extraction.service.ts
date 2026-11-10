@@ -29,7 +29,7 @@ let _client: Anthropic | null = null;
 function getClient(): Anthropic | null {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   // maxRetries:4 lets a brief 429/529 self-heal inside the SDK before we throw.
-  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 4 });
+  if (!_client) _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 4, timeout: 30_000 });
   return _client;
 }
 

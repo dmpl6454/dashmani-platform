@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { WebVitalsReporter } from "@/components/web-vitals";
 import { AuthContext, type InternalSession } from "@/lib/auth";
@@ -108,6 +108,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     router.push("/login");
   }, [router]);
 
+  // One stable value: opening the ⌘K palette (cmdOpen) re-renders this layout, and a fresh
+  // object here would redraw every component that reads useAuth().
+  const auth = useMemo(() => ({ user, login, adoptSession, logout, isLoading }), [user, login, adoptSession, logout, isLoading]);
+
   if (isLoading) {
     return (
       <html lang="en" suppressHydrationWarning>
@@ -159,7 +163,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-bg">
         <WebVitalsReporter />
-        <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>
+        <AuthContext.Provider value={auth}>
           {isPublicPage ? (
             children
           ) : isFullBleed ? (

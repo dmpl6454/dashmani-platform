@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { HrAuthContext, HrUser } from "@/lib/auth";
 import { loginHrefWithNext } from "@/lib/return-path";
@@ -67,8 +67,10 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
     router.push("/login");
   }, [router]);
 
+  const value = useMemo(() => ({ user, isLoading, login, logout }), [user, isLoading, login, logout]);
+
   return (
-    <HrAuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <HrAuthContext.Provider value={value}>
       {children}
     </HrAuthContext.Provider>
   );

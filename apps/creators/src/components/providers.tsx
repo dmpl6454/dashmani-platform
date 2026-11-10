@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch, clearSession, isPrivatePath, PENDING_CONNECT_KEY, storeSession, TOKEN_KEYS } from "@/lib/api";
@@ -57,27 +57,27 @@ export function Providers({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  function adoptSession(session: CreatorSession) {
+  const adoptSession = useCallback((session: CreatorSession) => {
     storeSession(session);
     setCreator(session.creator);
     // replace, not push: Back from the dashboard must not land on the sign-in form again.
     router.replace(safeNext() ?? "/dashboard");
-  }
+  }, [router]);
 
-  async function login(email: string, password: string) {
+  const login = useCallback(async (email: string, password: string) => {
     const res = await apiFetch<CreatorSession>("/creator/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
     adoptSession(res.data);
-  }
+  }, [adoptSession]);
 
-  function updateCreator(next: CreatorMe) {
+  const updateCreator = useCallback((next: CreatorMe) => {
     setCreator(next);
     try { localStorage.setItem(TOKEN_KEYS.user, JSON.stringify(next)); } catch { /* storage blocked */ }
-  }
+  }, []);
 
-  function logout() {
+  const logout = useCallback(() => {
     let refreshToken: string | null = null;
     try { refreshToken = localStorage.getItem(TOKEN_KEYS.refresh); } catch { /* storage blocked */ }
     if (refreshToken) {
@@ -86,7 +86,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
     clearSession();
     setCreator(null);
     router.push("/login");
-  }
+  }, [router]);
+
+  // Stable while the creator is unchanged: this provider re-renders on every page change.
+  const auth = useMemo(
+    () => ({ creator, login, adoptSession, updateCreator, logout, isLoading }),
+    [creator, login, adoptSession, updateCreator, logout, isLoading],
+  );
 
   let content: React.ReactNode;
   if (isPublic) content = children;
@@ -94,7 +100,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   else content = <AppShell>{children}</AppShell>;
 
   return (
-    <AuthContext.Provider value={{ creator, login, adoptSession, updateCreator, logout, isLoading }}>
+    <AuthContext.Provider value={auth}>
       {content}
     </AuthContext.Provider>
   );

@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { COMPANY_KEYS, DEFAULT_COMPANY, SALES_COMPANIES, isCompanyKey, type CompanyKey, type SalesCompany } from "@dashmani/shared/src/sales/companies";
 
 // The billing company the portal is working in (Digital Sukoon or Dashmani Media). Lists, the
@@ -27,12 +27,13 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
     setState(c);
     try { localStorage.setItem(STORAGE_KEY, c); } catch { /* storage blocked */ }
   }, []);
-  return <CompanyContext.Provider value={{ company, setCompany }}>{children}</CompanyContext.Provider>;
+  const value = useMemo(() => ({ company, setCompany }), [company, setCompany]);
+  return <CompanyContext.Provider value={value}>{children}</CompanyContext.Provider>;
 }
 
 export function useCompany() {
   const ctx = useContext(CompanyContext);
-  return { ...ctx, info: SALES_COMPANIES[ctx.company] };
+  return useMemo(() => ({ ...ctx, info: SALES_COMPANIES[ctx.company] }), [ctx]);
 }
 
 /** The company of a document, read defensively (rows from before the column default to Digital Sukoon). */

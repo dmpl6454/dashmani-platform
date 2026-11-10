@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { WebVitalsReporter } from "@/components/web-vitals";
 import "./globals.css";
@@ -30,31 +30,34 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  function adoptSession(session: ClientSession) {
+  const adoptSession = useCallback((session: ClientSession) => {
     localStorage.setItem("clientAccessToken", session.accessToken);
     localStorage.setItem("clientRefreshToken", session.refreshToken);
     localStorage.setItem("clientUser", JSON.stringify(session.user));
     setUser(session.user);
     // replace, not push: Back from the portal must not land on the sign-in form again.
     router.replace(safeNext() ?? "/dashboard");
-  }
+  }, [router]);
 
-  async function login(email: string, password: string) {
+  const login = useCallback(async (email: string, password: string) => {
     const res: any = await apiFetch("/client/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
     adoptSession(res.data);
-  }
+  }, [adoptSession]);
 
-  function logout() {
+  const logout = useCallback(() => {
     apiFetch("/client/auth/logout", { method: "POST" }).catch(() => {});
     localStorage.removeItem("clientAccessToken");
     localStorage.removeItem("clientRefreshToken");
     localStorage.removeItem("clientUser");
     setUser(null);
     router.push("/login");
-  }
+  }, [router]);
+
+  // Stable while the user is unchanged: this layout re-renders on every page change.
+  const auth = useMemo(() => ({ user, login, adoptSession, logout, isLoading }), [user, login, adoptSession, logout, isLoading]);
 
   const isPublicPage = publicRoutes.includes(pathname);
 
@@ -71,7 +74,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <WebVitalsReporter />
-        <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>
+        <AuthContext.Provider value={auth}>
           {isPublicPage ? children : <PortalShell>{children}</PortalShell>}
         </AuthContext.Provider>
       </body>

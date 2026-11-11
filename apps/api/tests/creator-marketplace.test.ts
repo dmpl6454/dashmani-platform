@@ -27,7 +27,7 @@ import { sendEmail, notifyAdminByEmail } from "../src/services/email.service";
 import { encryptToken } from "../src/utils/token-crypto";
 import { runPublishTick } from "../src/services/campaign/publish.service";
 import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.service";
-import { expireCreatorOffers, respondByFor } from "../src/services/creator/creator-offers.service";
+import { creatorNote, expireCreatorOffers, respondByFor } from "../src/services/creator/creator-offers.service";
 import { creatorClientPricePaise } from "@dashmani/shared/src/validators/creator";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
 import { generateToken, generateClientToken, generateCreatorToken } from "./helpers";
@@ -232,6 +232,16 @@ describe("creator marketplace", () => {
       expect(card).toMatchObject({ pricePaise: 600_000, creatorPayoutPaise: 400_000, active: true });
     });
 
+    it("the creator sees whether each format is listed: their price alone is not enough, our margin completes it", async () => {
+      const listed = async () => (await asCreator().get("/creator/prices")).body.data[0].prices.find((p: { format: string }) => p.format === "post").listed;
+      expect((await setCreatorPrice(300_000)).status).toBe(200);
+      expect(await listed()).toBe(false);
+      expect((await setMargin()).status).toBe(200);
+      expect(await listed()).toBe(true);
+      await prisma.creatorAsset.update({ where: { id: pageId }, data: { enabled: false } });
+      expect(await listed()).toBe(false);
+    });
+
     it("the creator sees their own price only — never our margin or the client price", async () => {
       await priceCreatorPage();
       const res = await asCreator().get("/creator/prices");
@@ -279,6 +289,9 @@ describe("creator marketplace", () => {
       const rows = await catalogue();
       const row = rows.find((r) => r.targetId === pageId)!;
       expect(row).toMatchObject({ targetType: "creator_asset", source: "creator", platform: "facebook", name: "Asha Eats", followers: 42_000 });
+      // No "link in 5–10 min" promise on a creator's page; the client sees how long the creator has instead.
+      expect(row.linkDeliveryMinutes).toBeNull();
+      expect(row.creatorResponseHours).toBe(72);
       expect(row.offers).toEqual([expect.objectContaining({ format: "post", pricePaise: 450_000 })]);
       expect(JSON.stringify(rows)).not.toMatch(/payout/i);
     });
@@ -385,6 +398,10 @@ describe("creator marketplace", () => {
       await approve(b.id);
       const offer = await asCreator().get(`/creator/offers/${item.id}`);
       expect(offer.body.data).toMatchObject({ payoutPaise: 350_000, campaign: expect.objectContaining({ songTrack: "Kesariya" }) });
+      // With auto-posting off, the creator still learns WHY this one is theirs to post (the song).
+      const acc = await asCreator().post(`/creator/offers/${item.id}/accept`);
+      expect(acc.body.data).toMatchObject({ status: "manual_pending" });
+      expect(acc.body.data.note).toMatch(/song/);
     });
 
     it("a page switched off before approval goes to staff instead of being offered", async () => {
@@ -433,7 +450,8 @@ describe("creator marketplace", () => {
 
       const acc = await asCreator().post(`/creator/offers/${itemId}/accept`);
       expect(acc.status).toBe(200);
-      expect(acc.body.data.status).toBe("queued");
+      expect(acc.body.data).toMatchObject({ status: "queued", autoPost: true });
+      expect((await asCreator().get("/creator/me")).body.data.autoPost).toBe(true);
       expect((await asCreator().post(`/creator/offers/${itemId}/accept`)).status).toBe(409);
 
       handler = (c) => {
@@ -467,8 +485,12 @@ describe("creator marketplace", () => {
       const { bookingId, itemId } = await paidBooking();
       await approve(bookingId);
       const acc = await asCreator().post(`/creator/offers/${itemId}/accept`);
-      expect(acc.body.data).toMatchObject({ status: "manual_pending", canRecordPost: true });
-      expect(acc.body.data.note).toMatch(/switched off/);
+      expect(acc.body.data).toMatchObject({ status: "manual_pending", canRecordPost: true, autoPost: false, note: "You post accepted bookings yourself for now." });
+      // The staff reason stays on the item; the creator never sees staff wording.
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } })).lastError).toMatch(/switched off/);
+      expect(JSON.stringify((await asCreator().get(`/creator/offers/${itemId}`)).body)).not.toMatch(/switched off|paste the link\./);
+      expect((await asCreator().get("/creator/offers")).body.data.autoPost).toBe(false);
+      expect((await asCreator().get("/creator/me")).body.data.autoPost).toBe(false);
       expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: "https://www.instagram.com/p/abc/" })).status).toBe(400);
       // The bare site or the page itself is not a post link: it used to count as "Live" and email the client.
       expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: "https://www.facebook.com/" })).status).toBe(400);
@@ -631,5 +653,26 @@ describe("creator marketplace", () => {
       expect(await prisma.creatorAsset.findUnique({ where: { id: spare.id } })).toBeNull();
       expect(r.assets + r.connections).toBeGreaterThan(0);
     });
+  });
+});
+
+describe("creatorNote: why a creator posts a booking themselves", () => {
+  it("translates the content reasons a creator can act on, and hides everything written for staff", () => {
+    expect(creatorNote("Song audio integration has to be added in the app — the API cannot attach a song.")).toMatch(/song/);
+    expect(creatorNote("The client chose a thumbnail — Facebook can't take it through the API, so post it by hand with the thumbnail.")).toMatch(/cover image/);
+    expect(creatorNote("Facebook carousels can only hold images through the API.")).toMatch(/photo carousels/);
+    expect(creatorNote("Stories are posted by hand.")).toMatch(/Stories/);
+    // A post we may already have published must never fall back to the generic sentence: a second copy would go up.
+    expect(creatorNote("Meta didn't confirm the Facebook post — check the Page before posting again, then paste the link.")).toMatch(/Check your Page first/);
+    expect(creatorNote("Instagram published the post but we couldn't read its link — open the profile and paste it.")).toMatch(/don't post it again/);
+    expect(creatorNote("The creator's Facebook login has expired — they must reconnect it.")).toMatch(/Reconnect Facebook/);
+    expect(creatorNote("Auto-posting on creator pages is switched off — post it on the page and paste the link.")).toBe("You post accepted bookings yourself for now.");
+    for (const staff of [
+      "This page now belongs to a different creator account — check with the creator before posting.",
+      "Staff switched this creator page off.",
+      "Token rejected (190)",
+      "",
+      null,
+    ]) expect(creatorNote(staff)).toBeNull();
   });
 });

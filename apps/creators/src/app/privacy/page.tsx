@@ -7,7 +7,7 @@ import { LegalPage } from "@/components/site-shell";
 
 export default function PrivacyPage() {
   return (
-    <LegalPage kicker="Privacy" title="Privacy policy" updated="12 October 2026">
+    <LegalPage kicker="Privacy" title="Privacy policy" updated="11 November 2026">
       <p>
         This policy explains what Digital Sukoon (Dashmani Media Private Limited, “we”, “us”) collects when you use Digital Sukoon
         Creators at creators.digitalsukoon.com, why, how long we keep it, and how to delete it. Questions or requests:{" "}
@@ -41,7 +41,7 @@ export default function PrivacyPage() {
       <ul>
         <li>To run your account: signing in, confirming your email, password resets and messages about your account.</li>
         <li>To review your profile: checking that the pages are yours, active, and that we can publish to them.</li>
-        <li>To offer your pages to brands, once bookings open: showing a page&apos;s name, picture and public statistics to brands considering a booking.</li>
+        <li>To offer your pages to brands: showing a page&apos;s name, picture and public statistics to brands considering a booking.</li>
         <li>To publish the campaigns you accept, report how they performed, and pay you.</li>
         <li>To prevent fraud and keep the service secure, and to meet legal obligations such as tax and accounting records.</li>
       </ul>

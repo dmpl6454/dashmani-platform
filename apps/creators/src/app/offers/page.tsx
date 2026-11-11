@@ -44,7 +44,9 @@ export default function OffersPage() {
       )}
       {counts.toPost > 0 && (
         <Banner tone="info" title={`${counts.toPost} accepted post${counts.toPost === 1 ? "" : "s"} to post yourself.`}>
-          We can&apos;t post these through Facebook for you. Post them on your page, then paste the link.
+          {data.autoPost
+            ? "We can't post these through Facebook for you. Post them on your page during the posting dates, then paste the link."
+            : "Post them on your page during the posting dates, then paste the link to each one."}
         </Banner>
       )}
 

@@ -131,8 +131,10 @@ export interface CatalogueEntry {
   views28d: number | null;
   category: string | null;
   profileUrl: string | null;
-  /** About how long after posting the link is ready. */
-  linkDeliveryMinutes: { min: number; max: number };
+  /** About how long after posting the link is ready. Null on a creator's page. */
+  linkDeliveryMinutes: { min: number; max: number } | null;
+  /** Creator pages only: the most hours the creator has to accept after our team approves. */
+  creatorResponseHours?: number | null;
   offers: Array<{ rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null }>;
 }
 

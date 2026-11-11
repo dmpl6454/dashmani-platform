@@ -308,6 +308,25 @@ describe("Creator admin API", () => {
       expect(off.body.data.enabled).toBe(false);
     });
 
+    it("emails the creator once when a page goes from off to on — never on a repeat save or a switch-off", async () => {
+      const c = await seedCreator({ status: "approved" });
+      const conn = await seedConnection(c.id);
+      const a = await seedAsset(c.id, conn.id);
+      const put = (enabled: boolean) => request(app).put(`/v1/admin/creators/${c.id}/assets/${a.id}`).set("Authorization", admin).send({ enabled });
+      const pageOn = () => sendMock.mock.calls.filter(([m]) => /switched on for booking/.test(m.subject));
+      sendMock.mockClear();
+      expect((await put(true)).status).toBe(200);
+      await vi.waitFor(() => expect(pageOn()).toHaveLength(1));
+      const [mail] = pageOn()[0];
+      expect(mail.to).toBe(c.email);
+      expect(mail.subject).toContain(a.name);
+      expect(mail.html).toContain("/prices");
+      expect((await put(true)).status).toBe(200);
+      expect((await put(false)).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(pageOn()).toHaveLength(1);
+    });
+
     it("refuses to enable with a reason: not approved, network duplicate, can't publish, disconnected, lapsed connection", async () => {
       const metaConn = await prisma.metaConnection.create({ data: { metaUserId: `mu-ca2-${Date.now()}`, connectedById: staff.id, status: "ACTIVE" } });
       const net = await prisma.metaAsset.create({ data: { connectionId: metaConn.id, kind: "FACEBOOK_PAGE", metaId: `fb-net2-${n}`, name: "Ours" } });

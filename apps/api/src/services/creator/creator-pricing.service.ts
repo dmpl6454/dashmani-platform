@@ -6,7 +6,7 @@ import {
   type CreatorOwnPricesInput,
 } from "@dashmani/shared/src/validators/creator";
 import { AppError } from "../../middleware/error-handler";
-import { invalidateCatalogueCache, listCreatorTargets } from "../campaign/rate-card.service";
+import { creatorBookableWhere, invalidateCatalogueCache, listCreatorTargets } from "../campaign/rate-card.service";
 
 // Creator page pricing (owner decision 2026-11-04, keeping the recorded Phase C decision):
 //  • the CREATOR sets their own price per page and format (creators.digitalsukoon.com → Prices).
@@ -169,6 +169,16 @@ export async function getOwnPrices(creatorId: string) {
     orderBy: [{ kind: "asc" }, { name: "asc" }],
     select: { id: true, kind: true, name: true, username: true, enabled: true, prices: { select: { format: true, creatorPricePaise: true, creatorUpdatedAt: true } } },
   });
+  const ids = assets.map((a) => a.id);
+  // Whether brands can book each format right now: the page passes the same gate as the client
+  // catalogue AND that format's derived card is active (creator price + our margin, not switched
+  // off by staff). The card's price and the margin never leave the server.
+  const [bookable, liveCards] = await Promise.all([
+    prisma.creatorAsset.findMany({ where: { id: { in: ids }, creatorId, ...creatorBookableWhere }, select: { id: true } }),
+    prisma.campaignRateCard.findMany({ where: { targetType: "creator_asset", targetId: { in: ids }, active: true }, select: { targetId: true, format: true } }),
+  ]);
+  const bookableIds = new Set(bookable.map((b) => b.id));
+  const listedKeys = new Set(liveCards.map((c) => `${c.targetId}:${c.format}`));
   return assets.map((a) => ({
     assetId: a.id,
     platform: PLATFORM_OF[a.kind],
@@ -178,7 +188,13 @@ export async function getOwnPrices(creatorId: string) {
     enabled: a.enabled,
     prices: CREATOR_PRICED_FORMATS.map((format) => {
       const p = a.prices.find((x) => x.format === format);
-      return { format, pricePaise: p?.creatorPricePaise ?? null, updatedAt: p?.creatorUpdatedAt ?? null };
+      return {
+        format,
+        pricePaise: p?.creatorPricePaise ?? null,
+        updatedAt: p?.creatorUpdatedAt ?? null,
+        /** Brands can book this format now. */
+        listed: bookableIds.has(a.id) && listedKeys.has(`${a.id}:${format}`),
+      };
     }),
   }));
 }

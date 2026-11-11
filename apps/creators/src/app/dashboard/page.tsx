@@ -46,7 +46,7 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-8">
       <PageHead kicker="Overview" title={<>Hi {first}.</>}>
-        Brands will book promotion on your page through Digital Sukoon, and you approve every booking before anything is posted.
+        Brands book promotion on your page through Digital Sukoon, and you approve every booking before anything is posted.
         Finish the steps below and our team will review your profile.
       </PageHead>
       <StatusBanner me={me} />
@@ -86,8 +86,9 @@ function StatusBanner({ me }: { me: CreatorMeWithChecklist }) {
     case "approved":
       return (
         <Banner tone="success" title="You're approved.">
-          Welcome to Digital Sukoon Creators. Our team turns on each of your pages for booking, and we&apos;ll email you when brands can book them.
-          Keep your Facebook connection active so we can publish the campaigns you accept.
+          Welcome to Digital Sukoon Creators. Our team switches on each of your pages for booking and emails you when it does. Set your
+          prices on the <Link href="/prices" className="underline">Prices</Link> page; each one shows when brands can book it. Keep your
+          Facebook connection active: a page is only offered to brands while it is connected.
         </Banner>
       );
     case "rejected":

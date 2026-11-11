@@ -6,7 +6,7 @@ import { LegalPage } from "@/components/site-shell";
 
 export default function TermsPage() {
   return (
-    <LegalPage kicker="Creator agreement" title="Creator terms" updated="12 October 2026">
+    <LegalPage kicker="Creator agreement" title="Creator terms" updated="11 November 2026">
       <p>
         These terms are the agreement between you and Digital Sukoon (Dashmani Media Private Limited, “we”, “us”) when you join
         Digital Sukoon Creators at creators.digitalsukoon.com. Please read them — by creating an account you agree to them. If you
@@ -17,7 +17,7 @@ export default function TermsPage() {
       <p>
         Brands and agencies come to Digital Sukoon to promote their products, films, music and campaigns. Through Digital Sukoon
         Creators they can book a promotional post on your Facebook Page or Instagram professional account. We handle the brand,
-        prepare the post, publish it on your page once you have accepted it, and pay you.
+        prepare the post, make sure it goes on your page once you have accepted it (we publish it or you do — see section 5), and pay you.
       </p>
 
       <h2>2. Who can join</h2>
@@ -47,9 +47,9 @@ export default function TermsPage() {
 
       <h2>5. Bookings — you approve each one</h2>
       <ul>
-        <li>You set your asking price for each type of post, in your own currency. Our team agrees the booking price with the brand separately.</li>
-        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking without giving a reason.</li>
-        <li>Once you accept, we publish exactly the post you accepted, on the page and at the time agreed. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
+        <li>You set your price for each type of post, in Indian rupees (₹). That price is what you are paid for the post; the price brands see includes our service.</li>
+        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking; when you do, you give a short reason, so we can send you better bookings.</li>
+        <li>Once you accept, exactly the post you accepted goes on the page during the posting dates: either we publish it through your Facebook connection, or we ask you to publish it yourself and paste the link to it. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
       </ul>
 
       <h2>6. Your content stays yours</h2>
@@ -62,13 +62,13 @@ export default function TermsPage() {
       <h2>7. Paid-partnership labelling</h2>
       <p>
         Promoted posts must be clearly marked as paid or sponsored, as advertising rules and Meta&apos;s branded-content policies require.
-        The post we publish will carry a disclosure — such as Meta&apos;s “Paid partnership” label where it is available, or #ad in the
-        caption. Don&apos;t remove these labels.
+        When you publish a booked post yourself, turn on Meta&apos;s “Paid partnership” label where it is available, or add #ad to the
+        caption. Don&apos;t remove a disclosure from a promoted post.
       </p>
 
       <h2>8. Payment</h2>
       <ul>
-        <li>The amount and currency are set per booking and shown to you before you accept.</li>
+        <li>The amount, in Indian rupees (₹), is set per booking and shown to you before you accept.</li>
         <li>We pay you <strong>manually after the post is live and we have verified it</strong> stayed up as agreed. We&apos;ll ask for your payout details before your first payment.</li>
         <li>If a post is removed early, never goes live, or breaks these terms, we may reduce or withhold payment for that booking.</li>
         <li>You are responsible for any taxes on what you earn, unless the law requires us to deduct them.</li>
@@ -78,7 +78,7 @@ export default function TermsPage() {
       <ul>
         <li>Follow Facebook&apos;s and Instagram&apos;s terms and community standards, and the law where you live.</li>
         <li>Don&apos;t inflate your numbers with bought followers, likes or views, and don&apos;t misrepresent your audience.</li>
-        <li>Keep your Facebook connection working while you have bookings, so we can publish what you accepted.</li>
+        <li>Keep your Facebook connection working while you have bookings: your pages are only offered to brands while they are connected, and where we post for you, we publish through it.</li>
       </ul>
 
       <h2>10. Suspension</h2>

@@ -120,7 +120,7 @@ function SignupForm() {
       kicker="Creator portal · Join"
       title={<>Get <em>booked.</em></>}
       lines={[
-        <>Brands and agencies will book promotion on your page through Digital Sukoon. You name your asking price and see your payout before you accept.</>,
+        <>Brands and agencies book promotion on your page through Digital Sukoon. You set your price, in rupees (₹), and see your payout on every booking before you accept.</>,
         <>Nothing is posted without your approval, and you can disconnect at any time.</>,
         <>Already a creator? <Link href={signInHref}>Sign in</Link>.</>,
       ]}

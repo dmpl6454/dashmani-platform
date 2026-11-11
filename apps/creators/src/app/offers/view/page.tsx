@@ -96,7 +96,9 @@ function OfferView() {
             </>
           }
         >
-          If you accept, it is posted on your page on the first posting day (10:00 am IST) — or, when we can&apos;t post it for you, you post it yourself and paste the link here.
+          {o.autoPost
+            ? "If you accept, we post it on your page when the posting dates start (or straight away if they already have) — or, when we can't post it for you, you post it yourself and paste the link here."
+            : "If you accept, you post it on your page yourself during the posting dates and paste the link here."}{" "}
           If you don&apos;t answer in time, it is treated as declined.
         </Banner>
       )}
@@ -131,6 +133,13 @@ function OfferView() {
                 <img loading="lazy" decoding="async" key={n} src={`${API_ORIGIN}${f.url}`} alt={`File ${n + 1}`} className="w-full bg-black object-contain max-h-[480px]" />
               ),
             )}
+            {cover?.ready && (
+              <figure className="flex flex-col gap-1.5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img loading="lazy" decoding="async" src={`${API_ORIGIN}${cover.url}`} alt="Cover image chosen by the brand" className="w-full bg-black object-contain max-h-[480px]" />
+                <figcaption className="text-[12px] text-ink-3">Cover image — use it as the video&apos;s cover when you post.</figcaption>
+              </figure>
+            )}
           </div>
         )}
         <dl className="grid gap-3 text-sm">
@@ -164,7 +173,10 @@ function RecordPost({ o, busy, onSubmit }: { o: CreatorOffer; busy: boolean; onS
     <section className="card p-5 flex flex-col gap-3">
       <h2 className="text-lg font-extrabold">Post it yourself</h2>
       <p className="text-sm text-ink-3">
-        {o.note ?? "We can't post this one for you."} Post the files and caption below on {o.page.name} during the posting dates, then paste the link to the post here.
+        {o.note ?? (o.autoPost ? "We couldn't post this one for you." : "")} Post the files and caption below on {o.page.name} during the posting dates, then paste the link to the post here.
+      </p>
+      <p className="text-sm text-ink-3">
+        Before you post, turn on Instagram&apos;s or Facebook&apos;s <b className="text-white">Paid partnership</b> label, or add <b className="text-white">#ad</b> to the caption.
       </p>
       <form
         className="flex flex-col sm:flex-row gap-2"

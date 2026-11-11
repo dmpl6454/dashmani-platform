@@ -19,6 +19,7 @@ import { razorpayConfig } from "./config";
 import { durationLimitSec } from "./media.service";
 import { overlayKey } from "./render.service";
 import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
+import { notifyStaffResubmitted } from "./delivery.service";
 
 // Campaign bookings — the client's side of the lifecycle and the one state-transition helper
 // every other module goes through.
@@ -651,6 +652,8 @@ export async function submitChanges(clientId: string, id: string) {
     note: "Changes submitted",
     data: { submittedAt: new Date() },
   });
+  // Before this nobody was told: the booking only reappeared in the queue.
+  void notifyStaffResubmitted(id).catch((e) => console.error("[campaign] resubmitted staff email failed", e));
   return getClientBooking(clientId, id);
 }
 

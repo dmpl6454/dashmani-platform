@@ -285,6 +285,21 @@ export async function notifyStaffPaid(bookingId: string) {
   );
 }
 
+/** The client sent a campaign back after "changes requested": it is in the review queue again. */
+export async function notifyStaffResubmitted(bookingId: string) {
+  const b = await bookingWithClient(bookingId);
+  if (!b) return;
+  await notifyAdminByEmail(
+    `Changes resubmitted — review again: ${b.name}`,
+    [
+      { label: "Client", value: b.client.companyName },
+      { label: "Brand", value: b.brand },
+      { label: "Your note was", value: b.reviewNote ?? "—" },
+    ],
+    `/campaigns/${b.id}`,
+  );
+}
+
 // ── Results (portal) ────────────────────────────────────────────────────────────
 
 /**

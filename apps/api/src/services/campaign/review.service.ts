@@ -194,6 +194,10 @@ export async function markPosted(bookingId: string, itemId: string, staffId: str
   if (!isPlatformPostUrl(item.platform as CampaignPlatform, url)) {
     throw new AppError(400, "WRONG_PLATFORM", platformPostLinkError(item.platform as CampaignPlatform));
   }
+  // Nothing goes on a creator's page without that creator's accept — staff can't post there for them.
+  if (item.targetType === "creator_asset" && !item.creatorDecidedAt) {
+    throw new AppError(409, "CREATOR_NOT_ACCEPTED", "The creator hasn't accepted this post. Refund it or arrange another page instead.");
+  }
   const b = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { status: true } });
   if (!b || !["approved", "publishing", "completed", "partially_published"].includes(b.status)) {
     throw new AppError(409, "INVALID_STATE", "Approve the campaign before recording posts.");

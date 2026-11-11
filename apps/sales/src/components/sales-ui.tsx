@@ -107,6 +107,8 @@ const STATUS_TONE: Record<string, string> = {
   credited_other_month: "border-border text-ink-3",
   rounding: "border-border text-ink-3",
   reconciled: "border-success text-success",
+  awaiting_creator: "border-attention text-attention",
+  creator_declined: "border-danger text-danger",
 };
 
 export function StatusPill({ status, label }: { status: string; label?: string }) {

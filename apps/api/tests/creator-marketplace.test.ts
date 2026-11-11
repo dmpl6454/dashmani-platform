@@ -566,6 +566,19 @@ describe("creator marketplace", () => {
       expect(item.lastError).toMatch(/different creator/);
     });
 
+    it("staff can't mark posted a creator post the creator hasn't accepted", async () => {
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      const early = await request(app).post(`/v1/admin/campaigns/${bookingId}/items/${itemId}/posted`).set("Authorization", `Bearer ${adminToken}`).send({ url: `https://www.facebook.com/${PAGE_META_ID}/posts/7` });
+      expect(early.status).toBe(409);
+      expect(early.body.error.code).toBe("CREATOR_NOT_ACCEPTED");
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } })).status).toBe("awaiting_creator");
+      // Once the creator accepts, staff may record the link on their behalf.
+      expect((await asCreator().post(`/creator/offers/${itemId}/accept`)).status).toBe(200);
+      const ok = await request(app).post(`/v1/admin/campaigns/${bookingId}/items/${itemId}/posted`).set("Authorization", `Bearer ${adminToken}`).send({ url: `https://www.facebook.com/${PAGE_META_ID}/posts/7` });
+      expect(ok.status).toBe(200);
+    });
+
     it("staff can't 'publish now' a post the creator hasn't accepted", async () => {
       vi.stubEnv("CREATOR_PUBLISH_ENABLED", "1");
       const { bookingId, itemId } = await paidBooking();

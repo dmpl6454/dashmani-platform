@@ -23,7 +23,7 @@ vi.mock("../src/services/email.service", async (orig) => {
 });
 
 import app from "../src/app";
-import { sendEmail } from "../src/services/email.service";
+import { sendEmail, notifyAdminByEmail } from "../src/services/email.service";
 import { mediaTools, sniffMime, parseProbe, diskAllows } from "../src/services/campaign/media.service";
 import { renderTools, renderNext, wrapOverlay, buildFfmpegArgs } from "../src/services/campaign/render.service";
 import { razorpayHttp, verifyWebhookSignature } from "../src/services/campaign/razorpay";
@@ -647,7 +647,10 @@ describe("campaign booking flow", () => {
     await pay(id);
     await request(app).post(`/v1/admin/campaigns/${id}/request-changes`).set("Authorization", `Bearer ${admin}`).send({ note: "Logo too small" });
     expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("changes_requested");
+    vi.mocked(notifyAdminByEmail).mockClear();
     expect((await request(app).post(`/v1/client/campaigns/${id}/submit-changes`).set("Authorization", `Bearer ${tokA}`)).status).toBe(200);
+    // Staff are told the campaign is back in the queue (before, it just reappeared silently).
+    await vi.waitFor(() => expect(vi.mocked(notifyAdminByEmail).mock.calls.some(([subject]) => /resubmitted/i.test(String(subject)))).toBe(true));
     await request(app).post(`/v1/admin/campaigns/${id}/approve`).set("Authorization", `Bearer ${admin}`);
     const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: id } });
     const rf = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/refund`).set("Authorization", `Bearer ${admin}`);

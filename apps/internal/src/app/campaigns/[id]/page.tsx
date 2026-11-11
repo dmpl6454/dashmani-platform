@@ -297,7 +297,8 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
   // Refundable while it hasn't gone out; a creator page that declined (or never answered) too.
   const open = ["manual_pending", "queued", "failed", "awaiting_creator", "creator_declined"].includes(i.status);
   // Recording a link is for posts someone can actually make: not while it sits with the creator.
-  const postFormOpen = ["manual_pending", "failed"].includes(i.status);
+  // A creator page the creator never accepted can't be posted by staff (the API refuses it).
+  const postFormOpen = ["manual_pending", "failed"].includes(i.status) && !(isCreator && !i.creatorDecidedAt);
   const queued = i.status === "queued";
   const live = i.status === "posted_manual" || i.status === "published";
   const ownCaption = i.captionOverride != null;

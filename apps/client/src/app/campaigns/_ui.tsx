@@ -86,12 +86,22 @@ export const STATUS_LABEL: Record<string, string> = {
   expired: "Expired",
 };
 
-export function CampaignStatus({ status }: { status: string }) {
+/**
+ * The campaign's badge. `liveCount` matters for partially_published: a campaign where NOTHING
+ * went live settles in that status too, and must read "Not posted", never "Partly live".
+ */
+export function CampaignStatus({ status, liveCount }: { status: string; liveCount?: number }) {
+  const nothingLive = status === "partially_published" && liveCount === 0;
   return (
-    <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${STATUS_TONE[status] ?? "bg-muted text-ink-2"}`}>
-      {STATUS_LABEL[status] ?? status}
+    <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${nothingLive ? "bg-muted text-ink-2" : STATUS_TONE[status] ?? "bg-muted text-ink-2"}`}>
+      {nothingLive ? "Not posted" : STATUS_LABEL[status] ?? status}
     </span>
   );
+}
+
+/** Marks an independent creator's page (the creator confirms each post) among our network accounts. */
+export function CreatorTag() {
+  return <span className="inline-flex items-center h-[18px] px-1.5 text-[10px] font-bold tracking-[0.04em] uppercase bg-indigo/10 text-indigo align-middle">Creator</span>;
 }
 
 const ITEM: Record<string, { label: string; cls: string }> = {
@@ -108,11 +118,15 @@ const ITEM: Record<string, { label: string; cls: string }> = {
 
 /**
  * One post's state. `paidOnline` is the booking's paidAt: a post dropped from a campaign that was
- * never paid online was not charged, so it must never read "refunded".
+ * never paid online was not charged, so it must never read "refunded". `bookingStatus` catches a
+ * campaign that ended before its posts were ever approved (cancelled / expired): those rows stay
+ * "pending" in the database but are not "Booked" any more.
  */
-export function ItemStatus({ status, paidOnline }: { status: string; paidOnline: boolean }) {
-  const s =
-    status === "refunded" && !paidOnline
+export function ItemStatus({ status, paidOnline, bookingStatus }: { status: string; paidOnline: boolean; bookingStatus?: string }) {
+  const ended = status === "pending" && (bookingStatus === "cancelled" || bookingStatus === "expired");
+  const s = ended
+    ? { label: "Cancelled", cls: "bg-muted text-ink-3" }
+    : status === "refunded" && !paidOnline
       ? { label: "Not posted — not charged", cls: "bg-muted text-ink-2" }
       : ITEM[status] ?? { label: status, cls: "bg-muted text-ink-2" };
   return <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${s.cls}`}>{s.label}</span>;

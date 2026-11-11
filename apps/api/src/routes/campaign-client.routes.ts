@@ -141,7 +141,9 @@ router.post("/client/campaigns/:id/cancel", authenticateClient, asyncHandler(asy
 }));
 
 router.post("/client/campaigns/:id/checkout", authenticateClient, asyncHandler(async (req, res) => {
-  return success(res, await payment.checkout(clientId(req), req.params.id));
+  // The total the client was shown, if the portal sends it (compared, never used as a price).
+  const expected = req.body?.expectedTotalPaise;
+  return success(res, await payment.checkout(clientId(req), req.params.id, Number.isInteger(expected) && expected >= 0 ? expected : undefined));
 }));
 
 router.post("/client/campaigns/:id/payment/verify", authenticateClient, asyncHandler(async (req, res) => {

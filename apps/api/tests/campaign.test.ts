@@ -23,7 +23,7 @@ vi.mock("../src/services/email.service", async (orig) => {
 });
 
 import app from "../src/app";
-import { sendEmail } from "../src/services/email.service";
+import { sendEmail, notifyAdminByEmail } from "../src/services/email.service";
 import { mediaTools, sniffMime, parseProbe, diskAllows } from "../src/services/campaign/media.service";
 import { renderTools, renderNext, wrapOverlay, buildFfmpegArgs } from "../src/services/campaign/render.service";
 import { razorpayHttp, verifyWebhookSignature } from "../src/services/campaign/razorpay";
@@ -97,6 +97,27 @@ describe("campaign pure helpers", () => {
     expect(isPlatformPostUrl("instagram", "https://instagram.com.evil.io/reel/ABC/")).toBe(false);
     expect(isPlatformPostUrl("facebook", "https://www.instagram.com/p/x")).toBe(false);
     expect(isPlatformPostUrl("youtube", "javascript:alert(1)")).toBe(false);
+    // A profile, a channel or the bare site is NOT a post: the client is emailed "your post is
+    // live" with this link and the campaign counts it as delivered.
+    expect(isPlatformPostUrl("instagram", "https://www.instagram.com/")).toBe(false);
+    expect(isPlatformPostUrl("instagram", "https://www.instagram.com/asha.eats/")).toBe(false);
+    expect(isPlatformPostUrl("instagram", "https://www.instagram.com/reel/CxYz123/?igsh=abc")).toBe(true);
+    expect(isPlatformPostUrl("instagram", "https://www.instagram.com/asha.eats/p/CxYz123/")).toBe(true);
+    expect(isPlatformPostUrl("facebook", "https://www.facebook.com/BollywoodSociety")).toBe(false);
+    expect(isPlatformPostUrl("facebook", "https://www.facebook.com/profile.php?id=100064123409001")).toBe(false);
+    expect(isPlatformPostUrl("facebook", "https://www.facebook.com/100064123409001/posts/pfbid0abc")).toBe(true);
+    expect(isPlatformPostUrl("facebook", "https://www.facebook.com/reel/1234567890/")).toBe(true);
+    expect(isPlatformPostUrl("facebook", "https://www.facebook.com/watch?v=123456")).toBe(true);
+    expect(isPlatformPostUrl("facebook", "https://www.facebook.com/photo.php?fbid=123")).toBe(true);
+    expect(isPlatformPostUrl("facebook", "https://www.facebook.com/share/r/abc123/")).toBe(true);
+    expect(isPlatformPostUrl("facebook", "https://fb.watch/abc123/")).toBe(true);
+    expect(isPlatformPostUrl("youtube", "https://www.youtube.com/@somechannel")).toBe(false);
+    expect(isPlatformPostUrl("youtube", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(true);
+    expect(isPlatformPostUrl("youtube", "https://www.youtube.com/shorts/dQw4w9WgXcQ")).toBe(true);
+    expect(isPlatformPostUrl("youtube", "https://youtu.be/dQw4w9WgXcQ")).toBe(true);
+    expect(isPlatformPostUrl("snapchat", "https://www.snapchat.com/@handle")).toBe(false);
+    expect(isPlatformPostUrl("snapchat", "https://www.snapchat.com/add/handle")).toBe(false);
+    expect(isPlatformPostUrl("snapchat", "https://www.snapchat.com/spotlight/W7_abc")).toBe(true);
   });
 
   it("verifies webhook HMACs over the raw body", () => {
@@ -367,6 +388,10 @@ describe("campaign booking flow", () => {
 
     const wrong = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/posted`).set("Authorization", `Bearer ${admin}`).send({ url: "https://www.facebook.com/reel/1" });
     expect(wrong.status).toBe(400);
+    expect(JSON.stringify(wrong.body)).toContain("a post on Instagram");
+    // The bare site (or a profile) is not a post link either — it used to make the post "Live".
+    const bare = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/posted`).set("Authorization", `Bearer ${admin}`).send({ url: "https://www.instagram.com/" });
+    expect(bare.status).toBe(400);
     const ok = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/posted`).set("Authorization", `Bearer ${admin}`).send({ url: "https://www.instagram.com/p/DABC123/" });
     expect(ok.status).toBe(200);
     await new Promise((r) => setTimeout(r, 50));
@@ -377,6 +402,8 @@ describe("campaign booking flow", () => {
     const deliveries = vi.mocked(sendEmail).mock.calls.filter(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Delivered"));
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0][0].html).toContain("https://www.instagram.com/p/DABC123/");
+    // A one-post campaign gets ONE email (the delivery email carries the link), not "Live on @x" as well.
+    expect(vi.mocked(sendEmail).mock.calls.filter(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Live on"))).toHaveLength(0);
 
     // Updating the link does not send it again; an explicit resend does.
     await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/posted`).set("Authorization", `Bearer ${admin}`).send({ url: "https://www.instagram.com/p/DABC124/" });
@@ -386,7 +413,7 @@ describe("campaign booking flow", () => {
 
     // The client sees the link; another client sees nothing.
     const results = await request(app).get(`/v1/client/campaigns/${id}/results`).set("Authorization", `Bearer ${tokA}`);
-    expect(results.body.data.items[0]).toMatchObject({ status: "posted_manual", permalink: "https://www.instagram.com/p/DABC124/", metrics: null });
+    expect(results.body.data.items[0]).toMatchObject({ status: "posted_manual", permalink: "https://www.instagram.com/p/DABC124/", metrics: null, metricsAvailable: true, targetType: "meta_asset" });
     expect((await request(app).get(`/v1/client/campaigns/${id}/results`).set("Authorization", `Bearer ${tokB}`)).status).toBe(404);
   });
 
@@ -450,6 +477,47 @@ describe("campaign booking flow", () => {
     expect((await save({ ...carousel, caption: "again" })).status).toBe(200);
     expect(await status()).toBe("queued");
     expect((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: up2.id } })).renderStatus).toBe("done");
+  });
+
+  it("a rate-card change after the accounts were picked is refused once with the new total, then accepted", async () => {
+    const { id } = await readyBooking();
+    const shown = (await request(app).get(`/v1/client/campaigns/${id}`).set("Authorization", `Bearer ${tokA}`)).body.data.pricing.totalPaise;
+    await setRates(300_000);
+    const stale = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`).send({ expectedTotalPaise: shown });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe("PRICE_CHANGED");
+    expect(stale.body.error.message).toContain("changed since you picked it");
+    expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("draft");
+    // The booking now carries the new price, so the Review page shows it on reload…
+    const fresh = (await request(app).get(`/v1/client/campaigns/${id}`).set("Authorization", `Bearer ${tokA}`)).body.data;
+    expect(fresh.items[0].pricePaise).toBe(300_000);
+    expect(fresh.pricing.totalPaise).toBeGreaterThan(shown);
+    // …and submitting the new total goes through. The figure sent is never used as a price.
+    const ok = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`).send({ expectedTotalPaise: fresh.pricing.totalPaise });
+    expect(ok.status).toBe(200);
+    expect(ok.body.data.amount).toBe(fresh.pricing.totalPaise);
+    // A client that sends nothing (older portal build) is charged the current price, as before.
+    const { id: id2 } = await readyBooking();
+    await setRates(310_000);
+    expect((await request(app).post(`/v1/client/campaigns/${id2}/checkout`).set("Authorization", `Bearer ${tokA}`)).status).toBe(200);
+  });
+
+  it("a webhook redelivered after a crash between 'captured' and the booking move finishes the job", async () => {
+    const { id } = await readyBooking();
+    const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+    expect(co.status).toBe(200);
+    // Simulate the first delivery dying right after the capture was recorded: the payment row
+    // says captured, the booking still waits for payment.
+    await prisma.campaignPayment.update({ where: { razorpayOrderId: co.body.data.orderId }, data: { status: "captured", razorpayPaymentId: "pay_crash" } });
+    expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("awaiting_payment");
+    const again = await webhook("payment.captured", { id: "pay_crash", order_id: co.body.data.orderId, amount: co.body.data.amount, currency: "INR", status: "captured" });
+    expect(again.status).toBe(200);
+    expect(again.body.data.duplicate).toBeUndefined();
+    expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("paid_pending_review");
+    // A genuine duplicate (the booking already moved on) is still a no-op.
+    const dup = await webhook("payment.captured", { id: "pay_crash", order_id: co.body.data.orderId, amount: co.body.data.amount, currency: "INR", status: "captured" });
+    expect(dup.body.data.duplicate).toBe(true);
+    expect(rzpCalls.filter((c) => c.url.includes("/refund"))).toHaveLength(0);
   });
 
   it("a payment for an outdated order is refunded, not accepted", async () => {
@@ -547,12 +615,42 @@ describe("campaign booking flow", () => {
     }
   });
 
+  it("nothing live settles as partially_published with liveCount 0; a failed post posted later completes it", async () => {
+    const { id } = await readyBooking();
+    await pay(id);
+    await request(app).post(`/v1/admin/campaigns/${id}/approve`).set("Authorization", `Bearer ${admin}`);
+    const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: id } });
+    const failed = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/failed`).set("Authorization", `Bearer ${admin}`).send({ note: "Page unavailable" });
+    expect(failed.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("partially_published");
+    // The client's list carries liveCount 0 (the portal reads it as "Not posted", never "Partly live"),
+    // and the delivery email is the "final status" one, not "your campaign is live".
+    const list = await request(app).get("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`);
+    expect(list.body.data.find((r: any) => r.id === id)).toMatchObject({ status: "partially_published", liveCount: 0, itemCount: 1 });
+    const finalMail = vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Delivered"));
+    expect(finalMail?.[0].subject).toContain("final status");
+    expect(finalMail?.[0].html).not.toContain("is live");
+
+    // Staff post it after all: the campaign is completed, the client gets the link once ("live" email).
+    const ok = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/posted`).set("Authorization", `Bearer ${admin}`).send({ url: "https://www.instagram.com/p/LATE1/" });
+    expect(ok.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("completed");
+    expect(vi.mocked(sendEmail).mock.calls.filter(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Live on"))).toHaveLength(1);
+    // Still exactly one delivery email: it is never resent by itself.
+    expect(vi.mocked(sendEmail).mock.calls.filter(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Delivered"))).toHaveLength(1);
+  });
+
   it("changes requested → client re-submits; refunding the only item lists it honestly in delivery", async () => {
     const { id } = await readyBooking();
     await pay(id);
     await request(app).post(`/v1/admin/campaigns/${id}/request-changes`).set("Authorization", `Bearer ${admin}`).send({ note: "Logo too small" });
     expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id } })).status).toBe("changes_requested");
+    vi.mocked(notifyAdminByEmail).mockClear();
     expect((await request(app).post(`/v1/client/campaigns/${id}/submit-changes`).set("Authorization", `Bearer ${tokA}`)).status).toBe(200);
+    // Staff are told the campaign is back in the queue (before, it just reappeared silently).
+    await vi.waitFor(() => expect(vi.mocked(notifyAdminByEmail).mock.calls.some(([subject]) => /resubmitted/i.test(String(subject)))).toBe(true));
     await request(app).post(`/v1/admin/campaigns/${id}/approve`).set("Authorization", `Bearer ${admin}`);
     const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: id } });
     const rf = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/refund`).set("Authorization", `Bearer ${admin}`);

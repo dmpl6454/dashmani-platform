@@ -69,7 +69,7 @@ export default function CampaignsPage() {
                   </span>
                 )}
                 {r.totalPaise != null && <span className="font-semibold tabular-nums">{rupees(r.totalPaise)}</span>}
-                <CampaignStatus status={r.status} />
+                <CampaignStatus status={r.status} liveCount={r.liveCount} />
               </div>
             </Link>
             );

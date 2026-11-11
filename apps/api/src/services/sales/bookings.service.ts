@@ -26,6 +26,8 @@ export type BookingStage = keyof typeof BOOKING_STAGES | "to_invoice" | "all";
 const billable = (status: string) => !(UNBILLABLE_BOOKING_STATUSES as readonly string[]).includes(status);
 const isLive = (s: string) => (LIVE_ITEM_STATUSES as readonly string[]).includes(s);
 const isBilledItem = (s: string) => !(UNBILLED_ITEM_STATUSES as readonly string[]).includes(s);
+/** What can be invoiced NOW: a creator post still waiting for the creator's answer isn't yet a sale. */
+const isBillableNow = (s: string) => isBilledItem(s) && s !== "awaiting_creator";
 
 const clientBrief = { select: { id: true, companyName: true, billingProfile: { select: { legalName: true } } } } as const;
 const invoiceBrief = { id: true, number: true, kind: true, status: true, companyKey: true, totalPaise: true, campaignBookingId: true } as const;
@@ -73,7 +75,7 @@ export async function listBookings(filter: { stage?: string; q?: string; clientI
       itemCount: r.items.length,
       liveCount: r.items.filter((i) => isLive(i.status)).length,
       /** What an invoice made now would bill: every account except failed or refunded posts. */
-      billablePaise: r.items.filter((i) => isBilledItem(i.status)).reduce((s, i) => s + i.pricePaise, 0),
+      billablePaise: r.items.filter((i) => isBillableNow(i.status)).reduce((s, i) => s + i.pricePaise, 0),
       billable: billable(r.status),
       invoices: inv.map(({ id, number, kind, status, companyKey, totalPaise }) => ({ id, number, kind, status, companyKey, totalPaise })),
       /** On a live invoice (a draft or proforma counts: making another would bill it twice). */
@@ -115,7 +117,7 @@ export async function getBooking(id: string) {
     launchFrom: dateToDay(b.launchFrom), launchTo: dateToDay(b.launchTo),
     paidOnline: !!b.paidAt,
     billable: billable(b.status),
-    billablePaise: b.items.filter((i) => isBilledItem(i.status)).reduce((s, i) => s + i.pricePaise, 0),
+    billablePaise: b.items.filter((i) => isBillableNow(i.status)).reduce((s, i) => s + i.pricePaise, 0),
     items: b.items.map((i) => ({ ...i, live: isLive(i.status), billed: isBilledItem(i.status) })),
     invoices: inv.map(({ id, number, kind, status, companyKey, totalPaise }) => ({ id, number, kind, status, companyKey, totalPaise })),
   };

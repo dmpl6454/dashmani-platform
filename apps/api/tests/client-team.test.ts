@@ -180,16 +180,21 @@ describe("client team logins", () => {
     expect(await teamEmailRecipients(clientId, "campaigns")).toEqual(["ravi@acme.test"]);
     expect(await teamEmailRecipients(clientId, "invoices")).toEqual(["ravi@acme.test"]);
 
-    // A campaign email goes to the owner with the team on cc.
+    // A campaign email goes to the owner with the team on cc. Two posts, one still to go:
+    // a post-live email is skipped when the delivery email is about to follow it.
     const booking = await prisma.campaignBooking.create({
       data: {
         clientId, name: "Diwali", brand: "Acme", status: "publishing",
-        items: { create: [{ rateCardId: "rc", targetType: "meta_asset", targetId: "a1", platform: "instagram", format: "reel", accountName: "Paps", pricePaise: 1, status: "published", permalink: "https://www.instagram.com/reel/X/", postedAt: new Date() }] },
+        items: { create: [
+          { rateCardId: "rc", targetType: "meta_asset", targetId: "a1", platform: "instagram", format: "reel", accountName: "Paps", pricePaise: 1, status: "published", permalink: "https://www.instagram.com/reel/X/", postedAt: new Date() },
+          { rateCardId: "rc2", targetType: "meta_asset", targetId: "a2", platform: "instagram", format: "reel", accountName: "Later", pricePaise: 1, status: "manual_pending" },
+        ] },
       },
       include: { items: true },
     });
+    const live = booking.items.find((i) => i.status === "published")!;
     vi.mocked(sendEmail).mockClear();
-    expect(await sendItemLiveEmail(booking.items[0].id)).toBe(true);
+    expect(await sendItemLiveEmail(live.id)).toBe(true);
     expect(vi.mocked(sendEmail).mock.calls[0][0]).toMatchObject({ to: "owner@acme.test", cc: "ravi@acme.test" });
 
     // The login switches campaign emails off; invoices stay on.

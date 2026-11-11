@@ -372,6 +372,13 @@ export const campaignRateCardUpsertSchema = z.object({
 });
 export type CampaignRateCardUpsertInput = z.infer<typeof campaignRateCardUpsertSchema>;
 
+export const CAMPAIGN_PLATFORM_LABELS: Record<CampaignPlatform, string> = {
+  instagram: "Instagram",
+  facebook: "Facebook",
+  youtube: "YouTube",
+  snapchat: "Snapchat",
+};
+
 /** Which hosts a manually recorded post link may point to, per platform. */
 export const PLATFORM_POST_HOSTS: Record<CampaignPlatform, readonly string[]> = {
   instagram: ["instagram.com"],
@@ -380,14 +387,40 @@ export const PLATFORM_POST_HOSTS: Record<CampaignPlatform, readonly string[]> = 
   snapchat: ["snapchat.com"],
 };
 
+/** Hosts whose first path segment IS the post id (youtu.be/<id>, fb.watch/<id>). */
+const SHORT_LINK_HOSTS = ["youtu.be", "fb.watch"];
+
+/**
+ * A link to a POST on the item's platform — never the bare site, a profile or a channel. The
+ * client is emailed "your post is live" with this link and the campaign counts it as delivered,
+ * so https://www.instagram.com/ or facebook.com/<page> must be refused, not accepted.
+ *
+ * Post links always carry an id after a path segment (/reel/<id>, /p/<id>, /<page>/posts/<id>,
+ * /shorts/<id>, /spotlight/<id>) or in a query (watch?v=, photo.php?fbid=, story.php?story_fbid=);
+ * profiles are one segment (/<user>, /@<handle>, /add/<user>, profile.php?id=).
+ */
 export function isPlatformPostUrl(platform: CampaignPlatform, url: string): boolean {
-  let host: string;
+  let u: URL;
   try {
-    const u = new URL(url);
-    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
-    host = u.hostname.toLowerCase();
+    u = new URL(url);
   } catch {
     return false;
   }
-  return PLATFORM_POST_HOSTS[platform].some((h) => host === h || host.endsWith(`.${h}`));
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  const host = u.hostname.toLowerCase();
+  if (!PLATFORM_POST_HOSTS[platform].some((h) => host === h || host.endsWith(`.${h}`))) return false;
+  const segs = u.pathname.split("/").filter(Boolean);
+  if (SHORT_LINK_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) return segs.length >= 1;
+  const first = (segs[0] ?? "").toLowerCase();
+  if (first === "profile.php" || first === "add" || first.startsWith("@")) return false;
+  if (segs.length >= 2) return true;
+  const q = u.searchParams;
+  if (platform === "youtube") return first === "watch" && !!q.get("v");
+  if (platform === "facebook") return !!(q.get("v") || q.get("fbid") || q.get("story_fbid"));
+  return false;
+}
+
+/** The error a wrong post link gets, on every path that records one (staff and creator). */
+export function platformPostLinkError(platform: CampaignPlatform): string {
+  return `That isn't a link to a post on ${CAMPAIGN_PLATFORM_LABELS[platform]}. Open the post itself and copy its link from the share menu.`;
 }

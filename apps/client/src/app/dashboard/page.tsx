@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
@@ -50,7 +50,13 @@ export default function DashboardPage() {
   const { data: campaigns, error: campaignsError, isLoading: campaignsLoading } = useCampaigns();
 
   const isLoading = approvalsLoading || projectsLoading;
-  const now = new Date();
+  // "Now" is read after mount: rendered on the server it differs from the browser's clock and
+  // locale and React logs hydration errors (#425/#422) on every visit to the home page.
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setNow(new Date());
+  }, []);
+  const today = now ? now.toLocaleDateString("en", { weekday: "long", month: "short", day: "numeric" }) : undefined;
 
   const pending: ApiPost[] = (approvalsData ?? []) as ApiPost[];
   const projects: ApiProject[] = (projectsRaw?.items ?? []) as ApiProject[];
@@ -65,7 +71,7 @@ export default function DashboardPage() {
     project: p.project?.id ?? null,
     projectName: p.project?.name ?? null,
     authorName: p.authorName,
-    overdue: !!(p.scheduledAt && new Date(p.scheduledAt) < now && p.status === "PENDING_APPROVAL"),
+    overdue: !!(now && p.scheduledAt && new Date(p.scheduledAt) < now && p.status === "PENDING_APPROVAL"),
   }));
 
   // A self-serve client (signed up to book campaigns) has no projects and nothing
@@ -78,7 +84,7 @@ export default function DashboardPage() {
   const noProjects = projectsLoaded && projects.length === 0;
 
   const overdue = mappedPending.filter((p) => p.overdue).length;
-  const dueToday = mappedPending.filter((p) => p.scheduled && new Date(p.scheduled).toDateString() === now.toDateString()).length;
+  const dueToday = now ? mappedPending.filter((p) => p.scheduled && new Date(p.scheduled).toDateString() === now.toDateString()).length : 0;
   const activeProj = projects.filter((p) => p.status === "ACTIVE").length;
 
   const statTiles = [
@@ -91,7 +97,7 @@ export default function DashboardPage() {
   if (isLoading) {
     return (
       <>
-        <Topstrip title="Home" sub={now.toLocaleDateString("en", { weekday: "long", month: "short", day: "numeric" })} />
+        <Topstrip title="Home" sub={today} />
         <div className="px-6 py-6 max-w-[1260px] mx-auto w-full space-y-4">
           <Skeleton className="h-40 v3-card" />
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -119,7 +125,7 @@ export default function DashboardPage() {
     <>
       <Topstrip
         title="Home"
-        sub={now.toLocaleDateString("en", { weekday: "long", month: "short", day: "numeric" })}
+        sub={today}
         right={
           noProjects ? (
             <Button variant="ink" size="sm" icon={<Icon.Plus size={14} sw={2.5} />} onClick={() => router.push("/campaigns/new")}>
@@ -306,7 +312,7 @@ function DashCampaigns({ rows, error, loading }: { rows: CampaignListRow[] | und
                     <div className="text-[13.5px] font-semibold text-ink truncate">{r.name}</div>
                     {hint && <div className="text-[12px] text-ink-2 truncate">{hint}</div>}
                   </div>
-                  <CampaignStatus status={r.status} />
+                  <CampaignStatus status={r.status} liveCount={r.liveCount} />
                   <Icon.ChevRight size={14} className="text-ink-4 shrink-0" />
                 </Link>
               </li>

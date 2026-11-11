@@ -470,12 +470,39 @@ describe("creator marketplace", () => {
       expect(acc.body.data).toMatchObject({ status: "manual_pending", canRecordPost: true });
       expect(acc.body.data.note).toMatch(/switched off/);
       expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: "https://www.instagram.com/p/abc/" })).status).toBe(400);
+      // The bare site or the page itself is not a post link: it used to count as "Live" and email the client.
+      expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: "https://www.facebook.com/" })).status).toBe(400);
+      const profile = await asCreator().post(`/creator/offers/${itemId}/posted`, { url: "https://www.facebook.com/AshaEats" });
+      expect(profile.status).toBe(400);
+      expect(JSON.stringify(profile.body)).toContain("a post on Facebook");
       const done = await asCreator().post(`/creator/offers/${itemId}/posted`, { url: `https://www.facebook.com/${PAGE_META_ID}/posts/9` });
       expect(done.status).toBe(200);
       expect(done.body.data.status).toBe("posted_manual");
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: bookingId } })).status).toBe("completed");
       const events = await prisma.campaignBookingEvent.findMany({ where: { bookingId, actorType: "creator" } });
       expect(events.length).toBeGreaterThanOrEqual(2);
+      // The client's results mark the creator page as one whose stats never reach us (no "Collecting stats…" for ever).
+      const results = await request(app).get(`/v1/client/campaigns/${bookingId}/results`).set("Authorization", `Bearer ${clientToken}`);
+      expect(results.status).toBe(200);
+      expect(results.body.data.items[0]).toMatchObject({ status: "posted_manual", targetType: "creator_asset", metricsAvailable: false });
+      // And the client's own campaign view says which account is a creator's page.
+      const view = await request(app).get(`/v1/client/campaigns/${bookingId}`).set("Authorization", `Bearer ${clientToken}`);
+      expect(view.body.data.items[0]).toMatchObject({ targetType: "creator_asset" });
+    });
+
+    it("a post can't be recorded before the campaign's posting window opens", async () => {
+      const from = new Date(Date.now() + 3 * 86_400_000);
+      from.setUTCHours(0, 0, 0, 0);
+      const { bookingId, itemId } = await paidBooking({ launchFrom: from, launchTo: new Date(from.getTime() + 7 * 86_400_000) });
+      await approve(bookingId);
+      expect((await asCreator().post(`/creator/offers/${itemId}/accept`)).status).toBe(200);
+      const early = await asCreator().post(`/creator/offers/${itemId}/posted`, { url: `https://www.facebook.com/${PAGE_META_ID}/posts/early` });
+      expect(early.status).toBe(409);
+      expect(early.body.error.code).toBe("BEFORE_WINDOW");
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } })).status).toBe("manual_pending");
+      // Once the window has opened the same link is accepted.
+      await prisma.campaignBooking.update({ where: { id: bookingId }, data: { launchFrom: new Date("2026-01-01T00:00:00Z") } });
+      expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: `https://www.facebook.com/${PAGE_META_ID}/posts/early` })).status).toBe(200);
     });
 
     it("song audio cannot go through the API even when publishing is on", async () => {
@@ -499,6 +526,8 @@ describe("creator marketplace", () => {
       expect(res.status).toBe(200);
       expect(res.body.data).toMatchObject({ status: "creator_declined", declineReason: "Not my audience", canAccept: false });
       await vi.waitFor(() => expect(vi.mocked(notifyAdminByEmail)).toHaveBeenCalled());
+      // The client is told at once, with what happens next — not left on "Approved. Your posts will go live…".
+      await vi.waitFor(() => expect(vi.mocked(sendEmail).mock.calls.some(([m]) => /couldn't take a post/.test(m.subject) && /Asha Eats/.test(m.html))).toBe(true));
       expect((await asCreator().post(`/creator/offers/${itemId}/accept`)).status).toBe(409);
       const refund = await request(app).post(`/v1/admin/campaigns/${bookingId}/items/${itemId}/refund`).set("Authorization", `Bearer ${adminToken}`);
       expect(refund.status).toBe(200);
@@ -515,6 +544,8 @@ describe("creator marketplace", () => {
       const item = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } });
       expect(item.status).toBe("creator_declined");
       expect(vi.mocked(notifyAdminByEmail)).toHaveBeenCalled();
+      // An expiry tells the client too, and says the creator didn't answer in time.
+      expect(vi.mocked(sendEmail).mock.calls.some(([m]) => /couldn't take a post/.test(m.subject) && /didn't answer in time/.test(m.html))).toBe(true);
     });
 
     it("a page that changed hands can't be accepted, and is never published under the old deal", async () => {
@@ -533,6 +564,19 @@ describe("creator marketplace", () => {
       const item = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } });
       expect(item.status).toBe("manual_pending");
       expect(item.lastError).toMatch(/different creator/);
+    });
+
+    it("staff can't mark posted a creator post the creator hasn't accepted", async () => {
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      const early = await request(app).post(`/v1/admin/campaigns/${bookingId}/items/${itemId}/posted`).set("Authorization", `Bearer ${adminToken}`).send({ url: `https://www.facebook.com/${PAGE_META_ID}/posts/7` });
+      expect(early.status).toBe(409);
+      expect(early.body.error.code).toBe("CREATOR_NOT_ACCEPTED");
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } })).status).toBe("awaiting_creator");
+      // Once the creator accepts, staff may record the link on their behalf.
+      expect((await asCreator().post(`/creator/offers/${itemId}/accept`)).status).toBe(200);
+      const ok = await request(app).post(`/v1/admin/campaigns/${bookingId}/items/${itemId}/posted`).set("Authorization", `Bearer ${adminToken}`).send({ url: `https://www.facebook.com/${PAGE_META_ID}/posts/7` });
+      expect(ok.status).toBe(200);
     });
 
     it("staff can't 'publish now' a post the creator hasn't accepted", async () => {

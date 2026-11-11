@@ -44,6 +44,10 @@ export interface CampaignItem {
   status: string;
   permalink: string | null;
   postedAt: string | null;
+  /** "creator_asset" = an independent creator's page (they confirm the post); "meta_asset" / "social_account" = our network. */
+  targetType?: string;
+  /** Creator page, while the creator is deciding: when they have to answer by (ISO). */
+  creatorRespondBy?: string | null;
 }
 
 export interface Campaign {
@@ -147,6 +151,10 @@ export interface CampaignResults {
     postedAt: string | null;
     /** When an automatic post is due (only while it waits). Absent on older API responses. */
     scheduledFor?: string | null;
+    targetType?: string;
+    creatorRespondBy?: string | null;
+    /** false = this page's stats never reach us (a creator's page, YouTube, Snapchat): don't wait for them. */
+    metricsAvailable?: boolean;
     metrics: { views: number | null; likes: number | null; comments: number | null; measuredAt: string | null } | null;
   }>;
 }

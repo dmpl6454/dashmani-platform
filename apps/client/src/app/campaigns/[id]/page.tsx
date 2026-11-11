@@ -13,7 +13,7 @@ import { compact, mutateJson, previewUrl, renderFailed, renderPending, renderPen
 import { AccountsStep, CreativeStep, InfoForm } from "../_steps";
 import { ItemTextRow } from "../_item-text";
 import { StepNav, STEPS, type Step } from "../_step-nav";
-import { Card, CampaignStatus, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
+import { Card, CampaignStatus, CreatorTag, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
 import { InvoiceList } from "@/components/invoice-list";
 import { useClientInvoices } from "@/lib/hooks/use-invoices";
 import { SUPPORT_WHATSAPP_DISPLAY, whatsappSupportUrl } from "@/lib/support";
@@ -73,7 +73,12 @@ export default function CampaignPage() {
 
   const prePayNow = !!c && PRE_PAY.includes(c.status);
   useEffect(() => {
-    if (!step || !prePayNow) return;
+    if (!step) return;
+    if (!prePayNow) {
+      // Submitted: the wizard is gone, so a left-over ?step=pay (or a pasted one) is dropped.
+      if (window.location.search) window.history.replaceState(null, "", window.location.pathname);
+      return;
+    }
     const want = `?step=${step}`;
     // history.replaceState (Next 14.1+ keeps the router in sync) — no RSC round-trip, no new history entry.
     if (window.location.search !== want) window.history.replaceState(null, "", `${window.location.pathname}${want}`);
@@ -141,7 +146,7 @@ export default function CampaignPage() {
 
   return (
     <>
-      <Topstrip title={c.name} sub={c.brand} right={<CampaignStatus status={c.status} />} />
+      <Topstrip title={c.name} sub={c.brand} right={<CampaignStatus status={c.status} liveCount={c.items.filter((i) => i.status === "posted_manual" || i.status === "published").length} />} />
       <div className="px-4 sm:px-6 py-6 max-w-[900px] mx-auto w-full flex-1 overflow-y-auto">
         <div className="mb-4 flex items-center justify-between gap-3">
           <Link href="/campaigns" className="text-[12.5px] text-ink-3 hover:text-ink inline-flex items-center gap-1"><Icon.ChevLeft size={14} />All campaigns</Link>
@@ -297,7 +302,9 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
     setBusy(true);
     setError(null);
     try {
-      const order = await mutateJson<{ offline?: boolean; orderId: string; amount: number; currency: string; keyId: string; name: string }>(`/client/campaigns/${c.id}/checkout`, "POST");
+      // The total on the button: a rate card that moved since the accounts were picked makes the
+      // server refuse once (PRICE_CHANGED) and the re-fetch below shows the new figure.
+      const order = await mutateJson<{ offline?: boolean; orderId: string; amount: number; currency: string; keyId: string; name: string }>(`/client/campaigns/${c.id}/checkout`, "POST", { expectedTotalPaise: total });
       if (order.offline) {
         // No gateway: the booking is now in review. The parent re-fetches and shows the status.
         onChanged();
@@ -394,7 +401,7 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
           {c.items.map((i) => (
             <li key={i.id} className="py-2.5 flex items-center gap-3 text-[13px]">
               <PlatformDot platform={i.platform} />
-              <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-ink">{i.accountName}</span>{i.accountHandle && <span className="text-ink-3"> @{i.accountHandle}</span>}</span>
+              <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-ink">{i.accountName}</span>{i.accountHandle && <span className="text-ink-3"> @{i.accountHandle}</span>}{i.targetType === "creator_asset" && <> <CreatorTag /></>}</span>
               <span className="text-ink-3 hidden sm:inline">{PLATFORM_LABEL[i.platform]}</span>
               <span className="text-right">
                 <span className="block font-semibold tabular-nums">{rupees(i.pricePaise)}</span>
@@ -538,6 +545,11 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
   const paidOnline = Boolean(c.paidAt);
   const hasWindow = Boolean(c.launchFrom && c.launchTo);
   const windowText = hasWindow ? `${fmtDate(c.launchFrom)} – ${fmtDate(c.launchTo)}` : null;
+  const liveCount = c.items.filter((i) => i.status === "posted_manual" || i.status === "published").length;
+  // A campaign where nothing went live settles as partially_published too (every post failed or
+  // was dropped): it is not "done with some posts missing", it is not posted at all.
+  const nothingLive = c.status === "partially_published" && liveCount === 0;
+  const declinedCount = c.items.filter((i) => i.status === "creator_declined").length;
   const message: Record<string, string> = {
     paid_pending_review: paidOnline
       ? "Payment received. Our team is reviewing your campaign — usually within one working day."
@@ -547,9 +559,13 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
       : "Approved. Your posts are scheduled; you'll get an email with each link as it goes live.",
     publishing: "Your posts are going live. Links appear below as each one is posted.",
     completed: "Every post is live. The links are below and in your email.",
-    partially_published: paidOnline
-      ? "Your campaign is done. Some posts couldn't go live — those were refunded."
-      : "Your campaign is done. Some posts couldn't go live — those won't be charged.",
+    partially_published: nothingLive
+      ? paidOnline
+        ? "None of the posts could go live, so this campaign is closed. The full amount is being refunded (5–7 working days)."
+        : "None of the posts could go live, so this campaign is closed. Nothing is charged for it."
+      : paidOnline
+        ? "Your campaign is done. Some posts couldn't go live — those were refunded."
+        : "Your campaign is done. Some posts couldn't go live — those won't be charged.",
     rejected: paidOnline
       ? "We couldn't run this campaign. A full refund is on its way (5–7 working days)."
       : "We couldn't run this campaign. Nothing has been charged for it.",
@@ -585,12 +601,18 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
             </p>
           )}
           {showWindow && <p className="text-[12.5px] text-ink-3 mt-2">Go-live window: {windowText}</p>}
+          {declinedCount > 0 && ["approved", "publishing"].includes(c.status) && (
+            <p className="text-[13px] text-attention mt-2">
+              {declinedCount === 1 ? "One creator couldn't take their post" : `${declinedCount} creators couldn't take their posts`} — our team will offer {declinedCount === 1 ? "it" : "them"} on another page or drop {declinedCount === 1 ? "it" : "them"}
+              {paidOnline ? " (a dropped post is refunded)" : " (a dropped post isn't charged)"}. The rest of your campaign goes ahead.
+            </p>
+          )}
           {c.reviewNote && ["rejected", "refunded"].includes(c.status) && (
             <blockquote className="mt-3 rounded-xl bg-muted px-4 py-3 text-[13px] whitespace-pre-line">{c.reviewNote}</blockquote>
           )}
           {/* Offline, the total is only news while there is still something to settle — never under
               "Nothing has been charged" (rejected), a cancelled or an expired campaign. */}
-          {c.totalPaise != null && (paidOnline || SETTLING.includes(c.status)) && (
+          {c.totalPaise != null && !nothingLive && (paidOnline || SETTLING.includes(c.status)) && (
             <p className="text-[12.5px] text-ink-3 mt-2">
               {paidOnline
                 ? `Paid ${rupees(c.totalPaise)} incl. GST on ${fmtDateTime(c.paidAt as string)}`
@@ -649,17 +671,18 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
         </>
       )}
 
-      <Card title="Your posts" sub={live ? "Each post with its link once it's live. Views and likes appear after our next sync." : undefined}>
+      <Card title="Your posts" sub={live ? (results?.items ?? []).some((i) => i.metricsAvailable !== false) ? "Each post with its link once it's live. Views and likes appear after our next sync." : "Each post with its link once it's live." : undefined}>
         <ul className="divide-y divide-ink/5">
-          {(results?.items ?? c.items.map((i) => ({ ...i, metrics: null }))).map((i) => (
+          {(results?.items ?? c.items.map((i) => ({ ...i, metrics: null, metricsAvailable: undefined as boolean | undefined }))).map((i) => (
             <li key={i.id} className="py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
               <div className="min-w-0 flex-1 flex items-center gap-2">
                 <PlatformDot platform={i.platform} />
                 <div className="min-w-0">
-                  <div className="text-[13.5px] font-semibold text-ink truncate">{i.accountName}{i.accountHandle && <span className="text-ink-3 font-normal"> @{i.accountHandle}</span>}</div>
+                  <div className="text-[13.5px] font-semibold text-ink truncate">{i.accountName}{i.accountHandle && <span className="text-ink-3 font-normal"> @{i.accountHandle}</span>}{"targetType" in i && i.targetType === "creator_asset" && <> <CreatorTag /></>}</div>
                   <div className="text-[12px] text-ink-3">
                     {PLATFORM_LABEL[i.platform]} · {formatLabelFor(i.platform, i.format)}
                     {i.postedAt ? ` · posted ${fmtDateTime(i.postedAt)}` : ""}
+                    {i.status === "awaiting_creator" && "creatorRespondBy" in i && i.creatorRespondBy ? ` · the creator answers by ${fmtDateTime(i.creatorRespondBy)}` : ""}
                     {!i.postedAt && "scheduledFor" in i && i.scheduledFor && new Date(i.scheduledFor) > new Date() ? ` · posts ${fmtDateTime(i.scheduledFor)}` : ""}
                   </div>
                 </div>
@@ -672,13 +695,15 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                       <span>{compact(i.metrics.likes)} likes</span>
                       <span>{compact(i.metrics.comments)} comments</span>
                     </>
+                  ) : i.metricsAvailable === false ? (
+                    <span className="text-ink-3">Stats aren&apos;t available for this page</span>
                   ) : (
                     <span className="text-ink-3">Collecting stats…</span>
                   )}
                 </div>
               )}
               <div className="flex items-center gap-2 shrink-0">
-                <ItemStatus status={i.status} paidOnline={paidOnline} />
+                <ItemStatus status={i.status} paidOnline={paidOnline} bookingStatus={c.status} />
                 {i.permalink && (
                   <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 h-8 px-3 rounded-xl border-2 border-ink text-[12.5px] font-semibold text-ink btn-3d bg-surface">
                     View post <Icon.External size={12} />

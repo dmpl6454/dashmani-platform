@@ -163,7 +163,8 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
   // so this one is skipped — decided BEFORE claiming, so the claim is never spent on a skip. A
   // link that arrives AFTER delivery (a post the API published without a readable link) is
   // still sent on its own: the delivery email told the client "link to follow".
-  if (!pb.deliveredAt && pb.items.length > 1 && pb.items.every((i) => (SETTLED_ITEM_STATUSES as readonly string[]).includes(i.status))) return false;
+  // (Also for a one-post campaign: it used to get "Live on @x" and "Delivered: …" seconds apart.)
+  if (!pb.deliveredAt && pb.items.every((i) => (SETTLED_ITEM_STATUSES as readonly string[]).includes(i.status))) return false;
   const claim = await prisma.campaignBookingItem.updateMany({
     where: { id: itemId, notifiedAt: null, permalink: { not: null } },
     data: { notifiedAt: new Date() },
@@ -180,6 +181,36 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
 <p>${button(item.permalink, "View post")}</p>
 ${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
   await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  return true;
+}
+
+/**
+ * A creator declined (or did not answer in time) one of the campaign's posts: the client is told
+ * at once, with what happens next — before this they kept reading "Approved. Your posts will go
+ * live between …" with no word that one page had fallen out. Once per item (creator_notified_at
+ * would be a schema change; the decided_at stamp plus the status is the guard: decline and expiry
+ * each set creator_declined exactly once). Never throws.
+ */
+export async function sendCreatorDeclinedEmail(itemId: string, why: "declined" | "expired"): Promise<boolean> {
+  const item = await prisma.campaignBookingItem.findUnique({
+    where: { id: itemId },
+    select: { bookingId: true, status: true, accountName: true, accountHandle: true, platform: true, format: true, pricePaise: true },
+  });
+  if (!item || item.status !== "creator_declined") return false;
+  const b = await bookingWithClient(item.bookingId);
+  if (!b) return false;
+  const where = item.accountHandle ? `${item.accountName} (@${item.accountHandle})` : item.accountName;
+  const paidOnline = Boolean(b.paidAt);
+  const html = shell(`A creator couldn't take one of your posts`, `
+<p>Hi ${esc(b.client.contactName)},</p>
+<p>The creator behind <strong>${esc(where)}</strong> ${why === "expired" ? "didn't answer in time" : "couldn't take"} the ${esc(formatLabelFor(item.platform, item.format))} booked in <strong>${esc(b.name)}</strong>, so it won't be posted on that page.</p>
+<p>Our team will get in touch to offer the post on another page, or drop it. ${
+    paidOnline
+      ? `If it is dropped, the amount for that post (${esc(formatPaise(item.pricePaise))} plus its GST) is refunded to your original payment method.`
+      : `If it is dropped, you won't be charged for it — the final amount is confirmed with you before payment.`
+  } The rest of your campaign is not affected.</p>
+<p>${button(portalLink(b.id), "Open campaign")}</p>`);
+  await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Update on ${b.name}: a creator couldn't take a post`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   return true;
 }
 
@@ -254,6 +285,21 @@ export async function notifyStaffPaid(bookingId: string) {
   );
 }
 
+/** The client sent a campaign back after "changes requested": it is in the review queue again. */
+export async function notifyStaffResubmitted(bookingId: string) {
+  const b = await bookingWithClient(bookingId);
+  if (!b) return;
+  await notifyAdminByEmail(
+    `Changes resubmitted — review again: ${b.name}`,
+    [
+      { label: "Client", value: b.client.companyName },
+      { label: "Brand", value: b.brand },
+      { label: "Your note was", value: b.reviewNote ?? "—" },
+    ],
+    `/campaigns/${b.id}`,
+  );
+}
+
 // ── Results (portal) ────────────────────────────────────────────────────────────
 
 /**
@@ -269,7 +315,7 @@ export async function getResults(clientId: string, bookingId: string) {
       deliveredAt: true,
       items: {
         orderBy: { createdAt: "asc" },
-        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true, attempts: true, containerId: true },
+        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true, attempts: true, containerId: true, targetType: true, creatorRespondBy: true },
       },
     },
   });
@@ -306,6 +352,10 @@ export async function getResults(clientId: string, bookingId: string) {
     items: b.items.map((i) => {
       const p = (i.remotePostId && byRemote.get(i.remotePostId)) || (matchIds.has(i.id) ? byMatch.get(matchIds.get(i.id)!) : undefined);
       const measured = p && p.metricsStatus !== "pending";
+      // Views / likes / comments come from meta_posts, i.e. from OUR connected Facebook Pages and
+      // Instagram accounts. A creator's page, a YouTube channel or a Snapchat account is never in
+      // that sync, so its post can't be "collecting stats" — the portal says so instead of waiting.
+      const metricsAvailable = i.targetType === "meta_asset" && (i.platform === "instagram" || i.platform === "facebook");
       return {
         id: i.id,
         platform: i.platform,
@@ -319,6 +369,9 @@ export async function getResults(clientId: string, bookingId: string) {
         // Retry / processing times are not a promise, and with auto-publishing switched off a
         // queued post will not go out by itself, so no time is shown then.
         scheduledFor: autoOn && i.status === "queued" && i.attempts === 0 && !i.containerId ? i.nextAttemptAt : null,
+        targetType: i.targetType,
+        creatorRespondBy: i.creatorRespondBy,
+        metricsAvailable,
         metrics: measured ? { views: p!.views, likes: p!.likes, comments: p!.comments, measuredAt: p!.metricsFetchedAt } : null,
       };
     }),

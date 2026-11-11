@@ -27,7 +27,7 @@ import { sendEmail, notifyAdminByEmail } from "../src/services/email.service";
 import { encryptToken } from "../src/utils/token-crypto";
 import { runPublishTick } from "../src/services/campaign/publish.service";
 import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.service";
-import { creatorNote, expireCreatorOffers, remindCreatorOffers, respondByFor } from "../src/services/creator/creator-offers.service";
+import { creatorNote, expireCreatorOffers, remindCreatorOffers, BRIEF_SHARED_SINCE, respondByFor } from "../src/services/creator/creator-offers.service";
 import { creatorClientPricePaise } from "@dashmani/shared/src/validators/creator";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
 import { generateToken, generateClientToken, generateCreatorToken } from "./helpers";
@@ -670,6 +670,10 @@ describe("creator marketplace", () => {
     it("the offer carries the brand's brief, and the offer email lets the creator reply with a question", async () => {
       const { bookingId, itemId } = await paidBooking();
       await approve(bookingId);
+      // A booking made before the client form said creators read it keeps its objective private.
+      await prisma.campaignBooking.update({ where: { id: bookingId }, data: { createdAt: new Date(BRIEF_SHARED_SINCE.getTime() - 1000) } });
+      expect((await asCreator().get(`/creator/offers/${itemId}`)).body.data.campaign.brief).toBeNull();
+      await prisma.campaignBooking.update({ where: { id: bookingId }, data: { createdAt: BRIEF_SHARED_SINCE } });
       const one = await asCreator().get(`/creator/offers/${itemId}`);
       expect(one.body.data.campaign.brief).toBe("Make people try the new Diwali glow kit.");
       await vi.waitFor(() => expect(emails().some((m) => /paid post is waiting/.test(m.subject))).toBe(true));

@@ -179,7 +179,11 @@ export async function reject(id: string, staffId: string, note: string) {
     refundError = err instanceof Error ? err.message : String(err);
   }
   void sendStatusEmail(id, "rejected").catch((e) => console.error("[campaign] rejected email failed", e));
-  void notifyCreatorsWithdrawn(engaged);
+  // Only items the reject actually moved (one posted in between kept its status).
+  const moved = engaged.length
+    ? new Set((await prisma.campaignBookingItem.findMany({ where: { id: { in: engaged.map((e) => e.id) }, status: "refunded" }, select: { id: true } })).map((r) => r.id))
+    : new Set<string>();
+  void notifyCreatorsWithdrawn(engaged.filter((e) => moved.has(e.id)));
   return { ...(await getBookingForStaff(id)), refundError };
 }
 

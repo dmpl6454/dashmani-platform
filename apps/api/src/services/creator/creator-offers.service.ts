@@ -36,12 +36,22 @@ const MIN_RESPONSE_MS = 6 * 3600_000;
 /** Offers expired per job run (the job runs every 10 minutes). */
 const EXPIRE_BATCH = 50;
 const BOOKING_LIVE = ["approved", "publishing"];
+/** The decline reason the expiry job writes (the creator never answered). */
+const NO_ANSWER = "No answer in time";
 /** A recorded link may still be corrected after the campaign settles (the client keeps the link). */
 const BOOKING_CORRECTABLE = ["approved", "publishing", "completed", "partially_published"];
 /** Answer-by reminder: sent once, this long before the deadline… */
 const REMIND_BEFORE_MS = 24 * 3600_000;
 /** …and only when the offer gave the creator more than this, so a short window gets one email, not two. */
 const REMIND_MIN_WINDOW_MS = 30 * 3600_000;
+/** No reminder this close to the deadline (a reminder that late is noise, not help). */
+const REMIND_MIN_LEFT_MS = 2 * 3600_000;
+/**
+ * ⚠️ Before this moment the client form said the objective was "for our team", so older
+ * bookings may hold notes never meant for a creator (the end client's name, budget…). Only
+ * bookings created from here on share it as the brief.
+ */
+export const BRIEF_SHARED_SINCE = new Date("2026-11-11T18:30:00Z"); // 12 Nov 2026, 00:00 IST
 
 /**
  * When the creator must have answered: CREATOR_RESPONSE_HOURS (72) after the offer, but no later
@@ -172,7 +182,7 @@ const OFFER_SELECT = {
   booking: {
     select: {
       id: true, name: true, brand: true, status: true, launchFrom: true, launchTo: true, caption: true, hashtags: true,
-      userTags: true, collaborators: true, audioIntegration: true, audioTrack: true, campaignType: true, objective: true,
+      userTags: true, collaborators: true, audioIntegration: true, audioTrack: true, campaignType: true, objective: true, createdAt: true,
     },
   },
 } as const;
@@ -241,7 +251,7 @@ function toOfferView(o: OfferRow, now: Date) {
       launchTo: ymd(o.booking.launchTo),
       songTrack: o.booking.audioIntegration ? o.booking.audioTrack : null,
       // What the brand wants from the post, in its own words (never who the brand's client is).
-      brief: o.booking.objective?.trim() || null,
+      brief: o.booking.createdAt >= BRIEF_SHARED_SINCE ? o.booking.objective?.trim() || null : null,
     },
     caption: text.caption,
     hashtags: text.hashtags,
@@ -258,7 +268,9 @@ function toOfferView(o: OfferRow, now: Date) {
     postedAt: o.postedAt,
     note: o.status === "manual_pending"
       ? creatorNote(o.lastError)
-      : (o.status === "refunded" || o.status === "failed") && o.creatorDeclineReason
+      : (o.status === "refunded" || o.status === "failed") && o.creatorDeclineReason === NO_ANSWER
+        ? "No answer was received in time — there is nothing to do, and no payout for this post."
+        : (o.status === "refunded" || o.status === "failed") && o.creatorDeclineReason
         ? "You declined this post — there is nothing to do."
         : o.status === "refunded" && o.creatorDecidedAt == null
         ? "Withdrawn by our team before you answered — there is nothing to do, and no payout for this post."
@@ -433,8 +445,7 @@ export async function recordCreatorPost(creatorId: string, itemId: string, url: 
  */
 async function correctCreatorPost(creatorId: string, o: OfferRow, url: string) {
   if (url === o.permalink) return getOffer(creatorId, o.id);
-  const a = await prisma.creatorAsset.findUnique({ where: { id: o.targetId }, select: { creatorId: true } });
-  if (!a || a.creatorId !== creatorId) throw new AppError(409, "PAGE_NOT_YOURS", "This page is no longer linked to your account.");
+  await assertStillTheirs(creatorId, o.targetId, { alreadyAccepted: true });
   const res = await prisma.campaignBookingItem.updateMany({
     where: { id: o.id, creatorId, status: "posted_manual", permalink: o.permalink },
     data: { permalink: url },
@@ -499,15 +510,18 @@ export async function remindCreatorOffers(now = new Date()): Promise<number> {
     where: {
       status: "awaiting_creator",
       creatorId: { not: null },
-      creatorRespondBy: { gt: now, lte: new Date(now.getTime() + REMIND_BEFORE_MS) },
+      creatorRespondBy: { gt: new Date(now.getTime() + REMIND_MIN_LEFT_MS), lte: new Date(now.getTime() + REMIND_BEFORE_MS) },
       booking: { status: { in: BOOKING_LIVE } },
     },
     orderBy: { creatorRespondBy: "asc" },
-    take: EXPIRE_BATCH,
+    // Rows already reminded (or with a short window) stay in this range until they expire, so
+    // look further than one batch; at most EXPIRE_BATCH emails go out per run.
+    take: EXPIRE_BATCH * 4,
     select: { id: true, bookingId: true, creatorId: true, accountName: true, format: true, creatorOfferedAt: true, creatorRespondBy: true },
   });
   let sent = 0;
   for (const d of due) {
+    if (sent >= EXPIRE_BATCH) break;
     if (!d.creatorOfferedAt || !d.creatorRespondBy) continue;
     if (d.creatorRespondBy.getTime() - d.creatorOfferedAt.getTime() <= REMIND_MIN_WINDOW_MS) continue;
     const already = await prisma.campaignBookingEvent.findFirst({ where: { bookingId: d.bookingId, note: { contains: reminderTag(d.id) } }, select: { id: true } });
@@ -549,7 +563,7 @@ export async function expireCreatorOffers(now = new Date()): Promise<number> {
   for (const d of due) {
     const res = await prisma.campaignBookingItem.updateMany({
       where: { id: d.id, status: "awaiting_creator", creatorRespondBy: { lte: now } },
-      data: { status: "creator_declined", creatorDecidedAt: now, creatorDeclineReason: "No answer in time", lastError: "The creator did not answer in time." },
+      data: { status: "creator_declined", creatorDecidedAt: now, creatorDeclineReason: NO_ANSWER, lastError: "The creator did not answer in time." },
     });
     if (res.count !== 1) continue;
     await logBookingEvent(d.bookingId, SYSTEM, `Creator did not answer in time for ${d.accountName} (${d.format})`);

@@ -296,7 +296,7 @@ function CopyText({ caption, hashtags }: { caption: string; hashtags: string[] }
   );
 }
 
-function CorrectLink({ o, busy, onSubmit }: { o: CreatorOffer; busy: boolean; onSubmit: (url: string) => void }) {
+function CorrectLink({ o, busy, onSubmit }: { o: CreatorOffer; busy: boolean; onSubmit: (url: string) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [err, setErr] = useState("");
@@ -315,7 +315,7 @@ function CorrectLink({ o, busy, onSubmit }: { o: CreatorOffer; busy: boolean; on
         const v = url.trim();
         if (!/^https?:\/\//i.test(v)) return setErr(`Paste the full ${PLATFORM[o.platform] ?? ""} link (starting with https://).`);
         setErr("");
-        onSubmit(v);
+        void onSubmit(v).then((ok) => { if (ok) { setOpen(false); setUrl(""); } });
       }}
     >
       <p className="text-sm text-ink-3">Paste the link to the post on {o.page.name}. Only the link changes; our team is told.</p>

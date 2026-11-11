@@ -260,6 +260,24 @@ function Checklist({ me, onChange }: { me: CreatorMeWithChecklist; onChange: (ne
             </>
           )}
         </Step>
+
+        {me.status === "approved" && (
+          <Step n={5} done={!!c.pricesSet} title="Set your prices">
+            {c.pricesSet ? (
+              <p>Every page our team switched on has a price. <Link href="/prices" className="text-indigo-light underline underline-offset-2">See your prices</Link>.</p>
+            ) : (c.enabledPages ?? 0) === 0 ? (
+              <p>Our team switches on each of your pages for booking and emails you when it does. Then set a price for each type of post on it.</p>
+            ) : (
+              <>
+                <p>
+                  {(c.enabledPages ?? 0) - (c.pricedPages ?? 0)} of your {c.enabledPages} switched-on {c.enabledPages === 1 ? "page has" : "pages have"} no
+                  price yet. Brands can only book a page once it has a price.
+                </p>
+                <Link href="/prices" className="btn btn-sm mt-3">Set your prices <ArrowRight size={14} aria-hidden /></Link>
+              </>
+            )}
+          </Step>
+        )}
       </ol>
     </section>
   );

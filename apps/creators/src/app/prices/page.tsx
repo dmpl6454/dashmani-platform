@@ -15,6 +15,11 @@ import { Banner, Loading, PageHead } from "@/components/ui";
 const FORMAT_LABEL: Record<string, string> = { reel: "Reel", post: "Post", carousel: "Carousel" };
 const PLATFORM: Record<string, string> = { instagram: "Instagram", facebook: "Facebook Page" };
 const toText = (p: number | null) => (p == null ? "" : String(p / 100));
+/** Typed rupees → number (commas, ₹ and spaces allowed); null when empty, NaN when not a number. */
+const parseRupees = (raw: string): number | null => (raw.trim() === "" ? null : Number(raw.replace(/[,₹\s]/g, "")));
+const fmtRupees = (r: number) => `₹${r.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+/** A new price below this share of the old one is asked about before it is saved (₹60 for ₹6,000). */
+const SHARP_DROP = 0.1;
 
 export default function PricesPage() {
   const { creator } = useAuth();
@@ -55,25 +60,38 @@ function PageForm({ page, readOnly, onSaved }: { page: CreatorPagePrices; readOn
   const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(page.prices.map((x) => [x.format, toText(x.pricePaise)])));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState("");
+  // Formats whose new price is a sharp drop; saving waits for a second click.
+  const [confirmDrop, setConfirmDrop] = useState<string[] | null>(null);
 
-  const save = async () => {
+  const save = async (confirmed = false) => {
     setErr("");
-    setDone(false);
+    setDone("");
     const prices: Array<{ assetId: string; format: string; pricePaise: number | null }> = [];
+    const drops: string[] = [];
     for (const x of page.prices) {
-      const raw = (vals[x.format] ?? "").trim();
-      const r = raw === "" ? null : Number(raw.replace(/[,₹\s]/g, ""));
+      const r = parseRupees(vals[x.format] ?? "");
       if (r !== null && (!Number.isFinite(r) || r < 1 || r > 1_000_000)) return setErr(`Check the ${FORMAT_LABEL[x.format]} price — a number of rupees, at least ₹1.`);
       const paise = r === null ? null : Math.round(r * 100);
-      if (paise !== x.pricePaise) prices.push({ assetId: page.assetId, format: x.format, pricePaise: paise });
+      if (paise === x.pricePaise) continue;
+      prices.push({ assetId: page.assetId, format: x.format, pricePaise: paise });
+      if (paise != null && x.pricePaise != null && paise < x.pricePaise * SHARP_DROP) {
+        drops.push(`${FORMAT_LABEL[x.format]} from ${fmtRupees(x.pricePaise / 100)} to ${fmtRupees(paise / 100)}`);
+      }
     }
     if (prices.length === 0) return setErr("Nothing changed.");
+    if (drops.length && !confirmed) return setConfirmDrop(drops);
+    setConfirmDrop(null);
     setBusy(true);
     try {
       const r = await apiFetch<CreatorPagePrices[]>("/creator/prices", { method: "PUT", body: JSON.stringify({ prices }) });
       onSaved(r.data);
-      setDone(true);
+      const saved = r.data.find((p) => p.assetId === page.assetId);
+      setDone(
+        saved
+          ? `Saved — ${saved.prices.map((p) => `${FORMAT_LABEL[p.format]} ${p.pricePaise == null ? "not offered" : fmtRupees(p.pricePaise / 100)}`).join(" · ")}.`
+          : "Saved.",
+      );
     } catch (e) {
       setErr(errorSentence(e));
     } finally {
@@ -98,8 +116,9 @@ function PageForm({ page, readOnly, onSaved }: { page: CreatorPagePrices; readOn
               value={vals[x.format] ?? ""}
               placeholder="Not offered"
               disabled={readOnly || busy}
-              onChange={(e) => { setDone(false); setVals((v) => ({ ...v, [x.format]: e.target.value })); }}
+              onChange={(e) => { setDone(""); setConfirmDrop(null); setVals((v) => ({ ...v, [x.format]: e.target.value })); }}
             />
+            <PriceReadback raw={vals[x.format] ?? ""} format={x.format} />
             {x.pricePaise != null && (
               x.listed
                 ? <span className="text-[12px] text-success">Listed — brands can book it</span>
@@ -110,10 +129,31 @@ function PageForm({ page, readOnly, onSaved }: { page: CreatorPagePrices; readOn
       </div>
       <p className="text-[12px] text-ink-3">Leave a format empty to stop offering it.</p>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className="btn btn-sm" onClick={save} disabled={readOnly || busy}>{busy ? "Saving…" : "Save prices"}</button>
-        {done && <span role="status" className="text-[13px] text-success">Saved.</span>}
+        <button type="button" className="btn btn-sm" onClick={() => save()} disabled={readOnly || busy}>{busy ? "Saving…" : "Save prices"}</button>
+        <span role="status" className="text-[13px] text-success">{done}</span>
       </div>
+      {confirmDrop && (
+        <Banner
+          tone="warn"
+          title="Is that price right?"
+          action={
+            <>
+              <button type="button" className="btn btn-sm" onClick={() => save(true)} disabled={busy}>Yes, save it</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConfirmDrop(null)}>Change it</button>
+            </>
+          }
+        >
+          {confirmDrop.join("; ")} — that is less than a tenth of your current price. New bookings use it straight away.
+        </Banner>
+      )}
       {err && <Banner tone="danger" role="alert">{err}</Banner>}
     </section>
   );
+}
+
+/** What the typed text means, in rupees, under the field (₹60 vs ₹6,000 is easy to mistype). */
+function PriceReadback({ raw, format }: { raw: string; format: string }) {
+  const r = parseRupees(raw);
+  if (r === null || !Number.isFinite(r) || r < 1) return null;
+  return <span className="text-[12px] text-ink-3 tabular-nums">{fmtRupees(r)} per {FORMAT_LABEL[format]?.toLowerCase() ?? format}</span>;
 }

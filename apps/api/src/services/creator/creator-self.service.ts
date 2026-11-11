@@ -34,9 +34,13 @@ async function loadCreator(id: string) {
 /** CreatorMe plus the onboarding checklist the creators app renders. */
 export async function getCreatorMe(creatorId: string) {
   const c = await loadCreator(creatorId);
-  const [connections, publishablePages] = await Promise.all([
+  const [connections, publishablePages, enabledPages, pricedPages] = await Promise.all([
     prisma.creatorConnection.count({ where: { creatorId, revokedAt: null, status: { not: "REVOKED" } } }),
     prisma.creatorAsset.count({ where: publishableWhere(creatorId) }),
+    // Pages our team switched on, and how many of those carry at least one price of the
+    // creator's own: a switched-on page with no price is never offered to brands.
+    prisma.creatorAsset.count({ where: { creatorId, enabled: true, disconnectedAt: null } }),
+    prisma.creatorAsset.count({ where: { creatorId, enabled: true, disconnectedAt: null, prices: { some: { creatorPricePaise: { not: null } } } } }),
   ]);
   return {
     ...toCreatorMe(c),
@@ -46,6 +50,10 @@ export async function getCreatorMe(creatorId: string) {
       publishablePages,
       // "Submitted" means waiting on, or past, our review — a rejected creator must resubmit.
       submitted: c.status === "in_review" || c.status === "approved" || c.status === "suspended",
+      enabledPages,
+      pricedPages,
+      // Every switched-on page has a price (false while no page is switched on yet).
+      pricesSet: enabledPages > 0 && pricedPages === enabledPages,
     },
   };
 }

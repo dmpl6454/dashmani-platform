@@ -21,9 +21,12 @@ export function shell(title: string, body: string) {
 }
 
 /** Send one creator email (no-op without SMTP, like every other mail in the app). */
-export function sendCreatorEmail(to: string, subject: string, title: string, bodyHtml: string) {
-  return sendEmail({ to, subject, html: shell(title, bodyHtml), fromName: "Digital Sukoon Creators" });
+export function sendCreatorEmail(to: string, subject: string, title: string, bodyHtml: string, opts: { replyTo?: string } = {}) {
+  return sendEmail({ to, subject, html: shell(title, bodyHtml), fromName: "Digital Sukoon Creators", ...(opts.replyTo ? { replyTo: opts.replyTo } : {}) });
 }
+
+/** Where creators write to us (shown on the offer page and used as reply-to on offer emails). */
+export const CREATOR_SUPPORT_EMAIL = "creators@digitalsukoon.com";
 
 /** Staff alert with every value escaped first. `path` is an internal-portal path. */
 export function adminAlert(subject: string, details: Array<{ label: string; value: string }>, path?: string) {

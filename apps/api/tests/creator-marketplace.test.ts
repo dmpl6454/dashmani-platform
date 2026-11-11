@@ -27,7 +27,7 @@ import { sendEmail, notifyAdminByEmail } from "../src/services/email.service";
 import { encryptToken } from "../src/utils/token-crypto";
 import { runPublishTick } from "../src/services/campaign/publish.service";
 import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.service";
-import { creatorNote, expireCreatorOffers, respondByFor } from "../src/services/creator/creator-offers.service";
+import { creatorNote, expireCreatorOffers, remindCreatorOffers, respondByFor } from "../src/services/creator/creator-offers.service";
 import { creatorClientPricePaise } from "@dashmani/shared/src/validators/creator";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
 import { generateToken, generateClientToken, generateCreatorToken } from "./helpers";
@@ -138,6 +138,7 @@ async function paidBooking(opts: { launchFrom?: Date; launchTo?: Date; audio?: b
     data: {
       clientId, name: "Diwali drop", brand: "Brand Q", status: "paid_pending_review", format: "post",
       caption: "Glow up this Diwali", hashtags: ["diwali"], userTags: [], collaborators: [],
+      objective: "Make people try the new Diwali glow kit.",
       audioIntegration: opts.audio ?? false,
       launchFrom: opts.launchFrom ?? new Date("2026-01-01T00:00:00Z"),
       launchTo: opts.launchTo ?? new Date("2099-01-01T00:00:00Z"),
@@ -652,6 +653,137 @@ describe("creator marketplace", () => {
       expect(await prisma.creatorConnection.findUnique({ where: { id: connectionId } })).not.toBeNull();
       expect(await prisma.creatorAsset.findUnique({ where: { id: spare.id } })).toBeNull();
       expect(r.assets + r.connections).toBeGreaterThan(0);
+    });
+  });
+
+  // ── Batch 2: a creator can do the job without asking ───────────────────────────────────────
+
+  describe("doing the job without asking (batch 2)", () => {
+    const emails = () => vi.mocked(sendEmail).mock.calls.map(([m]) => m);
+    const accepted = async () => {
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      expect((await asCreator().post(`/creator/offers/${itemId}/accept`)).body.data.status).toBe("manual_pending");
+      return { bookingId, itemId };
+    };
+
+    it("the offer carries the brand's brief, and the offer email lets the creator reply with a question", async () => {
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      const one = await asCreator().get(`/creator/offers/${itemId}`);
+      expect(one.body.data.campaign.brief).toBe("Make people try the new Diwali glow kit.");
+      await vi.waitFor(() => expect(emails().some((m) => /paid post is waiting/.test(m.subject))).toBe(true));
+      const offerMail = emails().find((m) => /paid post is waiting/.test(m.subject))!;
+      expect(offerMail.replyTo).toBe("creators@digitalsukoon.com");
+      expect(offerMail.html).toMatch(/Reply to this email before you decide/);
+    });
+
+    it("the checklist says when a switched-on page has no price", async () => {
+      const before = (await asCreator().get("/creator/me")).body.data.checklist;
+      expect(before).toMatchObject({ enabledPages: 1, pricedPages: 0, pricesSet: false });
+      await setCreatorPrice(300_000);
+      expect((await asCreator().get("/creator/me")).body.data.checklist).toMatchObject({ pricedPages: 1, pricesSet: true });
+    });
+
+    it("a recorded link can be corrected: only the link changes, no second client email", async () => {
+      const { itemId } = await accepted();
+      expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: `https://www.facebook.com/${PAGE_META_ID}/posts/1` })).status).toBe(200);
+      const liveMails = () => emails().filter((m) => /live|delivered/i.test(m.subject)).length;
+      await new Promise((r) => setTimeout(r, 50));
+      const before = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } });
+      const sentBefore = liveMails();
+      expect((await asCreator().get(`/creator/offers/${itemId}`)).body.data.canCorrectPost).toBe(true);
+      const fix = await asCreator().post(`/creator/offers/${itemId}/posted`, { url: `https://www.facebook.com/${PAGE_META_ID}/posts/2` });
+      expect(fix.status).toBe(200);
+      const after = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } });
+      expect(after).toMatchObject({ status: "posted_manual", permalink: `https://www.facebook.com/${PAGE_META_ID}/posts/2` });
+      expect(after.postedAt?.getTime()).toBe(before.postedAt?.getTime());
+      await new Promise((r) => setTimeout(r, 50));
+      expect(liveMails()).toBe(sentBefore);
+      await vi.waitFor(() => expect(vi.mocked(notifyAdminByEmail).mock.calls.some(([subject]) => /corrected a post link/.test(String(subject)))).toBe(true));
+      // A bare profile link is still refused on a correction.
+      expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: "https://www.facebook.com/AshaEats" })).status).toBe(400);
+    });
+
+    it("an accepted post can still be recorded after the page is disconnected; a new offer can't be accepted", async () => {
+      const { itemId } = await accepted();
+      await prisma.creatorAsset.update({ where: { id: pageId }, data: { disconnectedAt: new Date(), enabled: false } });
+      expect((await asCreator().post(`/creator/offers/${itemId}/posted`, { url: `https://www.facebook.com/${PAGE_META_ID}/posts/7` })).status).toBe(200);
+      // A fresh offer on the same (now disconnected) page cannot be accepted.
+      await prisma.creatorAsset.update({ where: { id: pageId }, data: { disconnectedAt: null, enabled: true } });
+      const { bookingId: b2, itemId: i2 } = await paidBooking();
+      await approve(b2);
+      await prisma.creatorAsset.update({ where: { id: pageId }, data: { disconnectedAt: new Date() } });
+      expect((await asCreator().post(`/creator/offers/${i2}/accept`)).body.error.code).toBe("PAGE_DISCONNECTED");
+    });
+
+    it("staff withdrawing an offered or accepted post tell the creator once; the creator sees no payout", async () => {
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      vi.mocked(sendEmail).mockClear();
+      expect((await request(app).post(`/v1/admin/campaigns/${bookingId}/items/${itemId}/refund`).set("Authorization", `Bearer ${adminToken}`)).status).toBe(200);
+      await vi.waitFor(() => expect(emails().filter((m) => /withdrawn/i.test(m.subject))).toHaveLength(1));
+      const view = (await asCreator().get(`/creator/offers/${itemId}`)).body.data;
+      expect(view.status).toBe("refunded");
+      expect(view.note).toMatch(/Withdrawn by our team before you answered/);
+
+      const { bookingId: b2, itemId: i2 } = await accepted();
+      vi.mocked(sendEmail).mockClear();
+      expect((await request(app).post(`/v1/admin/campaigns/${b2}/items/${i2}/failed`).set("Authorization", `Bearer ${adminToken}`).send({ note: "Internal: client changed their mind" })).status).toBe(200);
+      await vi.waitFor(() => expect(emails().filter((m) => /withdrawn/i.test(m.subject))).toHaveLength(1));
+      const failedView = (await asCreator().get(`/creator/offers/${i2}`)).body;
+      expect(failedView.data.note).toMatch(/marked this post as not made/);
+      expect(JSON.stringify(failedView)).not.toContain("client changed their mind");
+    });
+
+    it("a post the creator declined is refunded without emailing the creator", async () => {
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      await asCreator().post(`/creator/offers/${itemId}/decline`, { reason: "Not my audience" });
+      vi.mocked(sendEmail).mockClear();
+      expect((await request(app).post(`/v1/admin/campaigns/${bookingId}/items/${itemId}/refund`).set("Authorization", `Bearer ${adminToken}`)).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(emails().filter((m) => /withdrawn/i.test(m.subject))).toHaveLength(0);
+      expect((await asCreator().get(`/creator/offers/${itemId}`)).body.data.note).toMatch(/You declined this post/);
+    });
+
+    it("rejecting a campaign with an offered post emails that creator", async () => {
+      const { bookingId } = await paidBooking();
+      await approve(bookingId);
+      vi.mocked(sendEmail).mockClear();
+      expect((await request(app).post(`/v1/admin/campaigns/${bookingId}/reject`).set("Authorization", `Bearer ${adminToken}`).send({ note: "Brand safety" })).status).toBe(200);
+      await vi.waitFor(() => expect(emails().filter((m) => /withdrawn/i.test(m.subject))).toHaveLength(1));
+    });
+
+    it("reminds the creator once about a day before the answer deadline, never on a short window", async () => {
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      const now = new Date();
+      await prisma.campaignBookingItem.update({
+        where: { id: itemId },
+        data: { creatorOfferedAt: new Date(now.getTime() - 60 * 3600_000), creatorRespondBy: new Date(now.getTime() + 10 * 3600_000) },
+      });
+      vi.mocked(sendEmail).mockClear();
+      expect(await remindCreatorOffers(now)).toBe(1);
+      expect(emails().filter((m) => /Answer by/.test(m.subject))).toHaveLength(1);
+      expect(await remindCreatorOffers(now)).toBe(0);
+      expect(emails().filter((m) => /Answer by/.test(m.subject))).toHaveLength(1);
+
+      // A window that was short from the start (offered 5 h before a 10 h deadline): no reminder.
+      const { bookingId: b2, itemId: i2 } = await paidBooking();
+      await approve(b2);
+      await prisma.campaignBookingItem.update({
+        where: { id: i2 },
+        data: { creatorOfferedAt: new Date(now.getTime() - 5 * 3600_000), creatorRespondBy: new Date(now.getTime() + 10 * 3600_000) },
+      });
+      // Far from its deadline: no reminder either.
+      const { bookingId: b3, itemId: i3 } = await paidBooking();
+      await approve(b3);
+      await prisma.campaignBookingItem.update({
+        where: { id: i3 },
+        data: { creatorOfferedAt: new Date(now.getTime() - 10 * 3600_000), creatorRespondBy: new Date(now.getTime() + 50 * 3600_000) },
+      });
+      expect(await remindCreatorOffers(now)).toBe(0);
     });
   });
 });

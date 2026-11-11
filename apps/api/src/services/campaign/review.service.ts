@@ -7,7 +7,7 @@ import { refundBookingInFull, refundPaymentRow, capturedPaymentFor } from "./pay
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
-import { notifyCreatorsOfOffers, offerCreatorItems, type OfferedItem } from "../creator/creator-offers.service";
+import { CREATOR_ENGAGED_STATUSES, notifyCreatorsOfOffers, notifyCreatorsWithdrawn, offerCreatorItems, type OfferedItem } from "../creator/creator-offers.service";
 
 // Staff side: the review queue, booking detail, approve / reject / request changes, and the
 // per-item actions (mark posted with its link, mark failed, refund one item).
@@ -159,6 +159,11 @@ export async function reject(id: string, staffId: string, note: string) {
   // under the worker's feet would record as refunded a post Meta publishes seconds later.
   const publishing = await prisma.campaignBookingItem.count({ where: { bookingId: id, status: "queued", lockedUntil: { gt: new Date() } } });
   if (publishing > 0) throw new AppError(409, "PUBLISHING_NOW", "A post is being published right now — try again in a minute.");
+  // Creators already asked to post (as the items were before the reject) are told once it commits.
+  const engaged = await prisma.campaignBookingItem.findMany({
+    where: { bookingId: id, creatorId: { not: null }, status: { in: CREATOR_ENGAGED_STATUSES } },
+    select: { id: true, creatorId: true, status: true, accountName: true },
+  });
   await transitionBooking(id, ["paid_pending_review", "changes_requested", "approved"], "rejected", staff(staffId), {
     note,
     data: { reviewNote: note, reviewedById: staffId },
@@ -174,6 +179,7 @@ export async function reject(id: string, staffId: string, note: string) {
     refundError = err instanceof Error ? err.message : String(err);
   }
   void sendStatusEmail(id, "rejected").catch((e) => console.error("[campaign] rejected email failed", e));
+  void notifyCreatorsWithdrawn(engaged);
   return { ...(await getBookingForStaff(id)), refundError };
 }
 
@@ -241,6 +247,7 @@ export async function markFailed(bookingId: string, itemId: string, staffId: str
   });
   if (res.count !== 1) throw new AppError(409, "INVALID_STATE", "Only an item that is waiting to be posted can be marked failed.");
   await logBookingEvent(bookingId, staff(staffId), `Could not post on ${item.accountName}: ${note}`);
+  void notifyCreatorsWithdrawn([item]);
   await afterItemChange(bookingId, staffId);
   return getBookingForStaff(bookingId);
 }
@@ -271,6 +278,7 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
   if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
   if (!pay) {
     await logBookingEvent(bookingId, staff(staffId), `${item.accountName} removed from the booking (${item.pricePaise} paise) — no online payment on this booking; settle by hand if the client has already paid.`);
+    void notifyCreatorsWithdrawn([item]);
     await afterItemChange(bookingId, staffId);
     return getBookingForStaff(bookingId);
   }
@@ -284,6 +292,7 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: item.status } });
     throw err;
   }
+  void notifyCreatorsWithdrawn([item]);
   await afterItemChange(bookingId, staffId);
   return getBookingForStaff(bookingId);
 }

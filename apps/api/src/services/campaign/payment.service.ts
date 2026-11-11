@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { prisma, Prisma } from "@dashmani/db";
+import { formatPaise } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { razorpayConfig } from "./config";
 import * as rzp from "./razorpay";
@@ -32,7 +33,7 @@ export function computeTotal(items: Array<{ pricePaise: number }>): number {
  * re-pricing and price freeze happen, and the booking goes straight to review
  * (`paid_pending_review`) with no payment row and no `paidAt`; the amount is collected by hand.
  */
-export async function checkout(clientId: string, bookingId: string) {
+export async function checkout(clientId: string, bookingId: string, expectedTotalPaise?: number) {
   const mode = razorpayConfig.paymentMode();
   const b = await prisma.campaignBooking.findFirst({
     where: { id: bookingId, clientId },
@@ -71,6 +72,21 @@ export async function checkout(clientId: string, bookingId: string) {
   // GST is charged on top of the rate-card prices; the client pays the GST-inclusive total.
   const pricing = await campaignPricing(clientId, priced.map((i) => i.pricePaise));
   const total = pricing.totalPaise;
+
+  // The client submits (or pays) the total they were shown. A rate card that moved since they
+  // picked the account used to be charged silently at submit: now the new prices are written
+  // to the booking (so the Review page shows them on reload) and the submit is refused once —
+  // the next one carries the new figure. Nothing the client sends is a price: the figure is only
+  // compared, never used.
+  if (expectedTotalPaise != null && expectedTotalPaise !== total) {
+    const before = new Map(b.items.map((i) => [i.id, i.pricePaise]));
+    const changed = priced.filter((i) => i.pricePaise !== before.get(i.id));
+    await prisma.$transaction(async (tx) => {
+      for (const i of changed) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise } });
+    });
+    const who = changed.length === 1 ? changed[0].accountName : changed.length > 1 ? `${changed.length} of your accounts` : "GST";
+    throw new AppError(409, "PRICE_CHANGED", `The price of ${who} changed since you picked it — the total is now ${formatPaise(total)} incl. GST. Check the new total and submit again.`);
+  }
 
   const snapshot = {
     campaignType: b.campaignType,
@@ -185,11 +201,17 @@ export async function handleWebhook(rawBody: Buffer, signature: string | undefin
 async function onCaptured(p: any, event: string): Promise<WebhookResult> {
   const pay = await prisma.campaignPayment.findUnique({ where: { razorpayOrderId: String(p.order_id ?? "") } });
   if (!pay) return { handled: false, note: "unknown order" };
-  if (pay.status === "captured" || pay.status.startsWith("refund")) return { handled: true, duplicate: true };
+  if (pay.status.startsWith("refund")) return { handled: true, duplicate: true };
 
   const amount = Number(p.amount);
   const currency = String(p.currency ?? "");
   const booking = await prisma.campaignBooking.findUnique({ where: { id: pay.bookingId }, select: { status: true, totalPaise: true } });
+  const payable = booking && ["awaiting_payment", "draft", "cancelled", "expired"].includes(booking.status);
+  // Razorpay redelivers an event whose handler failed. The capture is recorded below BEFORE the
+  // booking moves, so a redelivery after a crash between the two writes finds status "captured"
+  // and a booking still waiting — that one must finish the job, never be waved through as a
+  // duplicate (the booking would sit in awaiting_payment until retention expired it, paid).
+  if (pay.status === "captured" && !payable) return { handled: true, duplicate: true };
 
   await prisma.campaignPayment.update({
     where: { id: pay.id },
@@ -197,7 +219,6 @@ async function onCaptured(p: any, event: string): Promise<WebhookResult> {
   });
 
   const matches = amount === pay.amountPaise && currency === "INR" && booking?.totalPaise === pay.amountPaise;
-  const payable = booking && ["awaiting_payment", "draft", "cancelled", "expired"].includes(booking.status);
   if (!matches || !payable) {
     // Paid an outdated order, or paid twice: money goes straight back.
     await refundPaymentRow(pay.id, amount, `stale:${pay.id}`, { type: "system" });

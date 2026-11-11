@@ -113,7 +113,12 @@ const itemSelect = {
   status: true,
   permalink: true,
   postedAt: true,
-  // ⚠️ No lastError: it carries staff-only reasons and raw Meta error text.
+  // creator_asset = an independent creator's page (the creator confirms the post); the client
+  // sees which of their accounts those are, and until when the creator has to answer.
+  targetType: true,
+  creatorRespondBy: true,
+  // ⚠️ No lastError and no creatorDeclineReason: they carry staff-only reasons, raw Meta error
+  // text and the creator's own words to our team.
 } satisfies Prisma.CampaignBookingItemSelect;
 
 /**
@@ -716,21 +721,29 @@ export function platformCarriesFormat(platform: string, format: string): boolean
  * After an item changes state, move the booking on: approved → publishing on the first live
  * post; publishing → completed / partially_published once every item has settled. Returns
  * true when the booking has just finished (the caller sends the delivery email).
+ *
+ * partially_published is NOT terminal: staff can still post a failed item later (markPosted
+ * allows it), and when that makes every post live the campaign becomes completed — the client
+ * must not keep reading "some posts couldn't go live" under a row that says Live. The delivery
+ * email is not resent (deliveredAt is already set); the item's own "live" email carries the link.
+ * ⚠️ A campaign where NOTHING went live still settles as partially_published (every item failed
+ * or was dropped); the portals and emails read liveCount and say so — never "partly live".
  */
 export async function settleBooking(bookingId: string, actor: Actor): Promise<boolean> {
   const b = await prisma.campaignBooking.findUnique({
     where: { id: bookingId },
     select: { status: true, items: { select: { status: true } } },
   });
-  if (!b || !["approved", "publishing"].includes(b.status)) return false;
+  if (!b || !["approved", "publishing", "partially_published"].includes(b.status)) return false;
   const statuses = b.items.map((i) => i.status);
   const live = statuses.filter((s) => (LIVE_ITEM_STATUSES as readonly string[]).includes(s)).length;
   const settled = statuses.every((s) => (SETTLED_ITEM_STATUSES as readonly string[]).includes(s));
   try {
     if (settled && statuses.length > 0) {
       const to: BookingStatus = live === statuses.length ? "completed" : "partially_published";
-      await transitionBooking(bookingId, ["approved", "publishing"], to, actor);
-      return true;
+      if (to === b.status) return false;
+      await transitionBooking(bookingId, ["approved", "publishing", "partially_published"], to, actor);
+      return b.status !== "partially_published";
     }
     if (live > 0 && b.status === "approved") {
       await transitionBooking(bookingId, ["approved"], "publishing", actor);

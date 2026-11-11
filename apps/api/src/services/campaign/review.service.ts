@@ -1,6 +1,6 @@
 import { itemGstPaise, snapshotPricing } from "./gst";
 import { prisma } from "@dashmani/db";
-import { isPlatformPostUrl, type CampaignPlatform } from "@dashmani/shared";
+import { isPlatformPostUrl, platformPostLinkError, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { transitionBooking, settleBooking, logBookingEvent } from "./booking.service";
 import { refundBookingInFull, refundPaymentRow, capturedPaymentFor } from "./payment.service";
@@ -155,6 +155,10 @@ export async function requestChanges(id: string, staffId: string, note: string) 
 
 /** Reject and refund in full. The booking moves to `refunded` once Razorpay confirms. */
 export async function reject(id: string, staffId: string, note: string) {
+  // An approved booking may have a post mid-publish (the worker holds its lease): refunding it
+  // under the worker's feet would record as refunded a post Meta publishes seconds later.
+  const publishing = await prisma.campaignBookingItem.count({ where: { bookingId: id, status: "queued", lockedUntil: { gt: new Date() } } });
+  if (publishing > 0) throw new AppError(409, "PUBLISHING_NOW", "A post is being published right now — try again in a minute.");
   await transitionBooking(id, ["paid_pending_review", "changes_requested", "approved"], "rejected", staff(staffId), {
     note,
     data: { reviewNote: note, reviewedById: staffId },
@@ -188,7 +192,7 @@ async function afterItemChange(bookingId: string, staffId: string) {
 export async function markPosted(bookingId: string, itemId: string, staffId: string, url: string) {
   const item = await itemOf(bookingId, itemId);
   if (!isPlatformPostUrl(item.platform as CampaignPlatform, url)) {
-    throw new AppError(400, "WRONG_PLATFORM", `That link isn't a ${item.platform} link.`);
+    throw new AppError(400, "WRONG_PLATFORM", platformPostLinkError(item.platform as CampaignPlatform));
   }
   const b = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { status: true } });
   if (!b || !["approved", "publishing", "completed", "partially_published"].includes(b.status)) {

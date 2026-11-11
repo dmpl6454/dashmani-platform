@@ -1,12 +1,12 @@
 import { prisma, type Prisma } from "@dashmani/db";
-import { formatLabelFor, isPlatformPostUrl, type CampaignPlatform } from "@dashmani/shared";
+import { formatLabelFor, isPlatformPostUrl, platformPostLinkError, todayIST, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { scrubSecrets } from "../../utils/token-crypto";
 import { campaignConfig } from "../campaign/config";
 import { signedMediaPath } from "../campaign/media-url";
 import { itemText, logBookingEvent, resolveItemFiles, settleBooking, type Actor } from "../campaign/booking.service";
 import { checkEligibility, launchAt } from "../campaign/publish.service";
-import { sendDeliveryEmail, sendItemLiveEmail } from "../campaign/delivery.service";
+import { sendDeliveryEmail, sendItemLiveEmail, sendCreatorDeclinedEmail } from "../campaign/delivery.service";
 import { adminAlert, button, creatorLink, esc, sendCreatorEmail } from "./creator-email";
 
 // Creator marketplace (creator portal Phase B): a client books a creator's page, our team
@@ -139,6 +139,12 @@ export async function notifyCreatorsOfOffers(offered: OfferedItem[]) {
       console.warn(`[creator-offers] offer email failed for ${creatorId}: ${scrubSecrets(e instanceof Error ? e.message : String(e))}`);
     }
   }
+}
+
+/** A @db.Date column (the IST calendar day at 00:00 UTC) as "13 Nov 2026". */
+function fmtIstDay(d: Date): string {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
 function fmtIst(d: Date): string {
@@ -325,6 +331,7 @@ export async function declineOffer(creatorId: string, itemId: string, reason: st
   if (res.count !== 1) throw new AppError(409, "ALREADY_DECIDED", "This post changed while you were looking — refresh.");
   await logBookingEvent(o.bookingId, creatorActor(creatorId), `Creator declined ${o.accountName} (${o.format}): ${reason}`);
   void alertStaffDeclined([{ bookingId: o.bookingId, accountName: o.accountName, why: `declined: ${reason}` }]);
+  void sendCreatorDeclinedEmail(itemId, "declined").catch((err) => console.error("[creator-offers] client decline email failed", err));
   return getOffer(creatorId, itemId);
 }
 
@@ -335,7 +342,13 @@ export async function declineOffer(creatorId: string, itemId: string, reason: st
 export async function recordCreatorPost(creatorId: string, itemId: string, url: string) {
   const o = await loadOwnOffer(creatorId, itemId);
   if (!isPlatformPostUrl(o.platform as CampaignPlatform, url)) {
-    throw new AppError(400, "WRONG_PLATFORM", `That link isn't a ${o.platform} link.`);
+    throw new AppError(400, "WRONG_PLATFORM", platformPostLinkError(o.platform as CampaignPlatform));
+  }
+  // The brand chose when the post may go live; a post recorded before the window opens is not
+  // the post they booked (and the client would be emailed "live" on the wrong day).
+  const from = ymd(o.booking.launchFrom);
+  if (from && from > todayIST()) {
+    throw new AppError(409, "BEFORE_WINDOW", `This campaign's posting window opens on ${fmtIstDay(o.booking.launchFrom!)} — post it on or after that day, then paste the link.`);
   }
   if (!actionsFor(o, new Date()).canRecordPost) {
     throw new AppError(409, "INVALID_STATE", o.status === "queued"
@@ -377,6 +390,7 @@ export async function expireCreatorOffers(now = new Date()): Promise<number> {
     if (res.count !== 1) continue;
     await logBookingEvent(d.bookingId, SYSTEM, `Creator did not answer in time for ${d.accountName} (${d.format})`);
     expired.push({ bookingId: d.bookingId, accountName: d.accountName, why: "no answer in time" });
+    await sendCreatorDeclinedEmail(d.id, "expired").catch((err) => console.error("[creator-offers] client expiry email failed", err));
   }
   if (expired.length) await alertStaffDeclined(expired);
   return expired.length;

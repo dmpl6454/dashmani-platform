@@ -195,7 +195,7 @@ export default function CampaignBookingDetail() {
               <p className="text-[12.5px] text-ds-t3 mb-3">
                 {autoOn
                   ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta / YouTube API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
-                  : "Auto-publishing is switched off: approving sends every account to \"To post\" — someone posts each one by hand and pastes the link."}
+                  : "Auto-publishing is switched off: approving sends every network account to \"To post\" — someone posts each one by hand and pastes the link. A creator's page goes to that creator instead: they accept or decline within the time shown, then post it themselves."}
                 {" "}
                 {offline
                   ? `No online payment was taken — collect ${rupees(b.totalPaise)} from the client by hand. Rejecting charges nothing.`
@@ -315,7 +315,8 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
             <div className="text-[12px] text-[#7DD3FC]">
               Creator page · payout {i.creatorPayoutPaise != null ? rupees(i.creatorPayoutPaise) : "not set"} (paid by hand)
               {i.status === "awaiting_creator" && i.creatorRespondBy ? ` · waiting for the creator until ${fmtWhen(i.creatorRespondBy)}` : ""}
-              {i.creatorDecidedAt && i.status !== "creator_declined" ? ` · accepted ${fmtWhen(i.creatorDecidedAt)}` : ""}
+              {i.creatorDecidedAt && !i.creatorDeclineReason ? ` · accepted ${fmtWhen(i.creatorDecidedAt)}` : ""}
+              {i.creatorDeclineReason ? ` · declined: ${i.creatorDeclineReason}` : ""}
             </div>
           )}
         </div>

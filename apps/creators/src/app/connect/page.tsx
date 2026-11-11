@@ -298,12 +298,12 @@ function ConnectionCard({ conn, starting, refreshing, onReconnect, onGrantMissin
 
       {needsReconnect && (
         <Banner tone="danger" title="Reconnect Facebook." action={<button className="btn btn-sm" onClick={onReconnect} disabled={starting}>Reconnect</button>}>
-          Facebook no longer lets us use this connection, so we can&apos;t check or publish to your pages until you reconnect.
+          Facebook no longer lets us use this connection, so your pages aren&apos;t offered to brands until you reconnect.
         </Banner>
       )}
       {expiringSoon && (
         <Banner tone="warn" title="Reconnect soon.">
-          Facebook asks people to renew access every few months. Reconnect before it runs out so campaigns you accept keep publishing.
+          Facebook asks people to renew access every few months. Reconnect before it runs out so your pages stay offered to brands.
         </Banner>
       )}
       {conn.missingScopes.length > 0 && (
@@ -312,7 +312,7 @@ function ConnectionCard({ conn, starting, refreshing, onReconnect, onGrantMissin
           title="Some permissions weren't granted."
           action={<button className="btn btn-sm" onClick={onGrantMissing} disabled={starting}>Grant the missing permissions</button>}
         >
-          <p>Without these we can&apos;t publish the campaigns you accept:</p>
+          <p>Without these, some of your pages can&apos;t be offered to brands or show their stats:</p>
           <ul className="mt-2 flex flex-col gap-1">
             {conn.missingScopes.map((s) => <li key={s}>• {SCOPE_LABELS[s] ?? s}</li>)}
           </ul>
@@ -396,7 +396,7 @@ function AssetCard({ a }: { a: CreatorAssetView }) {
             {a.publishProbeError || "Facebook didn't confirm that we can publish here. Check that you have full control of the Page and granted the publishing permission, then reconnect."}
           </p>
         )}
-        {a.enabled && !a.disconnected && <p className="mt-1 text-xs text-success">Switched on by our team — brands can book it once it has a price on the Prices page.</p>}
+        {a.enabled && !a.disconnected && <p className="mt-1 text-xs text-success">Switched on by our team. Set your prices on the Prices page; each one shows when brands can book it.</p>}
         {a.profileUrl && (
           <a href={a.profileUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm text-indigo-light hover:text-white">
             View on {ig ? "Instagram" : "Facebook"} <ExternalLink size={13} aria-hidden />

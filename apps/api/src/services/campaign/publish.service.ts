@@ -169,12 +169,14 @@ function contentReason(item: ItemLike, booking: BookingLike): string | null {
  * to staff instead (a page that changed hands must never publish under someone else's deal).
  */
 async function checkCreatorEligibility(item: ItemLike, booking: BookingLike): Promise<Eligibility> {
+  if (item.platform !== "instagram" && item.platform !== "facebook") return { ok: false, reason: "This platform is posted by hand." };
+  // Content reasons first: they hold whatever the switch, and the creator is told about them
+  // (song, cover image…) rather than only that auto-posting is off.
+  const content = contentReason(item, booking);
+  if (content) return { ok: false, reason: content };
   if (!campaignConfig.creatorPublishEnabled()) {
     return { ok: false, reason: "Auto-posting on creator pages is switched off — post it on the page and paste the link." };
   }
-  if (item.platform !== "instagram" && item.platform !== "facebook") return { ok: false, reason: "This platform is posted by hand." };
-  const content = contentReason(item, booking);
-  if (content) return { ok: false, reason: content };
 
   const asset = await prisma.creatorAsset.findUnique({
     where: { id: item.targetId },

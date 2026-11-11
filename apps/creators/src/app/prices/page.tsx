@@ -34,7 +34,8 @@ export default function PricesPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHead kicker="Prices" title="Your price per post">
-        Set what you want to be paid for one post on each page, in Indian rupees (₹). Brands see your page with our service included; you are paid your price after the post is live.
+        Set what you want to be paid for one post on each page, in Indian rupees (₹). A format is listed for brands once your
+        price is in and our team has finished pricing it; each one shows whether it is listed. Brands see your page with our service included; you are paid your price after the post is live.
         If a brand adds a song to a reel, the song add-on is paid to you in full on top of your price.
         Changing a price applies to new bookings only — posts already booked keep the price they were booked at.
       </PageHead>
@@ -99,6 +100,11 @@ function PageForm({ page, readOnly, onSaved }: { page: CreatorPagePrices; readOn
               disabled={readOnly || busy}
               onChange={(e) => { setDone(false); setVals((v) => ({ ...v, [x.format]: e.target.value })); }}
             />
+            {x.pricePaise != null && (
+              x.listed
+                ? <span className="text-[12px] text-success">Listed — brands can book it</span>
+                : <span className="text-[12px] text-ink-3">{page.enabled ? "Not listed yet — our team is finishing its pricing" : "Not listed — the page isn't switched on yet"}</span>
+            )}
           </label>
         ))}
       </div>

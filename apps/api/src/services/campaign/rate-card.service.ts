@@ -1,4 +1,4 @@
-import { prisma } from "@dashmani/db";
+import { prisma, type Prisma } from "@dashmani/db";
 import { type CampaignRateCardUpsertInput, PLATFORM_FORMATS, type CampaignPlatform, type CampaignFormat } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { resolveDuplicateAssetIds } from "../meta-oauth/meta-channels.service";
@@ -129,16 +129,19 @@ export async function listBookableTargets(): Promise<CatalogueTarget[]> {
  * own pages. Every condition is in the query, so a suspend, a disconnect or a lapsed grant takes
  * the page out of the catalogue (and out of checkout) at once.
  */
+/** A creator page brands may book (it still needs an active price card to be listed). */
+export const creatorBookableWhere = {
+  enabled: true,
+  canPublish: true,
+  disconnectedAt: null,
+  networkDuplicateOf: null,
+  creator: { status: "approved" },
+  connection: liveConnectionWhere,
+} satisfies Prisma.CreatorAssetWhereInput;
+
 export async function listCreatorTargets(): Promise<CatalogueTarget[]> {
   const rows = await prisma.creatorAsset.findMany({
-    where: {
-      enabled: true,
-      canPublish: true,
-      disconnectedAt: null,
-      networkDuplicateOf: null,
-      creator: { status: "approved" },
-      connection: liveConnectionWhere,
-    },
+    where: creatorBookableWhere,
     select: {
       id: true, kind: true, metaId: true, name: true, username: true, pictureUrl: true,
       followerCount: true, views28d: true, engagements28d: true,

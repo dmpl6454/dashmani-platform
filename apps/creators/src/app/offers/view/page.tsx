@@ -97,7 +97,7 @@ function OfferView() {
           }
         >
           {o.autoPost
-            ? "If you accept, we post it on your page on the first posting day (10:00 am IST) — or, when we can't post it for you, you post it yourself and paste the link here."
+            ? "If you accept, we post it on your page when the posting dates start (or straight away if they already have) — or, when we can't post it for you, you post it yourself and paste the link here."
             : "If you accept, you post it on your page yourself during the posting dates and paste the link here."}{" "}
           If you don&apos;t answer in time, it is treated as declined.
         </Banner>
@@ -132,6 +132,13 @@ function OfferView() {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img loading="lazy" decoding="async" key={n} src={`${API_ORIGIN}${f.url}`} alt={`File ${n + 1}`} className="w-full bg-black object-contain max-h-[480px]" />
               ),
+            )}
+            {cover?.ready && (
+              <figure className="flex flex-col gap-1.5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img loading="lazy" decoding="async" src={`${API_ORIGIN}${cover.url}`} alt="Cover image chosen by the brand" className="w-full bg-black object-contain max-h-[480px]" />
+                <figcaption className="text-[12px] text-ink-3">Cover image — use it as the video&apos;s cover when you post.</figcaption>
+              </figure>
             )}
           </div>
         )}

@@ -191,11 +191,22 @@ function actionsFor(o: OfferRow, now: Date) {
  * so it is never shown as is: only the content reasons a creator can act on are translated, and
  * anything else becomes null (the portal then shows its own sentence for the auto-posting switch).
  */
+const RECONNECT = "We couldn't post through your Facebook connection, so you post this one yourself. Reconnect Facebook on the Pages screen so your pages stay offered to brands.";
 const CREATOR_NOTES: Array<[string, string]> = [
+  ["Auto-posting on creator pages is switched off", "You post accepted bookings yourself for now."],
   ["Song audio integration", "The brand chose a song, which can only be added in the Instagram app, so you post this one yourself."],
   ["Stories are posted by hand", "Stories can't be posted through our tools, so you post this one yourself."],
   ["Facebook carousels can only hold images", "Facebook only takes photo carousels through our tools, so you post this one yourself."],
-  ["The client chose a thumbnail", "The brand chose a cover image, which Facebook only takes in the app, so you post this one yourself with that cover."],
+  ["The client chose a thumbnail", "The brand chose a cover image, which Facebook only takes in the app, so you post this one yourself with the cover shown below."],
+  // We may already have posted it: the creator must look before posting a second copy.
+  ["Instagram published the post", "We posted this on your Instagram but couldn't read its link. Find it on your profile and paste its link here — don't post it again."],
+  ["Meta didn't confirm the Facebook post", "We may already have posted this on your Page — Facebook didn't confirm it. Check your Page first: if it's there, paste its link instead of posting again."],
+  ["Facebook is still processing the reel", "Facebook is still processing the reel we posted. Check your Page: if it's there, paste its link instead of posting again."],
+  ["Facebook could not process the reel", "Facebook couldn't process the reel we tried to post, so you post this one yourself."],
+  ["The creator's Facebook connection needs reconnecting", RECONNECT],
+  ["The creator's Facebook login has expired", RECONNECT],
+  ["The creator's stored token could not be read", RECONNECT],
+  ["The Meta connection needs reconnecting", RECONNECT],
 ];
 export function creatorNote(lastError: string | null): string | null {
   if (!lastError) return null;

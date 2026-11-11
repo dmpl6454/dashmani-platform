@@ -120,5 +120,6 @@ export interface CreatorPagePrices {
   name: string;
   username: string | null;
   enabled: boolean;
-  prices: Array<{ format: "reel" | "post" | "carousel"; pricePaise: number | null; updatedAt: string | null }>;
+  /** listed: brands can book this format now (your price + our team's pricing, page switched on). */
+  prices: Array<{ format: "reel" | "post" | "carousel"; pricePaise: number | null; updatedAt: string | null; listed?: boolean }>;
 }

@@ -17,7 +17,7 @@ export default function TermsPage() {
       <p>
         Brands and agencies come to Digital Sukoon to promote their products, films, music and campaigns. Through Digital Sukoon
         Creators they can book a promotional post on your Facebook Page or Instagram professional account. We handle the brand,
-        prepare the post, publish it on your page once you have accepted it, and pay you.
+        prepare the post, make sure it goes on your page once you have accepted it (we publish it or you do — see section 5), and pay you.
       </p>
 
       <h2>2. Who can join</h2>
@@ -48,7 +48,7 @@ export default function TermsPage() {
       <h2>5. Bookings — you approve each one</h2>
       <ul>
         <li>You set your price for each type of post, in Indian rupees (₹). That price is what you are paid for the post; the price brands see includes our service.</li>
-        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking; we ask for a short reason so we can send you better bookings.</li>
+        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking; when you do, you give a short reason, so we can send you better bookings.</li>
         <li>Once you accept, exactly the post you accepted goes on the page during the posting dates: either we publish it through your Facebook connection, or we ask you to publish it yourself and paste the link to it. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
       </ul>
 
@@ -78,7 +78,7 @@ export default function TermsPage() {
       <ul>
         <li>Follow Facebook&apos;s and Instagram&apos;s terms and community standards, and the law where you live.</li>
         <li>Don&apos;t inflate your numbers with bought followers, likes or views, and don&apos;t misrepresent your audience.</li>
-        <li>Keep your Facebook connection working while you have bookings, so we can publish what you accepted.</li>
+        <li>Keep your Facebook connection working while you have bookings: your pages are only offered to brands while they are connected, and where we post for you, we publish through it.</li>
       </ul>
 
       <h2>10. Suspension</h2>

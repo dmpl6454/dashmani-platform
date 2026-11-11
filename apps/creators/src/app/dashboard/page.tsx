@@ -86,8 +86,8 @@ function StatusBanner({ me }: { me: CreatorMeWithChecklist }) {
     case "approved":
       return (
         <Banner tone="success" title="You're approved.">
-          Welcome to Digital Sukoon Creators. Our team switches on each of your pages for booking and emails you when it does. Brands can
-          book a page once it has a price — set yours on the <Link href="/prices" className="underline">Prices</Link> page. Keep your
+          Welcome to Digital Sukoon Creators. Our team switches on each of your pages for booking and emails you when it does. Set your
+          prices on the <Link href="/prices" className="underline">Prices</Link> page; each one shows when brands can book it. Keep your
           Facebook connection active: a page is only offered to brands while it is connected.
         </Banner>
       );

@@ -335,9 +335,9 @@ export async function setAssetEnabled(creatorId: string, assetId: string, enable
 }
 
 /**
- * Tells the creator a page is switched on for booking. It is listed for brands only once it also
- * has a price (theirs, plus our team's margin), so the email points at the Prices page rather than
- * promising bookings. Fire-and-forget: the switch stands even when the email cannot be sent.
+ * Tells the creator a page is switched on for booking. A format is listed for brands only once it
+ * also has the creator's price and our team's margin, so the email points at the Prices page (which
+ * shows each format's listing) rather than promising bookings. Fire-and-forget: the switch stands even when the email cannot be sent.
  */
 async function sendPageOnEmail(creatorId: string, pageName: string) {
   try {
@@ -345,7 +345,7 @@ async function sendPageOnEmail(creatorId: string, pageName: string) {
     if (!c || c.status !== "approved") return;
     const body =
       `<p style="margin:0 0 12px">Hi ${esc(c.name)},</p>` +
-      `<p style="margin:0 0 12px">Our team has switched on <strong>${esc(pageName)}</strong> for booking. Brands can book it once it has a price — set or check your price for each type of post on the Prices page.</p>` +
+      `<p style="margin:0 0 12px">Our team has switched on <strong>${esc(pageName)}</strong> for booking. Set your price for each type of post on the Prices page: each one shows when brands can book it, once our team has finished pricing it.</p>` +
       `<p style="margin:0 0 12px">Nothing is posted until you accept a booking.</p>` +
       `<p style="margin:18px 0">${button(creatorLink("/prices"), "Set your prices")}</p>`;
     const sent = await sendCreatorEmail(c.email, `${pageName} is switched on for booking`, "Your page is switched on", body);

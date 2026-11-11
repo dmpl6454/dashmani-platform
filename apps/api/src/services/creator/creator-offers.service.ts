@@ -185,6 +185,23 @@ function actionsFor(o: OfferRow, now: Date) {
   };
 }
 
+/**
+ * Why the creator posts an accepted booking themselves, in words written for the creator.
+ * `last_error` is written for staff ("check with the creator before posting", Meta error codes…),
+ * so it is never shown as is: only the content reasons a creator can act on are translated, and
+ * anything else becomes null (the portal then shows its own sentence for the auto-posting switch).
+ */
+const CREATOR_NOTES: Array<[string, string]> = [
+  ["Song audio integration", "The brand chose a song, which can only be added in the Instagram app, so you post this one yourself."],
+  ["Stories are posted by hand", "Stories can't be posted through our tools, so you post this one yourself."],
+  ["Facebook carousels can only hold images", "Facebook only takes photo carousels through our tools, so you post this one yourself."],
+  ["The client chose a thumbnail", "The brand chose a cover image, which Facebook only takes in the app, so you post this one yourself with that cover."],
+];
+export function creatorNote(lastError: string | null): string | null {
+  if (!lastError) return null;
+  return CREATOR_NOTES.find(([prefix]) => lastError.startsWith(prefix))?.[1] ?? null;
+}
+
 /** The creator-facing shape. Explicit fields only: no client identity, no client price. */
 function toOfferView(o: OfferRow, now: Date) {
   const text = itemText(o.booking, o);
@@ -216,7 +233,9 @@ function toOfferView(o: OfferRow, now: Date) {
     scheduledFor: o.status === "queued" ? o.nextAttemptAt ?? launchAt(o.booking.launchFrom, now) : null,
     permalink: o.permalink,
     postedAt: o.postedAt,
-    note: o.status === "manual_pending" ? o.lastError : null,
+    note: o.status === "manual_pending" ? creatorNote(o.lastError) : null,
+    // Whether accepted posts are posted for the creator at all right now (CREATOR_PUBLISH_ENABLED).
+    autoPost: campaignConfig.creatorPublishEnabled(),
     ...actionsFor(o, now),
   };
 }
@@ -237,6 +256,7 @@ export async function listOffers(creatorId: string, filter: "open" | "all" = "al
   const offers = rows.map((r) => toOfferView(r, now));
   return {
     offers,
+    autoPost: campaignConfig.creatorPublishEnabled(),
     counts: {
       waiting: offers.filter((o) => o.canAccept).length,
       toPost: offers.filter((o) => o.canRecordPost).length,

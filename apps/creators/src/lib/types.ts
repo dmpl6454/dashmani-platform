@@ -17,6 +17,8 @@ export interface CreatorMe {
   /** Only present when the account is rejected or suspended. */
   reviewNote: string | null;
   createdAt: string;
+  /** Whether we post accepted bookings for creators. While false, the creator posts every one. */
+  autoPost?: boolean;
 }
 
 export interface CreatorChecklist {
@@ -94,8 +96,10 @@ export interface CreatorOffer {
   scheduledFor: string | null;
   permalink: string | null;
   postedAt: string | null;
-  /** Why we can't post it for you (shown while you post it yourself). */
+  /** Why you post this one yourself, when there is a reason specific to it (shown while you post it). */
   note: string | null;
+  /** Whether we post accepted bookings for creators at all right now. */
+  autoPost?: boolean;
   canAccept: boolean;
   canDecline: boolean;
   canRecordPost: boolean;
@@ -105,6 +109,7 @@ export interface CreatorOffer {
 
 export interface CreatorOfferList {
   offers: CreatorOffer[];
+  autoPost?: boolean;
   counts: { waiting: number; toPost: number; payoutAcceptedPaise: number };
 }
 

@@ -470,6 +470,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                       <span>{PLATFORM_LABEL[a.platform]}{formatLabelFor(a.platform, format) !== FORMAT_LABELS[format] ? ` ${formatLabelFor(a.platform, format)}` : ""}</span>
                       {a.category && <span>{a.category}</span>}
                       {a.linkDeliveryMinutes && <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>}
+                      {a.source === "creator" && a.creatorResponseHours != null && <span>The creator has up to {a.creatorResponseHours} h after our approval to accept</span>}
                     </div>
                     <div className="sm:hidden text-[11px] text-ink-3 tabular-nums">
                       {compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement

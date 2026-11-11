@@ -1,4 +1,5 @@
 import type { Creator, CreatorAsset, CreatorConnection } from "@dashmani/db";
+import { campaignConfig } from "../campaign/config";
 
 // The ONE place a creator row becomes JSON. ⚠️ Never return a token column (*_enc), the
 // password hash, or payout details from anywhere else — every endpoint goes through these.
@@ -44,6 +45,9 @@ export function toCreatorMe(c: Creator) {
     // Only shown to the creator when it explains their current state.
     reviewNote: c.status === "rejected" || c.status === "suspended" ? c.reviewNote : null,
     createdAt: c.createdAt.toISOString(),
+    // Whether we post accepted bookings for the creator (CREATOR_PUBLISH_ENABLED). While it is
+    // off the creator posts every accepted booking themselves, and the portal must say so.
+    autoPost: campaignConfig.creatorPublishEnabled(),
   };
 }
 export type CreatorMe = ReturnType<typeof toCreatorMe>;

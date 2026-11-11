@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import type { Creator, CreatorAsset, CreatorConnection } from "@dashmani/db";
+import type { Creator, CreatorAsset, CreatorConnection, Prisma } from "@dashmani/db";
 import { CREATOR_STATUSES, type CreatorStatus } from "@dashmani/shared/src/validators/creator";
 import { AppError } from "../../middleware/error-handler";
 import { likeLiteral } from "../../utils/like-literal";
@@ -289,6 +289,7 @@ function notEnableable(reason: BlockReason): never {
 export async function setAssetEnabled(creatorId: string, assetId: string, enabled: boolean, staffId: string) {
   const exists = await prisma.creatorAsset.findFirst({ where: { id: assetId, creatorId }, select: { id: true } });
   if (!exists) throw new AppError(404, "NOT_FOUND", "Page not found");
+  let switchedOn = false;
 
   if (enabled) {
     // The stored duplicate flag is only as fresh as the creator's last discovery: re-check it
@@ -300,18 +301,20 @@ export async function setAssetEnabled(creatorId: string, assetId: string, enable
     if (reason) notEnableable(reason);
     // Re-assert every condition in the write itself: a suspend, a disconnect or a re-discovery
     // that lands between the read above and this write must win.
-    const res = await prisma.creatorAsset.updateMany({
-      where: {
-        id: assetId,
-        creatorId,
-        canPublish: true,
-        networkDuplicateOf: null,
-        disconnectedAt: null,
-        creator: { status: "approved" },
-        connection: liveConnectionWhere,
-      },
-      data: { enabled: true, enabledById: staffId, enabledAt: new Date() },
-    });
+    const gate = {
+      id: assetId,
+      creatorId,
+      canPublish: true,
+      networkDuplicateOf: null,
+      disconnectedAt: null,
+      creator: { status: "approved" },
+      connection: liveConnectionWhere,
+    } satisfies Prisma.CreatorAssetWhereInput;
+    const data = { enabled: true, enabledById: staffId, enabledAt: new Date() };
+    // OFF → ON first: only that change tells the creator. Saving an already-on page again (the
+    // second write) passes the same gate and sends nothing.
+    switchedOn = (await prisma.creatorAsset.updateMany({ where: { ...gate, enabled: false }, data })).count === 1;
+    const res = switchedOn ? { count: 1 } : await prisma.creatorAsset.updateMany({ where: gate, data });
     if (res.count === 0) {
       const now = await prisma.creatorAsset.findFirst({ where: { id: assetId, creatorId }, select: GATE_SELECT });
       if (!now) throw new AppError(404, "NOT_FOUND", "Page not found");
@@ -327,5 +330,27 @@ export async function setAssetEnabled(creatorId: string, assetId: string, enable
   invalidateCatalogueCache();
   const row = await prisma.creatorAsset.findUnique({ where: { id: assetId } });
   if (!row) throw new AppError(404, "NOT_FOUND", "Page not found");
+  if (switchedOn) void sendPageOnEmail(creatorId, row.name);
   return (await toAdminAssetViews([row]))[0];
+}
+
+/**
+ * Tells the creator a page is switched on for booking. It is listed for brands only once it also
+ * has a price (theirs, plus our team's margin), so the email points at the Prices page rather than
+ * promising bookings. Fire-and-forget: the switch stands even when the email cannot be sent.
+ */
+async function sendPageOnEmail(creatorId: string, pageName: string) {
+  try {
+    const c = await prisma.creator.findUnique({ where: { id: creatorId }, select: { email: true, name: true, status: true } });
+    if (!c || c.status !== "approved") return;
+    const body =
+      `<p style="margin:0 0 12px">Hi ${esc(c.name)},</p>` +
+      `<p style="margin:0 0 12px">Our team has switched on <strong>${esc(pageName)}</strong> for booking. Brands can book it once it has a price — set or check your price for each type of post on the Prices page.</p>` +
+      `<p style="margin:0 0 12px">Nothing is posted until you accept a booking.</p>` +
+      `<p style="margin:18px 0">${button(creatorLink("/prices"), "Set your prices")}</p>`;
+    const sent = await sendCreatorEmail(c.email, `${pageName} is switched on for booking`, "Your page is switched on", body);
+    if (sent == null) console.warn(`[creator-admin] page-on email for creator ${creatorId} was not sent`);
+  } catch (e) {
+    console.warn(`[creator-admin] page-on email failed for creator ${creatorId}: ${scrubSecrets(e instanceof Error ? e.message : String(e))}`);
+  }
 }

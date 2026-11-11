@@ -6,7 +6,7 @@ import { LegalPage } from "@/components/site-shell";
 
 export default function TermsPage() {
   return (
-    <LegalPage kicker="Creator agreement" title="Creator terms" updated="12 October 2026">
+    <LegalPage kicker="Creator agreement" title="Creator terms" updated="11 November 2026">
       <p>
         These terms are the agreement between you and Digital Sukoon (Dashmani Media Private Limited, “we”, “us”) when you join
         Digital Sukoon Creators at creators.digitalsukoon.com. Please read them — by creating an account you agree to them. If you
@@ -47,9 +47,9 @@ export default function TermsPage() {
 
       <h2>5. Bookings — you approve each one</h2>
       <ul>
-        <li>You set your asking price for each type of post, in your own currency. Our team agrees the booking price with the brand separately.</li>
-        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking without giving a reason.</li>
-        <li>Once you accept, we publish exactly the post you accepted, on the page and at the time agreed. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
+        <li>You set your price for each type of post, in Indian rupees (₹). That price is what you are paid for the post; the price brands see includes our service.</li>
+        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking; we ask for a short reason so we can send you better bookings.</li>
+        <li>Once you accept, exactly the post you accepted goes on the page during the posting dates: either we publish it through your Facebook connection, or we ask you to publish it yourself and paste the link to it. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
       </ul>
 
       <h2>6. Your content stays yours</h2>
@@ -62,13 +62,13 @@ export default function TermsPage() {
       <h2>7. Paid-partnership labelling</h2>
       <p>
         Promoted posts must be clearly marked as paid or sponsored, as advertising rules and Meta&apos;s branded-content policies require.
-        The post we publish will carry a disclosure — such as Meta&apos;s “Paid partnership” label where it is available, or #ad in the
-        caption. Don&apos;t remove these labels.
+        When you publish a booked post yourself, turn on Meta&apos;s “Paid partnership” label where it is available, or add #ad to the
+        caption. Don&apos;t remove a disclosure from a promoted post.
       </p>
 
       <h2>8. Payment</h2>
       <ul>
-        <li>The amount and currency are set per booking and shown to you before you accept.</li>
+        <li>The amount, in Indian rupees (₹), is set per booking and shown to you before you accept.</li>
         <li>We pay you <strong>manually after the post is live and we have verified it</strong> stayed up as agreed. We&apos;ll ask for your payout details before your first payment.</li>
         <li>If a post is removed early, never goes live, or breaks these terms, we may reduce or withhold payment for that booking.</li>
         <li>You are responsible for any taxes on what you earn, unless the law requires us to deduct them.</li>

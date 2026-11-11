@@ -3,7 +3,7 @@ import { type CampaignRateCardUpsertInput, PLATFORM_FORMATS, type CampaignPlatfo
 import { AppError } from "../../middleware/error-handler";
 import { resolveDuplicateAssetIds } from "../meta-oauth/meta-channels.service";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
-import { LINK_DELIVERY_MINUTES } from "./config";
+import { LINK_DELIVERY_MINUTES, campaignConfig } from "./config";
 import { liveConnectionWhere, profileUrl as creatorProfileUrl } from "../creator/creator-view";
 
 // Rate cards (our price per account per format) and the client-facing catalogue built from
@@ -317,8 +317,13 @@ export interface CatalogueEntry {
   views28d: number | null;
   category: string | null;
   profileUrl: string | null;
-  /** How long after posting the link is ready (approximate). Same for every account today. */
-  linkDeliveryMinutes: { min: number; max: number };
+  /**
+   * How long after posting the link is ready (approximate), for our own pages. Null for a
+   * creator's page: the creator accepts first and usually posts it by hand, so we can't promise it.
+   */
+  linkDeliveryMinutes: { min: number; max: number } | null;
+  /** Creator pages only: the most hours the creator has to accept after our team approves the campaign. */
+  creatorResponseHours: number | null;
   /** pricePaise = brand price; entertainmentPricePaise / audioAddonPaise null when not offered. */
   offers: Array<{
     rateCardId: string;
@@ -360,7 +365,8 @@ export async function getCatalogue(): Promise<CatalogueEntry[]> {
         views28d: t.views28d,
         category: own.find((c) => c.category)?.category ?? null,
         profileUrl: t.profileUrl,
-        linkDeliveryMinutes: { ...LINK_DELIVERY_MINUTES },
+        linkDeliveryMinutes: t.source === "creator" ? null : { ...LINK_DELIVERY_MINUTES },
+        creatorResponseHours: t.source === "creator" ? campaignConfig.creatorResponseHours() : null,
         offers: own
           .filter((c) => (PLATFORM_FORMATS[t.platform] as readonly string[]).includes(c.format))
           .map((c) => ({

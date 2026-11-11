@@ -6,7 +6,7 @@ import { Check, ExternalLink, RefreshCw, ShieldCheck, Unplug, X } from "lucide-r
 import { apiFetch, ApiError, fetcher, PENDING_CONNECT_KEY } from "@/lib/api";
 import { connectErrorSentence, errorSentence } from "@/lib/messages";
 import { daysUntil, fmtCompact, fmtDate, fmtUntil } from "@/lib/format";
-import type { ConnectionPayload, ConnectionView, CreatorAssetView } from "@/lib/types";
+import type { ConnectionPayload, ConnectionView, CreatorAssetView, CreatorMeWithChecklist } from "@/lib/types";
 import { Banner, Loading, Modal, PageHead } from "@/components/ui";
 
 // Facebook connection: what the permission lets us do, the Connect / Reconnect button, and every
@@ -73,6 +73,8 @@ function ConnectInner() {
   const connected = completion?.state === "done";
   const errorCode = completion?.state === "error" ? completion.code : queryError;
 
+  // Only for the auto-posting sentence under "What we can do"; same key as the Overview, so it is shared.
+  const { data: me } = useSWR<CreatorMeWithChecklist>("/creator/me", fetcher, { revalidateOnFocus: false });
   const { data, error, isLoading, mutate } = useSWR<ConnectionPayload>("/creator/meta/connection", fetcher, {
     revalidateOnFocus: true,
     // While discovery runs on the server, check back every few seconds until it settles.
@@ -152,7 +154,7 @@ function ConnectInner() {
         </Banner>
       )}
 
-      <Permissions />
+      <Permissions autoPost={me?.autoPost} />
 
       {isLoading && !data ? (
         <Loading label="Loading your connection…" />
@@ -205,14 +207,14 @@ function ConnectInner() {
   );
 }
 
-function Permissions() {
+function Permissions({ autoPost }: { autoPost: boolean | undefined }) {
   return (
     <section className="grid gap-3 md:grid-cols-2" aria-label="What the permission allows">
       <div className="card p-5 sm:p-6">
         <h2 className="flex items-center gap-2 font-extrabold text-lg"><ShieldCheck size={18} className="text-success" aria-hidden /> What we can do</h2>
         <ul className="mt-3 flex flex-col gap-2 text-sm text-ink-3 leading-relaxed">
           <li className="flex gap-2"><Check size={15} className="text-success mt-0.5 shrink-0" aria-hidden /> See the Pages and Instagram accounts you choose to share, with their follower counts and insights.</li>
-          <li className="flex gap-2"><Check size={15} className="text-success mt-0.5 shrink-0" aria-hidden /> Publish a campaign post on your page — only a campaign you have accepted, and only the post you approved.</li>
+          <li className="flex gap-2"><Check size={15} className="text-success mt-0.5 shrink-0" aria-hidden /> Publish a campaign post on your page — only a campaign you have accepted, and only the post you approved.{autoPost === false && " Automatic posting isn't switched on yet, so for now you post the bookings you accept yourself."}</li>
           <li className="flex gap-2"><Check size={15} className="text-success mt-0.5 shrink-0" aria-hidden /> Read how those posts perform, so brands see real results.</li>
         </ul>
       </div>
@@ -394,7 +396,7 @@ function AssetCard({ a }: { a: CreatorAssetView }) {
             {a.publishProbeError || "Facebook didn't confirm that we can publish here. Check that you have full control of the Page and granted the publishing permission, then reconnect."}
           </p>
         )}
-        {a.enabled && !a.disconnected && <p className="mt-1 text-xs text-success">Approved by our team — we&apos;ll email you when brands can book it.</p>}
+        {a.enabled && !a.disconnected && <p className="mt-1 text-xs text-success">Switched on by our team — brands can book it once it has a price on the Prices page.</p>}
         {a.profileUrl && (
           <a href={a.profileUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm text-indigo-light hover:text-white">
             View on {ig ? "Instagram" : "Facebook"} <ExternalLink size={13} aria-hidden />

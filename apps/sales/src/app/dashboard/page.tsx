@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { PortalLink } from "@/components/portal-link";
 import { useDashboard } from "@/lib/hooks";
@@ -20,7 +21,7 @@ export default function DashboardPage() {
       </PageHead>
       {!!d.bookings?.review.count && (
         <Link href="/bookings?stage=review" className="card p-3 mb-4 flex items-center justify-between gap-3 text-sm hover:border-indigo">
-          <span><span className="font-bold">{d.bookings.review.count} campaign booking{d.bookings.review.count === 1 ? "" : "s"}</span> waiting for review</span>
+          <span><span className="font-bold">{d.bookings.review.count} campaign booking{d.bookings.review.count === 1 ? "" : "s"}</span> waiting for review<OldestWait since={d.bookings.review.oldestWaitingSince} /></span>
           <span className="text-indigo-light text-xs uppercase tracking-[0.08em]">Review →</span>
         </Link>
       )}
@@ -146,4 +147,14 @@ function CreatorsWaiting() {
       <span className="text-indigo-light text-xs uppercase tracking-[0.08em]">Review →</span>
     </Link>
   );
+}
+
+// "· oldest waiting 30 h", amber from 24 h (we promise a review within one working day).
+// Read after mount, like every time-dependent label here, so the server render matches.
+function OldestWait({ since }: { since?: string | null }) {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => setNow(Date.now()), []);
+  if (!since || now === null) return null;
+  const h = Math.max(0, Math.floor((now - new Date(since).getTime()) / 3_600_000));
+  return <span className={h >= 24 ? "text-attention" : "text-ink-3"}> · oldest waiting {h < 48 ? `${h} h` : `${Math.floor(h / 24)} d`}</span>;
 }

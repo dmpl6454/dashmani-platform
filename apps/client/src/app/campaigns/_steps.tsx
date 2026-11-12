@@ -171,6 +171,16 @@ export { CreativeStep } from "./_creative";
 
 type Sort = "followers" | "price" | "engagement";
 
+function SortSelect({ value, onChange, className }: { value: Sort; onChange: (s: Sort) => void; className: string }) {
+  return (
+    <select className={`${inputCls} ${className}`} value={value} onChange={(e) => onChange(e.target.value as Sort)} aria-label="Sort">
+      <option value="followers">Most followers</option>
+      <option value="engagement">Highest engagement</option>
+      <option value="price">Lowest price</option>
+    </select>
+  );
+}
+
 export function AccountsStep({ campaign, onSaved, onEdit }: {
   campaign: Campaign;
   onSaved: (c: Campaign) => void;
@@ -190,6 +200,9 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const [sort, setSort] = useState<Sort>("followers");
   // Our network's pages vs independent creators' pages (shown only when both are on offer).
   const [source, setSource] = useState<"all" | "network" | "creator">("all");
+  // Phones only (G64): the source and category chips fold behind "Filters" so the first screen
+  // shows accounts, not controls. From `sm` up they are always shown and this flag is ignored.
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(() => new Set(campaign.items.map((i) => i.rateCardId)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -256,6 +269,8 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const labelOf = useMemo(() => new Map(categoryTabs(offers).map((t) => [t.key, t.label])), [offers]);
   // A category picked on another platform or format may not exist here: then show everything.
   const activeCat = cat !== null && catTabs.some((t) => t.key === cat) ? cat : null;
+  // What the folded panel is hiding, counted on its button: a changed sort, a source, a category.
+  const activeFilters = (sort !== "followers" ? 1 : 0) + (hasBothSources && source !== "all" ? 1 : 0) + (activeCat !== null ? 1 : 0);
 
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
@@ -341,21 +356,28 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
     <div className="grid grid-cols-1 gap-4 pb-24">
       <Card
         title="Choose accounts"
-        sub={`Accounts on our network that carry a ${fmt}. Prices are per account, for ${CAMPAIGN_TYPE_LABELS[campaign.campaignType].toLowerCase()}${withAudio ? ", including the song" : ""}.`}
+        sub={<span className="hidden sm:inline">{`Accounts on our network that carry a ${fmt}. Prices are per account, for ${CAMPAIGN_TYPE_LABELS[campaign.campaignType].toLowerCase()}${withAudio ? ", including the song" : ""}.`}</span>}
       >
         {renderPending(campaign) && <p role="status" className="text-[12.5px] text-ink-3 mb-3">Your preview is being prepared in the background — pick your accounts meanwhile.</p>}
         <div className="flex flex-wrap gap-2 items-center mb-3">
-          <div className="relative flex-1 min-w-[180px]">
+          <div className="relative flex-1 min-w-0 sm:min-w-[180px]">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"><Icon.Search size={15} /></span>
-            <input className={`${inputCls} pl-9`} placeholder="Search name, @handle or category" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search accounts" />
+            <input className={`${inputCls} pl-9`} placeholder="Name, @handle, category" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search accounts" />
           </div>
-          <select className={`${inputCls} !w-auto`} value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
-            <option value="followers">Most followers</option>
-            <option value="engagement">Highest engagement</option>
-            <option value="price">Lowest price</option>
-          </select>
+          <SortSelect className="hidden sm:block !w-auto" value={sort} onChange={setSort} />
+          <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-controls="account-filters"
+              aria-label={`Sort and filters${activeFilters > 0 ? `, ${activeFilters} on` : ""}`}
+              className={`sm:hidden h-11 px-3 rounded-full text-[12.5px] font-semibold border-2 shrink-0 ${activeFilters > 0 ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+            >
+              Sort & filters{activeFilters > 0 ? ` · ${activeFilters}` : ""} {filtersOpen ? "▴" : "▾"}
+            </button>
         </div>
-        <div className="flex flex-wrap gap-1.5 mb-4" role="tablist">
+        {/* One scrolling row on a phone (G64) — wrapped, five tabs took two or three rows. */}
+        <div className="flex flex-nowrap sm:flex-wrap gap-1.5 mb-4 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 [scrollbar-width:none]" role="tablist" aria-label="Platforms">
           {tabs.map((p) => (
             <button
               key={p}
@@ -363,13 +385,18 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
               role="tab"
               aria-selected={platform === p}
               onClick={() => setPlatform(p)}
-              className={`h-11 sm:h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${platform === p ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+              className={`shrink-0 whitespace-nowrap h-11 sm:h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${platform === p ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
             >
               {p === "all" ? "All" : PLATFORM_LABEL[p]} <span className="opacity-70 tabular-nums">{counts[p] ?? 0}</span>
             </button>
           ))}
         </div>
 
+        <div id="account-filters" className={filtersOpen ? "" : "hidden sm:block"}>
+        <div className="sm:hidden mb-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">Sort</p>
+          <SortSelect className="w-full" value={sort} onChange={setSort} />
+        </div>
         {hasBothSources && (
           <div className="mb-4">
             <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Who posts">
@@ -423,6 +450,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
             </div>
           </div>
         )}
+        </div>
 
         {data && (hidden.byType > 0 || hidden.bySong > 0 || hidden.byLength > 0) && (
           <div className="mb-4 grid gap-1 text-[12.5px] text-ink-3">

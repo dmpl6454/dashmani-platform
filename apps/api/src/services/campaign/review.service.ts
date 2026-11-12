@@ -1,6 +1,7 @@
 import { itemGstPaise, snapshotPricing } from "./gst";
 import { prisma } from "@dashmani/db";
-import { isPlatformPostUrl, platformPostLinkError, type CampaignPlatform } from "@dashmani/shared";
+import { isPlatformPostUrl, platformPostLinkError, SETTLED_ITEM_STATUSES, todayIST, type CampaignPlatform } from "@dashmani/shared";
+import { notifyAdminByEmail } from "../email.service";
 import { AppError } from "../../middleware/error-handler";
 import { transitionBooking, settleBooking, logBookingEvent } from "./booking.service";
 import { refundBookingInFull, refundPaymentRow, capturedPaymentFor } from "./payment.service";
@@ -40,6 +41,7 @@ export async function listQueue(filter: { status?: string } = {}) {
       items: { select: { status: true } },
     },
   });
+  const today = todayIST();
   return rows
     .map((r) => ({
       id: r.id,
@@ -57,11 +59,61 @@ export async function listQueue(filter: { status?: string } = {}) {
       updatedAt: r.updatedAt,
       itemCount: r.items.length,
       liveCount: r.items.filter((i) => i.status === "posted_manual" || i.status === "published").length,
+      // The last posting day is over and some posts are still open.
+      overdue: isWindowPassed(r.status, ymd(r.launchTo), r.items, today),
     }))
     .sort((a, b) => {
       const d = QUEUE_ORDER.indexOf(a.status) - QUEUE_ORDER.indexOf(b.status);
       return d !== 0 ? d : +b.updatedAt - +a.updatedAt;
     });
+}
+
+const SETTLED = SETTLED_ITEM_STATUSES as readonly string[];
+
+/** Approved or going live, the last posting day (an IST day key) is before today, and a post is still open. */
+export function isWindowPassed(status: string, launchTo: string | null, items: Array<{ status: string }>, today = todayIST()): boolean {
+  return ["approved", "publishing"].includes(status) && !!launchTo && launchTo < today && items.some((i) => !SETTLED.includes(i.status));
+}
+
+const WINDOW_TAG = "[window-passed]";
+
+/**
+ * Once per booking: staff are emailed when an approved campaign's posting window has closed with
+ * posts still open (a creator who never posted, a hand-post nobody made). The record is a booking
+ * event carrying WINDOW_TAG, written before the email. ≤50 per run. Never throws per booking.
+ */
+export async function alertPassedWindows(today = todayIST()): Promise<number> {
+  const rows = await prisma.campaignBooking.findMany({
+    where: { status: { in: ["approved", "publishing"] }, launchTo: { lt: new Date(`${today}T00:00:00Z`) } },
+    select: { id: true, name: true, brand: true, launchTo: true, status: true, client: { select: { companyName: true } }, items: { select: { status: true, accountName: true } } },
+    orderBy: { launchTo: "asc" },
+    take: 200,
+  });
+  let sent = 0;
+  for (const b of rows) {
+    if (sent >= 50) break;
+    if (!isWindowPassed(b.status, ymd(b.launchTo), b.items, today)) continue;
+    const done = await prisma.campaignBookingEvent.findFirst({ where: { bookingId: b.id, note: { contains: WINDOW_TAG } }, select: { id: true } });
+    if (done) continue;
+    const open = b.items.filter((i) => !SETTLED.includes(i.status));
+    try {
+      await logBookingEvent(b.id, { type: "system" }, `Posting window closed on ${ymd(b.launchTo)} with ${open.length} post${open.length === 1 ? "" : "s"} still open ${WINDOW_TAG}`);
+      await notifyAdminByEmail(
+        `Posting window passed: ${b.name}`,
+        [
+          { label: "Client", value: b.client.companyName },
+          { label: "Brand", value: b.brand },
+          { label: "Last posting day", value: ymd(b.launchTo) ?? "" },
+          { label: "Still open", value: open.map((i) => `${i.accountName} (${i.status.replace(/_/g, " ")})`).join(", ") },
+        ],
+        `/campaigns/${b.id}`,
+      );
+      sent++;
+    } catch (e) {
+      console.warn(`[campaign] window-passed alert failed for ${b.id}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return sent;
 }
 
 export async function getBookingForStaff(id: string) {
@@ -348,6 +400,7 @@ export async function resendDelivery(bookingId: string) {
     throw new AppError(409, "NOT_DELIVERED", "The delivery email goes out once every post is live.");
   }
   await prisma.campaignBooking.update({ where: { id: bookingId }, data: { deliveredAt: new Date() } });
-  await sendDeliveryEmail(bookingId, { force: true });
-  return { sent: true };
+  // The real outcome: a send that failed (or SMTP off) is reported, never "sent".
+  const sent = await sendDeliveryEmail(bookingId, { force: true });
+  return { sent };
 }

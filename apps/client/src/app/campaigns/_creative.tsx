@@ -664,7 +664,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
 
   return (
     <div className="grid grid-cols-1 gap-4">
-      <Card title="Format" sub="How the content appears on each account.">
+      <Card title="Format" sub={termsLocked ? "Fixed once the campaign was submitted." : "How the content appears on each account."}>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           {BOOKABLE_FORMATS.map((f) => {
             const F = FORMAT_ICON[f];
@@ -674,6 +674,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
                 key={f}
                 type="button"
                 disabled={termsLocked && f !== format}
+                title={termsLocked && f !== format ? "Fixed after submission" : undefined}
                 onClick={() => {
                   if (f === format || termsLocked) return;
                   touch();
@@ -787,6 +788,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
               type="checkbox"
               checked={audio}
               disabled={termsLocked}
+              title={termsLocked ? "Fixed after submission" : undefined}
               onChange={(e) => {
                 touch();
                 setAudio(e.target.checked);
@@ -796,6 +798,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
             />
             Use a song in this reel
           </label>
+          {termsLocked && <p className="text-[12px] text-ink-3 mt-1">Fixed after submission — the song choice was part of the price.</p>}
           {audio && (
             <div className="mt-3">
               <Field label="Song" htmlFor="c-audio" hint="Song name and artist, or a link to it on Instagram, Spotify or YouTube" error={fieldErrors.audioTrack ?? null}>

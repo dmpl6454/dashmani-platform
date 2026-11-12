@@ -98,7 +98,20 @@ function itemStatusText(status: string, paidOnline: boolean): string {
   }
 }
 
-/** Every post with its link — sent once the last item has settled. */
+/**
+ * A client email that did not go out (SMTP off, or the send failed: sendEmail returns null) is
+ * written to the booking's history, so staff never read "sent" for an email nobody received.
+ * Direct insert, not logBookingEvent (booking.service imports this file). Never throws.
+ */
+export async function noteEmailNotSent(bookingId: string, what: string, to: string): Promise<void> {
+  try {
+    await prisma.campaignBookingEvent.create({ data: { bookingId, actorType: "system", note: `Email not sent: ${what} → ${to}` } });
+  } catch (e) {
+    console.warn(`[campaign] could not record an unsent email for ${bookingId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
+/** Every post with its link — sent once the last item has settled. Resolves true only when the client's copy went out. */
 export async function sendDeliveryEmail(bookingId: string, opts: { force?: boolean } = {}): Promise<boolean> {
   if (!opts.force) {
     const claim = await prisma.campaignBooking.updateMany({
@@ -148,9 +161,10 @@ ${refundNote}
 <p>You can also see these links, and views and likes as they come in, in your portal.</p>
 <p>${button(portalLink(b.id), "See campaign results")}</p>`);
 
-  await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: anyLive ? `Delivered: ${b.name} — your post links` : `Delivered: ${b.name} — final status`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  const sent = await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: anyLive ? `Delivered: ${b.name} — your post links` : `Delivered: ${b.name} — final status`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  if (!sent) await noteEmailNotSent(b.id, "delivery email with every post link", b.client.email);
   await sendEmail({ to: campaignConfig.teamEmail(), subject: `[Copy] Delivered: ${b.name} (${b.client.companyName})`, html, fromName: "Digital Sukoon" });
-  return true;
+  return Boolean(sent);
 }
 
 /** "Your post is live on @account" — once per item. */
@@ -180,8 +194,9 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
 <p>Your ${esc(formatLabelFor(item.platform, item.format))} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
 <p>${button(item.permalink, "View post")}</p>
 ${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
-  await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
-  return true;
+  const sent = await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  if (!sent) await noteEmailNotSent(b.id, `"post is live" email for ${item.accountName}`, b.client.email);
+  return Boolean(sent);
 }
 
 /**
@@ -244,7 +259,7 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
     changes_requested: {
       subject: `Changes needed: ${b.name}`,
       title: "A small change is needed",
-      body: `<p>Our team reviewed <strong>${esc(b.name)}</strong> and needs a change before it can go live:</p><blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote ?? "")}</blockquote>${paidOnline ? "<p>Your payment is safe — make the change in the portal and resubmit.</p>" : "<p>Make the change in the portal and resubmit.</p>"}`,
+      body: `<p>Our team reviewed <strong>${esc(b.name)}</strong> and needs a change before it can go live:</p><blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote ?? "")}</blockquote>${paidOnline ? "<p>Your payment is safe — make the change in the portal and resubmit.</p>" : "<p>Make the change in the portal and resubmit.</p>"}<p style="color:#555">Dates, accounts, the format and the song are fixed once a campaign is submitted. If the change needs one of them, reply to this email.</p>`,
     },
     rejected: {
       subject: `Not approved: ${b.name}`,
@@ -257,7 +272,7 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
     },
   };
   const c = copy[kind];
-  await sendEmail({
+  const sent = await sendEmail({
     to: b.client.email,
     ...(await teamCc(b.client.id, b.client.email)),
     subject: c.subject,
@@ -265,6 +280,7 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
     fromName: "Digital Sukoon",
     replyTo: campaignConfig.teamEmail(),
   });
+  if (!sent) await noteEmailNotSent(b.id, `"${c.subject}" email`, b.client.email);
 }
 
 export async function notifyStaffPaid(bookingId: string) {

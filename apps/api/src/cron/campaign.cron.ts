@@ -2,6 +2,7 @@ import { renderNext } from "../services/campaign/render.service";
 import { runCampaignRetention } from "../services/campaign/retention.service";
 import { runPublishTick } from "../services/campaign/publish.service";
 import { runCreatorOfferExpiry } from "../services/creator/creator-offers.service";
+import { alertPassedWindows } from "../services/campaign/review.service";
 
 // Campaign booking background work:
 //  • render worker — every 30 s, at most ONE file per tick (renderNext has its own overlap
@@ -43,6 +44,18 @@ export function startCampaignCrons() {
     offerExpiryTick();
     setInterval(offerExpiryTick, 10 * 60_000);
   }, 4 * 60_000);
+
+  // An approved campaign whose posting window closed with posts still open: staff are emailed
+  // once per booking. Hourly; the event record makes a re-run (or a restart) a no-op.
+  const windowTick = () => {
+    alertPassedWindows()
+      .then((n) => { if (n) console.log(`[campaign] ${n} posting-window alert(s)`); })
+      .catch((err) => console.error("[campaign] window alert failed:", err));
+  };
+  setTimeout(() => {
+    windowTick();
+    setInterval(windowTick, 3600_000);
+  }, 25 * 60_000);
 
   const retentionTick = async () => {
     if (retentionRunning) return;

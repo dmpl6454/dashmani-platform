@@ -145,13 +145,20 @@ export async function notifyCreatorsOfOffers(offered: OfferedItem[]) {
       const first = await prisma.campaignBookingItem.findUnique({ where: { id: items[0].itemId }, select: { creatorRespondBy: true } });
       const by = first?.creatorRespondBy ? fmtIst(first.creatorRespondBy) : "soon";
       const pages = [...new Set(items.map((i) => i.accountName))].map((n) => `<li>${esc(n)}</li>`).join("");
-      await sendCreatorEmail(
+      const sent = await sendCreatorEmail(
         c.email,
         items.length === 1 ? "A paid post is waiting for you" : `${items.length} paid posts are waiting for you`,
         "New paid post",
         `<p style="margin:0 0 12px">Hi ${esc(c.name)},</p><p style="margin:0 0 12px">A brand booked ${items.length === 1 ? "a post" : `${items.length} posts`} on:</p><ul style="margin:0 0 12px">${pages}</ul><p style="margin:0 0 12px">See the content and your payout, then accept or decline by <b>${esc(by)}</b> (IST). Nothing is posted until you accept.</p><p style="margin:18px 0">${button(creatorLink("/offers"), "Review the post")}</p><p style="margin:12px 0 0">Questions? Reply to this email before you decide — declining is final.</p>`,
         { replyTo: CREATOR_SUPPORT_EMAIL },
       );
+      if (!sent) {
+        // Staff must not read "Offered to the creator" as "the creator was told".
+        const rows = await prisma.campaignBookingItem.findMany({ where: { id: { in: items.map((i) => i.itemId) } }, select: { bookingId: true } });
+        for (const bookingId of new Set(rows.map((r) => r.bookingId))) {
+          await logBookingEvent(bookingId, SYSTEM, `Offer email could not be sent to the creator (${items.map((i) => i.accountName).join(", ")}) — tell them another way; the offer is waiting under Bookings in their portal`);
+        }
+      }
     } catch (e) {
       console.warn(`[creator-offers] offer email failed for ${creatorId}: ${scrubSecrets(e instanceof Error ? e.message : String(e))}`);
     }

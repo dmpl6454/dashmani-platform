@@ -43,14 +43,8 @@ export function kindOfMime(mime: string): "image" | "video" | null {
   return null;
 }
 
-/** Max video length (seconds) for a format, or null for no extra limit (images). */
-export function durationLimitSec(format: string, kind: string): number | null {
-  if (kind !== "video") return null;
-  if (format === "reel") return CAMPAIGN_LIMITS.reelMaxSec;
-  if (format === "story") return CAMPAIGN_LIMITS.storyMaxSec;
-  if (format === "carousel") return CAMPAIGN_LIMITS.carouselVideoMaxSec;
-  return CAMPAIGN_LIMITS.postVideoMaxSec;
-}
+/** Max video length per format: one rule, shared with the client's upload step. */
+export { durationLimitSec } from "@dashmani/shared/src/validators/campaign";
 
 export async function ensureMediaDirs() {
   for (const d of [mediaSubdirs.tmp(), mediaSubdirs.orig(), mediaSubdirs.render()]) {

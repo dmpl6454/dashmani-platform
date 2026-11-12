@@ -402,7 +402,7 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
       <Card
         title="Preview"
         sub={defaultPending ? "Your files are shown without the printed text until the preview is ready." : c.superText ? "This is what will be posted, with your printed text in place." : "This is what will be posted."}
-        right={<Button size="sm" variant="ghost" onClick={() => onEdit("creative")}>Edit</Button>}
+        right={<Button size="sm" variant="ghost" onClick={() => onEdit("creative")} aria-label="Edit content">Edit</Button>}
       >
         <RenderWait campaign={c} action={offline ? "submit it for review" : "pay"} />
         {failed && (
@@ -432,7 +432,7 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
         </dl>
       </Card>
 
-      <Card title="Accounts" sub={nCustom ? "Accounts without their own text post the campaign's caption and printed text." : "Every account posts the campaign's caption and printed text."} right={<Button size="sm" variant="ghost" onClick={() => onEdit("accounts")}>Edit</Button>}>
+      <Card title="Accounts" sub={nCustom ? "Accounts without their own text post the campaign's caption and printed text." : "Every account posts the campaign's caption and printed text."} right={<Button size="sm" variant="ghost" onClick={() => onEdit("accounts")} aria-label="Edit accounts">Edit</Button>}>
         <ul className="divide-y divide-ink/5">
           {c.items.map((i) => (
             <li key={i.id} className="py-2.5 flex items-center gap-3 text-[13px]">

@@ -144,6 +144,15 @@ export const CAMPAIGN_LIMITS = {
   carouselVideoMaxSec: 60,
 } as const;
 
+/** Max video length (seconds) for a format, or null for no limit (images). The API and the upload step share it. */
+export function durationLimitSec(format: string, kind: string): number | null {
+  if (kind !== "video") return null;
+  if (format === "reel") return CAMPAIGN_LIMITS.reelMaxSec;
+  if (format === "story") return CAMPAIGN_LIMITS.storyMaxSec;
+  if (format === "carousel") return CAMPAIGN_LIMITS.carouselVideoMaxSec;
+  return CAMPAIGN_LIMITS.postVideoMaxSec;
+}
+
 export const CAMPAIGN_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 
 export const CAMPAIGN_UPLOAD_MIME = {

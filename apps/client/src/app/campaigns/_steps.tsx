@@ -188,6 +188,8 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   // null = every category; otherwise a categoryKey() from categoryTabs().
   const [cat, setCat] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("followers");
+  // Our network's pages vs independent creators' pages (shown only when both are on offer).
+  const [source, setSource] = useState<"all" | "network" | "creator">("all");
   const [picked, setPicked] = useState<Set<string>>(() => new Set(campaign.items.map((i) => i.rateCardId)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -240,9 +242,15 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   // The rows on the selected platform tab. Category counts are per platform and, like the platform
   // counts, ignore the search box.
   const onPlatform = useMemo(
-    () => offers.filter((a) => platform === "all" || a.platform === platform),
-    [offers, platform],
+    () => offers.filter((a) => (platform === "all" || a.platform === platform) && (source === "all" || a.source === source)),
+    [offers, platform, source],
   );
+  const sourceCounts = useMemo(() => {
+    const onTab = offers.filter((a) => platform === "all" || a.platform === platform);
+    return { all: onTab.length, network: onTab.filter((a) => a.source !== "creator").length, creator: onTab.filter((a) => a.source === "creator").length };
+  }, [offers, platform]);
+  // The chip row is shown only when the catalogue holds both kinds.
+  const hasBothSources = offers.some((a) => a.source === "creator") && offers.some((a) => a.source !== "creator");
   const catTabs = useMemo(() => categoryTabs(onPlatform), [onPlatform]);
   // Labels come from every account for this format, so a category reads the same on each platform tab.
   const labelOf = useMemo(() => new Map(categoryTabs(offers).map((t) => [t.key, t.label])), [offers]);
@@ -252,7 +260,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
     return inCategory(onPlatform, activeCat)
-      .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || matchesCategory(a.category, term))
+      .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || matchesCategory(a.category, term) || (a.source === "creator" && "creator".startsWith(term)))
       .sort((a, b) =>
         sort === "price" ? a.price.total - b.price.total :
         sort === "engagement" ? (b.engagementRatePct ?? -1) - (a.engagementRatePct ?? -1) :
@@ -355,12 +363,36 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
               role="tab"
               aria-selected={platform === p}
               onClick={() => setPlatform(p)}
-              className={`h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${platform === p ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+              className={`h-11 sm:h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${platform === p ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
             >
               {p === "all" ? "All" : PLATFORM_LABEL[p]} <span className="opacity-70 tabular-nums">{counts[p] ?? 0}</span>
             </button>
           ))}
         </div>
+
+        {hasBothSources && (
+          <div className="mb-4">
+            <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Who posts">
+              {(["all", "network", "creator"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  role="tab"
+                  aria-selected={source === s}
+                  onClick={() => setSource(s)}
+                  className={`h-11 sm:h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${source === s ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+                >
+                  {s === "all" ? "All pages" : s === "network" ? "Our pages" : "Creators"} <span className="opacity-70 tabular-nums">{sourceCounts[s]}</span>
+                </button>
+              ))}
+            </div>
+            {source === "creator" && (
+              <p className="text-[12.5px] text-ink-3 mt-2">
+                Independent creators&apos; own pages. After our team approves your campaign, each creator accepts your post and it goes live; if a creator declines, {campaign.paymentMode === "offline" ? "that post isn't charged" : "you're refunded for that post"}.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Category tabs appear once there are two or more to choose between: one category is just the list. */}
         {catTabs.length > 1 && (
@@ -372,7 +404,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                 role="tab"
                 aria-selected={activeCat === null}
                 onClick={() => setCat(null)}
-                className={`h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === null ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+                className={`h-11 sm:h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === null ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
               >
                 All <span className="opacity-70 tabular-nums">{onPlatform.length}</span>
               </button>
@@ -383,7 +415,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                   role="tab"
                   aria-selected={activeCat === t.key}
                   onClick={() => setCat(t.key)}
-                  className={`max-w-full min-w-0 h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === t.key ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+                  className={`max-w-full min-w-0 h-11 sm:h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === t.key ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
                 >
                   <span className="block truncate">{labelOf.get(t.key) ?? t.label} <span className="opacity-70 tabular-nums">{t.count}</span></span>
                 </button>
@@ -445,35 +477,40 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.pictureUrl} alt="" className="h-9 w-9 rounded-full object-cover shrink-0 bg-muted" loading="lazy" referrerPolicy="no-referrer" />
                   ) : (
-                    <span className="h-9 w-9 rounded-full bg-muted grid place-items-center text-[13px] font-bold text-ink-2 shrink-0">{a.name[0]?.toUpperCase()}</span>
+                    <span aria-hidden="true" className="h-9 w-9 rounded-full bg-muted grid place-items-center text-[13px] font-bold text-ink-2 shrink-0">{a.name[0]?.toUpperCase()}</span>
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <PlatformDot platform={a.platform} />
-                      <span className="text-[13.5px] font-semibold text-ink truncate">{a.name}</span>
+                      <span className="text-[13.5px] font-semibold text-ink line-clamp-2 sm:line-clamp-none sm:truncate break-words min-w-0">{a.name}</span>
                       {a.source === "creator" && (
-                        <span
-                          className="shrink-0 inline-flex items-center h-5 px-1.5 text-[10px] font-bold uppercase tracking-[0.06em] border border-indigo/40 text-indigo"
-                          title="An independent creator's page. The creator confirms your post before it goes live; if they decline, we refund that post."
-                        >
+                        <span className="hidden sm:inline-flex shrink-0 items-center h-5 px-1.5 text-[10px] font-bold uppercase tracking-[0.06em] border border-indigo/40 text-indigo">
                           Creator
                         </span>
                       )}
                       {a.profileUrl && (
-                        <a href={a.profileUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="p-2 -m-2 text-ink-3 hover:text-ink shrink-0" aria-label={`Open ${a.name}`}>
+                        <a href={a.profileUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="hidden sm:inline-flex p-2 -m-2 text-ink-3 hover:text-ink shrink-0" aria-label={`Open ${a.name}`}>
                           <Icon.External size={12} />
                         </a>
                       )}
                     </div>
                     <div className="text-[12px] text-ink-3 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {a.source === "creator" && (
+                        <span className="sm:hidden inline-flex items-center h-5 px-1.5 text-[10px] font-bold uppercase tracking-[0.06em] border border-indigo/40 text-indigo">Creator</span>
+                      )}
                       {a.username && <span className="truncate max-w-[160px]">@{a.username}</span>}
                       <span>{PLATFORM_LABEL[a.platform]}{formatLabelFor(a.platform, format) !== FORMAT_LABELS[format] ? ` ${formatLabelFor(a.platform, format)}` : ""}</span>
                       {a.category && <span>{a.category}</span>}
                       {a.linkDeliveryMinutes && <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>}
-                      {a.source === "creator" && a.creatorResponseHours != null && <span>The creator has up to {a.creatorResponseHours} h after our approval to accept</span>}
+                      {a.source === "creator" && (
+                        <span>
+                          Posted by the creator once they accept{a.creatorResponseHours != null ? ` (up to ${a.creatorResponseHours} h after our approval)` : ""} — if they decline, {campaign.paymentMode === "offline" ? "that post isn't charged" : "you're refunded for that post"}
+                        </span>
+                      )}
                     </div>
                     <div className="sm:hidden text-[11px] text-ink-3 tabular-nums">
-                      {compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement
+                      {compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement (28 days)
+                      {a.price.addon > 0 && <> · incl. {rupees(a.price.addon)} for the song</>}
                     </div>
                   </div>
                   <div className="hidden sm:grid grid-cols-2 gap-x-5 text-right shrink-0">

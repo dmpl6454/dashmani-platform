@@ -12,7 +12,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       <header className="border-b-2 border-border">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-3 flex items-center gap-4">
           <Link href="/" className="flex items-center gap-2.5 font-extrabold tracking-tight text-[17px] min-w-0">
-            <img src="/logo-mark.svg" alt="" className="w-8 h-8 shrink-0" />
+            <img src="/logo.png" alt="" className="w-8 h-8 shrink-0" />
             <span className="truncate">Digital Sukoon <span className="text-indigo-light">Creators</span></span>
           </Link>
           <div className="ml-auto flex items-center gap-2 shrink-0">

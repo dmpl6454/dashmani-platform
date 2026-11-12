@@ -85,7 +85,7 @@ function activityEmailHtml(title: string, details: { label: string; value: strin
       </table>
       ${actionUrl ? `<a href="${actionUrl}" class="action-btn">${actionLabel || "View in Portal"} →</a>` : ""}
     </div>
-    <div class="footer">Dashmani Media Private Limited · Digital Sukoon</div>
+    <div class="footer">Digital Sukoon Private Limited</div>
   </div>
 </body>
 </html>`;
@@ -125,7 +125,7 @@ export function announcementEmailHtml(senderName: string, title: string, message
       <p class="message-body">${safeMessage}</p>
       <a href="${portalUrl}" class="action-btn">Open Portal →</a>
     </div>
-    <div class="footer">Dashmani Media Private Limited · Digital Sukoon</div>
+    <div class="footer">Digital Sukoon Private Limited</div>
   </div>
 </body>
 </html>`;
@@ -230,7 +230,7 @@ export async function sendApplicationNotification(application: {
       <p style="margin-top:24px;font-size:13px;color:#999;">Review this application at <a href="${process.env.INTERNAL_APP_URL || "https://portal.digitalsukoon.com"}/jobs" style="color:#2563eb;">Admin Portal → Job Listings</a></p>
     </div>
     <div class="footer">
-      Dashmani Media Private Limited · Digital Sukoon
+      Digital Sukoon Private Limited
     </div>
   </div>
 </body>
@@ -271,7 +271,7 @@ export async function sendApplicationNotification(application: {
       <p style="margin-top:24px;">Best regards,<br><strong>Digital Sukoon HR Team</strong></p>
     </div>
     <div class="footer">
-      Dashmani Media Private Limited · Digital Sukoon
+      Digital Sukoon Private Limited
     </div>
   </div>
 </body>

@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="border-b-2 border-border">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Link href="/dashboard" className="flex items-center gap-2.5 font-extrabold tracking-tight text-[17px] whitespace-nowrap min-w-0">
-            <img src="/logo-mark.svg" alt="" className="w-8 h-8 shrink-0" />
+            <img src="/logo.png" alt="" className="w-8 h-8 shrink-0" />
             <span className="truncate">Digital Sukoon <span className="text-indigo-light">Creators</span></span>
           </Link>
           <nav aria-label="Creator portal" className="order-3 w-full sm:order-none sm:w-auto flex flex-wrap gap-1">

@@ -6,7 +6,7 @@ import { WebVitalsReporter } from "@/components/web-vitals";
 export const metadata: Metadata = {
   title: { default: "Digital Sukoon Billing", template: "%s · Digital Sukoon Billing" },
   description: "GST invoices, payments, bank statements, accounts, reconciliation and Tally for Digital Sukoon and Dashmani Media.",
-  icons: { icon: "/logo-mark.svg" },
+  icons: { icon: "/favicon.png", apple: "/apple-touch-icon.png" },
   robots: { index: false, follow: false },
 };
 

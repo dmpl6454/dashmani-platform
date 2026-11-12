@@ -871,7 +871,7 @@ router.get("/hr/preview", authenticateHr, async (req: Request, res: Response, ne
         timeoutMs: 5000,
         maxBytes: 50_000,
         maxRedirects: 1,
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; DashmaniBot/1.0)", Accept: "text/html" },
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; DigitalSukoonBot/1.0)", Accept: "text/html" },
       })).text;
     } catch { return success(res, null); }
 

@@ -10,7 +10,7 @@ export default function CompanyProfilePage() {
 
   return (
     <>
-      <Topstrip title="About Company" sub="About Dashmani Media & Digital Sukoon" />
+      <Topstrip title="About Company" sub="About Digital Sukoon" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
 
         {/* Hero */}
@@ -21,12 +21,12 @@ export default function CompanyProfilePage() {
                 <Building2 className="h-7 w-7 text-indigo" />
               </div>
               <div>
-                <h2 className="text-xl font-display font-light text-white">Dashmani Media Pvt. Ltd.</h2>
-                <p className="text-[12px] text-white/50 mt-0.5 font-medium">Parent Company</p>
+                <h2 className="text-xl font-display font-light text-white">Digital Sukoon Private Limited</h2>
+                <p className="text-[12px] text-white/50 mt-0.5 font-medium">Who we are</p>
               </div>
             </div>
             <p className="text-[13px] text-white/70 leading-relaxed max-w-2xl">
-              Dashmani Media Private Limited is a full-service media and marketing agency headquartered in India. We specialize in digital marketing, social media management, content creation, influencer marketing, and brand strategy. Our mission is to help brands grow their digital presence through innovative and data-driven marketing solutions.
+              Digital Sukoon Private Limited is a full-service media and marketing agency headquartered in Mumbai, India. We specialize in digital marketing, social media management, content creation, influencer marketing, and brand strategy. Our mission is to help brands grow their digital presence through innovative and data-driven marketing solutions.
             </p>
           </div>
         </div>
@@ -39,12 +39,12 @@ export default function CompanyProfilePage() {
             </div>
             <div>
               <p className="text-[14px] font-display font-semibold text-ink">Digital Sukoon</p>
-              <p className="text-[11px] text-ink-4 font-medium">A Dashmani Media Initiative</p>
+              <p className="text-[11px] text-ink-4 font-medium">Social media marketing &amp; management</p>
             </div>
           </div>
           <div className="p-5">
             <p className="text-[13px] text-ink-3 leading-relaxed mb-5">
-              Digital Sukoon is a social media marketing and management agency under Dashmani Media. We provide end-to-end social media services including content planning, graphic design, video production, influencer collaborations, paid advertising, and analytics reporting. We work with brands across industries to build authentic online communities and drive measurable business results.
+              Digital Sukoon is a social media marketing and management agency. We provide end-to-end social media services including content planning, graphic design, video production, influencer collaborations, paid advertising, and analytics reporting. We work with brands across industries to build authentic online communities and drive measurable business results.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {[
@@ -113,7 +113,8 @@ export default function CompanyProfilePage() {
         <div className="v3-card overflow-hidden">
           <div className="bg-ink px-6 py-5 text-center">
             <p className="text-[11px] text-white/50 font-medium mb-1 uppercase tracking-wider">Company Registered Office</p>
-            <p className="font-display text-[16px] text-white">Dashmani Media Private Limited</p>
+            <p className="font-display text-[16px] text-white">Digital Sukoon Private Limited</p>
+            <p className="text-[12px] text-white/60 mt-1">702, Parinee I, Andheri West, Mumbai 400053</p>
             <p className="text-[12px] text-white/50 mt-2">
               For any queries, contact HR at{" "}
               <a href="mailto:hr@digitalsukoon.com" className="text-indigo hover:underline font-medium">

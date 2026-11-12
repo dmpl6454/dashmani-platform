@@ -83,7 +83,7 @@ function AdminSignupForm() {
 
       <div className="w-full lg:w-[44%] min-w-0 lg:min-w-[380px] flex flex-col justify-between p-6 sm:p-9 relative z-10" style={{ animation: mounted ? "crx-fadeInLeft 0.6s ease-out" : "none" }}>
         <div className="flex items-center gap-2.5">
-          <img src="/logo.svg" alt="Digital Sukoon" className="h-9 w-9 rounded-full" />
+          <img src="/logo.png" alt="Digital Sukoon" className="h-9 w-9 rounded-full" />
           <span className="font-bold text-[#1A1A1A] uppercase tracking-[2px] text-sm">Digital Sukoon</span>
         </div>
 

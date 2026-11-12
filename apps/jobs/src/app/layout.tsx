@@ -62,21 +62,22 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
+  icons: { icon: "/favicon.png", apple: "/apple-touch-icon.png" },
   title: {
     default: "Careers at Digital Sukoon — Jobs & Internships",
     template: "%s | Digital Sukoon Careers",
   },
   description:
-    "Join Digital Sukoon, a full-service digital marketing agency by Dashmani Media. Explore open positions in social media, content creation, graphic design, video production, web development, and more. Apply for jobs or our 6-month internship program.",
+    "Join Digital Sukoon, a full-service digital marketing agency in Mumbai. Explore open positions in social media, content creation, graphic design, video production, web development, and more. Apply for jobs or our 6-month internship program.",
   keywords: [
-    "Digital Sukoon careers", "Dashmani Media jobs", "digital marketing jobs Mumbai",
+    "Digital Sukoon careers", "Digital Sukoon jobs", "digital marketing jobs Mumbai",
     "social media manager jobs", "content writing jobs", "graphic design internship",
     "video editor jobs", "marketing agency careers", "internship in digital marketing",
-    "Digital Sukoon internship", "Dashmani Media internship", "marketing jobs India",
+    "Digital Sukoon internship", "marketing jobs India",
   ],
-  authors: [{ name: "Dashmani Media Private Limited" }],
-  creator: "Dashmani Media Private Limited",
-  publisher: "Dashmani Media Private Limited",
+  authors: [{ name: "Digital Sukoon Private Limited" }],
+  creator: "Digital Sukoon Private Limited",
+  publisher: "Digital Sukoon Private Limited",
   robots: {
     index: true, follow: true,
     googleBot: { index: true, follow: true, "max-snippet": -1, "max-image-preview": "large" },
@@ -100,9 +101,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "Digital Sukoon",
-    legalName: "Dashmani Media Private Limited",
+    legalName: "Digital Sukoon Private Limited",
     url: "https://digitalsukoon.com",
-    logo: "https://digitalsukoon.com/logo.svg",
+    logo: "https://digitalsukoon.com/logo.png",
     sameAs: [
       "https://www.instagram.com/digitalsukoon",
       "https://www.linkedin.com/company/digitalsukoon",
@@ -120,7 +121,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     name: "Digital Sukoon Careers",
     url: SITE_URL,
     description: "Career opportunities at Digital Sukoon — a full-service digital marketing agency.",
-    publisher: { "@type": "Organization", name: "Dashmani Media Private Limited" },
+    publisher: { "@type": "Organization", name: "Digital Sukoon Private Limited" },
   };
 
   const fontVars = [dmSans.variable, bricolage.variable, instrumentSerif.variable, jetbrainsMono.variable].join(" ");

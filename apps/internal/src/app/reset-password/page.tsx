@@ -40,7 +40,7 @@ function ResetPasswordForm() {
     <div className="min-h-screen flex items-center justify-center bg-bg px-4">
       <div className="v3-card bg-surface p-8 w-full max-w-sm">
         <div className="flex items-center gap-2 mb-6">
-          <img src="/logo.svg" alt="Digital Sukoon" className="h-8 w-8 rounded-full border-2 border-ink" />
+          <img src="/logo.png" alt="Digital Sukoon" className="h-8 w-8 rounded-full border-2 border-ink" />
           <span className="font-bold text-ink uppercase tracking-[2px] text-sm">Digital Sukoon</span>
         </div>
         <h1 className="font-display text-2xl font-semibold text-ink mb-1">Set new password</h1>

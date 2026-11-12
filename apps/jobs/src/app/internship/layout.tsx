@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     "Digital Sukoon internship", "marketing internship Mumbai", "digital marketing internship",
     "content writing internship", "graphic design internship", "social media internship",
     "6 month internship", "paid internship marketing", "internship with certificate",
-    "Dashmani Media internship", "internship for freshers", "video production internship",
+    "internship for freshers", "video production internship",
   ],
   alternates: { canonical: `${SITE_URL}/internship` },
   openGraph: {
@@ -44,7 +44,7 @@ export default function InternshipLayout({ children }: { children: React.ReactNo
       "@type": "Organization",
       name: "Digital Sukoon",
       sameAs: "https://digitalsukoon.com",
-      logo: "https://digitalsukoon.com/logo.svg",
+      logo: "https://digitalsukoon.com/logo.png",
     },
     jobLocation: {
       "@type": "Place",

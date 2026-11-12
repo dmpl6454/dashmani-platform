@@ -11,6 +11,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "Digital Sukoon - Employee Portal",
   description: "HR Employee Portal",
+  icons: { icon: "/favicon.png", apple: "/apple-touch-icon.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

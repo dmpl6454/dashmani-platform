@@ -33,7 +33,7 @@ const orgJsonLd = {
   "@context": "https://schema.org",
   "@type": "Organization",
   name: "Digital Sukoon",
-  legalName: "Dashmani Media Private Limited",
+  legalName: "Digital Sukoon Private Limited",
   url: SITE_URL,
   logo: `${SITE_URL}/logo.png`,
   email: "biz@digitalsukoon.com",

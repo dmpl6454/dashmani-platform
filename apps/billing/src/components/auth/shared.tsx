@@ -63,7 +63,7 @@ export function AuthShell({
     <main className="auth-shell">
       <header className="auth-header">
         <Link href="/" className="auth-brand">
-          <img src="/logo-mark.svg" alt="" />
+          <img src="/logo.png" alt="" />
           <span>Digital Sukoon <em>Billing</em></span>
         </Link>
         <span className="auth-onair"><i aria-hidden /> On air</span>

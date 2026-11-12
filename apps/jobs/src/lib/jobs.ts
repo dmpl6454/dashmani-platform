@@ -177,7 +177,7 @@ export function buildJobPostingSchema(job: PublicJob) {
       "@type": "Organization",
       name: "Digital Sukoon",
       sameAs: "https://digitalsukoon.com",
-      logo: "https://digitalsukoon.com/logo.svg",
+      logo: "https://digitalsukoon.com/logo.png",
     },
     jobLocation: {
       "@type": "Place",

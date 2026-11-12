@@ -6,7 +6,7 @@ import { WebVitalsReporter } from "@/components/web-vitals";
 export const metadata: Metadata = {
   title: { default: "Digital Sukoon Sales", template: "%s · Digital Sukoon Sales" },
   description: "Inventory, quotes, orders, GST invoices and payments for the Digital Sukoon sales team.",
-  icons: { icon: "/logo-mark.svg" },
+  icons: { icon: "/favicon.png", apple: "/apple-touch-icon.png" },
   robots: { index: false, follow: false },
 };
 

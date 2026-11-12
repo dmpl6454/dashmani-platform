@@ -74,7 +74,7 @@ export function DsSidebar() {
       >
         {/* Brand */}
         <div className={cn("h-16 flex items-center gap-2.5 border-b border-ds-line shrink-0", expanded ? "px-4" : "justify-center")}>
-          <img src="/logo-ds.svg" alt="Digital Sukoon" className="h-9 w-9 rounded-full shrink-0 ring-1 ring-ds-gold/30" />
+          <img src="/logo.png" alt="Digital Sukoon" className="h-9 w-9 rounded-full shrink-0 ring-1 ring-ds-gold/30" />
           {expanded && (
             <div className="min-w-0">
               <p className="text-[11.5px] font-bold tracking-[.12em] uppercase leading-tight text-ds-text truncate">Digital Sukoon</p>
@@ -214,7 +214,7 @@ export function DsSidebar() {
         <button onClick={() => setMobileOpen(true)} className="p-1 text-ds-t2 hover:text-ds-text" aria-label="Open menu">
           <Menu className="h-5 w-5" />
         </button>
-        <img src="/logo-ds.svg" alt="" className="h-7 w-7 rounded-full" />
+        <img src="/logo.png" alt="" className="h-7 w-7 rounded-full" />
         <span className="text-[11px] font-bold tracking-[.12em] uppercase text-ds-text">Digital Sukoon</span>
       </div>
 

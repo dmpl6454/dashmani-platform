@@ -65,7 +65,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Dashmani Client Portal</title>
+        <title>Digital Sukoon Client Portal</title>
         {/* The body font, fetched alongside the CSS instead of after it (self-hosted, public/fonts). */}
         <link rel="preload" href="/fonts/manrope-normal-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         {/* The Digital Sukoon circle logo (same artwork as digitalsukoon.com's /logo.png). */}

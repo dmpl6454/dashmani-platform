@@ -978,7 +978,7 @@ export default function OverviewPage() {
       <aside className="ov-side" aria-label="Primary navigation">
         <div className="ov-brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.svg" alt="Digital Sukoon" className="ov-logo" />
+          <img src="/logo.png" alt="Digital Sukoon" className="ov-logo" />
         </div>
         <nav className="ov-nav" aria-label="Sections">
           {NAV.map((n) => {

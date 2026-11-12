@@ -118,8 +118,20 @@ async function toAdminAssetViews(assets: CreatorAsset[]) {
     ? await prisma.metaAsset.findMany({ where: { id: { in: dupIds } }, select: { id: true, name: true } })
     : [];
   const nameOf = new Map(network.map((n) => [n.id, n.name]));
+  // Formats a brand can book on each page right now: an active creator rate card exists only
+  // while the creator has a price AND staff set a margin (syncCreatorCards). Shown to staff so
+  // "switched on" is never read as "listed".
+  const cards = assets.length
+    ? await prisma.campaignRateCard.findMany({
+        where: { targetType: "creator_asset", targetId: { in: assets.map((a) => a.id) }, active: true },
+        select: { targetId: true, format: true },
+      })
+    : [];
+  const listedOf = new Map<string, string[]>();
+  for (const c of cards) listedOf.set(c.targetId, [...(listedOf.get(c.targetId) ?? []), c.format]);
   return assets.map((a) => ({
     ...toAssetView(a),
+    listedFormats: (listedOf.get(a.id) ?? []).sort(),
     tasks: a.tasks,
     // "Already on our network": the duplicate exists even when its network row has since gone.
     networkDuplicateOfName: a.networkDuplicateOf ? nameOf.get(a.networkDuplicateOf) ?? null : null,

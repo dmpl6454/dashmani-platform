@@ -77,7 +77,7 @@ function CreatorView() {
     try {
       await apiFetch(`/sales/creators/${id}/assets/${a.id}`, { method: "PUT", body: JSON.stringify({ enabled: !a.enabled }) });
       await mutate();
-      setToast({ message: a.enabled ? `${a.name} turned off.` : `${a.name} turned on — it can now be offered.`, tone: "ok" });
+      setToast({ message: a.enabled ? `${a.name} turned off.` : `${a.name} turned on. Brands can book it once the creator has set a price and an admin has set our margin (staff portal → Creators → Prices).`, tone: "ok" });
     } catch (err) {
       await mutate();
       setToast({ message: sentence(err), tone: "err" });
@@ -139,9 +139,9 @@ function CreatorView() {
       <section className="card overflow-x-auto mb-4">
         <div className="p-4 pb-0"><h2 className="font-bold">Pages <span className="text-ink-4 font-normal text-sm">{live.length} connected{gone.length ? ` · ${gone.length} disconnected` : ""}</span></h2></div>
         {assets.length === 0 ? <p className="p-4 text-sm text-ink-3">No pages yet.</p> : (
-          <table className="w-full text-sm min-w-[680px]">
+          <table className="w-full text-sm min-w-[820px]">
             <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left">
-              <tr className="border-b-2 border-border"><th className="p-3">Page</th><th className="p-3 text-right">Followers</th><th className="p-3 text-right">Views 28d</th><th className="p-3">Can offer?</th><th className="p-3 text-right">Offered</th></tr>
+              <tr className="border-b-2 border-border"><th className="p-3">Page</th><th className="p-3 text-right">Followers</th><th className="p-3 text-right">Views 28d</th><th className="p-3">Can offer?</th><th className="p-3">Listed for brands</th><th className="p-3 text-right">Offered</th></tr>
             </thead>
             <tbody>
               {[...live, ...gone].map((a) => {
@@ -158,6 +158,11 @@ function CreatorView() {
                     <td className="p-3 text-right tabular-nums">{compact(a.followerCount)}</td>
                     <td className="p-3 text-right tabular-nums">{compact(a.views28d)}</td>
                     <td className="p-3 text-xs">{block ? <span className={a.networkDuplicate ? "text-danger" : "text-attention"}>{block}</span> : <span className="text-success">Yes</span>}</td>
+                    <td className="p-3 text-xs">
+                      {!a.enabled || c.status !== "approved" ? <span className="text-ink-4">—</span>
+                        : (a.listedFormats ?? []).length > 0 ? <span className="text-success">Yes · {(a.listedFormats ?? []).join(", ")}</span>
+                        : <span className="text-attention">Not yet — needs the creator&apos;s price and our margin (an admin sets it on the staff portal)</span>}
+                    </td>
                     <td className="p-3 text-right">
                       {a.enabled || !block ? (
                         <button type="button" role="switch" aria-checked={a.enabled} aria-label={`Offer ${a.name}`} disabled={busyAsset === a.id} onClick={() => toggle(a)} className={`btn btn-sm ${a.enabled ? "" : "btn-ghost"}`}>

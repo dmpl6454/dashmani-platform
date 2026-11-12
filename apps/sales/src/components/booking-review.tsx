@@ -25,6 +25,13 @@ export function BookingReview({ b, onToast }: { b: BookingDetail; onToast: (t: T
   const offline = !b.paidOnline;
   const noteOk = note.trim().length >= 3;
   const accounts = b.items.filter((i) => i.billed);
+  const creatorCount = accounts.filter((i) => i.targetType === "creator_asset").length;
+  const networkCount = accounts.length - creatorCount;
+  // Where approval sends the posts: our pages to the staff posting list, creator pages to their creator.
+  const afterApprove = [
+    networkCount > 0 ? `${networkCount === accounts.length ? "each account goes" : `${networkCount} of our account${networkCount === 1 ? " goes" : "s go"}`} on the staff portal's posting list` : "",
+    creatorCount > 0 ? `${creatorCount === 1 ? "the creator page goes to its creator" : `${creatorCount} creator pages go to their creators`}, and nothing is posted there until they accept` : "",
+  ].filter(Boolean).join("; ") || "the posts go on the staff portal's posting list";
 
   async function run(action: Action) {
     const path = action === "approve" ? "approve" : action === "changes" ? "request-changes" : "reject";
@@ -42,7 +49,7 @@ export function BookingReview({ b, onToast }: { b: BookingDetail; onToast: (t: T
         onToast({
           message:
             action === "approve"
-              ? "Approved. Each account is now on the staff portal's posting list."
+              ? `Approved. ${afterApprove.charAt(0).toUpperCase()}${afterApprove.slice(1)}.`
               : action === "changes"
                 ? "Sent back to the client with your note."
                 : offline
@@ -99,7 +106,7 @@ export function BookingReview({ b, onToast }: { b: BookingDetail; onToast: (t: T
           body={
             <>
               {accounts.length} account{accounts.length === 1 ? "" : "s"} ({accounts.map((i) => i.accountName).join(", ")})
-              {b.launchFrom ? <>, posting between {fmtDate(b.launchFrom)} and {fmtDate(b.launchTo)}</> : null}. We email the client that it&apos;s approved.
+              {b.launchFrom ? <>, posting between {fmtDate(b.launchFrom)} and {fmtDate(b.launchTo)}</> : null}. {afterApprove.charAt(0).toUpperCase()}{afterApprove.slice(1)}. We email the client that it&apos;s approved.
             </>
           }
           confirmLabel="Approve"

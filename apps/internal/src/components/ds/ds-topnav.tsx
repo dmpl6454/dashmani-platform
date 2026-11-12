@@ -13,7 +13,7 @@ import { useTheme } from "@/lib/theme";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { QuickAnnounceModal } from "@/components/top-nav";
 // Deep import on purpose (see top-nav.tsx): the barrel would pull zod into every page.
-import { bellListView, pipelineNotificationUrl } from "@dashmani/shared/src/pipeline/bell";
+import { bellListView, pipelineNotificationUrl, salesNotificationUrl } from "@dashmani/shared/src/pipeline/bell";
 
 function initials(name?: string | null) {
   const parts = (name || "").trim().split(/\s+/).filter(Boolean);
@@ -189,6 +189,14 @@ export function DsTopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                         </a>
                       ) : null;
                     })()}
+                    {(() => {
+                      const url = salesNotificationUrl(selectedNotif);
+                      return url ? (
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] border border-ds-gold bg-ds-gold/[.12] text-ds-gold text-xs font-semibold hover:bg-ds-gold/[.22]">
+                          Open in Sales Portal ↗
+                        </a>
+                      ) : null;
+                    })()}
                     {approvalHint(selectedNotif) && (
                       <Link
                         href="/employees/pending"
@@ -260,6 +268,14 @@ export function DsTopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                                   return url ? (
                                     <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="inline-block mt-1.5 text-[10px] font-bold text-ds-gold hover:underline">
                                       Open in Employee Portal ↗
+                                    </a>
+                                  ) : null;
+                                })()}
+                                {(() => {
+                                  const url = salesNotificationUrl(n);
+                                  return url ? (
+                                    <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="inline-block mt-1.5 text-[10px] font-bold text-ds-gold hover:underline">
+                                      Open in Sales Portal ↗
                                     </a>
                                   ) : null;
                                 })()}

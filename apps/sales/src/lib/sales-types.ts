@@ -128,6 +128,8 @@ export interface BookingDetail {
     id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number; audioAddonPaise: number; status: string; permalink: string | null; postedAt: string | null; live: boolean; billed: boolean;
     /** null = the booking's caption; "" on superTextOverride = no overlay on this account. */
     captionOverride: string | null; hashtagsOverride: string[]; superTextOverride: string | null;
+    /** "creator_asset" = a creator's own page: approval offers the post to that creator. */
+    targetType?: string;
   }>;
   billable: boolean; billablePaise: number; invoices: BookingInvoice[];
   caption: string | null; hashtags: string[]; userTags: string[]; collaborators: string[]; superText: string | null; superTextStyle: string | null;

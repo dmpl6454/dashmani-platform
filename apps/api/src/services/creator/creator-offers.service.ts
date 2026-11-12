@@ -1,4 +1,5 @@
 import { prisma, type Prisma } from "@dashmani/db";
+import { notifyStaffBell } from "../campaign/staff-bell";
 import { formatLabelFor, isPlatformPostUrl, platformPostLinkError, todayIST, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { scrubSecrets } from "../../utils/token-crypto";
@@ -581,8 +582,18 @@ export async function expireCreatorOffers(now = new Date()): Promise<number> {
   return expired.length;
 }
 
-/** Tell the admin inbox; the campaign page shows the item with Refund / drop. Never throws. */
+/** Tell the admin inbox and the sales team's bell; the campaign page shows the item with Refund / drop. Never throws. */
 async function alertStaffDeclined(rows: Array<{ bookingId: string; accountName: string; why: string }>) {
+  // One bell row per booking (G45), so each links to the booking that needs acting on.
+  const byBooking = new Map<string, Array<{ accountName: string; why: string }>>();
+  for (const r of rows) byBooking.set(r.bookingId, [...(byBooking.get(r.bookingId) ?? []), r]);
+  for (const [bookingId, list] of byBooking) {
+    await notifyStaffBell(
+      bookingId,
+      list.length === 1 ? "A creator post needs a refund or another page" : `${list.length} creator posts need a refund or another page`,
+      `${list.map((r) => `${r.accountName}: ${r.why}`).join("; ")}. Refund the post or arrange another page.`,
+    );
+  }
   try {
     await adminAlert(
       rows.length === 1 ? "A creator post needs a refund or another page" : `${rows.length} creator posts need a refund or another page`,

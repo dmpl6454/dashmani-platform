@@ -16,6 +16,7 @@ export const metadata: Metadata = {
   title: "Digital Sukoon · We distribute attention",
   description: DESCRIPTION,
   alternates: { canonical: "/" },
+  icons: { icon: [{ url: "/favicon.ico", sizes: "any" }, { url: "/icon.png", type: "image/png" }], apple: "/apple-touch-icon.png" },
   openGraph: {
     type: "website",
     url: SITE_URL,

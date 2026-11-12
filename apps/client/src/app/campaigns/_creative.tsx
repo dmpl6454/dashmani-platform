@@ -10,6 +10,7 @@ import {
   HASHTAG_RE,
   countHashtags,
   countMentions,
+  durationLimitSec,
   type CampaignFormat,
 } from "@dashmani/shared/src/validators/campaign";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -140,6 +141,19 @@ interface Uploading {
   /** Waiting for a free upload slot. */
   queued: boolean;
   ctrl: AbortController | null;
+}
+
+/** A video longer than this format allows: said on the file as soon as its upload finishes (the server refuses it on Save). */
+function tooLongNote(m: CampaignMedia, format: CampaignFormat): string | null {
+  const limit = durationLimitSec(format, m.kind);
+  if (limit == null || m.durationMs == null || m.durationMs <= limit * 1000) return null;
+  return `This video is ${Math.round(m.durationMs / 1000)} s — a ${FORMAT_LABELS[format].toLowerCase()} takes up to ${limit} s. Remove it and upload a shorter one.`;
+}
+
+/** A landscape video in a vertical format is padded with black bars — said, never refused. */
+function landscapeNote(m: CampaignMedia, format: CampaignFormat): string | null {
+  if (m.kind !== "video" || (format !== "reel" && format !== "story") || !m.width || !m.height || m.width <= m.height) return null;
+  return `This video is landscape. ${format === "story" ? "Stories" : "Reels"} are vertical, so it'll be posted with black bars above and below. Keep it, or upload a vertical (9:16) video.`;
 }
 
 type FieldErrors = { hashtags?: string; userTags?: string; collabs?: string; audioTrack?: string };
@@ -580,6 +594,8 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
     if (format === "carousel" && media.length < CAMPAIGN_LIMITS.carouselMin) return setError("A carousel needs at least 2 files.");
     if (format === "reel" && media.some((m) => m.kind !== "video")) return setError("A reel needs a video (MP4 or MOV).");
     if (uploads.some((u) => !u.error) || (thumbApplies && thumbUpload && !thumbUpload.error)) return setError("Wait for the uploads to finish.");
+    const long = media.find((m) => tooLongNote(m, format));
+    if (long) return setError(tooLongNote(long, format));
     const withAudio = format === "reel" && audio;
 
     // Mirror the server's checks so a typo is caught here, next to its field.
@@ -770,6 +786,8 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
                     <button type="button" aria-label={`Remove ${m.originalName}`} className="p-1 hover:text-danger" onClick={() => removeMedia(m)}><Icon.Close size={14} /></button>
                   </div>
                   {!saved && <div className="text-[11.5px] text-attention">Not saved yet — save this step to keep it</div>}
+                  {tooLongNote(m, format) && <div role="alert" className="text-[11.5px] text-danger font-medium mt-0.5">{tooLongNote(m, format)}</div>}
+                  {!tooLongNote(m, format) && landscapeNote(m, format) && <div className="text-[11.5px] text-ink-3 mt-0.5">{landscapeNote(m, format)}</div>}
                   {saved && m.renderStatus === "failed" && <RenderFailedActions busy={busy} onRetry={save} onReplace={() => replaceFailed(m)} />}
                 </div>
               );

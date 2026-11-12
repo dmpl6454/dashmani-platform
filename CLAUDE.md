@@ -931,6 +931,14 @@ From the 2026-11-06 UX review (PR E). The Overview (`dashboard/page.tsx`) also r
 - **Not done (owner decisions):** how creators are paid (company, TDS, PAN) and default usage rights / how long a post stays up (G72, G85).
 - Tests: creator-marketplace "doing the job without asking (batch 2)" (8, each red-green checked).
 
+## Booking wizard catches mistakes early (2026-11-12, batch 4 of the two-sided review, no DDL)
+
+- **Video length at upload (G67):** `durationLimitSec(format, kind)` now lives in `packages/shared/src/validators/campaign.ts` (media.service re-exports it, so the server guard is the same rule). The Content step shows "This video is N s — a reel takes up to 90 s…" on the file as soon as its upload finishes (and again after a format switch), and Save refuses it locally with the same sentence. The server's TOO_LONG check stays.
+- **Landscape reel/story (G68):** a note on the file ("posted with black bars… upload a vertical (9:16) video"); never refused.
+- **Creators in the picker (G59, G58, G7):** an "All pages · Our pages · Creators" chip row (only when the catalogue holds both), composed with the platform and category tabs; typing "creator" in search lists them. The creator explanation is visible text on each creator row, worded by `campaign.paymentMode` (offline: "that post isn't charged"; never "refunded" offline). On phones the name wraps to two lines and the Creator tag and profile link move off the name line, so names are no longer cut to one letter; the song add-on and "engagement (28 days)" show on phones too.
+- **Accessibility (G62, G63):** platform/category/source tabs are 44 px tall below `sm`; the avatar initial is `aria-hidden`; the review step's two Edit buttons are named "Edit content" / "Edit accounts". G64 (first view of the picker on a phone) was not changed.
+- Not yet driven in a browser at 390 px when written — check the picker on a phone after deploy.
+
 ## Creator marketplace — creator portal Phase B/C (2026-11-04, `feat/creator-marketplace`; ⚠️ apply `scripts/creator-marketplace-ddl.sql` with `bash scripts/apply-creator-marketplace-ddl.sh` on prod BEFORE merging)
 
 **What it is.** A client books a creator's page beside our own accounts; the creator accepts each paid post before anything is posted; the accepted post goes out through the creator's OWN Facebook Login grant.

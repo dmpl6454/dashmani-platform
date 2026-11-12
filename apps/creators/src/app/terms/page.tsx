@@ -6,9 +6,9 @@ import { LegalPage } from "@/components/site-shell";
 
 export default function TermsPage() {
   return (
-    <LegalPage kicker="Creator agreement" title="Creator terms" updated="11 November 2026">
+    <LegalPage kicker="Creator agreement" title="Creator terms" updated="12 November 2026">
       <p>
-        These terms are the agreement between you and Digital Sukoon (Dashmani Media Private Limited, “we”, “us”) when you join
+        These terms are the agreement between you and Digital Sukoon Private Limited (“Digital Sukoon”, “we”, “us”) when you join
         Digital Sukoon Creators at creators.digitalsukoon.com. Please read them — by creating an account you agree to them. If you
         have a question, write to <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a>.
       </p>
@@ -49,7 +49,7 @@ export default function TermsPage() {
       <ul>
         <li>You set your price for each type of post, in Indian rupees (₹). That price is what you are paid for the post; the price brands see includes our service.</li>
         <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking; when you do, you give a short reason, so we can send you better bookings.</li>
-        <li>Once you accept, exactly the post you accepted goes on the page during the posting dates: either we publish it through your Facebook connection, or we ask you to publish it yourself and paste the link to it. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
+        <li>Once you accept, exactly the post you accepted goes on the page during the posting dates: either we publish it through your Facebook connection, or we ask you to publish it yourself and paste the link to it. Keep it up, unedited, for <strong>at least 3 months</strong> from the day it goes live. If a booking needs it up for longer (up to 6 months), we tell you before you accept.</li>
       </ul>
 
       <h2>6. Your content stays yours</h2>
@@ -68,10 +68,16 @@ export default function TermsPage() {
 
       <h2>8. Payment</h2>
       <ul>
-        <li>The amount, in Indian rupees (₹), is set per booking and shown to you before you accept.</li>
-        <li>We pay you <strong>manually after the post is live and we have verified it</strong> stayed up as agreed. We&apos;ll ask for your payout details before your first payment.</li>
-        <li>If a post is removed early, never goes live, or breaks these terms, we may reduce or withhold payment for that booking.</li>
-        <li>You are responsible for any taxes on what you earn, unless the law requires us to deduct them.</li>
+        <li>Digital Sukoon Private Limited pays you. The amount, in Indian rupees (₹), is set per booking and shown to you before you accept.</li>
+        <li>We pay you <strong>after the post is live and we have checked it</strong>. Add your tax details in Settings before your first payment:
+          <ul>
+            <li><strong>If you are registered for GST</strong>, give us your GSTIN and send us a GST invoice for each post. We pay your price plus GST.</li>
+            <li><strong>If you are not registered for GST</strong>, give us your PAN. We deduct TDS from your payout as the Income Tax Act requires and send you the TDS certificate.</li>
+          </ul>
+        </li>
+        <li>If you live outside India, write to us and we&apos;ll tell you what we need to pay you.</li>
+        <li>If a post is removed or edited within 3 months, never goes live, or breaks these terms, we may reduce or withhold payment for that booking.</li>
+        <li>You are responsible for any other taxes on what you earn.</li>
       </ul>
 
       <h2>9. Your responsibilities</h2>
@@ -111,7 +117,7 @@ export default function TermsPage() {
 
       <h2>14. Contact</h2>
       <p>
-        Digital Sukoon (Dashmani Media Private Limited), India. Email <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a>.
+        Digital Sukoon Private Limited, 702, Parinee I, Andheri West, Mumbai 400053, India. Email <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a>.
       </p>
     </LegalPage>
   );

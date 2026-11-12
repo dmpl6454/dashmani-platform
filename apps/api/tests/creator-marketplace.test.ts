@@ -851,6 +851,52 @@ describe("creator marketplace", () => {
       });
     });
   });
+
+  describe("owner decisions 2026-11-12 (G8 withdraw, G72 how creators are paid)", () => {
+    const withdraw = (id: string) => request(app).post(`/v1/client/campaigns/${id}/cancel`).set("Authorization", `Bearer ${clientToken}`);
+
+    it("a client can withdraw a submitted campaign before approval when nothing was paid online, and staff are told", async () => {
+      const { bookingId } = await paidBooking();
+      vi.mocked(notifyAdminByEmail).mockClear();
+      const r = await withdraw(bookingId);
+      expect(r.status).toBe(200);
+      expect(r.body.data.status).toBe("cancelled");
+      await vi.waitFor(() => expect(vi.mocked(notifyAdminByEmail).mock.calls.some(([s]) => /withdrawn by the client/.test(s))).toBe(true));
+      // changes_requested is withdrawable too.
+      const { bookingId: b2 } = await paidBooking();
+      await prisma.campaignBooking.update({ where: { id: b2 }, data: { status: "changes_requested" } });
+      expect((await withdraw(b2)).status).toBe(200);
+    });
+
+    it("refuses once approved, when paid online, or when an invoice exists", async () => {
+      const { bookingId } = await paidBooking();
+      await approve(bookingId);
+      expect((await withdraw(bookingId)).body.error.code).toBe("NOT_EDITABLE");
+      const { bookingId: paid } = await paidBooking();
+      await prisma.campaignBooking.update({ where: { id: paid }, data: { paidAt: new Date() } });
+      expect((await withdraw(paid)).body.error.code).toBe("PAID_ONLINE");
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid } })).status).toBe("paid_pending_review");
+    });
+
+    it("a creator saves a GSTIN or a PAN; only a masked hint comes back, staff see the full number", async () => {
+      if (!process.env.META_TOKEN_ENC_KEY) vi.stubEnv("META_TOKEN_ENC_KEY", "test-key-for-creator-tax-details-0123456789");
+      const put = (body: object) => request(app).put("/v1/creator/me/tax").set("Authorization", `Bearer ${creatorToken}`).send(body);
+      expect((await put({ route: "pan", pan: "abc", legalName: "Asha" })).body.error.code).toBe("INVALID_PAN");
+      expect((await put({ route: "gst", gstin: "27ABCDE1234F1Z", legalName: "Asha" })).body.error.code).toBe("INVALID_GSTIN");
+      const ok = await put({ route: "gst", gstin: "27abcde1234f1z5", legalName: "Asha Eats LLP" });
+      expect(ok.status).toBe(200);
+      expect(ok.body.data).toEqual({ route: "gst", hint: "GSTIN ••••1Z5" });
+      const me = await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${creatorToken}`);
+      expect(me.body.data.tax).toEqual({ route: "gst", hint: "GSTIN ••••1Z5" });
+      expect(JSON.stringify(me.body)).not.toContain("27ABCDE1234F1Z5");
+      const row = await prisma.creator.findUniqueOrThrow({ where: { id: creatorId } });
+      expect(row.payoutDetailsEnc).not.toContain("ABCDE1234F");
+      const staff = await request(app).get(`/v1/admin/creators/${creatorId}`).set("Authorization", `Bearer ${adminToken}`);
+      expect(staff.body.data.creator.taxDetails).toEqual({ route: "gst", gstin: "27ABCDE1234F1Z5", pan: "ABCDE1234F", legalName: "Asha Eats LLP" });
+      // Switching to PAN replaces it.
+      expect((await put({ route: "pan", pan: "ABCDE1234F", legalName: "Asha" })).body.data).toEqual({ route: "pan", hint: "PAN ••••34F" });
+    });
+  });
 });
 
 describe("creatorNote: why a creator posts a booking themselves", () => {

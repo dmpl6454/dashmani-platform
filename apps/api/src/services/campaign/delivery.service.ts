@@ -316,6 +316,21 @@ export async function notifyStaffResubmitted(bookingId: string) {
   );
 }
 
+/** A client withdrew a submitted campaign before approval (G8): take it off the review queue. */
+export async function notifyStaffWithdrawn(bookingId: string) {
+  const b = await bookingWithClient(bookingId);
+  if (!b) return;
+  await notifyAdminByEmail(
+    `Campaign withdrawn by the client: ${b.name}`,
+    [
+      { label: "Client", value: b.client.companyName },
+      { label: "Brand", value: b.brand },
+      { label: "What happens", value: "Nothing to review or post. No online payment was taken." },
+    ],
+    `/campaigns/${b.id}`,
+  );
+}
+
 // ── Results (portal) ────────────────────────────────────────────────────────────
 
 /**

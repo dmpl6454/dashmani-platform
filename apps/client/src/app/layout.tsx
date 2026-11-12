@@ -8,7 +8,7 @@ import { apiFetch } from "@/lib/api";
 import { PortalShell } from "@/components/portal-shell";
 import { safeNext } from "@/lib/safe-next";
 
-const publicRoutes = ["/login", "/signup", "/reset-password", "/join"];
+const publicRoutes = ["/login", "/signup", "/reset-password", "/join", "/terms"];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();

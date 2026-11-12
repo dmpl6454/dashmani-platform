@@ -30,6 +30,7 @@ export default function SettingsPage() {
     <div className="flex flex-col gap-8">
       <PageHead kicker="Settings" title="Your account." />
       <ProfileForm me={me} onSaved={(c) => mutate({ ...me, ...c }, { revalidate: false })} />
+      <TaxForm me={me} onSaved={(tax) => mutate({ ...me, tax }, { revalidate: false })} />
       <PasswordForm />
       <CloseAccount />
     </div>
@@ -123,6 +124,73 @@ function ProfileForm({ me, onSaved }: { me: CreatorMe; onSaved: (c: CreatorMe) =
         </label>
         <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
           <button type="submit" className="btn btn-sm" disabled={busy}>{busy ? <><span className="spinner" aria-hidden /> Saving…</> : "Save profile"}</button>
+          <span aria-live="polite" className={`text-sm ${msg?.tone === "danger" ? "text-danger" : "text-success"}`}>{msg?.text}</span>
+        </div>
+      </form>
+    </Section>
+  );
+}
+
+/** How you're paid (G72): GST registered → GSTIN, else PAN (TDS is deducted). Only a masked hint comes back. */
+function TaxForm({ me, onSaved }: { me: CreatorMe; onSaved: (tax: CreatorMe["tax"]) => void }) {
+  const [route, setRoute] = useState<"gst" | "pan" | "">(me.tax?.route ?? "");
+  const [number, setNumber] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (!route) { setMsg({ tone: "danger", text: "Choose whether you are GST registered." }); return; }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const body = route === "gst" ? { route, gstin: number, legalName } : { route, pan: number, legalName };
+      const r = await apiFetch<CreatorMe["tax"]>("/creator/me/tax", { method: "PUT", body: JSON.stringify(body) });
+      onSaved(r.data);
+      setNumber("");
+      setLegalName("");
+      setMsg({ tone: "success", text: "Saved." });
+    } catch (err) {
+      setMsg({ tone: "danger", text: errorSentence(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section
+      title="How you're paid"
+      intro={<>Digital Sukoon Private Limited pays you in Indian rupees after each post is live and checked. We need this before your first payment.
+        <ul className="list-disc pl-5 mt-2 space-y-1">
+          <li><strong>GST registered:</strong> send us a GST invoice for each post; we pay your price plus GST.</li>
+          <li><strong>Not GST registered:</strong> give us your PAN; TDS is deducted from your payout as the Income Tax Act requires, and we send you the TDS certificate.</li>
+        </ul>
+        <span className="block mt-2">Outside India? Write to creators@digitalsukoon.com and we&apos;ll tell you what we need.</span></>}
+    >
+      {me.tax && <p className="text-sm mb-4">On file: <strong>{me.tax.route === "gst" ? "GST registered" : "Not GST registered"}</strong> · {me.tax.hint}. Fill the form below only to change it.</p>}
+      <form onSubmit={save} noValidate className="grid gap-4 sm:grid-cols-2">
+        <fieldset className="sm:col-span-2 flex flex-wrap gap-4">
+          <legend className="field-label mb-2">Are you registered for GST?</legend>
+          <label className="inline-flex items-center gap-2 text-sm"><input type="radio" name="taxroute" checked={route === "gst"} onChange={() => setRoute("gst")} /> Yes, I have a GSTIN</label>
+          <label className="inline-flex items-center gap-2 text-sm"><input type="radio" name="taxroute" checked={route === "pan"} onChange={() => setRoute("pan")} /> No — I&apos;ll give my PAN</label>
+        </fieldset>
+        {route && (
+          <>
+            <label className="field" htmlFor="taxno">
+              <span className="field-label">{route === "gst" ? "GSTIN" : "PAN"}</span>
+              <input id="taxno" className="input uppercase" value={number} autoComplete="off" maxLength={route === "gst" ? 15 : 10}
+                placeholder={route === "gst" ? "27ABCDE1234F1Z5" : "ABCDE1234F"} onChange={(e) => setNumber(e.target.value)} />
+            </label>
+            <label className="field" htmlFor="taxname">
+              <span className="field-label">{route === "gst" ? "Legal name on the GST certificate" : "Name on the PAN card"}</span>
+              <input id="taxname" className="input" value={legalName} autoComplete="off" onChange={(e) => setLegalName(e.target.value)} />
+            </label>
+          </>
+        )}
+        <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+          <button type="submit" className="btn btn-sm" disabled={busy || !route}>{busy ? <><span className="spinner" aria-hidden /> Saving…</> : "Save payment details"}</button>
           <span aria-live="polite" className={`text-sm ${msg?.tone === "danger" ? "text-danger" : "text-success"}`}>{msg?.text}</span>
         </div>
       </form>

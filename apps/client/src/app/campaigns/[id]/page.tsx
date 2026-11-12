@@ -143,7 +143,10 @@ export default function CampaignPage() {
   };
 
   const cancel = async () => {
-    if (!window.confirm("Cancel this campaign? You can start a new one any time.")) return;
+    const msg = withdraw
+      ? "Withdraw this campaign? Our team stops reviewing it and nothing will be posted. You can start a new one any time."
+      : "Cancel this campaign? You can start a new one any time.";
+    if (!window.confirm(msg)) return;
     setCancelBusy(true);
     setCancelError(null);
     try {
@@ -166,6 +169,8 @@ export default function CampaignPage() {
   const current = step ?? firstIncomplete(c);
   // No cancelling once money may have moved (captured, being confirmed) or while checkout runs.
   const canCancel = prePay && !c.paidAt && !confirming && !payBusy;
+  // A submitted campaign may be withdrawn before approval when nothing was paid online (G8).
+  const withdraw = !prePay && !c.paidAt && (c.status === "paid_pending_review" || c.status === "changes_requested");
 
   return (
     <>
@@ -173,9 +178,9 @@ export default function CampaignPage() {
       <div className="px-4 sm:px-6 py-6 max-w-[900px] mx-auto w-full flex-1 overflow-y-auto">
         <div className="mb-4 flex items-center justify-between gap-3">
           <Link href="/campaigns" className="text-[12.5px] text-ink-3 hover:text-ink inline-flex items-center gap-1"><Icon.ChevLeft size={14} />All campaigns</Link>
-          {canCancel && (
+          {(canCancel || withdraw) && (
             <Button size="sm" variant="ghost" disabled={cancelBusy} onClick={cancel}>
-              {cancelBusy ? "Cancelling…" : "Cancel campaign"}
+              {withdraw ? (cancelBusy ? "Withdrawing…" : "Withdraw campaign") : cancelBusy ? "Cancelling…" : "Cancel campaign"}
             </Button>
           )}
         </div>
@@ -484,7 +489,10 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
         </ErrorBanner>
       )}
       {error && <ErrorBanner>{error}</ErrorBanner>}
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-2">
+        <p className="text-[12px] text-ink-3 text-right">
+          By {offline ? "submitting" : "paying"} you agree to our <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline">terms for campaigns</a>, including that each post stays up for at least 3 months.
+        </p>
         <Button variant="ink" onClick={pay} disabled={busy || rendering || failed || datePassed} aria-live="polite">
           {busy ? (offline ? "Submitting…" : "Opening payment…") : rendering ? "Preparing preview…" : offline ? `Submit for review · ${rupees(total)}` : `Pay ${rupees(total)}`}
         </Button>

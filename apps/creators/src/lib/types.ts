@@ -19,6 +19,8 @@ export interface CreatorMe {
   createdAt: string;
   /** Whether we post accepted bookings for creators. While false, the creator posts every one. */
   autoPost?: boolean;
+  /** How they are paid (G72): GST or PAN, masked; null until added in Settings. */
+  tax?: { route: "gst" | "pan"; hint: string | null } | null;
 }
 
 export interface CreatorChecklist {

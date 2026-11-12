@@ -1,5 +1,6 @@
 import type { Creator, CreatorAsset, CreatorConnection } from "@dashmani/db";
 import { campaignConfig } from "../campaign/config";
+import { taxSummary } from "./creator-tax.service";
 
 // The ONE place a creator row becomes JSON. ⚠️ Never return a token column (*_enc), the
 // password hash, or payout details from anywhere else — every endpoint goes through these.
@@ -48,6 +49,8 @@ export function toCreatorMe(c: Creator) {
     // Whether we post accepted bookings for the creator (CREATOR_PUBLISH_ENABLED). While it is
     // off the creator posts every accepted booking themselves, and the portal must say so.
     autoPost: campaignConfig.creatorPublishEnabled(),
+    // How they are paid (G72): GST or PAN, masked. Null until the creator adds it in Settings.
+    tax: taxSummary(c),
   };
 }
 export type CreatorMe = ReturnType<typeof toCreatorMe>;

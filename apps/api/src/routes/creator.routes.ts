@@ -11,6 +11,7 @@ import {
 import * as creatorSelf from "../services/creator/creator-self.service";
 import * as offers from "../services/creator/creator-offers.service";
 import * as pricing from "../services/creator/creator-pricing.service";
+import { setCreatorTax } from "../services/creator/creator-tax.service";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 
@@ -69,6 +70,22 @@ router.delete(
   "/creator/me",
   ...signedIn,
   asyncHandler(async (req: Request, res: Response) => success(res, await creatorSelf.closeCreatorAccount(creatorOf(req).id))),
+);
+
+// How the creator is paid (G72): GSTIN (GST registered) or PAN (TDS deducted). Validated in the service.
+router.put(
+  "/creator/me/tax",
+  ...signedIn,
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+    return success(res, await setCreatorTax(creatorOf(req).id, {
+      route: b.route === "gst" || b.route === "pan" ? b.route : (undefined as never),
+      gstin: str(b.gstin),
+      pan: str(b.pan),
+      legalName: str(b.legalName) ?? "",
+    }));
+  }),
 );
 
 // ── Marketplace (Phase C): the creator's own price per page and format (= their payout) ─────

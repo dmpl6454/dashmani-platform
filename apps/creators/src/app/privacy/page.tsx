@@ -7,9 +7,9 @@ import { LegalPage } from "@/components/site-shell";
 
 export default function PrivacyPage() {
   return (
-    <LegalPage kicker="Privacy" title="Privacy policy" updated="11 November 2026">
+    <LegalPage kicker="Privacy" title="Privacy policy" updated="12 November 2026">
       <p>
-        This policy explains what Digital Sukoon (Dashmani Media Private Limited, “we”, “us”) collects when you use Digital Sukoon
+        This policy explains what Digital Sukoon Private Limited (“Digital Sukoon”, “we”, “us”) collects when you use Digital Sukoon
         Creators at creators.digitalsukoon.com, why, how long we keep it, and how to delete it. Questions or requests:{" "}
         <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a>.
       </p>
@@ -20,6 +20,7 @@ export default function PrivacyPage() {
         <li>Your name, email address, country and (if you give it) phone number.</li>
         <li>Your password, stored only as a one-way hash — we can&apos;t read it. If you sign in with Google, we receive your name and verified email from Google, nothing else.</li>
         <li>When you accepted the creator terms and confirmed you are 18 or older, and your account&apos;s review status and any note our team wrote about it.</li>
+        <li>To pay you: your GSTIN or PAN and the name on it. These are <strong>stored encrypted</strong>; only our team that makes payments can see the full number.</li>
       </ul>
       <h3>From Facebook and Instagram (Meta)</h3>
       <ul>
@@ -106,7 +107,7 @@ export default function PrivacyPage() {
 
       <h2>Contact</h2>
       <p>
-        Digital Sukoon (Dashmani Media Private Limited), India — <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a>.
+        Digital Sukoon Private Limited, Mumbai, India — <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a>.
       </p>
     </LegalPage>
   );

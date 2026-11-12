@@ -4,6 +4,7 @@ import { CREATOR_STATUSES, type CreatorStatus } from "@dashmani/shared/src/valid
 import { AppError } from "../../middleware/error-handler";
 import { likeLiteral } from "../../utils/like-literal";
 import { scrubSecrets } from "../../utils/token-crypto";
+import { readCreatorTax } from "./creator-tax.service";
 import { toAssetView, toConnectionView, toCreatorMe, isPublishable, liveConnectionWhere, LIVE_CONNECTION_STATUSES } from "./creator-view";
 import { syncNetworkDuplicates } from "./creator-discovery.service";
 import { sendCreatorEmail, esc, button, creatorLink } from "./creator-email";
@@ -106,7 +107,8 @@ function toAdminCreator(c: Creator, reviewedByName: string | null) {
     reviewedById: c.reviewedById,
     reviewedByName,
     closedAt: c.closedAt ? c.closedAt.toISOString() : null,
-    payoutHint: null, // Phase C
+    // Staff pay the creator, so they see the full GSTIN / PAN (admin-gated route only).
+    taxDetails: readCreatorTax(c),
   };
 }
 

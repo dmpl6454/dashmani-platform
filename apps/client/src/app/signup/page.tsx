@@ -200,7 +200,7 @@ function SignupForm() {
             </button>
 
             <p className="auth-fine">
-              By creating an account you agree to work with Digital Sukoon under its standard terms. Questions: <a href="mailto:hello@digitalsukoon.com">hello@digitalsukoon.com</a> or <a href={whatsappSupportUrl("signing up")} target="_blank" rel="noopener noreferrer">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a>.
+              By creating an account you agree to Digital Sukoon&apos;s <a href="/terms" target="_blank" rel="noopener noreferrer">terms for campaigns</a>. Questions: <a href="mailto:hello@digitalsukoon.com">hello@digitalsukoon.com</a> or <a href={whatsappSupportUrl("signing up")} target="_blank" rel="noopener noreferrer">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a>.
             </p>
           </form>
         )}

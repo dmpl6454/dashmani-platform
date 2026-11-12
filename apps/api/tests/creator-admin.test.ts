@@ -183,7 +183,7 @@ describe("Creator admin API", () => {
       expect(res.status).toBe(200);
       expectNoSecrets(res.body);
       const { creator, connection, assets } = res.body.data;
-      expect(creator).toMatchObject({ id: c.id, status: "in_review", payoutHint: null, reviewedAt: null, closedAt: null });
+      expect(creator).toMatchObject({ id: c.id, status: "in_review", taxDetails: null, reviewedAt: null, closedAt: null });
       expect(connection).toMatchObject({ status: "ACTIVE", metaUserName: "Asha" });
       expect(connection.missingScopes).toContain("instagram_content_publish");
       expect(assets).toHaveLength(1);

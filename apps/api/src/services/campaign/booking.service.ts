@@ -19,7 +19,7 @@ import { razorpayConfig } from "./config";
 import { durationLimitSec } from "./media.service";
 import { overlayKey } from "./render.service";
 import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
-import { notifyStaffResubmitted } from "./delivery.service";
+import { notifyStaffResubmitted, notifyStaffWithdrawn } from "./delivery.service";
 
 // Campaign bookings — the client's side of the lifecycle and the one state-transition helper
 // every other module goes through.
@@ -638,9 +638,30 @@ async function repriceItems(tx: Tx, bookingId: string) {
   }
 }
 
+/** Statuses a client may withdraw a SUBMITTED campaign from (owner decision 2026-11-12, G8):
+ *  before approval, and only when nothing was paid online (a paid one needs a refund — staff). */
+export const WITHDRAWABLE_BOOKING_STATUSES = ["paid_pending_review", "changes_requested"] as const;
+
 export async function cancelBooking(clientId: string, id: string) {
-  await requireEditable(clientId, id, ["draft", "awaiting_payment"]);
-  await transitionBooking(id, ["draft", "awaiting_payment"], "cancelled", { type: "client", id: clientId });
+  const b = await prisma.campaignBooking.findFirst({ where: { id, clientId }, select: { status: true, paidAt: true } });
+  if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
+  if (b.status === "draft" || b.status === "awaiting_payment") {
+    await transitionBooking(id, ["draft", "awaiting_payment"], "cancelled", { type: "client", id: clientId });
+    return getClientBooking(clientId, id);
+  }
+  if (!(WITHDRAWABLE_BOOKING_STATUSES as readonly string[]).includes(b.status)) {
+    throw new AppError(409, "NOT_EDITABLE", "This campaign has already been approved, so it can't be withdrawn here. Write to hello@digitalsukoon.com and we'll sort it out.");
+  }
+  if (b.paidAt) {
+    throw new AppError(409, "PAID_ONLINE", "This campaign was paid online, so withdrawing it needs a refund. Write to hello@digitalsukoon.com and we'll sort it out.");
+  }
+  // An invoice already raised for it must be cancelled by our team first.
+  const invoiced = await prisma.salesInvoice.count({ where: { campaignBookingId: id, status: { not: "cancelled" } } });
+  if (invoiced > 0) {
+    throw new AppError(409, "INVOICED", "We've already raised an invoice for this campaign, so our team has to withdraw it. Write to hello@digitalsukoon.com.");
+  }
+  await transitionBooking(id, WITHDRAWABLE_BOOKING_STATUSES, "cancelled", { type: "client", id: clientId }, { note: "Withdrawn by the client before approval" });
+  void notifyStaffWithdrawn(id).catch((e) => console.error("[campaign] withdrawn staff email failed", e));
   return getClientBooking(clientId, id);
 }
 

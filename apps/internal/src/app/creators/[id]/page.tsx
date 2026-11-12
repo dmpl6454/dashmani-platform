@@ -310,6 +310,13 @@ export default function CreatorDetailPage() {
           <Row label="Email">{c.email} {c.emailVerified ? <span className="text-ds-teal text-[12px]">· verified</span> : <span className="text-ds-gold text-[12px]">· not verified</span>}</Row>
           <Row label="Country">{c.country ?? "—"}</Row>
           <Row label="Phone">{c.phone ?? "—"}</Row>
+          <Row label="Paid as">
+            {c.taxDetails
+              ? c.taxDetails.route === "gst"
+                ? <>GST registered · GSTIN {c.taxDetails.gstin} · {c.taxDetails.legalName} <span className="text-ds-t3 text-[12px]">(pay price + GST against their invoice)</span></>
+                : <>Not GST registered · PAN {c.taxDetails.pan} · {c.taxDetails.legalName} <span className="text-ds-t3 text-[12px]">(deduct TDS)</span></>
+              : <span className="text-ds-gold">No GSTIN or PAN yet — needed before the first payout</span>}
+          </Row>
           <Row label="Terms">{c.termsAccepted ? "Accepted" : "Not accepted"}</Row>
           <Row label="Signed up">{fmtWhen(c.createdAt)}</Row>
           <Row label="Submitted">{fmtWhen(c.submittedAt)}</Row>

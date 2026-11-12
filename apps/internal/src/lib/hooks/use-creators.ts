@@ -36,7 +36,7 @@ export interface AdminCreator {
   reviewedById: string | null;
   reviewedByName?: string | null;
   closedAt: string | null;
-  payoutHint: string | null;
+  taxDetails: { route: "gst" | "pan"; gstin: string | null; pan: string; legalName: string } | null;
 }
 
 export interface CreatorConnectionView {

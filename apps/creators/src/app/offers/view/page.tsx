@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { ChevronLeft, Copy, Download, ExternalLink } from "lucide-react";
 import { API_ORIGIN, apiFetch, fetcher } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
-import type { CreatorOffer } from "@/lib/types";
+import type { CreatorMe, CreatorOffer } from "@/lib/types";
 import { Banner, FieldError, Loading, Modal, PageHead } from "@/components/ui";
 import { SUPPORT_EMAIL, supportMailto } from "@/lib/support";
 import { OfferStatus, PLATFORM, fmtIst, fmtWindow, rupees } from "../_offer";
@@ -30,6 +30,8 @@ function OfferView() {
   const [actionError, setActionError] = useState("");
   const [declining, setDeclining] = useState(false);
   const [done, setDone] = useState("");
+  // Whether a GSTIN or PAN is on file (G72): needed before the first payout.
+  const { data: me } = useSWR<CreatorMe>("/creator/me", fetcher, { revalidateOnFocus: false });
 
   if (!id) return <Banner tone="danger" title="No post selected."><Link href="/offers" className="underline">Back to bookings</Link></Banner>;
   if (isLoading && !o) return <Loading label="Loading the post…" />;
@@ -81,6 +83,14 @@ function OfferView() {
           </>
         )}
       </div>
+      {!NO_PAYOUT.includes(o.status) && (
+        <p className="text-[13px] text-ink-3 leading-relaxed -mt-3">
+          Digital Sukoon Private Limited pays you after the post is live and checked —{" "}
+          {me?.tax?.route === "gst" ? "plus GST, against your GST invoice" : me?.tax?.route === "pan" ? "less TDS, as the Income Tax Act requires" : "plus GST if you're GST registered, or less TDS if you're not"}.
+          {" "}Keep the post up, unedited, for <b className="text-white">at least 3 months</b> (we tell you before you accept if a booking needs longer, up to 6 months).
+          {me && !me.tax && <> <Link href="/settings" className="underline text-white">Add your GSTIN or PAN</Link> so we can pay you.</>}
+        </p>
+      )}
 
       {done && <Banner tone="success" role="status" title={done} />}
       {actionError && <Banner tone="danger" role="alert" title="That didn't work.">{actionError}</Banner>}

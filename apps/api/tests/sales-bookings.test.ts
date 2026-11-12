@@ -56,6 +56,19 @@ describe("Sales: campaign bookings", () => {
     expect(dash.body.data.bookings).toMatchObject({ review: { count: 1, totalPaise: 70_000 }, live: { count: 1 }, toInvoice: { count: 2, totalPaise: 170_000 } });
   });
 
+  it("lists the review stage with what waits on us first, oldest submission first", async () => {
+    const h = 3_600_000;
+    await booking("Fresh", "paid_pending_review", [item(1, "pending", 1_000)], { submittedAt: new Date(Date.now() - 2 * h) });
+    await booking("Client fixing", "changes_requested", [item(2, "pending", 1_000)], { submittedAt: new Date(Date.now() - 90 * h) });
+    await booking("Old", "paid_pending_review", [item(3, "pending", 1_000)], { submittedAt: new Date(Date.now() - 30 * h) });
+    const res = await request(app).get("/v1/sales/bookings?stage=review").set(auth(token));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.map((b: { name: string }) => b.name)).toEqual(["Old", "Fresh", "Client fixing"]);
+    expect(res.body.data[0].submittedAt).toBeTruthy();
+    const dash = await request(app).get("/v1/sales/dashboard").set(auth(token));
+    expect(new Date(dash.body.data.bookings.review.oldestWaitingSince).getTime()).toBe(new Date(res.body.data[0].submittedAt).getTime());
+  });
+
   it("invoices only posts that were made, never twice, and never an unpaid or refunded booking", async () => {
     const live = await booking("Live one", "partially_published", [item(1, "published", 100_000), item(2, "failed", 50_000), item(3, "refunded", 30_000)]);
     const res = await request(app).post(`/v1/sales/invoices/from-booking/${live.id}?company=dmpl`).set(auth(token));

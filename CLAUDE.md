@@ -958,8 +958,12 @@ The open decisions from the two-sided review, as the owner answered them:
 - **Bell for campaign problems (G45):** `services/campaign/staff-bell.ts` `notifyStaffBell(bookingId, title, message)` writes GENERAL rows (`metadata.kind = "campaign_alert"`, `url` = sales portal `/bookings/view?id=`) for every ACTIVE user whose roles grant `sales:view` (`salesTeam()`, so Sales + Admin/Super Admin). Fired on a creator decline or expiry (one row per booking), a creator page unavailable at approval, and a passed posting window. The admin@ emails are unchanged. `salesNotificationUrl` (shared bell.ts) accepts `campaign_alert` under `/bookings/` and `creator_review` under `/creators/` only; the staff portal's bell (ds-topnav) now renders "Open in Sales Portal ↗" for both (it had dropped the creator link).
 - **"Turned on" is not "listed" (G47):** creator detail assets carry `listedFormats` (active creator rate cards). The sales creator page has a "Listed for brands" column and the switch-on toast says brands can book once the creator has a price and an admin has set our margin. Margins stay admin-only (staff portal).
 - **Approve copy (G52):** the sales review card's confirm and toast say where the posts go — our pages to the posting list, creator pages to their creators who must accept first (`targetType` is now on the sales booking detail's items); the staff page's auto-publish sentence says the same.
-- Not changed: the sales portal's booking list has no review clock yet; G64 (account picker first screen on a phone).
+- The sales portal's booking list and the account picker on a phone (G64) were done right after — see the next section and "First screen on a phone (G64)".
 - Tests: creator-marketplace "staff see what needs doing (batch 5)" (4) + bell.test `campaign_alert` (1); 4 of 5 fail on the old code.
+
+## Sales portal: review clock on campaign bookings (2026-11-12, no DDL)
+
+`GET /sales/bookings?stage=review` lists campaigns waiting on US (`paid_pending_review`) first, oldest submission first (`reviewOrder` in sales/bookings.service), then the ones waiting on the client (`changes_requested`). The list shows "Waiting N h / N d" under the status of every `paid_pending_review` row, amber from 24 h (we promise one working day); the time is read after mount and ticks once a minute. The dashboard's bookings banner adds "· oldest waiting N h" from `bookings.review.oldestWaitingSince`. Test: sales-bookings "lists the review stage …" (fails on the old code).
 
 ## Creator marketplace — creator portal Phase B/C (2026-11-04, `feat/creator-marketplace`; ⚠️ apply `scripts/creator-marketplace-ddl.sql` with `bash scripts/apply-creator-marketplace-ddl.sh` on prod BEFORE merging)
 

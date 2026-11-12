@@ -14,6 +14,17 @@ const TABS: Array<[string, string]> = [
   ["all", "All"], ["to_invoice", "To invoice"], ["review", "In review"], ["active", "Approved"], ["live", "Live"], ["awaiting_payment", "Unpaid"], ["closed", "Closed"],
 ];
 
+// How long a campaign has waited on our review (we promise one working day): amber from 24 h.
+function Waiting({ since, now }: { since: string; now: number }) {
+  const h = Math.max(0, Math.floor((now - new Date(since).getTime()) / 3_600_000));
+  const text = h < 1 ? "Waiting < 1 h" : h < 48 ? `Waiting ${h} h` : `Waiting ${Math.floor(h / 24)} d`;
+  return (
+    <span title="Since the client submitted it. We promise a review within one working day." className={`mt-1 inline-block text-[11px] font-semibold tabular-nums ${h >= 24 ? "text-attention" : "text-ink-3"}`}>
+      {text}
+    </span>
+  );
+}
+
 export default function BookingsPage() {
   const [stage, setStage] = useState("all");
   // Opened from a dashboard tile: start on its tab (read once; no useSearchParams in a static export page).
@@ -22,6 +33,14 @@ export default function BookingsPage() {
     if (s && TABS.some(([k]) => k === s)) setStage(s);
   }, []);
   const [q, setQ] = useState("");
+  // Read after mount (a time-dependent label rendered on the server would not match the browser),
+  // then once a minute so an open tab stays true.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
   const { data, error, isLoading, mutate } = useBookings({ stage, q: q.trim() || undefined });
   return (
     <>
@@ -51,7 +70,10 @@ export default function BookingsPage() {
                     <div className="text-xs text-ink-4">{b.brand} · {fmtDate(b.submittedAt ?? b.createdAt)}{b.paidOnline ? " · paid online" : ""}</div>
                   </td>
                   <td className="p-3"><Link href={`/clients/view?id=${b.client.id}`} className="hover:text-indigo-light">{b.client.companyName}</Link></td>
-                  <td className="p-3"><StatusPill status={b.status} label={b.statusLabel} /></td>
+                  <td className="p-3">
+                    <StatusPill status={b.status} label={b.statusLabel} />
+                    {b.status === "paid_pending_review" && b.submittedAt && now !== null && <div><Waiting since={b.submittedAt} now={now} /></div>}
+                  </td>
                   <td className="p-3">{b.liveCount}/{b.itemCount}</td>
                   <td className="p-3">
                     {b.invoices.filter((i) => i.status !== "cancelled").length

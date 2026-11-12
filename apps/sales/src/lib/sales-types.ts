@@ -141,7 +141,7 @@ export interface BookingMediaUrls {
   items: Array<{ itemId: string; custom: boolean; files: Array<{ mediaId: string; kind: string; role: string; status: string; url: string | null }> }>;
 }
 export interface BookingsSummary {
-  review: { count: number; totalPaise: number }; active: { count: number; totalPaise: number }; live: { count: number; totalPaise: number };
+  review: { count: number; totalPaise: number; oldestWaitingSince?: string | null }; active: { count: number; totalPaise: number }; live: { count: number; totalPaise: number };
   toInvoice: { count: number; totalPaise: number };
   recentToInvoice: Array<{ id: string; name: string; brand: string; status: string; statusLabel: string; client: string; billablePaise: number }>;
 }

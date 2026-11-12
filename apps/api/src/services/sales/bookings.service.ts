@@ -82,7 +82,17 @@ export async function listBookings(filter: { stage?: string; q?: string; clientI
       invoiced: inv.some((i) => i.status !== "cancelled"),
     };
   });
-  return stage === "to_invoice" ? shaped.filter((b) => b.billable && !b.invoiced && b.billablePaise > 0) : shaped;
+  if (stage === "to_invoice") return shaped.filter((b) => b.billable && !b.invoiced && b.billablePaise > 0);
+  // In review: what waits on US first, longest wait first (we promise one working day); then the
+  // ones waiting on the client (changes requested), most recently touched first as before.
+  if (stage === "review") return [...shaped].sort(reviewOrder);
+  return shaped;
+}
+
+const waitTime = (b: { submittedAt: Date | null; createdAt: Date }) => (b.submittedAt ?? b.createdAt).getTime();
+export function reviewOrder(a: { status: string; submittedAt: Date | null; createdAt: Date }, b: { status: string; submittedAt: Date | null; createdAt: Date }) {
+  const ours = (x: { status: string }) => (x.status === "paid_pending_review" ? 0 : 1);
+  return ours(a) - ours(b) || (ours(a) === 0 ? waitTime(a) - waitTime(b) : 0);
 }
 
 export type BookingRow = Awaited<ReturnType<typeof listBookings>>[number];
@@ -131,7 +141,11 @@ export async function bookingsSummary() {
   const toInvoice = rows.filter((b) => b.billable && !b.invoiced && b.billablePaise > 0);
   const review = inStage("review"), active = inStage("active"), live = inStage("live");
   return {
-    review: { count: review.length, totalPaise: sum(review, (b) => b.totalPaise ?? 0) },
+    review: {
+      count: review.length, totalPaise: sum(review, (b) => b.totalPaise ?? 0),
+      /** The longest-waiting campaign on OUR side (changes requested waits on the client). */
+      oldestWaitingSince: review.filter((b) => b.status === "paid_pending_review").map((b) => b.submittedAt ?? b.createdAt).sort((x, y) => x.getTime() - y.getTime())[0] ?? null,
+    },
     active: { count: active.length, totalPaise: sum(active, (b) => b.totalPaise ?? 0) },
     live: { count: live.length, totalPaise: sum(live, (b) => b.totalPaise ?? 0) },
     toInvoice: { count: toInvoice.length, totalPaise: sum(toInvoice, (b) => b.billablePaise) },

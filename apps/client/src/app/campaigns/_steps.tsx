@@ -133,7 +133,7 @@ export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
             </div>
             <p className="text-[12px] text-ink-3 mt-1.5">Prices on our accounts differ by campaign type.</p>
           </fieldset>
-          <Field label="Objective (optional)" htmlFor="c-obj" hint="What should the posts achieve? Any do's and don'ts for our team.">
+          <Field label="Objective (optional)" htmlFor="c-obj" hint="What should the posts achieve? Any do's and don'ts. Our team reads this, and so do creators whose pages you book.">
             <textarea id="c-obj" className={textareaCls} rows={3} value={objective} onChange={(e) => setObjective(e.target.value)} maxLength={2000} disabled={disabled} />
           </Field>
           {/* Stacked on phones: two date fields side by side wrap their labels unevenly below ~370px. */}

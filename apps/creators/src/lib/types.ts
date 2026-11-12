@@ -26,6 +26,10 @@ export interface CreatorChecklist {
   connected: boolean;
   publishablePages: number;
   submitted: boolean;
+  /** Pages our team switched on, and how many of those have at least one price of yours. */
+  enabledPages?: number;
+  pricedPages?: number;
+  pricesSet?: boolean;
 }
 
 export type CreatorMeWithChecklist = CreatorMe & { checklist: CreatorChecklist };
@@ -83,7 +87,7 @@ export interface CreatorOffer {
   format: string;
   formatLabel: string;
   page: { id: string; name: string; handle: string | null };
-  campaign: { name: string; brand: string; type: string; launchFrom: string | null; launchTo: string | null; songTrack: string | null };
+  campaign: { name: string; brand: string; type: string; launchFrom: string | null; launchTo: string | null; songTrack: string | null; brief?: string | null };
   caption: string;
   hashtags: string[];
   userTags: string[];
@@ -103,6 +107,8 @@ export interface CreatorOffer {
   canAccept: boolean;
   canDecline: boolean;
   canRecordPost: boolean;
+  /** A link you recorded can still be corrected. */
+  canCorrectPost?: boolean;
   /** Only on GET /creator/offers/:id: the exact files that would be posted, as signed paths. */
   files?: Array<{ kind: string; role: string; ready: boolean; url: string }>;
 }

@@ -67,7 +67,7 @@ export default function OffersPage() {
                   {o.canAccept && o.respondBy && <p className="text-[12px] text-attention mt-0.5">Answer by {fmtIst(o.respondBy)}</p>}
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="font-bold tabular-nums">{rupees(o.payoutPaise)}</p>
+                  <p className="font-bold tabular-nums">{["creator_declined", "refunded", "failed"].includes(o.status) ? "No payout" : rupees(o.payoutPaise)}</p>
                   <p className="text-[11px] uppercase tracking-[0.08em] text-ink-3">Your payout</p>
                 </div>
                 <OfferStatus o={o} />

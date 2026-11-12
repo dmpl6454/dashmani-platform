@@ -8,6 +8,7 @@ import { errorSentence } from "@/lib/messages";
 import { countries } from "@/lib/countries";
 import type { CreatorMe, CreatorMeWithChecklist } from "@/lib/types";
 import { Banner, FieldError, Loading, Modal, PageHead } from "@/components/ui";
+import { OpenBookingsWarning } from "@/components/open-bookings-warning";
 
 // Settings: profile (PUT /v1/creator/me), password (PUT /v1/creator/me/password) and closing the
 // account (DELETE /v1/creator/me, behind a typed confirmation).
@@ -241,6 +242,7 @@ function CloseModal({ onClose }: { onClose: () => void }) {
         <p className="text-sm text-ink-3 leading-relaxed">
           Type <span className="font-mono text-white">{CONFIRM_WORD}</span> to confirm. Your pages come off Digital Sukoon Creators at once.
         </p>
+        <OpenBookingsWarning action="close" />
         <label className="field" htmlFor="closeword">
           <span className="field-label">Confirmation</span>
           <input id="closeword" className="input" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />

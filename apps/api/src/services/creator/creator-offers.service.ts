@@ -7,7 +7,7 @@ import { signedMediaPath } from "../campaign/media-url";
 import { itemText, logBookingEvent, resolveItemFiles, settleBooking, type Actor } from "../campaign/booking.service";
 import { checkEligibility, launchAt } from "../campaign/publish.service";
 import { sendDeliveryEmail, sendItemLiveEmail, sendCreatorDeclinedEmail } from "../campaign/delivery.service";
-import { adminAlert, button, creatorLink, esc, sendCreatorEmail } from "./creator-email";
+import { adminAlert, button, creatorLink, CREATOR_SUPPORT_EMAIL, esc, sendCreatorEmail } from "./creator-email";
 
 // Creator marketplace (creator portal Phase B): a client books a creator's page, our team
 // approves the campaign, and the post is OFFERED to the creator, who accepts or declines it.
@@ -36,6 +36,22 @@ const MIN_RESPONSE_MS = 6 * 3600_000;
 /** Offers expired per job run (the job runs every 10 minutes). */
 const EXPIRE_BATCH = 50;
 const BOOKING_LIVE = ["approved", "publishing"];
+/** The decline reason the expiry job writes (the creator never answered). */
+const NO_ANSWER = "No answer in time";
+/** A recorded link may still be corrected after the campaign settles (the client keeps the link). */
+const BOOKING_CORRECTABLE = ["approved", "publishing", "completed", "partially_published"];
+/** Answer-by reminder: sent once, this long before the deadline… */
+const REMIND_BEFORE_MS = 24 * 3600_000;
+/** …and only when the offer gave the creator more than this, so a short window gets one email, not two. */
+const REMIND_MIN_WINDOW_MS = 30 * 3600_000;
+/** No reminder this close to the deadline (a reminder that late is noise, not help). */
+const REMIND_MIN_LEFT_MS = 2 * 3600_000;
+/**
+ * ⚠️ Before this moment the client form said the objective was "for our team", so older
+ * bookings may hold notes never meant for a creator (the end client's name, budget…). Only
+ * bookings created from here on share it as the brief.
+ */
+export const BRIEF_SHARED_SINCE = new Date("2026-11-11T18:30:00Z"); // 12 Nov 2026, 00:00 IST
 
 /**
  * When the creator must have answered: CREATOR_RESPONSE_HOURS (72) after the offer, but no later
@@ -133,7 +149,8 @@ export async function notifyCreatorsOfOffers(offered: OfferedItem[]) {
         c.email,
         items.length === 1 ? "A paid post is waiting for you" : `${items.length} paid posts are waiting for you`,
         "New paid post",
-        `<p style="margin:0 0 12px">Hi ${esc(c.name)},</p><p style="margin:0 0 12px">A brand booked ${items.length === 1 ? "a post" : `${items.length} posts`} on:</p><ul style="margin:0 0 12px">${pages}</ul><p style="margin:0 0 12px">See the content and your payout, then accept or decline by <b>${esc(by)}</b> (IST). Nothing is posted until you accept.</p><p style="margin:18px 0">${button(creatorLink("/offers"), "Review the post")}</p>`,
+        `<p style="margin:0 0 12px">Hi ${esc(c.name)},</p><p style="margin:0 0 12px">A brand booked ${items.length === 1 ? "a post" : `${items.length} posts`} on:</p><ul style="margin:0 0 12px">${pages}</ul><p style="margin:0 0 12px">See the content and your payout, then accept or decline by <b>${esc(by)}</b> (IST). Nothing is posted until you accept.</p><p style="margin:18px 0">${button(creatorLink("/offers"), "Review the post")}</p><p style="margin:12px 0 0">Questions? Reply to this email before you decide — declining is final.</p>`,
+        { replyTo: CREATOR_SUPPORT_EMAIL },
       );
     } catch (e) {
       console.warn(`[creator-offers] offer email failed for ${creatorId}: ${scrubSecrets(e instanceof Error ? e.message : String(e))}`);
@@ -165,7 +182,7 @@ const OFFER_SELECT = {
   booking: {
     select: {
       id: true, name: true, brand: true, status: true, launchFrom: true, launchTo: true, caption: true, hashtags: true,
-      userTags: true, collaborators: true, audioIntegration: true, audioTrack: true, campaignType: true,
+      userTags: true, collaborators: true, audioIntegration: true, audioTrack: true, campaignType: true, objective: true, createdAt: true,
     },
   },
 } as const;
@@ -182,6 +199,9 @@ function actionsFor(o: OfferRow, now: Date) {
     canDecline: open,
     // An accepted post the API can't publish (song audio, publishing off…): the creator posts it.
     canRecordPost: o.status === "manual_pending" && !!o.creatorDecidedAt && bookingLive,
+    // A link the creator recorded can be corrected (a wrong paste) while the campaign is open or
+    // settled; the status, the posting time and every email already sent stay as they were.
+    canCorrectPost: o.status === "posted_manual" && !!o.creatorDecidedAt && BOOKING_CORRECTABLE.includes(o.booking.status),
   };
 }
 
@@ -230,6 +250,8 @@ function toOfferView(o: OfferRow, now: Date) {
       launchFrom: ymd(o.booking.launchFrom),
       launchTo: ymd(o.booking.launchTo),
       songTrack: o.booking.audioIntegration ? o.booking.audioTrack : null,
+      // What the brand wants from the post, in its own words (never who the brand's client is).
+      brief: o.booking.createdAt >= BRIEF_SHARED_SINCE ? o.booking.objective?.trim() || null : null,
     },
     caption: text.caption,
     hashtags: text.hashtags,
@@ -244,7 +266,19 @@ function toOfferView(o: OfferRow, now: Date) {
     scheduledFor: o.status === "queued" ? o.nextAttemptAt ?? launchAt(o.booking.launchFrom, now) : null,
     permalink: o.permalink,
     postedAt: o.postedAt,
-    note: o.status === "manual_pending" ? creatorNote(o.lastError) : null,
+    note: o.status === "manual_pending"
+      ? creatorNote(o.lastError)
+      : (o.status === "refunded" || o.status === "failed") && o.creatorDeclineReason === NO_ANSWER
+        ? "No answer was received in time — there is nothing to do, and no payout for this post."
+        : (o.status === "refunded" || o.status === "failed") && o.creatorDeclineReason
+        ? "You declined this post — there is nothing to do."
+        : o.status === "refunded" && o.creatorDecidedAt == null
+        ? "Withdrawn by our team before you answered — there is nothing to do, and no payout for this post."
+        : o.status === "refunded"
+          ? "Withdrawn by our team — please don't post it. There is no payout for this post."
+          : o.status === "failed"
+            ? "Our team marked this post as not made. There is no payout for it."
+            : null,
     // Whether accepted posts are posted for the creator at all right now (CREATOR_PUBLISH_ENABLED).
     autoPost: campaignConfig.creatorPublishEnabled(),
     ...actionsFor(o, now),
@@ -304,13 +338,16 @@ export async function getOffer(creatorId: string, itemId: string) {
  * The page must still be this creator's, connected and switched on — otherwise the deal cannot be
  * made by them (the item stays with staff).
  */
-async function assertStillTheirs(creatorId: string, assetId: string) {
+async function assertStillTheirs(creatorId: string, assetId: string, opts: { alreadyAccepted?: boolean } = {}) {
   const a = await prisma.creatorAsset.findUnique({
     where: { id: assetId },
     select: { creatorId: true, disconnectedAt: true, enabled: true, creator: { select: { status: true } } },
   });
   if (!a || a.creatorId !== creatorId) throw new AppError(409, "PAGE_NOT_YOURS", "This page is no longer linked to your account.");
   if (a.creator.status !== "approved") throw new AppError(403, "ACCOUNT_NOT_ACTIVE", "Your account is not active.");
+  // A post the creator already accepted (and posts by hand) does not need a live connection or
+  // the staff switch: recording its link must still work after a disconnect or a switch-off.
+  if (opts.alreadyAccepted) return;
   if (a.disconnectedAt) throw new AppError(409, "PAGE_DISCONNECTED", "This page is disconnected — reconnect it first.");
   if (!a.enabled) throw new AppError(409, "PAGE_OFF", "Our team switched this page off. Write to creators@digitalsukoon.com.");
 }
@@ -381,12 +418,14 @@ export async function recordCreatorPost(creatorId: string, itemId: string, url: 
   if (from && from > todayIST()) {
     throw new AppError(409, "BEFORE_WINDOW", `This campaign's posting window opens on ${fmtIstDay(o.booking.launchFrom!)} — post it on or after that day, then paste the link.`);
   }
-  if (!actionsFor(o, new Date()).canRecordPost) {
+  const actions = actionsFor(o, new Date());
+  if (actions.canCorrectPost) return correctCreatorPost(creatorId, o, url);
+  if (!actions.canRecordPost) {
     throw new AppError(409, "INVALID_STATE", o.status === "queued"
       ? "This post is scheduled to go out automatically — no need to post it yourself."
       : "This post can't be marked as posted.");
   }
-  await assertStillTheirs(creatorId, o.targetId);
+  await assertStillTheirs(creatorId, o.targetId, { alreadyAccepted: true });
   const res = await prisma.campaignBookingItem.updateMany({
     where: { id: itemId, creatorId, status: "manual_pending", creatorDecidedAt: { not: null } },
     data: { status: "posted_manual", permalink: url, postedAt: new Date(), lastError: null },
@@ -397,6 +436,114 @@ export async function recordCreatorPost(creatorId: string, itemId: string, url: 
   const finished = await settleBooking(o.bookingId, creatorActor(creatorId));
   if (finished) void sendDeliveryEmail(o.bookingId).catch((err) => console.error("[creator-offers] delivery email failed", err));
   return getOffer(creatorId, itemId);
+}
+
+/**
+ * A wrong link pasted earlier: only the link changes. The post stays live with its original time,
+ * no email goes to the client again (they were already told), and staff are told so the client
+ * can be sent the right link if needed.
+ */
+async function correctCreatorPost(creatorId: string, o: OfferRow, url: string) {
+  if (url === o.permalink) return getOffer(creatorId, o.id);
+  await assertStillTheirs(creatorId, o.targetId, { alreadyAccepted: true });
+  const res = await prisma.campaignBookingItem.updateMany({
+    where: { id: o.id, creatorId, status: "posted_manual", permalink: o.permalink },
+    data: { permalink: url },
+  });
+  if (res.count !== 1) throw new AppError(409, "INVALID_STATE", "This post changed — refresh.");
+  await logBookingEvent(o.bookingId, creatorActor(creatorId), `Creator corrected the link on ${o.accountName} (${o.format}): ${o.permalink ?? "none"} → ${url}`);
+  void adminAlert(
+    "A creator corrected a post link",
+    [
+      { label: "Page", value: o.accountName },
+      { label: "Old link", value: o.permalink ?? "none" },
+      { label: "New link", value: url },
+    ],
+    `/campaigns/${o.bookingId}`,
+  ).catch((err) => console.warn(`[creator-offers] correction alert failed: ${scrubSecrets(err instanceof Error ? err.message : String(err))}`));
+  return getOffer(creatorId, o.id);
+}
+
+// ── Withdrawn by staff ──────────────────────────────────────────────────────────────────────
+
+/** Item statuses in which a creator has been asked to (or will) put the post on their page. */
+export const CREATOR_ENGAGED_STATUSES = ["awaiting_creator", "manual_pending", "queued"];
+
+/**
+ * Staff refunded, failed or rejected posts the creator was asked to make: tell each creator once,
+ * so nobody posts something that will not be paid. Call it after the change commits, with the
+ * items as they were BEFORE it. Never throws.
+ */
+export async function notifyCreatorsWithdrawn(items: Array<{ id: string; creatorId: string | null; status: string; accountName: string }>) {
+  const engaged = items.filter((i) => i.creatorId && CREATOR_ENGAGED_STATUSES.includes(i.status));
+  const byCreator = new Map<string, typeof engaged>();
+  for (const i of engaged) byCreator.set(i.creatorId!, [...(byCreator.get(i.creatorId!) ?? []), i]);
+  for (const [creatorId, rows] of byCreator) {
+    try {
+      const c = await prisma.creator.findUnique({ where: { id: creatorId }, select: { email: true, name: true, status: true } });
+      if (!c || c.status === "closed") continue;
+      const pages = [...new Set(rows.map((r) => r.accountName))].map((n) => `<li>${esc(n)}</li>`).join("");
+      await sendCreatorEmail(
+        c.email,
+        rows.length === 1 ? "A booked post was withdrawn" : `${rows.length} booked posts were withdrawn`,
+        "Post withdrawn",
+        `<p style="margin:0 0 12px">Hi ${esc(c.name)},</p><p style="margin:0 0 12px">Our team withdrew ${rows.length === 1 ? "a booked post" : "booked posts"} on:</p><ul style="margin:0 0 12px">${pages}</ul><p style="margin:0 0 12px"><b>Please don't post ${rows.length === 1 ? "it" : "them"}.</b> There is no payout for a withdrawn post. If you have already posted, reply to this email and tell us.</p><p style="margin:18px 0">${button(creatorLink("/offers"), "See your bookings")}</p>`,
+        { replyTo: CREATOR_SUPPORT_EMAIL },
+      );
+    } catch (e) {
+      console.warn(`[creator-offers] withdrawal email failed for ${creatorId}: ${scrubSecrets(e instanceof Error ? e.message : String(e))}`);
+    }
+  }
+}
+
+// ── Reminder before the answer deadline ─────────────────────────────────────────────────────
+
+const reminderTag = (itemId: string) => `[reminded:${itemId}]`;
+
+/**
+ * About a day before `creator_respond_by`, remind the creator once. The booking event is the
+ * record that it was sent (no column needed); the job's overlap guard keeps two runs apart.
+ * Offers that gave less than REMIND_MIN_WINDOW_MS in total get no reminder.
+ */
+export async function remindCreatorOffers(now = new Date()): Promise<number> {
+  const due = await prisma.campaignBookingItem.findMany({
+    where: {
+      status: "awaiting_creator",
+      creatorId: { not: null },
+      creatorRespondBy: { gt: new Date(now.getTime() + REMIND_MIN_LEFT_MS), lte: new Date(now.getTime() + REMIND_BEFORE_MS) },
+      booking: { status: { in: BOOKING_LIVE } },
+    },
+    orderBy: { creatorRespondBy: "asc" },
+    // Rows already reminded (or with a short window) stay in this range until they expire, so
+    // look further than one batch; at most EXPIRE_BATCH emails go out per run.
+    take: EXPIRE_BATCH * 4,
+    select: { id: true, bookingId: true, creatorId: true, accountName: true, format: true, creatorOfferedAt: true, creatorRespondBy: true },
+  });
+  let sent = 0;
+  for (const d of due) {
+    if (sent >= EXPIRE_BATCH) break;
+    if (!d.creatorOfferedAt || !d.creatorRespondBy) continue;
+    if (d.creatorRespondBy.getTime() - d.creatorOfferedAt.getTime() <= REMIND_MIN_WINDOW_MS) continue;
+    const already = await prisma.campaignBookingEvent.findFirst({ where: { bookingId: d.bookingId, note: { contains: reminderTag(d.id) } }, select: { id: true } });
+    if (already) continue;
+    // Record first: a failed send is not retried (one reminder, never a stream of them).
+    await logBookingEvent(d.bookingId, SYSTEM, `Reminded the creator to answer for ${d.accountName} (${d.format}) ${reminderTag(d.id)}`);
+    try {
+      const c = await prisma.creator.findUnique({ where: { id: d.creatorId! }, select: { email: true, name: true, status: true } });
+      if (!c || c.status !== "approved") continue;
+      await sendCreatorEmail(
+        c.email,
+        `Answer by ${fmtIst(d.creatorRespondBy)} — a paid post is waiting`,
+        "A paid post is waiting for your answer",
+        `<p style="margin:0 0 12px">Hi ${esc(c.name)},</p><p style="margin:0 0 12px">A booked post on <b>${esc(d.accountName)}</b> is still waiting for your answer. Accept or decline by <b>${esc(fmtIst(d.creatorRespondBy))}</b> (IST) — after that it is treated as declined.</p><p style="margin:18px 0">${button(creatorLink(`/offers/view?id=${d.id}`), "Review the post")}</p><p style="margin:12px 0 0">Questions? Reply to this email.</p>`,
+        { replyTo: CREATOR_SUPPORT_EMAIL },
+      );
+      sent++;
+    } catch (e) {
+      console.warn(`[creator-offers] reminder failed for ${d.id}: ${scrubSecrets(e instanceof Error ? e.message : String(e))}`);
+    }
+  }
+  return sent;
 }
 
 // ── Expiry + staff alerts ───────────────────────────────────────────────────────────────────
@@ -416,7 +563,7 @@ export async function expireCreatorOffers(now = new Date()): Promise<number> {
   for (const d of due) {
     const res = await prisma.campaignBookingItem.updateMany({
       where: { id: d.id, status: "awaiting_creator", creatorRespondBy: { lte: now } },
-      data: { status: "creator_declined", creatorDecidedAt: now, creatorDeclineReason: "No answer in time", lastError: "The creator did not answer in time." },
+      data: { status: "creator_declined", creatorDecidedAt: now, creatorDeclineReason: NO_ANSWER, lastError: "The creator did not answer in time." },
     });
     if (res.count !== 1) continue;
     await logBookingEvent(d.bookingId, SYSTEM, `Creator did not answer in time for ${d.accountName} (${d.format})`);
@@ -447,6 +594,7 @@ export async function runCreatorOfferExpiry(): Promise<number> {
   if (expiring) return 0;
   expiring = true;
   try {
+    await remindCreatorOffers().catch((err) => console.error("[creator-offers] reminders failed:", err));
     return await expireCreatorOffers();
   } catch (err) {
     console.error("[creator-offers] expiry failed:", err);

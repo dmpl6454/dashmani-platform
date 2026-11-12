@@ -8,6 +8,7 @@ import { connectErrorSentence, errorSentence } from "@/lib/messages";
 import { daysUntil, fmtCompact, fmtDate, fmtUntil } from "@/lib/format";
 import type { ConnectionPayload, ConnectionView, CreatorAssetView, CreatorMeWithChecklist } from "@/lib/types";
 import { Banner, Loading, Modal, PageHead } from "@/components/ui";
+import { OpenBookingsWarning } from "@/components/open-bookings-warning";
 
 // Facebook connection: what the permission lets us do, the Connect / Reconnect button, and every
 // Page / Instagram account we found (GET /v1/creator/meta/connection), with whether we can
@@ -431,6 +432,7 @@ function DisconnectModal({ onClose, onDone }: { onClose: () => void; onDone: () 
         This removes our access on our side. To also remove the app from your Facebook account, go to Facebook → Settings → Business
         integrations and remove “Post Automation 2”.
       </p>
+      <OpenBookingsWarning action="disconnect" />
       {error && <Banner tone="danger" role="alert">{error}</Banner>}
       <div className="flex flex-wrap gap-2 justify-end">
         <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Keep connected</button>

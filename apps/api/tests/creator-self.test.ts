@@ -106,7 +106,7 @@ describe("Creator self API", () => {
       await seedAsset(c.id, conn.id, { networkDuplicateOf: "some-meta-asset-id" });
       await seedAsset(c.id, conn.id, { disconnectedAt: new Date() });
       res = await request(app).get("/v1/creator/me").set("Authorization", auth);
-      expect(res.body.data.checklist).toEqual({ emailVerified: false, connected: true, publishablePages: 1, submitted: false });
+      expect(res.body.data.checklist).toEqual({ emailVerified: false, connected: true, publishablePages: 1, submitted: false, enabledPages: 0, pricedPages: 0, pricesSet: false });
       expect(JSON.stringify(res.body)).not.toMatch(/secret|passwordHash|Enc/);
     });
 

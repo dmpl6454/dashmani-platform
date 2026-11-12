@@ -30,9 +30,9 @@ import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.ser
 import { creatorNote, expireCreatorOffers, remindCreatorOffers, BRIEF_SHARED_SINCE, respondByFor } from "../src/services/creator/creator-offers.service";
 import { creatorClientPricePaise } from "@dashmani/shared/src/validators/creator";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
-import { alertPassedWindows } from "../src/services/campaign/review.service";
+import { alertPassedWindows, listQueue } from "../src/services/campaign/review.service";
 import { todayIST } from "@dashmani/shared";
-import { generateToken, generateClientToken, generateCreatorToken } from "./helpers";
+import { generateToken, generateClientToken, generateCreatorToken, createTestRole } from "./helpers";
 
 // ── Fake Graph API ───────────────────────────────────────────────────────────────────────────
 
@@ -849,6 +849,58 @@ describe("creator marketplace", () => {
         const m = vi.mocked(sendEmail).mock.calls.map(([x]) => x).find((x) => /Changes needed/.test(x.subject));
         expect(m?.html).toMatch(/fixed once a campaign is submitted/);
       });
+    });
+  });
+
+  describe("staff see what needs doing (batch 5)", () => {
+    async function salesUser() {
+      const role = await createTestRole(`Sales-${++n}`, [{ resource: "sales", action: "view", scope: "global" }]);
+      const u = await prisma.user.create({ data: { name: "Seller", email: `seller-${++n}@ds.test`, passwordHash: "x", status: "ACTIVE" } });
+      await prisma.userRole.create({ data: { userId: u.id, roleId: role.id } });
+      return u;
+    }
+
+    it("the queue counts a creator page as waiting on its creator, not as a post for staff", async () => {
+      const { bookingId } = await paidBooking();
+      await approve(bookingId);
+      const row = (await listQueue()).find((r) => r.id === bookingId)!;
+      expect(row.toPostCount).toBe(0);
+      expect(row.waitingOnCreatorCount).toBe(1);
+      expect(row.creatorDeclinedCount).toBe(0);
+      expect(row.nextCreatorDeadline).not.toBeNull();
+    });
+
+    it("reviews are listed oldest submission first, with their submit time", async () => {
+      const { bookingId: newer } = await paidBooking();
+      const { bookingId: older } = await paidBooking();
+      await prisma.campaignBooking.update({ where: { id: older }, data: { submittedAt: new Date(Date.now() - 30 * 3_600_000) } });
+      const ids = (await listQueue()).filter((r) => r.status === "paid_pending_review").map((r) => r.id);
+      expect(ids.indexOf(older)).toBeLessThan(ids.indexOf(newer));
+      expect((await listQueue()).find((r) => r.id === older)!.submittedAt).not.toBeNull();
+    });
+
+    it("a creator decline puts a bell row in front of the sales team, linking to the booking", async () => {
+      const seller = await salesUser();
+      const { bookingId, itemId } = await paidBooking();
+      await approve(bookingId);
+      const r = await asCreator().post(`/creator/offers/${itemId}/decline`, { reason: "Not a fit for my page" });
+      expect(r.status).toBe(200);
+      await vi.waitFor(async () => {
+        const rows = await prisma.notification.findMany({ where: { userId: seller.id } });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].title).toMatch(/needs a refund or another page/);
+        expect(rows[0].metadata).toMatchObject({ kind: "campaign_alert", bookingId, url: expect.stringContaining(`/bookings/view?id=${bookingId}`) });
+      });
+      const row = (await listQueue()).find((q) => q.id === bookingId)!;
+      expect(row.creatorDeclinedCount).toBe(1);
+    });
+
+    it("staff see which switched-on pages brands can actually book", async () => {
+      const before = await request(app).get(`/v1/admin/creators/${creatorId}`).set("Authorization", `Bearer ${adminToken}`);
+      expect(before.body.data.assets[0].listedFormats).toEqual([]);
+      await priceCreatorPage();
+      const after = await request(app).get(`/v1/admin/creators/${creatorId}`).set("Authorization", `Bearer ${adminToken}`);
+      expect(after.body.data.assets[0].listedFormats.length).toBeGreaterThan(0);
     });
   });
 

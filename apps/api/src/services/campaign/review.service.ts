@@ -7,6 +7,7 @@ import { transitionBooking, settleBooking, logBookingEvent } from "./booking.ser
 import { refundBookingInFull, refundPaymentRow, capturedPaymentFor } from "./payment.service";
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
+import { notifyStaffBell } from "./staff-bell";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
 import { CREATOR_ENGAGED_STATUSES, notifyCreatorsOfOffers, notifyCreatorsWithdrawn, offerCreatorItems, type OfferedItem } from "../creator/creator-offers.service";
 
@@ -36,9 +37,10 @@ export async function listQueue(filter: { status?: string } = {}) {
       launchFrom: true,
       launchTo: true,
       paidAt: true,
+      submittedAt: true,
       updatedAt: true,
       client: { select: { companyName: true } },
-      items: { select: { status: true } },
+      items: { select: { status: true, targetType: true, creatorRespondBy: true } },
     },
   });
   const today = todayIST();
@@ -61,14 +63,39 @@ export async function listQueue(filter: { status?: string } = {}) {
       liveCount: r.items.filter((i) => i.status === "posted_manual" || i.status === "published").length,
       // The last posting day is over and some posts are still open.
       overdue: isWindowPassed(r.status, ymd(r.launchTo), r.items, today),
+      // When the client sent it for review: the review clock ("usually within one working day").
+      submittedAt: r.submittedAt,
+      ...queueCounts(r.items),
     }))
     .sort((a, b) => {
       const d = QUEUE_ORDER.indexOf(a.status) - QUEUE_ORDER.indexOf(b.status);
-      return d !== 0 ? d : +b.updatedAt - +a.updatedAt;
+      if (d !== 0) return d;
+      // Reviews: the one waiting longest first. Everything else: most recently touched first.
+      if (a.status === "paid_pending_review") return +(a.submittedAt ?? a.updatedAt) - +(b.submittedAt ?? b.updatedAt);
+      return +b.updatedAt - +a.updatedAt;
     });
 }
 
 const SETTLED = SETTLED_ITEM_STATUSES as readonly string[];
+
+/**
+ * Per-booking work split (G50): what staff must post, what sits with a creator, and what a
+ * creator turned down. A creator page is the creator's to post once accepted, so it is never
+ * counted as "to post" for staff.
+ */
+export function queueCounts(items: Array<{ status: string; targetType?: string | null; creatorRespondBy?: Date | null }>) {
+  const creator = (i: { targetType?: string | null }) => i.targetType === "creator_asset";
+  const open = ["manual_pending", "queued"];
+  const deadlines = items
+    .filter((i) => creator(i) && i.status === "awaiting_creator" && i.creatorRespondBy)
+    .map((i) => +i.creatorRespondBy!);
+  return {
+    toPostCount: items.filter((i) => !creator(i) && open.includes(i.status)).length,
+    waitingOnCreatorCount: items.filter((i) => creator(i) && (i.status === "awaiting_creator" || open.includes(i.status))).length,
+    creatorDeclinedCount: items.filter((i) => i.status === "creator_declined").length,
+    nextCreatorDeadline: deadlines.length ? new Date(Math.min(...deadlines)) : null,
+  };
+}
 
 /** Approved or going live, the last posting day (an IST day key) is before today, and a post is still open. */
 export function isWindowPassed(status: string, launchTo: string | null, items: Array<{ status: string }>, today = todayIST()): boolean {
@@ -98,6 +125,7 @@ export async function alertPassedWindows(today = todayIST()): Promise<number> {
     const open = b.items.filter((i) => !SETTLED.includes(i.status));
     try {
       await logBookingEvent(b.id, { type: "system" }, `Posting window closed on ${ymd(b.launchTo)} with ${open.length} post${open.length === 1 ? "" : "s"} still open ${WINDOW_TAG}`);
+      await notifyStaffBell(b.id, `Posting window passed: ${b.name}`, `The last posting day was ${ymd(b.launchTo)} and ${open.length} post${open.length === 1 ? " is" : "s are"} still open: ${open.map((i) => i.accountName).join(", ")}.`);
       await notifyAdminByEmail(
         `Posting window passed: ${b.name}`,
         [
@@ -191,6 +219,13 @@ export async function approve(id: string, staffId: string) {
   }
   for (const o of offered) await logBookingEvent(id, staff(staffId), `Offered to the creator: ${o.accountName}`);
   for (const c of creatorToStaff) await logBookingEvent(id, staff(staffId), `Creator page unavailable — ${c.accountName}: ${c.reason}`);
+  if (creatorToStaff.length) {
+    void notifyStaffBell(
+      id,
+      creatorToStaff.length === 1 ? "A creator page couldn't be offered" : `${creatorToStaff.length} creator pages couldn't be offered`,
+      `${creatorToStaff.map((c) => `${c.accountName}: ${c.reason}`).join("; ")}. Post it another way, or refund it.`,
+    );
+  }
   void notifyCreatorsOfOffers(offered);
   void sendStatusEmail(id, "approved").catch((e) => console.error("[campaign] approved email failed", e));
   return getBookingForStaff(id);

@@ -104,7 +104,7 @@ export async function getBooking(id: string) {
         orderBy: [{ createdAt: "asc" }, { accountName: "asc" }, { id: "asc" }],
         select: {
           id: true, platform: true, format: true, accountName: true, accountHandle: true, pricePaise: true, audioAddonPaise: true, status: true, permalink: true, postedAt: true,
-          captionOverride: true, hashtagsOverride: true, superTextOverride: true,
+          captionOverride: true, hashtagsOverride: true, superTextOverride: true, targetType: true,
         },
       },
     },

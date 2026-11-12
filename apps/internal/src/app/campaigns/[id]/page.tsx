@@ -207,7 +207,7 @@ export default function CampaignBookingDetail() {
               <h2 className="text-[15px] font-semibold text-ds-text mb-1">Review</h2>
               <p className="text-[12.5px] text-ds-t3 mb-3">
                 {autoOn
-                  ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta / YouTube API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
+                  ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta / YouTube API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand. A creator's page goes to that creator first: nothing is posted there until they accept.`
                   : "Auto-publishing is switched off: approving sends every network account to \"To post\" — someone posts each one by hand and pastes the link. A creator's page goes to that creator instead: they accept or decline within the time shown, then post it themselves."}
                 {" "}
                 {offline

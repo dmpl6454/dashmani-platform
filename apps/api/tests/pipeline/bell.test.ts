@@ -225,6 +225,13 @@ describe("salesNotificationUrl — creator-review rows link to the sales portal"
       "https://sales.digitalsukoon.com/creators/view?id=abc",
     );
   });
+  it("links a campaign_alert row to the booking in the sales portal, and only there", () => {
+    expect(salesNotificationUrl(row({ kind: "campaign_alert", url: "https://sales.digitalsukoon.com/bookings/view?id=b1" }))).toBe(
+      "https://sales.digitalsukoon.com/bookings/view?id=b1",
+    );
+    expect(salesNotificationUrl(row({ kind: "campaign_alert", url: "https://sales.digitalsukoon.com/creators/view?id=b1" }))).toBeNull();
+    expect(salesNotificationUrl(row({ kind: "creator_review", url: "https://sales.digitalsukoon.com/bookings/view?id=b1" }))).toBeNull();
+  });
   it("refuses everything else", () => {
     expect(salesNotificationUrl(row({ kind: "other", url: "https://sales.digitalsukoon.com/creators/view?id=abc" }))).toBeNull();
     expect(salesNotificationUrl(row({ kind: "creator_review", url: "https://evil.example/creators/view?id=abc" }))).toBeNull();

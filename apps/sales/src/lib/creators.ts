@@ -72,6 +72,8 @@ export interface CreatorAsset {
   engagements28d: number | null;
   metricsFetchedAt: string | null;
   tasks: string[];
+  /** Formats brands can book right now (needs the creator's price and our margin). */
+  listedFormats?: string[];
 }
 
 export interface CreatorDetail {

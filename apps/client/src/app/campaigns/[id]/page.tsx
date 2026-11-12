@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { mutate as revalidate } from "swr";
@@ -58,6 +58,13 @@ export default function CampaignPage() {
   // payment is being confirmed or a checkout is in flight (cancel must never race money).
   const [payBusy, setPayBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  // Accounts the server took off on the last save (the song or the campaign type changed and
+  // they don't offer it) — named once on the step the client lands on.
+  const [dropped, setDropped] = useState<{ names: string[]; paise: number } | null>(null);
+  // After "Submit for review" the wizard unmounts: move focus to the confirmation instead of
+  // leaving it on nothing, and scroll it into view.
+  const afterRef = useRef<HTMLParagraphElement>(null);
+  const wasPrePay = useRef<boolean | null>(null);
   // Where a detour should come back to: Accounts → "change the type in Details" returns to
   // Accounts, Review → "Update dates" returns to Review. Cleared by any direct step pick.
   const returnTo = useRef<Step | null>(null);
@@ -83,6 +90,15 @@ export default function CampaignPage() {
     // history.replaceState (Next 14.1+ keeps the router in sync) — no RSC round-trip, no new history entry.
     if (window.location.search !== want) window.history.replaceState(null, "", `${window.location.pathname}${want}`);
   }, [step, prePayNow]);
+
+  useEffect(() => {
+    if (!c) return;
+    if (wasPrePay.current === true && !prePayNow) {
+      afterRef.current?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
+    }
+    wasPrePay.current = prePayNow;
+  }, [c, prePayNow]);
 
   // After a step change, put keyboard / screen-reader focus on the new step's heading.
   useEffect(() => {
@@ -111,6 +127,13 @@ export default function CampaignPage() {
     const want = returnTo.current ?? fallback;
     returnTo.current = null;
     saved(next, reachedOf(next)[want] ? want : firstIncomplete(next));
+  };
+
+  // Which picked accounts a save removed (compared by rate card, so a re-priced account is not
+  // "removed"). Cleared by the next save that removes nothing.
+  const noteDropped = (before: Campaign, after: Campaign) => {
+    const gone = before.items.filter((i) => !after.items.some((j) => j.rateCardId === i.rateCardId));
+    setDropped(gone.length ? { names: gone.map((i) => i.accountName), paise: gone.reduce((s, i) => s + i.pricePaise, 0) } : null);
   };
 
   const detour = (from: Step) => (to: Step, next?: Campaign) => {
@@ -170,11 +193,23 @@ export default function CampaignPage() {
               }}
               headingRef={headingRef}
             />
+            {dropped && (
+              <div role="status" className="rounded-xl bg-attention-bg text-ink px-4 py-3 text-[13px] flex items-start justify-between gap-3">
+                <span>
+                  {dropped.names.length === 1 ? `${dropped.names[0]} was` : `${dropped.names.slice(0, -1).join(", ")} and ${dropped.names[dropped.names.length - 1]} were`} removed from your campaign — {dropped.names.length === 1 ? "it doesn't" : "they don't"} offer this option ({"−"}{rupees(dropped.paise)} before GST). Change the song or the campaign type back to keep {dropped.names.length === 1 ? "it" : "them"}.
+                </span>
+                <button type="button" className="shrink-0 text-ink-3 hover:text-ink" aria-label="Dismiss" onClick={() => setDropped(null)}><Icon.X size={14} /></button>
+              </div>
+            )}
             {current === "info" && (
               <InfoForm
                 initial={c}
                 submitLabel="Save & continue"
-                onSubmit={async (v) => resume(await mutateJson<Campaign>(`/client/campaigns/${c.id}/info`, "PUT", v), "creative")}
+                onSubmit={async (v) => {
+                  const n = await mutateJson<Campaign>(`/client/campaigns/${c.id}/info`, "PUT", v);
+                  noteDropped(c, n);
+                  resume(n, "creative");
+                }}
               />
             )}
             {current === "creative" && (
@@ -184,6 +219,7 @@ export default function CampaignPage() {
                 // Accounts already picked and still all there → straight back to Review — unless the
                 // client came here from Accounts (to turn the song off), which is where they return.
                 onSaved={(n) => {
+                  noteDropped(c, n);
                   const intact = n.items.length > 0 && n.items.length === c.items.length;
                   // Lost accounts (a format or song change) are always shown, whatever the detour.
                   if (!intact) returnTo.current = null;
@@ -205,7 +241,7 @@ export default function CampaignPage() {
             )}
           </>
         ) : (
-          <AfterPayment campaign={c} onChanged={(n?: Campaign) => (n ? mutate(n, { revalidate: true }) : mutate())} />
+          <AfterPayment campaign={c} focusRef={afterRef} onChanged={(n?: Campaign) => (n ? mutate(n, { revalidate: true }) : mutate())} />
         )}
       </div>
     </>
@@ -428,20 +464,7 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
           ))}
         </ul>
         <div className="mt-3 pt-3 space-y-1" style={{ borderTop: "2px solid rgba(255,255,255,0.18)" }}>
-          {pricing && pricing.gstPaise > 0 && (
-            <>
-              <div className="flex items-center justify-between text-[13px] text-ink-2"><span>Subtotal</span><span className="tabular-nums">{rupees(pricing.subtotalPaise)}</span></div>
-              {pricing.taxMode === "intra" ? (
-                <>
-                  <div className="flex items-center justify-between text-[13px] text-ink-2"><span>CGST ({pricing.gstRateBp / 200}%)</span><span className="tabular-nums">{rupees(pricing.cgstPaise)}</span></div>
-                  <div className="flex items-center justify-between text-[13px] text-ink-2"><span>SGST ({pricing.gstRateBp / 200}%)</span><span className="tabular-nums">{rupees(pricing.sgstPaise)}</span></div>
-                </>
-              ) : (
-                <div className="flex items-center justify-between text-[13px] text-ink-2"><span>IGST ({pricing.gstRateBp / 100}%)</span><span className="tabular-nums">{rupees(pricing.igstPaise)}</span></div>
-              )}
-              {pricing.roundOffPaise !== 0 && <div className="flex items-center justify-between text-[12px] text-ink-3"><span>Round-off</span><span className="tabular-nums">{pricing.roundOffPaise > 0 ? "+" : "−"}{rupees(Math.abs(pricing.roundOffPaise))}</span></div>}
-            </>
-          )}
+          {pricing && <PricingLines pricing={pricing} />}
           <div className="flex items-center justify-between pt-1">
             <span className="text-[13px] font-semibold text-ink-2">{pricing && pricing.gstPaise > 0 ? "Total incl. GST" : "Total"}</span>
             <span className="text-[19px] font-bold text-ink tabular-nums">{rupees(total)}</span>
@@ -530,9 +553,28 @@ function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
   );
 }
 
+/** Subtotal, GST and round-off of a campaign — the same lines before and after submission. */
+function PricingLines({ pricing }: { pricing: NonNullable<Campaign["pricing"]> }) {
+  if (pricing.gstPaise <= 0) return null;
+  return (
+    <>
+              <div className="flex items-center justify-between text-[13px] text-ink-2"><span>Subtotal</span><span className="tabular-nums">{rupees(pricing.subtotalPaise)}</span></div>
+              {pricing.taxMode === "intra" ? (
+                <>
+                  <div className="flex items-center justify-between text-[13px] text-ink-2"><span>CGST ({pricing.gstRateBp / 200}%)</span><span className="tabular-nums">{rupees(pricing.cgstPaise)}</span></div>
+                  <div className="flex items-center justify-between text-[13px] text-ink-2"><span>SGST ({pricing.gstRateBp / 200}%)</span><span className="tabular-nums">{rupees(pricing.sgstPaise)}</span></div>
+                </>
+              ) : (
+                <div className="flex items-center justify-between text-[13px] text-ink-2"><span>IGST ({pricing.gstRateBp / 100}%)</span><span className="tabular-nums">{rupees(pricing.igstPaise)}</span></div>
+              )}
+              {pricing.roundOffPaise !== 0 && <div className="flex items-center justify-between text-[12px] text-ink-3"><span>Round-off</span><span className="tabular-nums">{pricing.roundOffPaise > 0 ? "+" : "−"}{rupees(Math.abs(pricing.roundOffPaise))}</span></div>}
+    </>
+  );
+}
+
 // ── After payment: status, changes, results ─────────────────────────────────────
 
-function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChanged: (saved?: Campaign) => void }) {
+function AfterPayment({ campaign: c, onChanged, focusRef }: { campaign: Campaign; onChanged: (saved?: Campaign) => void; focusRef?: Ref<HTMLParagraphElement> }) {
   const live = ["approved", "publishing", "completed", "partially_published"].includes(c.status);
   const { data: results } = useResults(c.id, live);
   const { user } = useAuth();
@@ -574,13 +616,20 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
     expired: "This campaign wasn't completed in time and has expired. Start a new one any time.",
   };
   const showWindow = hasWindow && ["paid_pending_review", "approved", "publishing"].includes(c.status);
+  const showPricing = !!c.pricing && !nothingLive && (paidOnline || SETTLING.includes(c.status));
   // In "changes requested" the dates can't be edited here; a window that has closed goes to our team.
   const windowPassed = !!c.launchTo && c.launchTo < todayIST();
+  // Approved or going live, but the last posting day is over with posts still open.
+  const overdue = windowPassed && ["approved", "publishing"].includes(c.status);
 
   return (
     <div className="grid grid-cols-1 gap-4">
       {c.status === "changes_requested" ? (
         <Card title="A change is needed" sub={paidOnline ? "Your payment is safe. Update your video, image or text and send it back for review." : "Update your video, image or text and send it back for review."}>
+          <p className="text-[12.5px] text-ink-2 mb-3">
+            Dates, accounts, the format and the song are fixed once a campaign is submitted. If the change you were asked for needs one of them, reply to the review email or{" "}
+            <a href={whatsappSupportUrl(`a change to my campaign "${c.name}"`)} target="_blank" rel="noopener noreferrer" className="underline font-semibold">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a>.
+          </p>
           <blockquote className="rounded-xl bg-attention-bg text-ink px-4 py-3 text-[13.5px] whitespace-pre-line">{c.reviewNote}</blockquote>
           {windowText && <p className="text-[12.5px] text-ink-3 mt-3">Go-live window: {windowText}</p>}
           {windowPassed && (
@@ -594,7 +643,18 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
         </Card>
       ) : (
         <Card>
-          <p className="text-[14px] text-ink">{message[c.status] ?? ""}</p>
+          <p ref={focusRef} tabIndex={-1} role="status" className="text-[14px] text-ink outline-none">
+            {overdue
+              ? "Your posting window has passed and some posts aren't live yet — our team is following up and will email you."
+              : message[c.status] ?? ""}
+          </p>
+          {overdue && (
+            <p className="text-[13px] text-ink-2 mt-2">
+              Questions? Write to{" "}
+              <a href="mailto:hello@digitalsukoon.com" className="underline font-semibold">hello@digitalsukoon.com</a> or{" "}
+              <a href={whatsappSupportUrl(`posts still to go live on my campaign "${c.name}"`)} target="_blank" rel="noopener noreferrer" className="underline font-semibold">WhatsApp {SUPPORT_WHATSAPP_DISPLAY}</a>.
+            </p>
+          )}
           {c.status === "paid_pending_review" && (
             <p className="text-[13px] text-ink-2 mt-2">
               We&apos;re sending a confirmation to {user?.email ?? "your email"} — check your inbox (and spam). Our team replies from that thread.
@@ -620,6 +680,15 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                   ? `Campaign total before the posts that couldn't be made: ${rupees(c.totalPaise)} — our team will confirm the final amount with you`
                   : `Campaign total ${rupees(c.totalPaise)} incl. GST — our team will confirm payment with you`}
             </p>
+          )}
+          {showPricing && c.pricing && c.pricing.gstPaise > 0 && (
+            <details className="mt-2 text-[12.5px]">
+              <summary className="cursor-pointer text-ink-3 hover:text-ink">Show the price breakdown</summary>
+              <div className="mt-2 space-y-1 max-w-[360px]">
+                <PricingLines pricing={c.pricing} />
+                <div className="flex items-center justify-between text-[13px] font-semibold text-ink"><span>Total incl. GST</span><span className="tabular-nums">{rupees(c.pricing.totalPaise)}</span></div>
+              </div>
+            </details>
           )}
         </Card>
       )}

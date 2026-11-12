@@ -30,6 +30,8 @@ import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.ser
 import { creatorNote, expireCreatorOffers, remindCreatorOffers, BRIEF_SHARED_SINCE, respondByFor } from "../src/services/creator/creator-offers.service";
 import { creatorClientPricePaise } from "@dashmani/shared/src/validators/creator";
 import { purgeCreatorPageData } from "../src/cron/creator.cron";
+import { alertPassedWindows } from "../src/services/campaign/review.service";
+import { todayIST } from "@dashmani/shared";
 import { generateToken, generateClientToken, generateCreatorToken } from "./helpers";
 
 // ── Fake Graph API ───────────────────────────────────────────────────────────────────────────
@@ -788,6 +790,65 @@ describe("creator marketplace", () => {
         data: { creatorOfferedAt: new Date(now.getTime() - 10 * 3600_000), creatorRespondBy: new Date(now.getTime() + 50 * 3600_000) },
       });
       expect(await remindCreatorOffers(now)).toBe(0);
+    });
+  });
+
+  describe("the client and staff always know where a campaign stands (batch 3)", () => {
+    const yesterday = () => new Date(`${todayIST()}T00:00:00Z`).getTime() - 86_400_000;
+
+    it("a passed posting window with an open post alerts staff once, and the queue flags it", async () => {
+      const { bookingId } = await paidBooking({ launchTo: new Date(yesterday()) });
+      await approve(bookingId);
+      vi.mocked(notifyAdminByEmail).mockClear();
+      expect(await alertPassedWindows()).toBe(1);
+      expect(vi.mocked(notifyAdminByEmail).mock.calls[0][0]).toMatch(/Posting window passed: Diwali drop/);
+      // A second run (or a restart) is a no-op.
+      expect(await alertPassedWindows()).toBe(0);
+      const q = await request(app).get("/v1/admin/campaigns").set("Authorization", `Bearer ${adminToken}`);
+      expect(q.body.data.find((r: { id: string }) => r.id === bookingId).overdue).toBe(true);
+    });
+
+    it("a window that is still open, or a campaign with every post settled, is never flagged", async () => {
+      const { bookingId } = await paidBooking();
+      await approve(bookingId);
+      expect(await alertPassedWindows()).toBe(0);
+      const { bookingId: b2, itemId: i2 } = await paidBooking({ launchTo: new Date(yesterday()) });
+      await approve(b2);
+      await prisma.campaignBookingItem.update({ where: { id: i2 }, data: { status: "refunded" } });
+      expect(await alertPassedWindows()).toBe(0);
+    });
+
+    it("an email that didn't go out is recorded, and resend reports it honestly", async () => {
+      const { bookingId, itemId } = await paidBooking();
+      // The offer email fails: staff read that the creator was not told.
+      vi.mocked(sendEmail).mockResolvedValueOnce(null as never);
+      await approve(bookingId);
+      await vi.waitFor(async () => {
+        const ev = await prisma.campaignBookingEvent.findFirst({ where: { bookingId, note: { contains: "Offer email could not be sent" } } });
+        expect(ev).not.toBeNull();
+      });
+      // Resend of the delivery email with SMTP failing → sent:false and an "Email not sent" event.
+      await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: "refunded" } });
+      await prisma.campaignBooking.update({ where: { id: bookingId }, data: { status: "partially_published" } });
+      vi.mocked(sendEmail).mockResolvedValueOnce(null as never);
+      const r = await request(app).post(`/v1/admin/campaigns/${bookingId}/resend-delivery`).set("Authorization", `Bearer ${adminToken}`);
+      expect(r.status).toBe(200);
+      expect(r.body.data.sent).toBe(false);
+      expect(await prisma.campaignBookingEvent.findFirst({ where: { bookingId, note: { startsWith: "Email not sent: delivery email" } } })).not.toBeNull();
+      // Green path.
+      const ok = await request(app).post(`/v1/admin/campaigns/${bookingId}/resend-delivery`).set("Authorization", `Bearer ${adminToken}`);
+      expect(ok.body.data.sent).toBe(true);
+    });
+
+    it("the changes-needed email says what can't change and where to ask", async () => {
+      const { bookingId } = await paidBooking();
+      vi.mocked(sendEmail).mockClear();
+      const r = await request(app).post(`/v1/admin/campaigns/${bookingId}/request-changes`).set("Authorization", `Bearer ${adminToken}`).send({ note: "Please brighten the video." });
+      expect(r.status).toBe(200);
+      await vi.waitFor(() => {
+        const m = vi.mocked(sendEmail).mock.calls.map(([x]) => x).find((x) => /Changes needed/.test(x.subject));
+        expect(m?.html).toMatch(/fixed once a campaign is submitted/);
+      });
     });
   });
 });

@@ -175,7 +175,20 @@ export default function CampaignBookingDetail() {
                   className={BTN_GHOST}
                   disabled={busy === "resend"}
                   onClick={async () => {
-                    if (await act("resend", `/admin/campaigns/${b.id}/resend-delivery`)) setInfo(`Delivery email sent to ${b.client.email}.`);
+                    // Its own call: the answer says whether the email really went out.
+                    setBusy("resend");
+                    setErr("");
+                    setInfo("");
+                    try {
+                      const r = await apiFetch<{ data: { sent: boolean } }>(`/admin/campaigns/${b.id}/resend-delivery`, { method: "POST" });
+                      if (r.data?.sent === false) setErr(`The delivery email couldn't be sent to ${b.client.email} — check the email settings, or send the links yourself.`);
+                      else setInfo(`Delivery email sent to ${b.client.email}.`);
+                      await mutate();
+                    } catch (e: any) {
+                      setErr(e.message || "That didn't work.");
+                    } finally {
+                      setBusy(null);
+                    }
                   }}
                 >
                   <Mail className="h-4 w-4" /> Resend delivery email

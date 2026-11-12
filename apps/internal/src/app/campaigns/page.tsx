@@ -22,6 +22,8 @@ type Row = {
   paidAt: string | null;
   itemCount: number;
   liveCount: number;
+  /** The posting window closed with posts still open. */
+  overdue?: boolean;
 };
 
 const FILTERS: { key: string; label: string; match: (s: string) => boolean }[] = [
@@ -93,6 +95,7 @@ export default function CampaignBookingsPage() {
               <div className="text-[12px] text-ds-t3 truncate">{r.client} · {r.brand} · {r.campaignType === "entertainment" ? "Entertainment" : "Brand"} · {r.format ?? "—"}{r.audioIntegration ? " + audio" : ""} · {fmtDate(r.launchFrom)} – {fmtDate(r.launchTo)}</div>
             </div>
             <div className="flex items-center gap-4 shrink-0 text-[12.5px] text-ds-t2">
+              {r.overdue && <span className="rounded-full bg-red-500/15 text-red-300 px-2 py-0.5 text-[11.5px] font-semibold">Window passed</span>}
               <span className="tabular-nums">{r.liveCount}/{r.itemCount} posted</span>
               <span className="tabular-nums font-semibold text-ds-text w-[84px] text-right">{rupees(r.totalPaise)}</span>
               <StatusPill status={r.status} />

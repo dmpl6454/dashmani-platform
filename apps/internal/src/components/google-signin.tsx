@@ -148,7 +148,11 @@ export function GoogleSignIn({
         <span>or</span>
         <span className="flex-1 h-px bg-white/[0.18]" />
       </div>
-      <div ref={slot} className="flex justify-center min-h-[44px]" aria-busy={busy} />
+      {/* Google draws the button in a cross-origin iframe with a light colour scheme. The login page
+          is `color-scheme: dark`, and when an iframe's scheme differs from its parent's the browser
+          paints the iframe opaque white — a white box around the pill. A light scheme on the slot
+          (inherited by the iframe element) makes them match, so the iframe stays transparent. */}
+      <div ref={slot} className="flex justify-center min-h-[44px]" style={{ colorScheme: "light" }} aria-busy={busy} />
       {busy && <p className="text-[11.5px] text-[#a7a7b0] text-center mt-2 font-medium" aria-live="polite">Checking with Google…</p>}
     </div>
   );

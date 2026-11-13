@@ -26,7 +26,11 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, _retr
   const data = await res.json();
 
   if (!data.success) {
-    if (res.status === 401 && typeof window !== "undefined" && !_retried) {
+    // A wrong password (sign-in, or the current password on change-password) is a 401 too, but it
+    // says nothing about the session: refreshing can't fix it, and redirecting reloaded /login and
+    // wiped the form, so a typo showed no "Invalid email or password" at all. Show the message.
+    const wrongPassword = data.error?.code === "INVALID_CREDENTIALS";
+    if (res.status === 401 && typeof window !== "undefined" && !_retried && !wrongPassword) {
       const refreshed = await tryRefresh();
       if (refreshed) {
         return apiFetch(path, options, true);

@@ -125,7 +125,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
         </head>
         <body>
-          <div className={`flex items-center justify-center min-h-screen ${isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
+          <div className={`flex items-center justify-center min-h-screen ${pathname === "/login" ? "bg-black ds-site-loader" : isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
             <BoxesLoader />
           </div>
         </body>
@@ -134,7 +134,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   if ((!user && !isPublicPage) || !pathAllowed) {
-    // useEffect above handles the redirect — just show spinner while it fires.
+    // useEffect above handles the redirect — just show spinner while it fires. A signed-out
+    // visitor is on the way to /login, so they get the login page's (website) colours.
     return (
       <html lang="en" suppressHydrationWarning>
         <head>
@@ -147,7 +148,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
         </head>
         <body>
-          <div className={`flex items-center justify-center min-h-screen ${isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
+          <div className={`flex items-center justify-center min-h-screen ${!user ? "bg-black ds-site-loader" : isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
             <BoxesLoader />
           </div>
         </body>

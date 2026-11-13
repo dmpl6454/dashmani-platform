@@ -126,7 +126,7 @@ export function GoogleSignIn({
         });
         el.innerHTML = "";
         window.google.accounts.id.renderButton(el, {
-          theme: "outline",
+          theme: "filled_black",
           size: "large",
           shape: "pill",
           text: "signin_with",
@@ -143,13 +143,13 @@ export function GoogleSignIn({
 
   return (
     <div className="mt-5">
-      <div className="flex items-center gap-3 mb-4 font-mono text-[10.5px] font-bold uppercase tracking-[0.16em] text-ink-4" aria-hidden>
-        <span className="flex-1 h-px bg-ink-4/25" />
+      <div className="flex items-center gap-3 mb-4 font-mono text-[10.5px] font-bold uppercase tracking-[0.16em] text-[#a7a7b0]" aria-hidden>
+        <span className="flex-1 h-px bg-white/[0.18]" />
         <span>or</span>
-        <span className="flex-1 h-px bg-ink-4/25" />
+        <span className="flex-1 h-px bg-white/[0.18]" />
       </div>
       <div ref={slot} className="flex justify-center min-h-[44px]" aria-busy={busy} />
-      {busy && <p className="text-[11.5px] text-ink-3 text-center mt-2 font-medium" aria-live="polite">Checking with Google…</p>}
+      {busy && <p className="text-[11.5px] text-[#a7a7b0] text-center mt-2 font-medium" aria-live="polite">Checking with Google…</p>}
     </div>
   );
 }

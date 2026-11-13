@@ -871,3 +871,9 @@ kbd {
    which renders before the .ds-root shell mounts. */
 .ds-root .bx-boxes .bx-box > div:nth-child(4),
 .bg-ds-bg .bx-boxes .bx-box > div:nth-child(4) { --background: var(--ds-box4); }
+/* The /login page wears the digitalsukoon.com palette (black canvas, #403cfa accent), so the
+   startup loader shown before it renders does too. Set by the layout for /login only. */
+.ds-site-loader .bx-boxes .bx-box > div:nth-child(1) { --background: #403cfa; }
+.ds-site-loader .bx-boxes .bx-box > div:nth-child(2) { --background: #0a06ba; }
+.ds-site-loader .bx-boxes .bx-box > div:nth-child(3) { --background: #322eea; }
+.ds-site-loader .bx-boxes .bx-box > div:nth-child(4) { --background: #1a1760; }

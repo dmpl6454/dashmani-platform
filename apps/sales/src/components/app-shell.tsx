@@ -37,6 +37,11 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ];
+// Desktop nav: each group is "LABEL  item item item", groups split by a hairline divider.
+const NAV_GROUP_CLS = "flex flex-col gap-1 lg:flex-row lg:items-center lg:gap-4";
+const NAV_GROUP_SEP = "lg:ml-7 lg:pl-7 lg:border-l lg:border-border";
+const NAV_LABEL_CLS = "text-[10px] leading-none uppercase tracking-[0.14em] text-ink-3 font-bold";
+const NAV_LINK_CLS = "inline-flex items-center h-8 px-3 text-[12px] leading-none uppercase tracking-[0.06em] border-2";
 const NAV = NAV_GROUPS.flatMap((g) => g.items);
 
 function isActive(pathname: string, href: string) {
@@ -59,7 +64,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       style={fit ? { height: "var(--pl-vh, 100dvh)" } : undefined}
     >
       <header className="border-b-2 border-border">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 flex items-center flex-nowrap gap-x-3 py-2 lg:gap-x-6 lg:py-3">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 flex items-center flex-nowrap gap-x-3 py-2 lg:gap-x-6 lg:pt-4 lg:pb-6">
           <Link href="/dashboard" className="flex items-center gap-2 sm:gap-2.5 font-extrabold tracking-tight text-[15px] sm:text-[17px] whitespace-nowrap min-w-0">
             <img src={COMPANY_LOGO[info.key]} alt="" className="w-7 h-7 sm:w-8 sm:h-8 shrink-0" />
             {/* Phones: company over a small "Sales" label, so a long company name never cuts off. */}
@@ -101,10 +106,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           className={`mx-auto max-w-7xl px-4 sm:px-6 ${menuOpen ? "block" : "hidden"} lg:block pb-3 lg:pb-0`}
         >
           <div className="md:hidden pt-1 pb-3 lg:hidden"><CompanySwitcher /></div>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-x-6 lg:gap-y-1 lg:flex-wrap lg:border-t lg:border-border lg:py-1.5">
-            {NAV_GROUPS.map((g) => (
-              <div key={g.label} className="flex flex-col gap-1 lg:flex-row lg:items-center lg:gap-1.5">
-                <span className="text-[10px] uppercase tracking-[0.14em] text-ink-3 font-bold lg:w-14">{g.label}</span>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-center lg:gap-y-2 lg:flex-wrap lg:border-t lg:border-border lg:pt-5 lg:pb-4">
+            {NAV_GROUPS.map((g, i) => (
+              <div key={g.label} className={`${NAV_GROUP_CLS} ${i > 0 ? NAV_GROUP_SEP : ""}`}>
+                <span className={NAV_LABEL_CLS}>{g.label}</span>
                 <div className="flex flex-wrap gap-1">
                   {g.items.map((n) => {
                     const active = isActive(pathname, n.href);
@@ -113,7 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         key={n.href}
                         href={n.href}
                         aria-current={active ? "page" : undefined}
-                        className={`px-2.5 py-1.5 text-[12px] uppercase tracking-[0.06em] border-2 ${active ? "bg-indigo border-indigo text-white font-bold" : "border-transparent text-ink-3 hover:text-white hover:border-border"}`}
+                        className={`${NAV_LINK_CLS} ${active ? "bg-indigo border-indigo text-white font-bold" : "border-transparent text-ink-3 hover:text-white hover:border-border"}`}
                       >
                         {n.label}
                       </Link>
@@ -123,10 +128,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             ))}
             {/* Invoices, payments and the finance pages: the billing portal, opened signed in. */}
-            <div className="flex flex-col gap-1 lg:flex-row lg:items-center lg:gap-1.5">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-ink-3 font-bold lg:w-14">Bill</span>
+            <div className={`${NAV_GROUP_CLS} ${NAV_GROUP_SEP}`}>
+              <span className={NAV_LABEL_CLS}>Bill</span>
               <div className="flex flex-wrap gap-1">
-                <PortalLink portal="billing" href="/dashboard" className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[12px] uppercase tracking-[0.06em] border-2 border-transparent text-ink-3 hover:text-white hover:border-border" title="Invoices, payments, bank, accounts, Tally — opens signed in">
+                <PortalLink portal="billing" href="/dashboard" className={`${NAV_LINK_CLS} gap-1 border-transparent text-ink-3 hover:text-white hover:border-border`} title="Invoices, payments, bank, accounts, Tally — opens signed in">
                   Billing portal <ArrowUpRight size={12} aria-hidden />
                 </PortalLink>
               </div>

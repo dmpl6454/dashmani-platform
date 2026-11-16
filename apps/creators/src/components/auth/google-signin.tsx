@@ -192,7 +192,12 @@ export function GoogleSignIn({ mode, onSession, initialCountry, onProfileStep }:
   return (
     <div className="auth-google">
       <div className="auth-or" aria-hidden><span>or</span></div>
-      <div ref={slot} className="auth-google-slot" aria-busy={busy} />
+      {/* Google draws the button in a cross-origin iframe with a light colour scheme. The page is
+          `color-scheme: dark`, and when an iframe's scheme differs from its parent's the browser
+          paints the iframe opaque white — a white box around the pill. A light scheme on the slot
+          (inherited by the iframe element) makes them match, so the iframe stays transparent.
+          Same fix as the staff portal (apps/internal google-signin.tsx). */}
+      <div ref={slot} className="auth-google-slot" style={{ colorScheme: "light" }} aria-busy={busy} />
       {busy && <p className="auth-fine">Checking with Google…</p>}
       {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
     </div>

@@ -29,13 +29,12 @@ import {
   type UniqueIdentifier,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { Archive, Camera, Gauge, Inbox, Plus, Search, Trash2, MessagesSquare } from "lucide-react";
+import { Archive, BarChart3, Camera, Gauge, Layers, Plus, Search, Trash2, MessagesSquare } from "lucide-react";
 import { keyBetween, selectCardsByPhase, type PipelineCard, type PipelinePhase } from "@dashmani/shared";
 import { plKey, plReadJson, plWrite } from "@/lib/pipeline-storage";
 import { ModalPortal } from "@/components/modal-portal";
 import { usePipeline, usePhases } from "../provider";
 import { useStoreSelector } from "../store";
-import { PipelineHeader } from "../header/PipelineHeader";
 import { StatusPill } from "../ui/StatusPill";
 import { LoadError } from "../ui/LoadError";
 import { EmptyState } from "../ui/EmptyState";
@@ -323,50 +322,80 @@ export function Board({ newPrefill, onPrefillDone }: { newPrefill?: NewProjectPr
   const openCard = useCallback((id: string) => router.push(`/pipeline/view?id=${id}`), [router]);
 
   // ── render ──────────────────────────────────────────────────────────────────────
+  // The board's own hero header (the other Pipeline pages keep the compact PipelineHeader).
+  const action =
+    "h-10 w-10 lg:w-auto lg:px-3.5 inline-flex items-center justify-center gap-2 rounded-full border-2 border-border text-ink-2 text-[13px] font-semibold hover:border-indigo hover:text-white transition-colors";
   const header = (
-    <PipelineHeader
-      title="Pipeline"
-      status={<StatusPill engine={engine} />}
-      actions={
-        <>
+    <header className="relative shrink-0 overflow-hidden border-b-2 border-rule bg-bg" style={{ zIndex: 20 }}>
+      {/* A soft indigo glow behind the actions, like the website's channel panels. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 right-0 w-2/3"
+        style={{ background: "radial-gradient(60% 120% at 70% 0%, rgba(64,60,250,0.22), transparent 70%)" }}
+      />
+      <div className="relative px-3 sm:px-5 py-3 sm:py-4 flex items-center gap-3 sm:gap-4 min-w-0">
+        <div className="hidden sm:grid place-items-center h-12 w-12 shrink-0 border-2 border-indigo/60 bg-indigo-soft text-indigo-light">
+          <BarChart3 size={22} aria-hidden />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <h1 className="min-w-0 truncate text-[18px] sm:text-[22px] font-extrabold tracking-tight text-ink">Pipeline</h1>
+            <span className="hidden sm:flex min-w-0">
+              <StatusPill engine={engine} />
+            </span>
+          </div>
+          <p className="hidden md:block mt-0.5 truncate text-[12.5px] text-ink-3 font-medium">Track and manage your projects across different stages.</p>
+          {/* G4 (GA): access is open by design, so say it in words before anyone types. */}
+          <p className="hidden md:block truncate text-[11.5px] text-ink-4 font-medium">
+            <span>
+              {boot.mode === "on"
+                ? "Everyone at Digital Sukoon can see and edit projects here."
+                : "Everyone in the Pipeline pilot can see and edit projects here."}
+            </span>
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 lg:gap-2 shrink-0">
           {/* Chat: team-wide channels and direct messages (campaign channels live inside each campaign). */}
-          <Link href="/pipeline/chat" className="h-11 w-11 sm:w-auto sm:px-3 inline-flex items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="Chat">
-            <MessagesSquare size={16} />
-            <span className="hidden sm:inline">Chat</span>
+          <Link href="/pipeline/chat" className={action} aria-label="Chat">
+            <MessagesSquare size={16} aria-hidden />
+            <span className="hidden lg:inline">Chat</span>
           </Link>
-          <Link href="/pipeline/my-work" className="h-11 w-11 sm:w-auto sm:px-3 inline-flex items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="My work">
-            <Inbox size={16} />
+          <Link href="/pipeline/my-work" className={action} aria-label="My work">
+            <Layers size={16} aria-hidden />
             <span className="hidden lg:inline">My work</span>
           </Link>
-          <Link href="/pipeline/shoots" className="hidden md:inline-flex h-11 w-11 sm:w-auto sm:px-3 items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="Shoot desk">
-            <Camera size={16} />
+          <Link href="/pipeline/shoots" className={`${action} max-md:hidden`} aria-label="Shoot desk">
+            <Camera size={16} aria-hidden />
             <span className="hidden xl:inline">Shoots</span>
           </Link>
-          <Link href="/pipeline/workload" className="hidden md:inline-flex h-11 w-11 sm:w-auto sm:px-3 items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="Workload">
-            <Gauge size={16} />
+          <Link href="/pipeline/workload" className={`${action} max-md:hidden`} aria-label="Workload">
+            <Gauge size={16} aria-hidden />
             <span className="hidden xl:inline">Workload</span>
           </Link>
-          <Link href="/pipeline?view=archived" className="h-11 w-11 sm:w-auto sm:px-3 inline-flex items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="Archived projects">
-            <Archive size={16} />
+          <Link href="/pipeline?view=archived" className={action} aria-label="Archived projects">
+            <Archive size={16} aria-hidden />
             <span className="hidden lg:inline">Archived</span>
           </Link>
-          <Link href="/pipeline?view=deleted" className="h-11 w-11 sm:w-auto sm:px-3 inline-flex items-center justify-center gap-1.5 rounded-xl text-ink-3 hover:bg-muted text-[13px] font-semibold" aria-label="Deleted projects">
-            <Trash2 size={16} />
+          <Link href="/pipeline?view=deleted" className={action} aria-label="Deleted projects">
+            <Trash2 size={16} aria-hidden />
             <span className="hidden lg:inline">Deleted</span>
           </Link>
           <button
             type="button"
             onClick={() => setNewOpen(true)}
             disabled={!board}
-            className="h-11 px-3 inline-flex items-center gap-1.5 rounded-xl bg-indigo text-white text-[13px] font-semibold disabled:opacity-50"
+            className="h-10 px-3 sm:px-4 inline-flex items-center gap-2 bg-indigo hover:bg-indigo-deep text-white text-[13px] font-bold disabled:opacity-50 transition-colors"
           >
-            <Plus size={16} />
+            <Plus size={16} aria-hidden />
             <span className="hidden sm:inline">New project</span>
             <span className="sm:hidden sr-only">New project</span>
           </button>
-        </>
-      }
-    />
+        </div>
+      </div>
+      <div className="sm:hidden px-3 pb-2 -mt-1 flex min-w-0">
+        <StatusPill engine={engine} />
+      </div>
+    </header>
   );
 
   let content: React.ReactNode;
@@ -402,21 +431,21 @@ export function Board({ newPrefill, onPrefillDone }: { newPrefill?: NewProjectPr
     );
   } else {
     const emptyText = (ph: PipelinePhase) => {
-      if (!filtered) return "Nothing here yet";
+      if (!filtered) return `No projects in ${ph.name}`;
       const label = FILTERS.find((f) => f.id === filter)?.label ?? "All";
       const elsewhere = totalVisible - (visible[ph.id]?.length ?? 0);
       return `Nothing in ${ph.name} for ${filter === "all" ? "this search" : label}${elsewhere ? ` — ${elsewhere} in other phases` : ""}`;
     };
     const filters = (
-      <div className="flex flex-wrap items-center gap-2 px-3 sm:px-5 pt-3 pb-2 min-w-0">
-        <div className="flex gap-1.5" role="group" aria-label="Filter">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-5 pt-4 pb-3 min-w-0">
+        <div className="flex gap-1.5 sm:gap-2" role="group" aria-label="Filter">
           {FILTERS.map((f) => (
             <button
               key={f.id}
               type="button"
               aria-pressed={filter === f.id}
               onClick={() => setFilter(f.id)}
-              className={`h-11 px-3.5 rounded-full text-[13px] font-semibold border ${filter === f.id ? "bg-indigo text-white border-indigo" : "bg-surface text-ink-2 border-border"}`}
+              className={`h-11 px-4 rounded-full text-[13px] font-bold border-2 transition-colors ${filter === f.id ? "bg-indigo text-white border-indigo" : "bg-transparent text-ink-2 border-border hover:border-indigo hover:text-white"}`}
             >
               {f.label}
             </button>
@@ -424,13 +453,13 @@ export function Board({ newPrefill, onPrefillDone }: { newPrefill?: NewProjectPr
         </div>
         <label className="relative min-w-0 flex-1 basis-48">
           <span className="sr-only">Search projects</span>
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-4" aria-hidden />
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-3" aria-hidden />
           <input
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search projects or clients"
-            className="w-full h-11 pl-9 pr-3 rounded-xl border border-border bg-surface text-[16px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-indigo"
+            placeholder="Search projects or clients…"
+            className="w-full h-11 pl-10 pr-3 border-2 border-border bg-surface text-[16px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-indigo"
           />
         </label>
       </div>
@@ -472,7 +501,7 @@ export function Board({ newPrefill, onPrefillDone }: { newPrefill?: NewProjectPr
         <>
           {filters}
           <div className="flex-1 min-h-0 min-w-0 overflow-x-auto overflow-y-hidden">
-            <div className="h-full flex gap-3 px-3 sm:px-5 pb-3 w-max">
+            <div className="h-full flex gap-3 px-3 sm:px-5 pb-4 w-max">
               {phases.map((ph) => (
                 <PhaseColumn
                   key={ph.id}
@@ -499,13 +528,6 @@ export function Board({ newPrefill, onPrefillDone }: { newPrefill?: NewProjectPr
   return (
     <div className="flex flex-col min-h-0 flex-1 min-w-0">
       {header}
-      {/* G4 (GA): access is open by design (any active HR user may view, move, edit and post),
-          so say it in words before anyone types. Pilot copy until pipeline.mode is "on". */}
-      <p className="shrink-0 px-3 sm:px-5 pt-2.5 text-[12px] font-medium text-ink-3">
-        {boot.mode === "on"
-          ? "Everyone at Digital Sukoon can see and edit projects here."
-          : "Everyone in the Pipeline pilot can see and edit projects here."}
-      </p>
       <p ref={liveRef} className="sr-only" aria-live="polite" />
       <DndContext
         sensors={sensors}

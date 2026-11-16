@@ -54,8 +54,8 @@ export function CardFace({
   const unread = mine?.unread ?? 0;
   return (
     <article
-      className={`pl-card relative flex gap-1 rounded-xl bg-surface border p-3 pr-1 ${
-        overlay ? "border-indigo shadow-pop" : "border-rule "
+      className={`pl-card relative flex gap-1 bg-muted border-2 p-3.5 pr-1 transition-colors ${
+        overlay ? "border-indigo shadow-pop" : "border-border hover:border-indigo"
       }`}
     >
       <div className="min-w-0 flex-1">
@@ -84,8 +84,8 @@ export function CardFace({
             </span>
           )}
           {due === "later" && card.dueDate && (
-            <span className="inline-flex items-center h-6 px-2 rounded-full bg-muted text-ink-3 text-[11.5px] font-semibold">
-              Due {dayMonthShort(card.dueDate, today)}
+            <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full border border-border text-ink-3 text-[11.5px] font-semibold">
+              <CalendarClock size={12} aria-hidden /> Due {dayMonthShort(card.dueDate, today)}
             </span>
           )}
           {card.linkedClient && (
@@ -97,7 +97,7 @@ export function CardFace({
             </span>
           )}
           {owner && !owner.active && (
-            <span className="inline-flex items-center h-6 px-2 rounded-full bg-muted text-ink-3 text-[11.5px] font-semibold">
+            <span className="inline-flex items-center h-6 px-2 rounded-full border border-border text-ink-3 text-[11.5px] font-semibold">
               Owner inactive
             </span>
           )}
@@ -109,12 +109,12 @@ export function CardFace({
         </div>
         <div className="mt-2 flex items-center gap-2 min-w-0">
           <div className="flex items-center -space-x-1.5" role="img" aria-label={`${card.memberCount} member${card.memberCount === 1 ? "" : "s"}`}>
-            <Initials userId={card.ownerId} name={nameOf(dirById, card.ownerId)} initials={owner?.initials} size={24} className="ring-2 ring-surface" />
+            <Initials userId={card.ownerId} name={nameOf(dirById, card.ownerId)} initials={owner?.initials} size={24} className="ring-2 ring-muted" />
             {members.map((id) => (
-              <Initials key={id} userId={id} name={nameOf(dirById, id)} initials={dirById.get(id)?.initials} size={24} className="ring-2 ring-surface" />
+              <Initials key={id} userId={id} name={nameOf(dirById, id)} initials={dirById.get(id)?.initials} size={24} className="ring-2 ring-muted" />
             ))}
             {extra > 0 && (
-              <span className="inline-grid place-items-center h-6 min-w-6 px-1 rounded-full bg-muted text-ink-3 text-[10.5px] font-bold ring-2 ring-surface">
+              <span className="inline-grid place-items-center h-6 min-w-6 px-1 rounded-full bg-muted text-ink-3 text-[10.5px] font-bold ring-2 ring-muted">
                 +{extra}
               </span>
             )}

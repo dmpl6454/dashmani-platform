@@ -186,7 +186,7 @@ export function Composer({
   };
 
   return (
-    <div className="shrink-0 border-t border-rule bg-surface px-3 py-2" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+    <div className="relative shrink-0 px-3 sm:px-5 pt-2 pb-3" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
       {readOnly && readOnlyReason && (
         // The page banner is the live region; this repeat by the composer is visual only.
         <p className="mb-1.5 text-[12.5px] text-ink-3">
@@ -198,7 +198,7 @@ export function Composer({
           {error}
         </p>
       )}
-      <div className="flex items-end gap-2">
+      <div className="flex items-end gap-2 border-2 border-border bg-surface p-1.5 pl-2 transition-colors focus-within:border-indigo">
         <textarea
           ref={ta}
           value={text}
@@ -223,14 +223,14 @@ export function Composer({
           onKeyUp={syncCaret}
           onClick={syncCaret}
           onSelect={syncCaret}
-          className="min-w-0 flex-1 resize-none rounded-xl border border-border bg-bg px-3 py-2.5 text-[16px] leading-[22px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-indigo read-only:opacity-80"
+          className="min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-[16px] leading-[22px] text-ink placeholder:text-ink-4 focus:outline-none read-only:opacity-80"
         />
         {readOnly ? (
           <button type="button" onClick={() => void copy()} disabled={!text} aria-label="Copy your text" className="h-11 w-11 grid place-items-center rounded-xl border border-border text-ink-2 disabled:opacity-40">
             <Copy size={16} />
           </button>
         ) : (
-          <button type="button" onClick={submit} disabled={!text.trim()} aria-label="Send" className="h-11 w-11 grid place-items-center rounded-xl bg-indigo text-white disabled:opacity-40">
+          <button type="button" onClick={submit} disabled={!text.trim()} aria-label="Send" className="h-11 w-11 shrink-0 grid place-items-center bg-indigo hover:bg-indigo-deep text-white disabled:opacity-40 transition-colors">
             <Send size={16} />
           </button>
         )}

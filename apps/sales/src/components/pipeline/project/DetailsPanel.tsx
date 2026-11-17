@@ -17,6 +17,7 @@ import {
   type PipelineEditableFields,
   type PipelineHeader,
 } from "@dashmani/shared";
+import { CalendarDays, Tag, UserRound } from "lucide-react";
 import { usePipeline, usePhases } from "../provider";
 import { Sheet } from "../ui/Sheet";
 import { describeError, isApiError, isRateLimited, plApi, retryAfterMs } from "../api";
@@ -47,7 +48,7 @@ function toWire(f: Partial<Form>): PipelineEditableFields {
 }
 
 const inputCls =
-  "w-full h-11 px-3 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo read-only:bg-muted/50";
+  "w-full h-11 px-3 border-2 border-border bg-surface text-[16px] text-ink focus:outline-none focus:border-indigo read-only:bg-muted/50";
 
 export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; readOnly: boolean }) {
   const { store, engine, dirById } = usePipeline();
@@ -127,18 +128,25 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
 
   return (
     <section aria-label="Details" className="p-4 space-y-4">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]">
-        <dt className="text-ink-4">Phase</dt>
-        <dd className="min-w-0 truncate text-ink">{phase?.name ?? "—"}</dd>
-        <dt className="text-ink-4">Owner</dt>
-        <dd className="pl-name min-w-0 truncate text-ink">
+      <dl className="grid grid-cols-[auto_auto_1fr] items-center gap-x-3 gap-y-2.5 border-2 border-rule bg-muted/60 p-4 text-[13.5px]">
+        <Tag size={16} className="text-ink-3" aria-hidden />
+        <dt className="text-ink-3">Phase</dt>
+        <dd className="min-w-0">
+          <span className="inline-flex max-w-full items-center h-6 px-2.5 rounded-full bg-indigo text-white text-[12px] font-bold">
+            <span className="truncate">{phase?.name ?? "—"}</span>
+          </span>
+        </dd>
+        <UserRound size={16} className="text-ink-3" aria-hidden />
+        <dt className="text-ink-3">Owner</dt>
+        <dd className="pl-name min-w-0 truncate font-semibold text-ink">
           {owner?.name ?? "Former member"}
-          {owner && !owner.active && <span className="text-ink-4"> · inactive</span>}
+          {owner && !owner.active && <span className="font-normal text-ink-4"> · inactive</span>}
         </dd>
         {header.dueDate && (
           <>
-            <dt className="text-ink-4">Due</dt>
-            <dd className="text-ink">{dayMonthShort(header.dueDate, today)}</dd>
+            <CalendarDays size={16} className="text-ink-3" aria-hidden />
+            <dt className="text-ink-3">Due</dt>
+            <dd className="font-semibold text-ink">{dayMonthShort(header.dueDate, today)}</dd>
           </>
         )}
       </dl>
@@ -151,13 +159,13 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
         noValidate
       >
         <div>
-          <label htmlFor={ids.title} className="block text-[12.5px] font-semibold text-ink-2 mb-1">
+          <label htmlFor={ids.title} className="block text-[13px] font-bold text-ink mb-1.5">
             Title
           </label>
           <input id={ids.title} value={form.title} readOnly={readOnly} maxLength={PIPELINE_LIMITS.titleMax} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputCls} />
         </div>
         <div>
-          <label htmlFor={ids.desc} className="block text-[12.5px] font-semibold text-ink-2 mb-1">
+          <label htmlFor={ids.desc} className="block text-[13px] font-bold text-ink mb-1.5">
             Description
           </label>
           <textarea
@@ -167,12 +175,12 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
             maxLength={PIPELINE_LIMITS.descriptionMax}
             rows={4}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
-            className="w-full px-3 py-2 rounded-xl border border-border bg-surface text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo whitespace-pre-wrap read-only:bg-muted/50"
+            className="w-full px-3 py-2 border-2 border-border bg-surface text-[16px] text-ink focus:outline-none focus:border-indigo whitespace-pre-wrap read-only:bg-muted/50"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="min-w-0">
-            <label htmlFor={ids.start} className="block text-[12.5px] font-semibold text-ink-2 mb-1">
+            <label htmlFor={ids.start} className="block text-[13px] font-bold text-ink mb-1.5">
               Start
             </label>
             <input
@@ -188,7 +196,7 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
             />
           </div>
           <div className="min-w-0">
-            <label htmlFor={ids.due} className="block text-[12.5px] font-semibold text-ink-2 mb-1">
+            <label htmlFor={ids.due} className="block text-[13px] font-bold text-ink mb-1.5">
               Due
             </label>
             <input
@@ -205,13 +213,13 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
           </div>
         </div>
         {!readOnly && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2">
             {msg && (
-              <p role={msg.tone === "err" ? "alert" : "status"} className={`min-w-0 flex-1 text-[12.5px] ${msg.tone === "err" ? "text-danger" : "text-success"}`}>
+              <p role={msg.tone === "err" ? "alert" : "status"} className={`min-w-0 text-[12.5px] ${msg.tone === "err" ? "text-danger" : "text-success"}`}>
                 {msg.text}
               </p>
             )}
-            <button type="submit" disabled={busy || changed.length === 0} className="ml-auto h-11 px-5 rounded-xl bg-indigo text-white text-[14px] font-semibold disabled:opacity-40">
+            <button type="submit" disabled={busy || changed.length === 0} className="w-full h-11 px-5 bg-indigo hover:bg-indigo-deep text-white text-[14px] font-bold disabled:opacity-40 transition-colors">
               {busy ? "Saving…" : "Save"}
             </button>
           </div>

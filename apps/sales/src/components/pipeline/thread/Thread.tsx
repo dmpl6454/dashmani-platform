@@ -16,7 +16,6 @@ import { daySeparatorBefore, groupsWithPrevious, selectPendingSends, selectTopLe
 import { usePipeline } from "../provider";
 import { useStoreSelector } from "../store";
 import { describeError, plApi } from "../api";
-import { EmptyState } from "../ui/EmptyState";
 import { LoadError } from "../ui/LoadError";
 import { Skeleton } from "../ui/Skeleton";
 import { type AckLedger, useSeenObserver } from "../hooks/use-seen-observer";
@@ -24,6 +23,7 @@ import { useLocalDayKey } from "../hooks/use-local-day-key";
 import { MessageItem, PendingRow } from "./MessageItem";
 import { DaySeparator } from "./DaySeparator";
 import { Composer } from "./Composer";
+import { ChatBubblesArt } from "../ui/decor";
 
 const RENDER_WINDOW = 100;
 const NEAR_BOTTOM_PX = 120;
@@ -211,7 +211,13 @@ export function Thread({
       </div>
     );
   } else if (shown.length === 0 && pending.length === 0 && !project.hasOlder) {
-    body = <EmptyState title="No messages yet — start the conversation" />;
+    body = (
+      <div className="min-h-full flex flex-col items-center justify-center text-center px-6 py-12">
+        <ChatBubblesArt />
+        <p className="mt-6 text-[24px] font-extrabold tracking-tight text-ink">No messages yet</p>
+        <p className="mt-2 text-[14.5px] text-ink-3">Start the conversation to collaborate with your team.</p>
+      </div>
+    );
   } else {
     body = (
       <ul className="py-2">

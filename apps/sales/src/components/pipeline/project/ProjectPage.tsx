@@ -27,7 +27,6 @@ import {
 import { usePipeline, usePhases } from "../provider";
 import { useStoreSelector } from "../store";
 import { describeError, isApiError, plApi } from "../api";
-import { PipelineHeader } from "../header/PipelineHeader";
 import { StatusPill } from "../ui/StatusPill";
 import { LoadError } from "../ui/LoadError";
 import { Skeleton } from "../ui/Skeleton";
@@ -45,6 +44,7 @@ import { MembersPanel } from "./MembersPanel";
 import { WorkPanel } from "./WorkPanel";
 import { PhasePill, PhaseSelect, ProjectMenu } from "./ProjectHeader";
 import { CampaignChannelList } from "../chat/CampaignSidebar";
+import { WaveGlow } from "../ui/decor";
 
 const RETRY_MS = [10_000, 20_000, 40_000];
 
@@ -369,32 +369,43 @@ export function ProjectPage({ id }: { id: string }) {
 
   return (
     <div className="flex flex-col min-h-0 flex-1 min-w-0">
-      <PipelineHeader
-        title={header?.title ?? "Project"}
-        sub={moved ? <span title={moved}>{moved}</span> : null}
-        left={back}
-        status={<StatusPill engine={engine} />}
-        actions={
-          header ? (
-            <>
-              <PhaseSelect header={header} disabled={readOnly} />
-              <ProjectMenu header={header} me={project!.me} can={project!.can} />
-            </>
-          ) : null
-        }
-      />
+      <header className="shrink-0 h-[72px] px-4 sm:px-6 flex items-center gap-3 min-w-0 border-b-2 border-rule bg-bg" style={{ zIndex: 20 }}>
+        {back}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <h1 className="min-w-0 truncate text-[20px] font-extrabold tracking-tight text-ink">{header?.title ?? "Project"}</h1>
+            <span className="hidden sm:flex min-w-0">
+              <StatusPill engine={engine} />
+            </span>
+          </div>
+          {moved && (
+            <p className="min-w-0 truncate text-[12px] text-ink-3" title={moved}>
+              {moved}
+            </p>
+          )}
+        </div>
+        {header && (
+          <div className="flex items-center gap-2 shrink-0">
+            <PhaseSelect header={header} disabled={readOnly} />
+            <ProjectMenu header={header} me={project!.me} can={project!.can} />
+          </div>
+        )}
+      </header>
       {banner}
       {main}
       {header && (
         <div className="flex-1 min-h-0 flex min-w-0">
-          <div className="flex-1 min-w-0 min-h-0 flex flex-col">{thread}</div>
+          <div className="relative flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+            <WaveGlow />
+            {thread}
+          </div>
           {t ? (
             <aside className="w-[400px] shrink-0 min-h-0 border-l border-rule bg-surface" aria-label="Replies">
               {replies}
             </aside>
           ) : (
-            <aside className="w-[360px] shrink-0 min-h-0 border-l border-rule bg-surface flex flex-col" aria-label="Details and work">
-              <div className="shrink-0 flex gap-1 px-2 pt-1 border-b border-rule" role="tablist" aria-label="Side panel">
+            <aside className="w-[380px] shrink-0 min-h-0 border-l-2 border-rule bg-surface flex flex-col" aria-label="Details and work">
+              <div className="shrink-0 flex gap-2 px-3 pt-2 border-b-2 border-rule" role="tablist" aria-label="Side panel">
                 {(["details", "work"] as const).map((k) => (
                   <button
                     key={k}
@@ -402,7 +413,7 @@ export function ProjectPage({ id }: { id: string }) {
                     role="tab"
                     aria-selected={sideTab === k}
                     onClick={() => setSideTab(k)}
-                    className={`h-11 px-3 text-[13.5px] font-semibold border-b-2 ${sideTab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
+                    className={`-mb-0.5 h-12 px-4 text-[14.5px] font-bold border-b-[3px] transition-colors ${sideTab === k ? "border-indigo text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}
                   >
                     {k === "details" ? "Details" : "Work"}
                   </button>

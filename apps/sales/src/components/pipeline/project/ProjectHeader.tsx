@@ -6,7 +6,8 @@
  */
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Ellipsis } from "lucide-react";
+import { ChevronDown, Ellipsis } from "lucide-react";
+import { phaseIcon } from "../board/phase-icon";
 import { keyBetween, selectCardsByPhase, type PipelineCan, type PipelineHeader, type PipelineMe } from "@dashmani/shared";
 import { usePipeline, usePhases } from "../provider";
 import { useStoreSelector } from "../store";
@@ -35,14 +36,20 @@ function useMoveToPhase(header: PipelineHeader) {
 export function PhaseSelect({ header, disabled }: { header: PipelineHeader; disabled: boolean }) {
   const phases = usePhases();
   const moveTo = useMoveToPhase(header);
+  const name = phases.find((p) => p.id === header.phaseId)?.name ?? "Phase";
+  const Icon = phaseIcon(name);
+  // Still a native <select> (keyboard, screen readers, the OS picker), dressed as a pill: the
+  // icon and chevron sit over it and ignore the pointer, so a click anywhere opens the list.
   return (
-    <label className="min-w-0 max-w-[220px]">
+    <label className="group relative min-w-0 max-w-[240px] inline-flex">
       <span className="sr-only">Phase</span>
+      <Icon size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-indigo-light" aria-hidden />
+      <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-3 group-hover:text-white" aria-hidden />
       <select
         value={header.phaseId}
         disabled={disabled}
         onChange={(e) => void moveTo(e.target.value)}
-        className="w-full max-w-full h-11 px-3 rounded-xl border border-border bg-surface text-[16px] font-semibold text-ink disabled:opacity-60"
+        className="appearance-none w-full max-w-full h-11 pl-10 pr-10 min-w-[170px] rounded-full border-2 border-indigo/50 bg-indigo-soft text-[14px] font-bold text-white cursor-pointer hover:border-indigo focus:outline-none focus-visible:border-indigo focus-visible:ring-2 focus-visible:ring-indigo/40 disabled:opacity-60 disabled:cursor-default transition-colors"
       >
         {phases.map((p) => (
           <option key={p.id} value={p.id}>
@@ -173,7 +180,7 @@ export function ProjectMenu({
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} aria-label="Project actions" className="h-11 w-11 grid place-items-center rounded-xl text-ink-3 hover:bg-muted">
+      <button type="button" onClick={() => setOpen(true)} aria-label="Project actions" className="h-11 w-11 grid place-items-center rounded-full border-2 border-border text-ink-2 hover:border-indigo hover:text-white transition-colors">
         <Ellipsis size={18} />
       </button>
       <Sheet open={open} onClose={() => setOpen(false)} title={header.title}>

@@ -30,7 +30,7 @@ export function ClientSelect({ clients, value, onChange, className = "" }: { cli
   );
 }
 
-function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (client: ClientRow) => void }) {
+export function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (client: ClientRow) => void }) {
   const { mutate } = useSWRConfig();
   const [form, setForm] = useState({ companyName: "", contactName: "", email: "", phone: "" });
   const [billing, setBilling] = useState<BillingProfile>(EMPTY_BILLING);
@@ -39,9 +39,15 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
   const setB = (k: keyof BillingProfile, v: string) => setBilling((f) => ({ ...f, [k]: v }));
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture phase on window runs before any sheet underneath (the Pipeline Sheet listens on
+    // document, capture): Escape closes only this dialog, never the sheet it was opened from.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      if (!busy) onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [busy, onClose]);
 
   async function create(e: React.FormEvent) {
@@ -64,12 +70,12 @@ function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <ModalPortal>
-      <div className="fixed inset-0 z-40 bg-black/70 grid place-items-center p-4 overflow-y-auto">
+      <div className="fixed inset-0 z-[70] bg-black/70 grid place-items-center p-4 overflow-y-auto">
         <form onSubmit={create} className="card p-4 sm:p-6 w-full max-w-3xl my-auto grid grid-cols-[minmax(0,1fr)] gap-4 text-sm" role="dialog" aria-modal="true" aria-labelledby="new-client-title">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 id="new-client-title" className="font-extrabold text-lg">Add new client</h3>
-              <p className="text-ink-3 text-xs mt-1">Saved to Clients and picked for this document. Everything already typed here stays.</p>
+              <p className="text-ink-3 text-xs mt-1">Saved to Clients and picked here. Everything already typed here stays.</p>
             </div>
             <button type="button" className="text-ink-3 hover:text-white" aria-label="Close" disabled={busy} onClick={onClose}><X size={18} /></button>
           </div>

@@ -467,22 +467,22 @@ model Client {
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  projects         Project[]
-  refreshTokens    ClientRefreshToken[]
+  projects                  Project[]
+  refreshTokens             ClientRefreshToken[]
   /// Extra portal logins for the same company (the row's own email is the owner's login).
-  users            ClientUser[]
-  otpTokens        OtpToken[]
-  campaignBookings CampaignBooking[]
-  campaignMedia    CampaignMedia[]
-  billingProfile   ClientBillingProfile?
-  salesQuotes      SalesQuote[]
-  salesOrders      SalesOrder[]
-  salesInvoices    SalesInvoice[]
-  salesPayments    SalesPayment[]
-  salesCreditNotes SalesCreditNote[]
-  salesRefunds     SalesRefund[]
-  salesRecurring   SalesRecurringInvoice[]
-  pipelineProjects PipelineProject[]
+  users                     ClientUser[]
+  otpTokens                 OtpToken[]
+  campaignBookings          CampaignBooking[]
+  campaignMedia             CampaignMedia[]
+  billingProfile            ClientBillingProfile?
+  salesQuotes               SalesQuote[]
+  salesOrders               SalesOrder[]
+  salesInvoices             SalesInvoice[]
+  salesPayments             SalesPayment[]
+  salesCreditNotes          SalesCreditNote[]
+  salesRefunds              SalesRefund[]
+  salesRecurring            SalesRecurringInvoice[]
+  pipelineProjects          PipelineProject[]
   // smart-invoicing: reconcile (PR 5)
   salesTdsDeductors         SalesTdsDeductor[]
   salesBalanceConfirmations SalesBalanceConfirmation[]
@@ -2244,6 +2244,8 @@ model PipelineProject {
   deliverables     PipelineDeliverable[]
   comments         PipelineVersionComment[]
   shoots           PipelineShoot[]
+  inventoryPages   PipelineProjectPage[]
+  revenue          PipelineProjectRevenue?
 
   @@unique([createdById, clientId])
   @@index([linkedClientId])
@@ -2928,8 +2930,8 @@ model CreatorAsset {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  creator    Creator           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  connection CreatorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  creator    Creator            @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  connection CreatorConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   prices     CreatorPagePrice[]
 
   @@unique([kind, metaId])
@@ -3247,6 +3249,13 @@ model SalesInvoice {
   allocations   SalesPaymentAllocation[]
   creditNotes   SalesCreditNote[]
   einvoice      SalesEInvoice?
+  // smart-invoicing: import (PR 3)
+  /// portal | swipe — where the invoice was made. Imported invoices keep their filed figures and are
+  /// never edited or cancelled here (credit note, or undo the whole import).
+  source        String                   @default("portal") @db.VarChar(16)
+  /// The import that created it (null = made in the portal).
+  importId      String?                  @map("import_id")
+  salesImport   SalesImport?             @relation(fields: [importId], references: [id], onDelete: Restrict)
 
   @@index([clientId])
   @@index([status, dueDate])
@@ -3254,14 +3263,6 @@ model SalesInvoice {
   @@index([convertedFromId])
   @@index([recurringId])
   @@index([companyKey])
-  // smart-invoicing: import (PR 3)
-  /// portal | swipe — where the invoice was made. Imported invoices keep their filed figures and are
-  /// never edited or cancelled here (credit note, or undo the whole import).
-  source      String       @default("portal") @db.VarChar(16)
-  /// The import that created it (null = made in the portal).
-  importId    String?      @map("import_id")
-  salesImport SalesImport? @relation(fields: [importId], references: [id], onDelete: Restrict)
-
   @@index([importId])
   @@map("sales_invoices")
 }
@@ -3311,27 +3312,25 @@ model SalesPayment {
   client      Client                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   allocations SalesPaymentAllocation[]
   refunds     SalesRefund[]
-
-  @@index([clientId, paidOn])
-  @@index([companyKey])
   // smart-invoicing: import (PR 3)
   /// The import that created this receipt ("Swipe import" receipts); null = recorded in the portal.
-  importId    String?      @map("import_id")
-  salesImport SalesImport? @relation(fields: [importId], references: [id], onDelete: Restrict)
-
-  @@index([importId])
+  importId    String?                  @map("import_id")
+  salesImport SalesImport?             @relation(fields: [importId], references: [id], onDelete: Restrict)
 
   // smart-invoicing: bank (PR 4)
   /// The bank statement line this receipt is matched to (null = not reconciled). A voided receipt
   /// KEEPS it (history) but stops counting toward the line, like its allocations.
-  bankLineId   String?   @map("bank_line_id")
+  bankLineId String? @map("bank_line_id")
   /// Rate the client deducted at, basis points (100 = 1%). Null when tdsPaise = 0 or unknown.
-  tdsRateBp    Int?      @map("tds_rate_bp")
+  tdsRateBp  Int?    @map("tds_rate_bp")
   /// 194C | 194J | 194H | other — null when tdsPaise = 0 or unknown.
-  tdsSection   String?   @map("tds_section") @db.VarChar(8)
+  tdsSection String? @map("tds_section") @db.VarChar(8)
 
-  bankLine     SalesBankLine? @relation(fields: [bankLineId], references: [id], onDelete: Restrict)
+  bankLine SalesBankLine? @relation(fields: [bankLineId], references: [id], onDelete: Restrict)
 
+  @@index([clientId, paidOn])
+  @@index([companyKey])
+  @@index([importId])
   @@index([bankLineId])
   /// Bank matching reads a company's receipts by date (receipt candidates, the double-receipt guard).
   @@index([companyKey, paidOn])
@@ -3832,35 +3831,35 @@ model SalesConfirmationFile {
 /// columns. The current reconciliation is the row whose activeKey is set.
 /// balanceSource: statement | typed     supersedeKind: re_reconciled | reopened
 model SalesBrsSignoff {
-  id                 String    @id @default(uuid())
-  companyKey         String    @map("company_key") @db.VarChar(8)
-  bankAccountId      String    @map("bank_account_id")
+  id              String    @id @default(uuid())
+  companyKey      String    @map("company_key") @db.VarChar(8)
+  bankAccountId   String    @map("bank_account_id")
   /// "2026-10"
-  month              String    @db.VarChar(7)
-  version            Int
+  month           String    @db.VarChar(7)
+  version         Int
   /// "<bankAccountId>:<month>" while current; NULL once superseded
-  activeKey          String?   @unique @map("active_key") @db.VarChar(64)
+  activeKey       String?   @unique @map("active_key") @db.VarChar(64)
   /// md5 hex of the month's inputs (§5.4.6)
-  fingerprint        String    @db.VarChar(32)
-  balanceSource      String    @map("balance_source") @db.VarChar(9)
-  openingPaise       BigInt    @map("opening_paise")
-  creditsPaise       BigInt    @map("credits_paise")
-  debitsPaise        BigInt    @map("debits_paise")
-  closingPaise       BigInt    @map("closing_paise")
-  booksPaise         BigInt    @map("books_paise")
-  openItemsPaise     BigInt    @map("open_items_paise")
-  openItemCount      Int       @map("open_item_count")
+  fingerprint     String    @db.VarChar(32)
+  balanceSource   String    @map("balance_source") @db.VarChar(9)
+  openingPaise    BigInt    @map("opening_paise")
+  creditsPaise    BigInt    @map("credits_paise")
+  debitsPaise     BigInt    @map("debits_paise")
+  closingPaise    BigInt    @map("closing_paise")
+  booksPaise      BigInt    @map("books_paise")
+  openItemsPaise  BigInt    @map("open_items_paise")
+  openItemCount   Int       @map("open_item_count")
   /// BrsView as reconciled (numbers only, every item with its reason) — this version's PDF/CSV render from it
-  snapshot           Json
+  snapshot        Json
   /// acknowledgements given: subset of ["open_items","coverage_gap","statement_break"]
-  accepted           Json
-  note               String?   @db.VarChar(1000)
-  reconciledById     String    @map("reconciled_by_id")
-  reconciledAt       DateTime  @default(now()) @map("reconciled_at")
-  supersededAt       DateTime? @map("superseded_at")
-  supersededById     String?   @map("superseded_by_id")
-  supersedeKind      String?   @map("supersede_kind") @db.VarChar(16)
-  supersedeReason    String?   @map("supersede_reason") @db.VarChar(500)
+  accepted        Json
+  note            String?   @db.VarChar(1000)
+  reconciledById  String    @map("reconciled_by_id")
+  reconciledAt    DateTime  @default(now()) @map("reconciled_at")
+  supersededAt    DateTime? @map("superseded_at")
+  supersededById  String?   @map("superseded_by_id")
+  supersedeKind   String?   @map("supersede_kind") @db.VarChar(16)
+  supersedeReason String?   @map("supersede_reason") @db.VarChar(500)
 
   bankAccount SalesBankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
 
@@ -4140,8 +4139,8 @@ model SalesBankAccount {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  statements SalesBankStatement[]
-  lines      SalesBankLine[]
+  statements  SalesBankStatement[]
+  lines       SalesBankLine[]
   brsSignoffs SalesBrsSignoff[]
 
   @@index([companyKey])
@@ -4231,4 +4230,102 @@ model SalesBankLine {
   @@index([bankAccountId, txnDate])
   @@index([statementId, rowNo])
   @@map("sales_bank_lines")
+}
+
+// ─── External pages + vendors (sales inventory) and per-campaign pages / revenue (2026-11-18) ───
+// scripts/sales-vendors-ddl.sql. Owner feedback on the Pipeline: one list of external pages we buy
+// posts on (the partner network moved here from system_settings), the vendors who sell them (meme
+// pages: Archit, Amit, Arif; cricket: Mahesh), a category-wise page list attached to a campaign,
+// and the campaign's revenue with a GST / cash payment mode. Sales-only (/v1/sales/*, sales:view).
+
+/// Someone who sells us posts on pages they run or broker (a meme-page vendor, a cricket vendor).
+model SalesVendor {
+  id          String              @id @default(uuid())
+  name        String              @db.VarChar(120)
+  phone       String?             @db.VarChar(30)
+  email       String?             @db.VarChar(200)
+  notes       String              @default("") @db.Text
+  active      Boolean             @default(true)
+  createdById String              @map("created_by_id")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+  pages       SalesExternalPage[]
+
+  @@map("sales_vendors")
+}
+
+/// A page we do NOT own and buy posts on (partner network, a vendor's meme page). Never a rate card:
+/// the client catalogue, checkout and the publisher cannot reach it.
+model SalesExternalPage {
+  id                 String       @id @default(uuid())
+  vendorId           String?      @map("vendor_id")
+  /// instagram | facebook | youtube | x | snapchat | other
+  platform           String       @db.VarChar(16)
+  /// Lowercased, no "@". Unique per platform when set.
+  handle             String?      @db.VarChar(60)
+  name               String       @db.VarChar(120)
+  profileUrl         String?      @map("profile_url") @db.VarChar(300)
+  followers          Int?
+  category           String?      @db.VarChar(60)
+  /// Price per post by campaign type, in paise; null = not offered.
+  brandPaise         Int?         @map("brand_paise")
+  entertainmentPaise Int?         @map("entertainment_paise")
+  eventPaise         Int?         @map("event_paise")
+  audioPaise         Int?         @map("audio_paise")
+  notes              String       @default("") @db.Text
+  active             Boolean      @default(true)
+  createdById        String       @map("created_by_id")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+  vendor             SalesVendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+
+  @@unique([platform, handle])
+  @@index([vendorId])
+  @@index([category])
+  @@map("sales_external_pages")
+}
+
+/// A page planned for a Pipeline campaign, with what it showed when it was added (a snapshot: a
+/// later price change never rewrites a list the team already agreed on).
+model PipelineProjectPage {
+  id                 String          @id @default(uuid())
+  projectId          String          @map("project_id")
+  /// "meta_asset:<id>" | "social_account:<id>" | "external:<id>" — one row per page per project.
+  pageKey            String          @map("page_key") @db.VarChar(80)
+  /// network | external
+  source             String          @db.VarChar(10)
+  platform           String          @db.VarChar(16)
+  name               String          @db.VarChar(120)
+  handle             String?         @db.VarChar(60)
+  category           String?         @db.VarChar(60)
+  vendorName         String?         @map("vendor_name") @db.VarChar(120)
+  followers          Int?
+  profileUrl         String?         @map("profile_url") @db.VarChar(300)
+  /// Lowest per-post price by campaign type when added (paise); null = none.
+  brandPaise         Int?            @map("brand_paise")
+  entertainmentPaise Int?            @map("entertainment_paise")
+  eventPaise         Int?            @map("event_paise")
+  addedById          String          @map("added_by_id")
+  createdAt          DateTime        @default(now()) @map("created_at")
+  project            PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, pageKey])
+  @@map("pipeline_project_pages")
+}
+
+/// What a Pipeline campaign is worth and how it is paid. Cash = an internal record only: it is not
+/// an invoice, so it never reaches GST, Tally or the client.
+model PipelineProjectRevenue {
+  projectId     String          @id @map("project_id")
+  amountPaise   Int             @map("amount_paise")
+  /// gst | cash
+  paymentMode   String          @map("payment_mode") @db.VarChar(8)
+  receivedPaise Int             @default(0) @map("received_paise")
+  receivedOn    DateTime?       @map("received_on") @db.Date
+  note          String          @default("") @db.Text
+  updatedById   String          @map("updated_by_id")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  project       PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("pipeline_project_revenue")
 }

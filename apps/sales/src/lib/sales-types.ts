@@ -21,11 +21,11 @@ export interface SellerBranch {
 export interface EInvoiceBrief { status: "pending" | "registering" | "registered" | "failed" | "cancelled"; irn: string | null; ackNo: string | null; ackDate: string | null; lastError: string | null }
 export interface SellerSettings { company: string; profile: SellerProfile; saved: boolean; missing: string[] }
 
-/** rateCardId is null on a partner page (no rate card); pricePaise (brand) is null only on a partner page that takes no brand posts. */
+/** rateCardId is null on an external page (no rate card); pricePaise (brand) is null only on an external page that takes no brand posts. */
 export interface InventoryOffer { rateCardId: string | null; format: string; pricePaise: number | null; entertainmentPricePaise: number | null; eventPricePaise: number | null; audioAddonPaise: number | null; active: boolean }
 export interface InventoryChannel {
-  /** "partner" = the external partner network (sales inventory only); targetId is then its Instagram handle. */
-  targetType: "meta_asset" | "social_account" | "partner"; source: "network" | "partner"; targetId: string; platform: string; name: string; handle: string | null; pictureUrl: string | null;
+  /** "external" = a page we buy posts on (partner network, a vendor's page; sales inventory only); targetId is then its sales_external_pages id. */
+  targetType: "meta_asset" | "social_account" | "external"; source: "network" | "external"; vendorName: string | null; targetId: string; platform: string; name: string; handle: string | null; pictureUrl: string | null;
   followers: number | null; views28d: number | null; engagements28d: number | null; engagementRatePct: number | null; category: string | null;
   profileUrl: string | null; bookable: boolean; inCatalogue: boolean; offers: InventoryOffer[];
 }
@@ -498,3 +498,17 @@ export interface BankSummary {
 }
 export interface BankLinesResponse { lines: BankLineView[]; counts: { review: number; sure: number; matched: number; ignored: number; debits: number }; summary: BankSummary | null }
 export interface LineReceipt { paymentId: string; number: string; clientId: string; clientName: string; amountPaise: number; tdsPaise: number; paidOn: string | null; reference: string | null; mode: string; days: number; imported: boolean; why: string }
+
+export interface Vendor { id: string; name: string; phone: string | null; email: string | null; notes: string; active: boolean; pageCount: number; createdAt: string; updatedAt: string }
+export interface ExternalPage {
+  id: string; vendorId: string | null; platform: string; handle: string | null; name: string; profileUrl: string | null; followers: number | null; category: string | null;
+  brandPaise: number | null; entertainmentPaise: number | null; eventPaise: number | null; audioPaise: number | null; notes: string; active: boolean;
+  createdAt: string; updatedAt: string; vendor: { id: string; name: string; active: boolean } | null;
+}
+export interface CampaignPage {
+  id: string; projectId: string; pageKey: string; source: "network" | "external"; platform: string; name: string; handle: string | null; category: string | null;
+  vendorName: string | null; followers: number | null; profileUrl: string | null; brandPaise: number | null; entertainmentPaise: number | null; eventPaise: number | null;
+  addedById: string; createdAt: string;
+}
+export interface CampaignRevenue { amountPaise: number; paymentMode: "gst" | "cash"; receivedPaise: number; receivedOn: string | null; note: string; updatedById: string; updatedAt: string }
+export interface CampaignPlan { pages: CampaignPage[]; revenue: CampaignRevenue | null }

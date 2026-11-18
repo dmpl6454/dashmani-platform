@@ -40,6 +40,7 @@ import { Thread } from "../thread/Thread";
 import { ReplySheet } from "../thread/ReplySheet";
 import { DetailsPanel } from "./DetailsPanel";
 import { ClientLinkPanel } from "./ClientLinkPanel";
+import { CampaignPlanPanel } from "./CampaignPlanPanel";
 import { MembersPanel } from "./MembersPanel";
 import { WorkPanel } from "./WorkPanel";
 import { PhasePill, PhaseSelect, ProjectMenu } from "./ProjectHeader";
@@ -293,6 +294,7 @@ export function ProjectPage({ id }: { id: string }) {
     <>
       <DetailsPanel header={header} readOnly={readOnly} />
       <ClientLinkPanel header={header} readOnly={readOnly} />
+      <CampaignPlanPanel projectId={header.id} title={header.title} readOnly={readOnly} />
       <MembersPanel header={header} participants={project!.participants} me={project!.me} can={project!.can} readOnly={readOnly} />
     </>
   ) : null;

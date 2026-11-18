@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { getCatalogue, listBookableTargets, type CatalogueTarget } from "../campaign/rate-card.service";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
+import { getPartnerNetwork, type PartnerPage } from "./partner-network";
 
 // The sellable inventory for the sales team, in two layers:
 //  1. the CLIENT CATALOGUE — exactly what client.digitalsukoon.com lists under Campaigns: the
@@ -11,18 +12,27 @@ import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 //     every other active social_accounts row (Snapchat, X, the Pages and IG accounts that are
 //     tracked but not connected) — with its live numbers but no price, so a quote can still be
 //     built for it at a negotiated price. `inCatalogue` tells the two layers apart.
+//  3. the PARTNER NETWORK (owner, 2026-11-18) — external pages we buy posts on (Pinkvilla,
+//     Filmygyan…), with the prices on the owner's sheet. Sales inventory only: never in the client
+//     catalogue, no rate card, quoted as a plain placement line. `source: "partner"`.
 
 export interface InventoryOffer {
-  rateCardId: string;
+  /** null for a partner page (it has no rate card). */
+  rateCardId: string | null;
   format: string;
-  pricePaise: number;
+  /** Brand price. null only on a partner page that takes no brand posts. */
+  pricePaise: number | null;
   entertainmentPricePaise: number | null;
+  eventPricePaise: number | null;
   audioAddonPaise: number | null;
   active: boolean;
 }
 
 export interface InventoryChannel {
-  targetType: "meta_asset" | "social_account";
+  /** "partner": targetId is the partner page's Instagram handle, not a row id. */
+  targetType: "meta_asset" | "social_account" | "partner";
+  /** network = one of our channels (connected or tracked); partner = the external partner network. */
+  source: "network" | "partner";
   targetId: string;
   platform: string;
   name: string;
@@ -48,8 +58,44 @@ export function invalidateInventoryCache(): void {
   memo.clear();
 }
 
+/** The formats a partner page's per-post price applies to (the same three clients can book). */
+const PARTNER_FORMATS = ["reel", "post", "carousel"] as const;
+
+function fromPartner(p: PartnerPage): InventoryChannel {
+  return {
+    targetType: "partner",
+    source: "partner",
+    targetId: p.handle,
+    platform: p.platform,
+    name: p.name,
+    handle: p.handle,
+    pictureUrl: null,
+    followers: p.followers,
+    views28d: null,
+    engagements28d: null,
+    engagementRatePct: null,
+    category: p.category,
+    profileUrl: p.profileUrl,
+    bookable: false,
+    inCatalogue: false,
+    offers:
+      p.brandPaise == null && p.entertainmentPaise == null && p.eventPaise == null
+        ? []
+        : PARTNER_FORMATS.map((format) => ({
+            rateCardId: null,
+            format,
+            pricePaise: p.brandPaise,
+            entertainmentPricePaise: p.entertainmentPaise,
+            eventPricePaise: p.eventPaise,
+            audioAddonPaise: format === "reel" ? p.audioPaise : null,
+            active: true,
+          })),
+  };
+}
+
 function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "category" | "bookable" | "inCatalogue"> {
   return {
+    source: "network",
     // listBookableTargets() returns our own accounts only; creator pages are not sold here yet.
     targetType: t.targetType as InventoryChannel["targetType"],
     targetId: t.targetId,
@@ -67,7 +113,7 @@ function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "c
 
 export async function listInventory(): Promise<InventoryChannel[]> {
   return memo.memo("all", async () => {
-    const [catalogue, targets, cards, accounts] = await Promise.all([
+    const [catalogue, targets, cards, accounts, partners] = await Promise.all([
       getCatalogue(),
       listBookableTargets(),
       prisma.campaignRateCard.findMany(),
@@ -83,6 +129,7 @@ export async function listInventory(): Promise<InventoryChannel[]> {
           metaAssets: { where: { disconnectedAt: null }, select: { id: true }, take: 1 },
         },
       }),
+      getPartnerNetwork(),
     ]);
     const listed = new Map(catalogue.map((e) => [`${e.targetType}:${e.targetId}`, e]));
     // Rate-card rows of channels OUTSIDE the catalogue (withdrawn prices, or a format the platform
@@ -92,7 +139,7 @@ export async function listInventory(): Promise<InventoryChannel[]> {
       const k = `${c.targetType}:${c.targetId}`;
       byTarget.set(k, [
         ...(byTarget.get(k) ?? []),
-        { rateCardId: c.id, format: c.format, pricePaise: c.pricePaise, entertainmentPricePaise: c.entertainmentPricePaise, audioAddonPaise: c.audioAddonPaise, active: false },
+        { rateCardId: c.id, format: c.format, pricePaise: c.pricePaise, entertainmentPricePaise: c.entertainmentPricePaise, eventPricePaise: c.eventPricePaise, audioAddonPaise: c.audioAddonPaise, active: false },
       ]);
     }
     const categoryFor = (k: string) => cards.find((c) => `${c.targetType}:${c.targetId}` === k && c.category)?.category ?? null;
@@ -115,6 +162,7 @@ export async function listInventory(): Promise<InventoryChannel[]> {
       const k = `social_account:${a.id}`;
       out.push({
         targetType: "social_account",
+        source: "network",
         targetId: a.id,
         platform: a.platform.slug,
         name: a.displayName || a.handle,
@@ -131,8 +179,10 @@ export async function listInventory(): Promise<InventoryChannel[]> {
         offers: byTarget.get(k) ?? [],
       });
     }
-    // Catalogue channels first (the client portal's own order), then the rest by reach.
-    out.sort((x, y) => Number(y.inCatalogue) - Number(x.inCatalogue) || (y.followers ?? -1) - (x.followers ?? -1) || x.name.localeCompare(y.name));
+    for (const p of partners.pages) out.push(fromPartner(p));
+    // Catalogue channels first (the client portal's own order), then partner pages, then the rest by reach.
+    const rank = (c: InventoryChannel) => (c.inCatalogue ? 2 : c.source === "partner" ? 1 : 0);
+    out.sort((x, y) => rank(y) - rank(x) || (y.followers ?? -1) - (x.followers ?? -1) || x.name.localeCompare(y.name));
     return out;
   });
 }

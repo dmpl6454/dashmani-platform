@@ -190,7 +190,7 @@ function CampaignBody({ b, media, reload }: { b: Booking; media: MediaUrl[]; rel
         <Kv k="Client" v={`${b.client.companyName} · ${b.client.contactName}`} />
         <Kv k="Contact" v={[b.client.email, b.client.phone].filter(Boolean).join(" · ")} />
         <Kv k="Brand" v={b.brand} />
-        <Kv k="Type" v={b.campaignType === "entertainment" ? "Entertainment (film, OTT, music)" : "Brand promotion"} />
+        <Kv k="Type" v={b.campaignType === "entertainment" ? "Entertainment (film, OTT, music)" : b.campaignType === "event" ? "Event (launch, screening, appearance)" : "Brand promotion"} />
         <Kv k="Window" v={b.launchFrom ? fmtRange(b.launchFrom, b.launchTo) : "—"} />
         <Kv k="Total" v={`${money(b.totalPaise)}${offline ? " · to collect offline" : b.paidAt ? " · paid online" : ""}`} />
         {b.audioIntegration ? <Kv k="Song" v={b.audioTrack || "Yes"} /> : null}

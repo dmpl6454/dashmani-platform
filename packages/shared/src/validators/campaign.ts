@@ -49,13 +49,38 @@ export function formatLabelFor(platform: string, format: string): string {
  */
 export const BOOKABLE_FORMATS: readonly CampaignFormat[] = ["reel", "post", "carousel"];
 
-/** brand = a product / brand promotion (Brand price); entertainment = film, OTT, music or show promotion. */
-export const CAMPAIGN_TYPES = ["brand", "entertainment"] as const;
+/**
+ * brand = a product / brand promotion (Brand price); entertainment = film, OTT, music or show
+ * promotion; event = a launch, screening, appearance or other event (Event price, owner sheet
+ * 2026-11-18).
+ */
+export const CAMPAIGN_TYPES = ["brand", "entertainment", "event"] as const;
 export type CampaignType = (typeof CAMPAIGN_TYPES)[number];
 export const CAMPAIGN_TYPE_LABELS: Record<CampaignType, string> = {
   brand: "Brand promotion",
   entertainment: "Entertainment (film, OTT, music)",
+  event: "Event (launch, screening, appearance)",
 };
+/** Short labels for lists ("Brand", "Entertainment", "Event"). */
+export const CAMPAIGN_TYPE_SHORT: Record<CampaignType, string> = {
+  brand: "Brand",
+  entertainment: "Entertainment",
+  event: "Event",
+};
+
+/**
+ * The base price of one rate card for a campaign type: Brand → pricePaise, Entertainment →
+ * entertainmentPricePaise, Event → eventPricePaise. null = the card does not offer that type.
+ * The ONE rule, shared by the API (priceFor), the client portal and the sales portal.
+ */
+export function basePriceForType(
+  card: { pricePaise: number; entertainmentPricePaise?: number | null; eventPricePaise?: number | null },
+  campaignType: string,
+): number | null {
+  if (campaignType === "entertainment") return card.entertainmentPricePaise ?? null;
+  if (campaignType === "event") return card.eventPricePaise ?? null;
+  return card.pricePaise;
+}
 
 export const FORMAT_LABELS: Record<CampaignFormat, string> = {
   reel: "Reel",
@@ -370,6 +395,8 @@ export const campaignRateCardUpsertSchema = z.object({
         pricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable(),
         /** Entertainment price; null = not offered for entertainment campaigns. */
         entertainmentPricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
+        /** Event price; null = not offered for event campaigns. */
+        eventPricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
         /** Song audio integration add-on (reels only); null = not offered. */
         audioAddonPaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
         active: z.boolean().optional().default(true),

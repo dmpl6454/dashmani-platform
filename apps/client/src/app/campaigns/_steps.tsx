@@ -5,6 +5,8 @@ import { Icon } from "@/components/portal-icons";
 import {
   CAMPAIGN_LIMITS,
   CAMPAIGN_TYPE_LABELS,
+  CAMPAIGN_TYPE_SHORT,
+  basePriceForType,
   CAMPAIGN_TYPES,
   FORMAT_LABELS,
   daysBetween,
@@ -120,13 +122,13 @@ export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
           </div>
           <fieldset>
             <legend className="block text-[11px] uppercase tracking-wider font-bold text-ink-3 mb-1.5">Campaign type</legend>
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-3">
               {CAMPAIGN_TYPES.map((t) => (
                 <label key={t} className={`flex items-start gap-2.5 rounded-xl border-2 px-3 py-2.5 cursor-pointer ${campaignType === t ? "border-ink" : "border-ink/15"}`}>
                   <input type="radio" name="ctype" value={t} checked={campaignType === t} onChange={() => setCampaignType(t)} disabled={disabled} className="mt-0.5 accent-[#403cfa]" />
                   <span>
                     <span className="block text-[13.5px] font-semibold text-ink">{CAMPAIGN_TYPE_LABELS[t]}</span>
-                    <span className="block text-[12px] text-ink-3">{t === "brand" ? "A product, app or brand." : "A film, OTT show, song or event."}</span>
+                    <span className="block text-[12px] text-ink-3">{t === "brand" ? "A product, app or brand." : t === "event" ? "A launch, screening or appearance." : "A film, OTT show or song."}</span>
                   </span>
                 </label>
               ))}
@@ -227,7 +229,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   }, [data, format, campaign, longestSec]);
 
   // Accounts that carry this format but are left out by a choice the client made: the campaign
-  // type (no entertainment price) or the song option (no add-on). Said out loud, never silent.
+  // type (no price for that type) or the song option (no add-on). Said out loud, never silent.
   const hidden = useMemo(() => {
     let byType = 0;
     let bySong = 0;
@@ -240,8 +242,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
         continue;
       }
       if (offerPrice(o, campaign)) continue;
-      const base = campaign.campaignType === "entertainment" ? o.entertainmentPricePaise : o.pricePaise;
-      if (base == null) byType++;
+      if (basePriceForType(o, campaign.campaignType) == null) byType++;
       else bySong++;
     }
     return { byType, bySong, byLength };
@@ -456,7 +457,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
           <div className="mb-4 grid gap-1 text-[12.5px] text-ink-3">
             {hidden.byType > 0 && (
               <p>
-                {hiddenLead(hidden.byType)} take {campaign.campaignType === "entertainment" ? "entertainment" : "brand"} campaigns — change the campaign type in {jump("info", "Details")} to see {hidden.byType === 1 ? "it" : "them"}.
+                {hiddenLead(hidden.byType)} take {(CAMPAIGN_TYPE_SHORT[campaign.campaignType] ?? "brand").toLowerCase()} campaigns — change the campaign type in {jump("info", "Details")} to see {hidden.byType === 1 ? "it" : "them"}.
               </p>
             )}
             {hidden.bySong > 0 && (

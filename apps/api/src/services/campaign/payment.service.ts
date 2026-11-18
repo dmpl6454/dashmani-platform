@@ -55,7 +55,7 @@ export async function checkout(clientId: string, bookingId: string, expectedTota
   // Re-price from the CURRENT rate cards: a price that changed since the client picked it is
   // what they pay now, and an account withdrawn since then blocks checkout.
   const cards = await prisma.campaignRateCard.findMany({ where: { id: { in: b.items.map((i) => i.rateCardId) }, active: true } });
-  // The campaign type picks the Brand or Entertainment price; reel audio integration adds the
+  // The campaign type picks the Brand, Entertainment or Event price; reel audio integration adds the
   // account's audio add-on (see priceFor).
   const cardById = new Map(cards.map((c) => [c.id, c]));
   const priced = b.items.map((i) => {

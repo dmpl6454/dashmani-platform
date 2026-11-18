@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { ChevronLeft, Download, ExternalLink, Mail } from "lucide-react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { CAMPAIGN_TYPE_LABELS, CAMPAIGN_TYPE_SHORT, type CampaignType } from "@dashmani/shared/src/validators/campaign";
 import {
   BTN_GHOST, BTN_GOLD, BTN_RED, CARD, INPUT, ITEM_STATUS, ErrorBar, PageHead, PlatformDot, StatusPill, fmtDate, fmtWhen, rupees,
 } from "../_ds";
@@ -86,7 +87,7 @@ export default function CampaignBookingDetail() {
       <Link href="/campaigns" className="mt-6 inline-flex items-center gap-1 text-[12.5px] text-ds-t3 hover:text-ds-text"><ChevronLeft className="h-4 w-4" />All bookings</Link>
       <PageHead
         title={b.name}
-        sub={<>{b.client.companyName} · {b.brand} · {b.campaignType === "entertainment" ? "Entertainment" : "Brand"} · {b.format ?? "—"}{b.audioIntegration ? " + song audio" : ""} · go live {fmtDate(b.launchFrom)} – {fmtDate(b.launchTo)}</>}
+        sub={<>{b.client.companyName} · {b.brand} · {CAMPAIGN_TYPE_SHORT[b.campaignType as CampaignType] ?? b.campaignType} · {b.format ?? "—"}{b.audioIntegration ? " + song audio" : ""} · go live {fmtDate(b.launchFrom)} – {fmtDate(b.launchTo)}</>}
         right={<StatusPill status={b.status} />}
       />
 
@@ -151,7 +152,7 @@ export default function CampaignBookingDetail() {
               })}
             </div>
             <dl className="mt-4 grid gap-2.5 text-[13px]">
-              <Kv k="Campaign type" v={b.campaignType === "entertainment" ? "Entertainment (film, OTT, music)" : "Brand promotion"} />
+              <Kv k="Campaign type" v={CAMPAIGN_TYPE_LABELS[b.campaignType as CampaignType] ?? b.campaignType} />
               {b.audioIntegration && <Kv k="Song audio" v={<span className="break-words font-semibold text-ds-gold">{b.audioTrack}</span>} />}
               {b.media.some((m) => m.role === "thumbnail") && <Kv k="Thumbnail" v={autoOn ? "Client-supplied cover image — Instagram takes it through the API; set it by hand on Facebook / YouTube." : "Client-supplied cover image — set it by hand when posting."} />}
               {b.superText && <Kv k="Overlay" v={<span className="whitespace-pre-line">{b.superText} <span className="text-ds-t4">({b.superTextStyle})</span></span>} />}

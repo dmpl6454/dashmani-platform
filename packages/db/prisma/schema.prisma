@@ -2518,6 +2518,8 @@ model CampaignRateCard {
   pricePaise              Int      @map("price_paise")
   /// Entertainment (film / OTT / music promo) price. null = not offered for entertainment.
   entertainmentPricePaise Int?     @map("entertainment_price_paise")
+  /// Event (launch, screening, appearance) price. null = not offered for event campaigns.
+  eventPricePaise         Int?     @map("event_price_paise")
   /// Song audio integration on a reel, charged on top of the post price. null = not offered.
   audioAddonPaise         Int?     @map("audio_addon_paise")
   active                  Boolean  @default(true)
@@ -2541,7 +2543,7 @@ model CampaignBooking {
   name             String    @db.VarChar(200)
   brand            String    @db.VarChar(200)
   objective        String?   @db.Text
-  /// brand | entertainment — decides which rate-card price applies. Staff check it at review.
+  /// brand | entertainment | event — decides which rate-card price applies. Staff check it at review.
   campaignType     String    @default("brand") @map("campaign_type") @db.VarChar(16)
   /// Reel only: integrate the client's song audio (priced per account as an add-on).
   audioIntegration Boolean   @default(false) @map("audio_integration")

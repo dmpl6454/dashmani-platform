@@ -54,7 +54,7 @@ export const panSchema = z.string().trim().transform(upper).pipe(z.string().rege
 export const stateCodeSchema = z.string().trim().regex(/^\d{2}$/, "GST state code is two digits (27 = Maharashtra)");
 
 export const TAX_MODE_VALUES = TAX_MODES as readonly ["intra", "inter", "none"];
-export const SALES_CAMPAIGN_TYPES = ["brand", "entertainment"] as const;
+export const SALES_CAMPAIGN_TYPES = ["brand", "entertainment", "event"] as const;
 export const LINE_KINDS = ["placement", "custom"] as const;
 export const INVOICE_KINDS = ["tax_invoice", "proforma"] as const;
 export const PAYMENT_MODES = ["bank_transfer", "upi", "cheque", "cash", "razorpay", "other"] as const;

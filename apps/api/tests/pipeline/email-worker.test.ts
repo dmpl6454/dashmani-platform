@@ -129,6 +129,33 @@ describe("pipeline email — worker", () => {
     return { priya, bob, cara, project };
   }
 
+  it("emails a person added to a project (2026-11-18), and not one removed again before the send", async () => {
+    const { priya, bob, cara, project } = await team("Added campaign");
+    const dan = await createPipelineUser({ name: "Dan New", tag: "ew-dan" });
+    const eve = await createPipelineUser({ name: "Eve Brief", tag: "ew-eve" });
+    const r = await request(app).post(`/v1/pipeline/projects/${project.id}/members`).set(auth(priya.id)).send({ userIds: [dan.id, eve.id] });
+    expect(r.status).toBe(200);
+    const rows = await outbox({ kind: "added" });
+    expect(rows.map((x) => x.userId).sort()).toEqual([dan.id, eve.id].sort());
+    expect(rows.every((x) => x.status === "pending" && x.projectId === project.id)).toBe(true);
+    // The adder never emails themself, and existing members get nothing.
+    expect(rows.some((x) => [priya.id, bob.id, cara.id].includes(x.userId))).toBe(false);
+
+    // Eve is removed again before the email goes: hers is skipped at send time.
+    const rm = await request(app).delete(`/v1/pipeline/projects/${project.id}/members/${eve.id}`).set(auth(priya.id));
+    expect(rm.status).toBe(200);
+    await makeDue();
+    await tick();
+    const toDan = sent.filter((m) => String(m.to).includes("ew-dan"));
+    expect(toDan).toHaveLength(1);
+    expect(toDan[0].subject).toBe("Priya Owner added you to “Added campaign”");
+    expect(String(toDan[0].text)).toContain(`https://hr.example.test/pipeline/${project.id}`);
+    expect(sent.some((m) => String(m.to).includes("ew-eve"))).toBe(false);
+    const after = await outbox({ kind: "added" });
+    expect(after.find((x) => x.userId === dan.id)?.status).toBe("sent");
+    expect(after.find((x) => x.userId === eve.id)?.status).toBe("skipped");
+  });
+
   it("sends ONE digest per recipient, marks its rows sent with one sent_at, and links every item", async () => {
     const { priya, bob, cara, project } = await team();
     const other = await createProjectFixture({ ownerId: priya.id, title: "Holi shoot", memberIds: [bob.id] });

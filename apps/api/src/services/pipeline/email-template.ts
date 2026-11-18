@@ -48,6 +48,8 @@ export interface DigestShoot {
 
 export type DigestItem =
   | { kind: "mention"; projectId: string; projectTitle: string; mentions: DigestMention[] }
+  /** Someone added you to a project (2026-11-18). `due` is null when there is none (or the card is finished). */
+  | { kind: "added"; projectId: string; projectTitle: string; actorNames: string[]; phase: string; due: string | null }
   | { kind: "assigned"; projectId: string; projectTitle: string; actorNames: string[]; pages: DigestPage[] }
   | { kind: "published"; projectId: string; projectTitle: string; actorNames: string[]; pages: DigestPage[] }
   /** projectTitle is "" when the shoot is not linked to a project (projectId null). */
@@ -157,6 +159,10 @@ function render(item: DigestItem, today: string): Rendered {
         extraLinks: ms.length > 1 ? ms.map((m, i) => ({ label: `Message ${i + 1}`, url: link(m) })) : [],
       };
     }
+    case "added": {
+      const details = [`Phase: ${item.phase}${item.due ? ` · ${dueWhen(item.due, today)}` : ""}`];
+      return { headline: `${joinNames(item.actorNames)} added you to ${qt}`, details, url: projectUrl, extraLinks: [] };
+    }
     case "moved": {
       const headline =
         item.actorNames.length === 1
@@ -209,6 +215,8 @@ function render(item: DigestItem, today: string): Rendered {
 }
 
 const WORK_KINDS: ReadonlySet<DigestItem["kind"]> = new Set(["assigned", "published", "shoot"]);
+/** Kinds sent whether or not you follow the project (they are about you). */
+const PERSONAL_KINDS: ReadonlySet<DigestItem["kind"]> = new Set(["mention", "added"]);
 
 /**
  * Why this email came, one line per reason present. Following explains itself; a mention
@@ -216,7 +224,7 @@ const WORK_KINDS: ReadonlySet<DigestItem["kind"]> = new Set(["assigned", "publis
  * "unfollow to stop" advice never promises something it cannot do.
  */
 export function digestFooter(items: DigestItem[]): string[] {
-  const followed = new Set(items.filter((i) => i.kind !== "mention" && !WORK_KINDS.has(i.kind)).map((i) => i.projectId));
+  const followed = new Set(items.filter((i) => !PERSONAL_KINDS.has(i.kind) && !WORK_KINDS.has(i.kind)).map((i) => i.projectId));
   const lines: string[] = [];
   if (followed.size === 1) {
     lines.push("You're receiving this because you follow this project in the Pipeline. Unfollow it there to stop these updates.");
@@ -225,6 +233,9 @@ export function digestFooter(items: DigestItem[]): string[] {
   }
   if (items.some((i) => i.kind === "mention")) {
     lines.push("You were @mentioned in a Pipeline message. Mention emails arrive even if you don't follow the project.");
+  }
+  if (items.some((i) => i.kind === "added")) {
+    lines.push("Someone added you to a Pipeline project. You get this email once per project you are added to.");
   }
   if (items.some((i) => WORK_KINDS.has(i.kind))) {
     lines.push("This is Pipeline work assigned to you, or a page you created or were assigned. These emails arrive even if you don't follow the project.");

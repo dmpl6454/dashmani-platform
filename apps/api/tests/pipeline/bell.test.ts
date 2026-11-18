@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   salesNotificationUrl,
+  pipelineSalesPath,
   bellListView,
   pipelineNotificationPath,
   pipelineNotificationUrl,
@@ -240,5 +241,33 @@ describe("salesNotificationUrl — creator-review rows link to the sales portal"
     expect(salesNotificationUrl(row({ kind: "creator_review", url: "javascript:alert(1)" }))).toBeNull();
     expect(salesNotificationUrl(row(null))).toBeNull();
     expect(salesNotificationUrl(null)).toBeNull();
+  });
+});
+
+describe("pipelineSalesPath — the sales-portal bell (2026-11-18)", () => {
+  const pid = "3f1c2a8e-1111-4222-8333-444455556666";
+  const mid = "aa11bb22-3333-4444-5555-666677778888";
+  const pl = (path: unknown) => ({ id: "n", type: "PIPELINE", metadata: { kind: "added", pid, path } });
+
+  it("opens a project at the static-export route, keeping message, thread and work-tab links", () => {
+    expect(pipelineSalesPath(pl(`/pipeline/${pid}`))).toBe(`/pipeline/view?id=${pid}`);
+    expect(pipelineSalesPath(pl(`/pipeline/${pid}?m=${mid}&t=${mid}`))).toBe(`/pipeline/view?id=${pid}&m=${mid}&t=${mid}`);
+    expect(pipelineSalesPath(pl(`/pipeline/${pid}?tab=work`))).toBe(`/pipeline/view?id=${pid}&tab=work`);
+  });
+
+  it("keeps the shoot desk and drops anything that is not an id", () => {
+    expect(pipelineSalesPath(pl("/pipeline/shoots?view=mine"))).toBe("/pipeline/shoots?view=mine");
+    expect(pipelineSalesPath(pl(`/pipeline/${pid}/x`))).toBeNull();
+    expect(pipelineSalesPath(pl("/pipeline/<script>"))).toBeNull();
+    expect(pipelineSalesPath(pl(`/pipeline/${pid}?m=javascript:1&tab=evil`))).toBe(`/pipeline/view?id=${pid}`);
+    expect(pipelineSalesPath(pl("//evil.example/pipeline/x"))).toBeNull();
+    expect(pipelineSalesPath({ id: "n", type: "GENERAL", metadata: { path: `/pipeline/${pid}` } })).toBeNull();
+  });
+
+  it("opens sales rows (creator review, campaign alert) inside the portal", () => {
+    const sales = { id: "n", type: "GENERAL", metadata: { kind: "campaign_alert", url: "https://sales.digitalsukoon.com/bookings/view?id=b1" } };
+    expect(pipelineSalesPath(sales)).toBe("/bookings/view?id=b1");
+    const foreign = { id: "n", type: "GENERAL", metadata: { kind: "campaign_alert", url: "https://evil.example/bookings/view?id=b1" } };
+    expect(pipelineSalesPath(foreign)).toBeNull();
   });
 });

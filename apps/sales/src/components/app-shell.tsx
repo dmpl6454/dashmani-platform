@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ArrowUpRight, LogOut, Menu, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { PortalSwitcher } from "./portal-switcher";
+import { NotificationBell } from "./notification-bell";
 import { CompanySwitcher } from "./company-switcher";
 import { PortalLink } from "./portal-link";
 import { COMPANY_LOGO, useCompany } from "@/lib/company";
@@ -93,6 +94,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {menuOpen ? <X size={14} aria-hidden /> : <Menu size={14} aria-hidden />}{" "}
               <span className="hidden sm:inline">{menuOpen ? "Close" : current?.label ?? "Menu"}</span>
             </button>
+            <NotificationBell />
             <PortalSwitcher />
             <button type="button" onClick={logout} className="btn btn-ghost btn-sm" aria-label="Log out">
               <LogOut size={14} aria-hidden /> <span className="hidden sm:inline">Log out</span>

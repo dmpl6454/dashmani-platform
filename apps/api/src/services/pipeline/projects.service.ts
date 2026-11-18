@@ -220,6 +220,7 @@ export async function createProject(
         phaseName: String(s1.phase_name ?? ""),
         dueDate: input.dueDate ?? null,
         addedUserIds: memberIds,
+        email: pipelineEmailOn(actor.settings),
       });
 
       const card: PipelineCard = {

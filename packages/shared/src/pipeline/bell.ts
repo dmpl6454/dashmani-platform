@@ -162,3 +162,41 @@ export function salesNotificationUrl(n: unknown, origins: readonly string[] = SA
   if (!u.pathname.startsWith(prefix)) return null;
   return u.href;
 }
+
+/**
+ * Sales-portal bell (2026-11-18, "marked members not getting notifications"): the in-app path a
+ * row should open in the SALES portal, or null (then the row only opens its detail).
+ *
+ *  - PIPELINE rows carry the HR path (`metadata.path`). The sales portal is a static export, so
+ *    a project is `/pipeline/view?id=<pid>` (query kept: `m`, `t`, `tab`), and the shoot desk
+ *    keeps its own path (`/pipeline/shoots?view=mine`).
+ *  - Sales rows (creator_review, campaign_alert) carry a sales-origin URL; its path is used.
+ *
+ * Every output starts with `/`, never `//`, so `router.push` stays same-origin. Never throws.
+ */
+export function pipelineSalesPath(n: unknown, salesOrigins: readonly string[] = SALES_ORIGINS): string | null {
+  const sales = salesNotificationUrl(n, salesOrigins);
+  if (sales) {
+    const u = new URL(sales);
+    return `${u.pathname}${u.search}`;
+  }
+  const path = pipelineNotificationPath(n);
+  if (!path) return null;
+  const q = path.indexOf("?");
+  const pathname = q === -1 ? path : path.slice(0, q);
+  const params = new URLSearchParams(q === -1 ? "" : path.slice(q + 1));
+  if (pathname === "/pipeline/shoots") {
+    const view = params.get("view");
+    return view && /^[a-z]{1,16}$/.test(view) ? `/pipeline/shoots?view=${view}` : "/pipeline/shoots";
+  }
+  const pid = pathname.slice("/pipeline/".length);
+  // A project id (uuid) only: anything else (a nested path, an odd character) opens nothing.
+  if (!/^[0-9a-f-]{8,64}$/i.test(pid)) return null;
+  const out = new URLSearchParams({ id: pid });
+  for (const k of ["m", "t"]) {
+    const v = params.get(k);
+    if (v && /^[0-9a-f-]{8,64}$/i.test(v)) out.set(k, v);
+  }
+  if (params.get("tab") === "work") out.set("tab", "work");
+  return `/pipeline/view?${out.toString()}`;
+}

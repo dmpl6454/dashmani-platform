@@ -49,7 +49,7 @@ import { isPipelineEmailSchemaOk } from "./self-check";
 import { pipelineStats } from "./stats";
 import type { PipelineSettings } from "./settings";
 
-export const EMAIL_KINDS = ["moved", "mention", "due_soon", "due_changed", "assigned", "published", "shoot"] as const;
+export const EMAIL_KINDS = ["moved", "mention", "due_soon", "due_changed", "assigned", "published", "shoot", "added"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 /** The work-notice kinds that email (review / reviewed already email through their mention). */
 export const WORK_EMAIL_KINDS = ["assigned", "published", "shoot"] as const;
@@ -66,6 +66,10 @@ export const EMAIL_SETTLE_MS: Readonly<Record<EmailKind, number>> = {
   assigned: 2 * 60_000,
   published: 2 * 60_000,
   shoot: 2 * 60_000,
+  // Someone added you to a project (2026-11-18, owner: "marked members not getting
+  // notifications"). Long enough for an accidental add to be undone; the worker sends only
+  // while you are still a participant of a live project.
+  added: 2 * 60_000,
 };
 
 /** Page / shoot ids kept on one pending work row (the latest ones). */
@@ -143,6 +147,7 @@ function unionIds(older: Prisma.Sql, newer: Prisma.Sql, key: string, cap: number
  *   mention      {messageIds}             → every message (the latest 20)
  *   due_soon     {due}                    → the newer due date
  *   assigned / published / shoot {refIds, actorIds} → every page / shoot (the latest 20), all actors
+ *   added        {actorIds}               → all actors (≤ 5)
  */
 export function mergePayloadSql(older: Prisma.Sql, newer: Prisma.Sql): Prisma.Sql {
   const parts: Prisma.Sql[] = [Prisma.sql`${newer}`];
@@ -251,6 +256,30 @@ export async function enqueueWorkEmails(
     INSERT INTO pipeline_email_outbox AS o ${INSERT_COLUMNS}
     SELECT gen_random_uuid()::text, r.uid, ${e.projectId}::text, ${e.kind}, ${payload}::jsonb,
            'pending', 0, ${settleSql(e.kind)}, ${NOW}, ${NOW}
+      FROM unnest(${ids}::text[]) AS r(uid)
+      JOIN users u ON u.id = r.uid
+     WHERE ${recipientFragment(Prisma.sql`r.uid`, e.actorId, e.allow)}
+     ORDER BY r.uid
+    ${ON_PENDING_CONFLICT}`;
+  pipelineStats.emailQueued(n);
+  return n;
+}
+
+/**
+ * "X added you to <project>" (2026-11-18): one row per newly added member (the caller already
+ * dropped the actor). Sent even if the person later unfollows — like a mention, being added is
+ * about you — but skipped at send time once you are no longer a participant.
+ */
+export async function enqueueAddedEmails(
+  tx: PipelineTx,
+  e: ParticipantEvent & { recipients: string[] },
+): Promise<number> {
+  const ids = [...new Set(e.recipients)].sort();
+  if (ids.length === 0) return 0;
+  const n = await tx.$executeRaw`
+    INSERT INTO pipeline_email_outbox AS o ${INSERT_COLUMNS}
+    SELECT gen_random_uuid()::text, r.uid, ${e.projectId}, 'added', ${JSON.stringify({ actorIds: [e.actorId] })}::jsonb,
+           'pending', 0, ${settleSql("added")}, ${NOW}, ${NOW}
       FROM unnest(${ids}::text[]) AS r(uid)
       JOIN users u ON u.id = r.uid
      WHERE ${recipientFragment(Prisma.sql`r.uid`, e.actorId, e.allow)}

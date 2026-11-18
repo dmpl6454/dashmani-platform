@@ -25,6 +25,7 @@ import {
   type PipelineRemoveMemberResponse,
 } from "@dashmani/shared";
 import type { PipelineTx } from "./db";
+import { pipelineEmailOn } from "./email-outbox";
 import { pipelineWrite } from "./tx";
 import { PipelineError } from "./errors";
 import { bumpBoard } from "./board";
@@ -122,6 +123,7 @@ export async function addMembers(actor: PipelineActor, projectId: string, userId
         phaseName: String(s2.phase_name ?? ""),
         dueDate: day(row.due_date),
         addedUserIds: addedIds.filter((id) => id !== me),
+        email: pipelineEmailOn(actor.settings),
       });
     }
     return { participants: await listParticipants(tx, projectId, ownerId), added: addedIds, changedCount };

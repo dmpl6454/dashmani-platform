@@ -946,4 +946,41 @@ describe("campaign booking flow", () => {
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("RATE_CARD_UNAVAILABLE");
   });
+
+  it("an event campaign charges each account's Event price; an account without one can't be booked for it", async () => {
+    const rates = await request(app)
+      .put("/v1/admin/campaign-rate-cards")
+      .set("Authorization", `Bearer ${admin}`)
+      .send({ cards: [{ targetType: "meta_asset", targetId: assetId, format: "post", pricePaise: 300_000, entertainmentPricePaise: 120_000, eventPricePaise: 200_000 }] });
+    expect(rates.status).toBe(200);
+    expect((await prisma.campaignRateCard.findFirstOrThrow({ where: { format: "post" } })).eventPricePaise).toBe(200_000);
+
+    const created = await request(app).post("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "event" });
+    expect(created.status).toBe(201);
+    expect(created.body.data.campaignType).toBe("event");
+    const id = created.body.data.id;
+    const up = await upload(tokA, JPEG, "image/jpeg");
+    await request(app).put(`/v1/client/campaigns/${id}/creative`).set("Authorization", `Bearer ${tokA}`).send({ format: "post", mediaIds: [up.id] });
+    const cat = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
+    const offer = cat.body.data[0].offers[0];
+    expect(offer).toMatchObject({ pricePaise: 300_000, entertainmentPricePaise: 120_000, eventPricePaise: 200_000 });
+    const items = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: [offer.rateCardId] });
+    expect(items.status).toBe(200);
+    expect(items.body.data.items[0].pricePaise).toBe(200_000);
+
+    // Switching type re-prices from the matching column.
+    const asEnt = await request(app).put(`/v1/client/campaigns/${id}/info`).set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "entertainment" });
+    expect(asEnt.body.data.items[0].pricePaise).toBe(120_000);
+
+    // Withdraw the Event price: the account drops out of an event campaign.
+    await request(app)
+      .put("/v1/admin/campaign-rate-cards")
+      .set("Authorization", `Bearer ${admin}`)
+      .send({ cards: [{ targetType: "meta_asset", targetId: assetId, format: "post", pricePaise: 300_000, eventPricePaise: null }] });
+    const asEvent = await request(app).put(`/v1/client/campaigns/${id}/info`).set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "event" });
+    expect(asEvent.body.data.items).toEqual([]);
+    const again = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: [offer.rateCardId] });
+    expect(again.status).toBe(400);
+    expect(again.body.error.code).toBe("RATE_CARD_UNAVAILABLE");
+  });
 });

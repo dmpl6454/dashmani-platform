@@ -9,7 +9,8 @@ import { BTN_GOLD, CARD, INPUT, ErrorBar, PageHead, PlatformDot, compact } from 
 
 // Rate card: our price per account per format. Each format has a Brand price (required to
 // offer the format at all), an Entertainment price (film / OTT / music campaigns; empty = not
-// offered for those) and, on reels, a song-audio add-on (empty = not offered). Only accounts
+// offered for those), an Event price (launches, screenings, appearances; empty = not offered)
+// and, on reels, a song-audio add-on (empty = not offered). Only accounts
 // with at least one active price appear in the client catalogue.
 
 type Target = {
@@ -22,14 +23,15 @@ type Target = {
   engagementRatePct: number | null;
   category: string | null;
   formats: string[];
-  cards: Array<{ id: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null; active: boolean }>;
+  cards: Array<{ id: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; eventPricePaise: number | null; audioAddonPaise: number | null; active: boolean }>;
 };
 
 const ALL_FORMATS = ["reel", "post", "carousel"] as const;
-type Field = "pricePaise" | "entertainmentPricePaise" | "audioAddonPaise";
+type Field = "pricePaise" | "entertainmentPricePaise" | "eventPricePaise" | "audioAddonPaise";
 const FIELDS: Array<{ key: Field; short: string; label: string }> = [
   { key: "pricePaise", short: "Brand", label: "brand price" },
   { key: "entertainmentPricePaise", short: "Ent.", label: "entertainment price" },
+  { key: "eventPricePaise", short: "Event", label: "event price" },
   { key: "audioAddonPaise", short: "Audio", label: "song audio add-on" },
 ];
 const fieldsFor = (f: string) => FIELDS.filter((x) => x.key !== "audioAddonPaise" || f === "reel");
@@ -75,7 +77,7 @@ export default function RateCardsPage() {
     setErr("");
     setOk("");
     const byKey = new Map((data ?? []).map((t) => [keyOf(t), t]));
-    type Out = { targetType: string; targetId: string; format: string; pricePaise: number | null; entertainmentPricePaise?: number | null; audioAddonPaise?: number | null; category?: string | null };
+    type Out = { targetType: string; targetId: string; format: string; pricePaise: number | null; entertainmentPricePaise?: number | null; eventPricePaise?: number | null; audioAddonPaise?: number | null; category?: string | null };
     const cards: Out[] = [];
     for (const [k, e] of Object.entries(edits)) {
       const t = byKey.get(k);
@@ -92,7 +94,7 @@ export default function RateCardsPage() {
         }
         const existed = t.cards.some((c) => c.format === f);
         if (vals.pricePaise == null) {
-          if (vals.entertainmentPricePaise != null || vals.audioAddonPaise != null) return setErr(`Set the ${f} brand price for ${t.name} first — it's what offers the format.`);
+          if (vals.entertainmentPricePaise != null || vals.eventPricePaise != null || vals.audioAddonPaise != null) return setErr(`Set the ${f} brand price for ${t.name} first — it's what offers the format.`);
           if (!existed) continue;
         }
         cards.push({
@@ -101,6 +103,7 @@ export default function RateCardsPage() {
           format: f,
           pricePaise: vals.pricePaise ?? null,
           entertainmentPricePaise: vals.entertainmentPricePaise ?? null,
+          eventPricePaise: vals.eventPricePaise ?? null,
           ...(f === "reel" ? { audioAddonPaise: vals.audioAddonPaise ?? null } : {}),
           ...(category !== undefined ? { category } : {}),
         });
@@ -134,7 +137,7 @@ export default function RateCardsPage() {
       <Link href="/campaigns" className="mt-6 inline-flex items-center gap-1 text-[12.5px] text-ds-t3 hover:text-ds-text"><ChevronLeft className="h-4 w-4" />Campaign bookings</Link>
       <PageHead
         title="Rate card"
-        sub="Rupees per account and format. Brand = brand campaigns (empty = format not offered). Ent. = film / OTT / music campaigns (empty = not offered for those). Audio = song integration add-on on reels. On YouTube the Reel column is a Short and Post a video; on Snapchat Reel is a Spotlight (videos up to 60 s, posted by hand). Clients see accounts with at least one price."
+        sub="Rupees per account and format. Brand = brand campaigns (empty = format not offered). Ent. = film / OTT / music campaigns (empty = not offered for those). Event = launches, screenings, appearances (empty = not offered). Audio = song integration add-on on reels. On YouTube the Reel column is a Short and Post a video; on Snapchat Reel is a Spotlight (videos up to 60 s, posted by hand). Clients see accounts with at least one price."
       />
 
       <div className="flex flex-wrap gap-2 items-center mb-4">
@@ -159,7 +162,7 @@ export default function RateCardsPage() {
 
       <section className={`${CARD} overflow-hidden`}>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1180px] text-[13px]">
+          <table className="w-full min-w-[1420px] text-[13px]">
             <thead>
               <tr className="bg-ds-inset text-[10.5px] uppercase tracking-[.1em] text-ds-t3">
                 <th className="text-left font-semibold px-5 h-[46px]">Account</th>

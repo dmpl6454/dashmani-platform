@@ -16,10 +16,11 @@ import { computeTotals, registrationFor, taxModeFor, GST_STATE_CODES } from "@da
 // the shared GST arithmetic (the API recomputes everything on save; this is for the eyes).
 
 type Kind = "quote" | "order";
+type CampaignTypeKey = "brand" | "entertainment" | "event";
 type Doc = Quote | Order;
 
 interface FormState {
-  clientId: string; title: string; campaignType: "brand" | "entertainment"; validUntil: string; poNumber: string; startDate: string; endDate: string;
+  clientId: string; title: string; campaignType: CampaignTypeKey; validUntil: string; poNumber: string; startDate: string; endDate: string;
   taxMode: "auto" | TaxMode; gstRateBp: number; discountPaise: number; notes: string; internalNotes: string; items: LineItem[];
 }
 
@@ -29,7 +30,7 @@ function fromDoc(d: Doc | undefined, clientIdPreset: string | null): FormState {
   return {
     clientId: d?.clientId ?? clientIdPreset ?? "",
     title: d?.title ?? "",
-    campaignType: (d?.campaignType as "brand" | "entertainment") ?? "brand",
+    campaignType: (d?.campaignType as CampaignTypeKey) ?? "brand",
     validUntil: (d as Quote | undefined)?.validUntil ?? "",
     poNumber: (d as Order | undefined)?.poNumber ?? "",
     startDate: (d as Order | undefined)?.startDate ?? "",
@@ -64,9 +65,11 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
   const removeItem = (i: number) => setForm((f) => ({ ...f, items: f.items.length > 1 ? f.items.filter((_, j) => j !== i) : [blankLine()] }));
 
   function addFromInventory(c: InventoryChannel, format: string, pricePaise: number, rateCardId: string | null) {
+    // A partner page is not one of our accounts: no row id to link, so the line names it instead.
+    const partner = c.targetType === "partner";
     const line: LineItem = {
-      kind: "placement", targetType: c.targetType, targetId: c.targetId, platform: c.platform, format, rateCardId,
-      description: `${c.name} · ${platformLabel(c.platform)} ${titleCase(format)}`, accountName: c.name, accountHandle: c.handle, quantity: 1, unitPricePaise: pricePaise, discountPaise: 0,
+      kind: "placement", targetType: partner ? null : c.targetType, targetId: partner ? null : c.targetId, platform: c.platform, format, rateCardId: partner ? null : rateCardId,
+      description: `${c.name} · ${platformLabel(c.platform)} ${titleCase(format)}${partner ? " (partner page)" : ""}`, accountName: c.name, accountHandle: c.handle, quantity: 1, unitPricePaise: pricePaise, discountPaise: 0,
     };
     setForm((f) => ({ ...f, items: f.items.length === 1 && !f.items[0].description && !f.items[0].unitPricePaise ? [line] : [...f.items, line] }));
     setPicker(false);
@@ -109,8 +112,8 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
         </Field>
         <ClientSelect className="sm:col-span-2" clients={clients} value={form.clientId} onChange={(clientId) => setForm((f) => ({ ...f, clientId }))} />
         <Field label="Title" className="sm:col-span-2"><input className="input" required maxLength={200} placeholder="Diwali reels across 6 pages" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
-        <Field label="Campaign type" hint="Entertainment uses the entertainment column of the rate card.">
-          <select className="input" value={form.campaignType} onChange={(e) => setForm({ ...form, campaignType: e.target.value as FormState["campaignType"] })}><option value="brand">Brand promotion</option><option value="entertainment">Entertainment (film, OTT, music)</option></select>
+        <Field label="Campaign type" hint="Picks which rate-card column (Brand, Entertainment or Event) the inventory prices use.">
+          <select className="input" value={form.campaignType} onChange={(e) => setForm({ ...form, campaignType: e.target.value as FormState["campaignType"] })}><option value="brand">Brand promotion</option><option value="entertainment">Entertainment (film, OTT, music)</option><option value="event">Event (launch, screening, appearance)</option></select>
         </Field>
         {kind === "quote" ? (
           <Field label="Valid until"><input className="input" type="date" value={form.validUntil} onChange={(e) => setForm({ ...form, validUntil: e.target.value })} /></Field>
@@ -186,7 +189,7 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
   );
 }
 
-function InventoryPicker({ campaignType, onPick, onClose }: { campaignType: "brand" | "entertainment"; onPick: (c: InventoryChannel, format: string, pricePaise: number, rateCardId: string | null) => void; onClose: () => void }) {
+function InventoryPicker({ campaignType, onPick, onClose }: { campaignType: CampaignTypeKey; onPick: (c: InventoryChannel, format: string, pricePaise: number, rateCardId: string | null) => void; onClose: () => void }) {
   const { data, isLoading } = useInventory();
   const [q, setQ] = useState("");
   const [platform, setPlatform] = useState("all");
@@ -211,12 +214,12 @@ function InventoryPicker({ campaignType, onPick, onClose }: { campaignType: "bra
               return (
                 <li key={`${c.targetType}:${c.targetId}`} className="py-2 flex flex-wrap items-center gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold truncate">{c.name} <span className="text-ink-3 font-normal text-xs">{platformLabel(c.platform)} · {fmtCompact(c.followers)} followers{c.category ? ` · ${c.category}` : ""}</span></div>
+                    <div className="font-bold truncate">{c.name} <span className="text-ink-3 font-normal text-xs">{c.source === "partner" ? "Partner · " : ""}{platformLabel(c.platform)} · {fmtCompact(c.followers)} followers{c.category ? ` · ${c.category}` : ""}</span></div>
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {offers.map((o) => {
-                      const price = campaignType === "entertainment" ? o.entertainmentPricePaise : o.pricePaise;
-                      return price == null ? null : <button key={o.rateCardId} type="button" className="btn btn-ghost btn-sm" onClick={() => onPick(c, o.format, price, o.rateCardId)}>{titleCase(o.format)} · {fmtInr(price, { whole: true })}</button>;
+                      const price = campaignType === "entertainment" ? o.entertainmentPricePaise : campaignType === "event" ? o.eventPricePaise : o.pricePaise;
+                      return price == null ? null : <button key={o.rateCardId ?? o.format} type="button" className="btn btn-ghost btn-sm" onClick={() => onPick(c, o.format, price, o.rateCardId)}>{titleCase(o.format)} · {fmtInr(price, { whole: true })}</button>;
                     })}
                     <button type="button" className="btn btn-ghost btn-sm text-ink-3" onClick={() => onPick(c, "post", 0, null)}>Custom price…</button>
                   </div>

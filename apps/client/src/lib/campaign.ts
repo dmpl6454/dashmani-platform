@@ -1,5 +1,6 @@
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
+import { basePriceForType } from "@dashmani/shared/src/validators/campaign";
 
 // Campaign booking — types, SWR hooks and the resumable chunked uploader for the client portal.
 
@@ -60,7 +61,7 @@ export interface Campaign {
   launchFrom: string | null;
   launchTo: string | null;
   format: string | null;
-  campaignType: "brand" | "entertainment";
+  campaignType: "brand" | "entertainment" | "event";
   audioIntegration: boolean;
   audioTrack: string | null;
   caption: string | null;
@@ -135,7 +136,7 @@ export interface CatalogueEntry {
   linkDeliveryMinutes: { min: number; max: number } | null;
   /** Creator pages only: the most hours the creator has to accept after our team approves. */
   creatorResponseHours?: number | null;
-  offers: Array<{ rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null }>;
+  offers: Array<{ rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; eventPricePaise?: number | null; audioAddonPaise: number | null }>;
 }
 
 export interface CampaignResults {
@@ -323,7 +324,7 @@ export function offerPrice(
   offer: CatalogueEntry["offers"][number],
   b: { campaignType: string; audioIntegration: boolean; format: string | null },
 ): { base: number; addon: number; total: number } | null {
-  const base = b.campaignType === "entertainment" ? offer.entertainmentPricePaise : offer.pricePaise;
+  const base = basePriceForType(offer, b.campaignType);
   if (base == null) return null;
   let addon = 0;
   if (b.audioIntegration && b.format === "reel") {

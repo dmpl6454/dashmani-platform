@@ -1,5 +1,5 @@
 import { prisma, type Prisma } from "@dashmani/db";
-import { type CampaignRateCardUpsertInput, PLATFORM_FORMATS, type CampaignPlatform, type CampaignFormat } from "@dashmani/shared";
+import { type CampaignRateCardUpsertInput, PLATFORM_FORMATS, basePriceForType, type CampaignPlatform, type CampaignFormat } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { resolveDuplicateAssetIds } from "../meta-oauth/meta-channels.service";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
@@ -189,19 +189,20 @@ export async function resolveCatalogueTargets(keys: Array<{ targetType: string; 
 export interface PricedCard {
   pricePaise: number;
   entertainmentPricePaise: number | null;
+  eventPricePaise?: number | null;
   audioAddonPaise: number | null;
 }
 
 /**
- * The price of one account for a booking: the campaign type picks the base (Brand or
- * Entertainment column), and a reel with song audio integration adds the account's audio
+ * The price of one account for a booking: the campaign type picks the base (Brand,
+ * Entertainment or Event column — basePriceForType), and a reel with song audio integration adds the account's audio
  * add-on. null = this account does not offer what the booking asks for.
  */
 export function priceFor(
   card: PricedCard,
   booking: { campaignType: string; audioIntegration: boolean; format: string | null },
 ): { base: number; addon: number; total: number } | null {
-  const base = booking.campaignType === "entertainment" ? card.entertainmentPricePaise : card.pricePaise;
+  const base = basePriceForType(card, booking.campaignType);
   if (base == null) return null;
   let addon = 0;
   if (booking.audioIntegration && booking.format === "reel") {
@@ -236,6 +237,7 @@ export async function listRateCardGrid() {
           format: c.format,
           pricePaise: c.pricePaise,
           entertainmentPricePaise: c.entertainmentPricePaise,
+          eventPricePaise: c.eventPricePaise,
           audioAddonPaise: c.audioAddonPaise,
           active: c.active,
         })),
@@ -271,6 +273,7 @@ export async function upsertRateCards(input: CampaignRateCardUpsertInput, staffI
           format: c.format,
           pricePaise: c.pricePaise,
           entertainmentPricePaise: c.entertainmentPricePaise ?? null,
+          eventPricePaise: c.eventPricePaise ?? null,
           audioAddonPaise: c.format === "reel" ? c.audioAddonPaise ?? null : null,
           active: c.active ?? true,
           category: c.category ?? null,
@@ -279,6 +282,7 @@ export async function upsertRateCards(input: CampaignRateCardUpsertInput, staffI
         update: {
           pricePaise: c.pricePaise,
           ...(c.entertainmentPricePaise !== undefined ? { entertainmentPricePaise: c.entertainmentPricePaise } : {}),
+          ...(c.eventPricePaise !== undefined ? { eventPricePaise: c.eventPricePaise } : {}),
           ...(c.audioAddonPaise !== undefined ? { audioAddonPaise: c.format === "reel" ? c.audioAddonPaise : null } : {}),
           active: c.active ?? true,
           ...(c.category !== undefined ? { category: c.category } : {}),
@@ -327,12 +331,13 @@ export interface CatalogueEntry {
   linkDeliveryMinutes: { min: number; max: number } | null;
   /** Creator pages only: the most hours the creator has to accept after our team approves the campaign. */
   creatorResponseHours: number | null;
-  /** pricePaise = brand price; entertainmentPricePaise / audioAddonPaise null when not offered. */
+  /** pricePaise = brand price; entertainment / event / audio prices null when not offered. */
   offers: Array<{
     rateCardId: string;
     format: CampaignFormat;
     pricePaise: number;
     entertainmentPricePaise: number | null;
+    eventPricePaise: number | null;
     audioAddonPaise: number | null;
   }>;
 }
@@ -377,6 +382,7 @@ export async function getCatalogue(): Promise<CatalogueEntry[]> {
             format: c.format as CampaignFormat,
             pricePaise: c.pricePaise,
             entertainmentPricePaise: c.entertainmentPricePaise,
+            eventPricePaise: c.eventPricePaise,
             audioAddonPaise: c.audioAddonPaise,
           })),
       });

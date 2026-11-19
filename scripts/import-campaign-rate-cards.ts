@@ -1,13 +1,15 @@
 /**
- * Import the campaign rate card from the owner's sheet
- * ("Instagram and Facebook Bollywood Pages — Updated Jan 2026", extracted to
- * scripts/data/campaign-rate-cards.json).
+ * Import the campaign rate card from the owner's sheet. Current sheet (2026-11-18):
+ * "Digital Sukoon Private Limited Management" → scripts/data/campaign-rate-cards-2026-11.json
+ * (the default). The January 2026 sheet ("Instagram and Facebook Bollywood Pages") is kept in
+ * scripts/data/campaign-rate-cards.json; pass --file=campaign-rate-cards.json to re-run it.
  *
  * For every page in the sheet that matches a connected, monitored Meta channel, it writes a
  * rate card for each bookable format (reel, post, carousel — no stories, owner decision
  * 2026-10-08):
  *   pricePaise              = "Brand Cost in INR"
- *   entertainmentPricePaise = "Entertainment Cost (INR)"
+ *   entertainmentPricePaise = "Entertainment Cost (INR)" / "Entertainment/Song"
+ *   eventPricePaise         = "Event" (2026-11 sheet; absent = not offered for event campaigns)
  *   audioAddonPaise         = "Paparazzi Audio Integration" — Instagram REELS only
  *                             ("don't do" / empty → not offered)
  *   category                = "Bollywood" when the account has none yet
@@ -23,19 +25,30 @@
  * Unmatched pages are listed and skipped (connect the channel, then re-run).
  *
  * Idempotent: re-running updates the same cards. Existing cards for pages NOT in the sheet are
- * left alone. Dry-run by default.
+ * left alone, unless --switch-off-others is given (owner decision 2026-11-18: "all campaigns
+ * happen on these networks"): then every ACTIVE rate card of a connected Meta channel (Instagram
+ * or Facebook, target_type meta_asset) that the sheet did not match is set active = false. Its
+ * prices are kept, so a channel can be switched back on from Campaigns → Rate cards. YouTube /
+ * Snapchat channels and creator pages are never touched. Dry-run by default.
+ *
+ * Partner network: the file's "partners" list (external pages we buy posts on — owner decision
+ * 2026-11-18: SALES INVENTORY ONLY, never offered to clients) replaces system_settings
+ * "sales.partnerNetwork" (apps/api/src/services/sales/partner-network.ts). No rate cards.
  *
  * Run from packages/db (so Prisma loads packages/db/.env):
- *   npx tsx ../../scripts/import-campaign-rate-cards.ts                 # dry run
- *   npx tsx ../../scripts/import-campaign-rate-cards.ts --apply --confirm-prod
+ *   npx tsx ../../scripts/import-campaign-rate-cards.ts --switch-off-others                        # dry run
+ *   npx tsx ../../scripts/import-campaign-rate-cards.ts --switch-off-others --apply --confirm-prod
  */
 import fs from "fs";
 import path from "path";
 import { prisma } from "@dashmani/db";
 import { listBookableTargets, invalidateCatalogueCache } from "../apps/api/src/services/campaign/rate-card.service";
+import { savePartnerNetwork, getPartnerNetwork, type PartnerPage } from "../apps/api/src/services/sales/partner-network";
 
 const APPLY = process.argv.includes("--apply");
 const CONFIRM_PROD = process.argv.includes("--confirm-prod");
+const SWITCH_OFF_OTHERS = process.argv.includes("--switch-off-others");
+const FILE = process.argv.find((a) => a.startsWith("--file="))?.slice("--file=".length) ?? "campaign-rate-cards-2026-11.json";
 const FORMATS = ["reel", "post", "carousel"] as const;
 const DEFAULT_CATEGORY = "Bollywood";
 
@@ -46,7 +59,13 @@ interface SheetPage {
   sheetFollowers: number | null;
   entertainmentRupees: number | null;
   brandRupees: number | null;
+  /** 2026-11 sheet only. */
+  eventRupees?: number | null;
   audioRupees: number | null;
+}
+
+interface SheetPartner extends SheetPage {
+  handle: string;
 }
 
 const RESERVED_FB = new Set(["profile.php", "pages", "people", "pg", "groups", "share", "reel", "watch", "p"]);
@@ -74,8 +93,11 @@ const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 const paise = (rupees: number | null) => (rupees == null ? null : Math.round(rupees * 100));
 
 async function main() {
-  const file = path.join(__dirname, "data", "campaign-rate-cards.json");
-  const { pages } = JSON.parse(fs.readFileSync(file, "utf8")) as { pages: SheetPage[] };
+  if (!/^[\w.-]+\.json$/.test(FILE)) throw new Error(`--file must be a file name in scripts/data, got "${FILE}"`);
+  const file = path.join(__dirname, "data", FILE);
+  const sheet = JSON.parse(fs.readFileSync(file, "utf8")) as { source?: string; pages: SheetPage[]; partners?: SheetPartner[] };
+  const pages = sheet.pages;
+  console.log(`File: scripts/data/${FILE}${sheet.source ? ` (${sheet.source})` : ""}`);
 
   const dbUrl = process.env.DATABASE_URL ?? "";
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl);
@@ -159,11 +181,61 @@ async function main() {
   for (const m of matched) {
     const audio = m.page.platform === "instagram" ? (m.page.audioRupees != null ? `audio ₹${m.page.audioRupees}` : "no audio") : "";
     console.log(
-      `  ${m.page.platform.padEnd(9)} ${m.page.name.padEnd(28)} → ${m.target.name} (@${m.target.username ?? "—"}) [${m.how}]  brand ₹${m.page.brandRupees} · ent ₹${m.page.entertainmentRupees ?? "—"} ${audio}`,
+      `  ${m.page.platform.padEnd(9)} ${m.page.name.padEnd(28)} → ${m.target.name} (@${m.target.username ?? "—"}) [${m.how}]  brand ₹${m.page.brandRupees} · ent ₹${m.page.entertainmentRupees ?? "—"} · event ₹${m.page.eventRupees ?? "—"} ${audio}`,
     );
   }
   console.log(`\nNot imported ${unmatched.length}:`);
   for (const u of unmatched) console.log(`  ${u.page.platform.padEnd(9)} ${u.page.name.padEnd(28)} ${u.page.url}  — ${u.why}`);
+
+  // Channels whose active prices --switch-off-others would withdraw: connected Meta channels the
+  // sheet did not match. Listed in the dry run either way, so the owner sees what "only these
+  // networks" removes before it happens.
+  const matchedIds = new Set(matched.map((m) => m.target.targetId));
+  const othersActive = await prisma.campaignRateCard.findMany({
+    where: { targetType: "meta_asset", active: true, targetId: { notIn: [...matchedIds] } },
+    select: { id: true, targetId: true, platform: true, format: true },
+  });
+  const nameOf = new Map(targets.map((t) => [t.targetId, `${t.name}${t.username ? ` (@${t.username})` : ""}`]));
+  const otherChannels = new Map<string, { platform: string; formats: string[] }>();
+  for (const c of othersActive) {
+    const e = otherChannels.get(c.targetId) ?? { platform: c.platform, formats: [] };
+    e.formats.push(c.format);
+    otherChannels.set(c.targetId, e);
+  }
+  const untouched = await prisma.campaignRateCard.groupBy({
+    by: ["targetType", "platform"],
+    where: { active: true, targetType: { not: "meta_asset" } },
+    _count: { _all: true },
+  });
+  console.log(
+    `\n${SWITCH_OFF_OTHERS ? "Switching off" : "Would switch off with --switch-off-others"}: ${otherChannels.size} other priced Meta channels (${othersActive.length} active rate cards; prices kept, set inactive):`,
+  );
+  for (const [id, e] of [...otherChannels].sort((a, b) => a[1].platform.localeCompare(b[1].platform))) {
+    console.log(`  ${e.platform.padEnd(9)} ${nameOf.get(id) ?? `(not connected now) ${id}`} — ${e.formats.sort().join(", ")}`);
+  }
+  for (const u of untouched) console.log(`  untouched: ${u._count._all} active ${u.platform} rate cards (${u.targetType})`);
+
+  // Partner network (sales inventory only).
+  const partners: PartnerPage[] = (sheet.partners ?? []).map((p) => ({
+    handle: p.handle.toLowerCase(),
+    name: p.name,
+    platform: "instagram" as const,
+    profileUrl: p.url,
+    followers: p.sheetFollowers,
+    category: DEFAULT_CATEGORY,
+    brandPaise: paise(p.brandRupees),
+    entertainmentPaise: paise(p.entertainmentRupees),
+    eventPaise: paise(p.eventRupees ?? null),
+    audioPaise: paise(p.audioRupees),
+  }));
+  if (sheet.partners) {
+    const before = await getPartnerNetwork();
+    console.log(`\nPartner network (sales inventory only): ${partners.length} pages${before.pages.length ? ` — replaces the ${before.pages.length} stored` : ""}:`);
+    const r = (v: number | null) => (v == null ? "—" : `₹${v / 100}`);
+    for (const p of partners) {
+      console.log(`  ${p.name.padEnd(20)} @${p.handle.padEnd(18)} brand ${r(p.brandPaise)} · ent ${r(p.entertainmentPaise)} · event ${r(p.eventPaise)} · song ${r(p.audioPaise)}`);
+    }
+  }
 
   if (!APPLY) {
     console.log(`\nDry run. ${matched.length * FORMATS.length} rate cards would be written. Re-run with --apply${isLocal ? "" : " --confirm-prod"} to write.`);
@@ -182,6 +254,8 @@ async function main() {
           platform: target.platform,
           pricePaise: paise(page.brandRupees)!,
           entertainmentPricePaise: paise(page.entertainmentRupees),
+          // The January sheet had no Event column: leave a stored event price alone there.
+          ...(page.eventRupees !== undefined ? { eventPricePaise: paise(page.eventRupees) } : {}),
           audioAddonPaise: page.platform === "instagram" && format === "reel" ? paise(page.audioRupees) : null,
           active: true,
           category,
@@ -194,9 +268,18 @@ async function main() {
         written++;
       }
     }
+    if (SWITCH_OFF_OTHERS && othersActive.length) {
+      await tx.campaignRateCard.updateMany({ where: { id: { in: othersActive.map((c) => c.id) } }, data: { active: false } });
+    }
   });
   invalidateCatalogueCache();
   console.log(`\nWrote ${written} rate cards for ${matched.length} accounts.`);
+  if (SWITCH_OFF_OTHERS) console.log(`Switched off ${othersActive.length} rate cards on ${otherChannels.size} other channels.`);
+  if (sheet.partners) {
+    await savePartnerNetwork({ source: sheet.source ?? FILE, updatedAt: new Date().toISOString(), pages: partners });
+    console.log(`Saved ${partners.length} partner pages to system_settings "sales.partnerNetwork".`);
+  }
+  console.log("The API caches the catalogue and inventory for up to a minute.");
 }
 
 main()

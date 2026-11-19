@@ -21,9 +21,11 @@ export interface SellerBranch {
 export interface EInvoiceBrief { status: "pending" | "registering" | "registered" | "failed" | "cancelled"; irn: string | null; ackNo: string | null; ackDate: string | null; lastError: string | null }
 export interface SellerSettings { company: string; profile: SellerProfile; saved: boolean; missing: string[] }
 
-export interface InventoryOffer { rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null; active: boolean }
+/** rateCardId is null on a partner page (no rate card); pricePaise (brand) is null only on a partner page that takes no brand posts. */
+export interface InventoryOffer { rateCardId: string | null; format: string; pricePaise: number | null; entertainmentPricePaise: number | null; eventPricePaise: number | null; audioAddonPaise: number | null; active: boolean }
 export interface InventoryChannel {
-  targetType: "meta_asset" | "social_account"; targetId: string; platform: string; name: string; handle: string | null; pictureUrl: string | null;
+  /** "partner" = the external partner network (sales inventory only); targetId is then its Instagram handle. */
+  targetType: "meta_asset" | "social_account" | "partner"; source: "network" | "partner"; targetId: string; platform: string; name: string; handle: string | null; pictureUrl: string | null;
   followers: number | null; views28d: number | null; engagements28d: number | null; engagementRatePct: number | null; category: string | null;
   profileUrl: string | null; bookable: boolean; inCatalogue: boolean; offers: InventoryOffer[];
 }

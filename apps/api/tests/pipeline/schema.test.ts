@@ -107,6 +107,9 @@ const FOREIGN_KEYS = [
   // Work tracking (scripts/pipeline-work-ddl.sql): rows belong to a project; people ids
   // (created_by_id, reviewer_id, assignee_id…) deliberately have NO FK into users.
   "pipeline_deliverables.project_id -> pipeline_projects : c",
+  // A campaign's sales plan (scripts/sales-vendors-ddl.sql, 2026-11-18): goes with the project.
+  "pipeline_project_pages.project_id -> pipeline_projects : c",
+  "pipeline_project_revenue.project_id -> pipeline_projects : c",
   "pipeline_reviews.project_id -> pipeline_projects : c",
   "pipeline_versions.project_id -> pipeline_projects : c",
   // Part 2 (scripts/pipeline-work2-ddl.sql): comments belong to a version; a shoot outlives its project.

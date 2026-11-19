@@ -4,6 +4,7 @@ import { fetcher } from "./api";
 import { useCompany, type CompanyKey } from "./company";
 import type { BrsMonthsView, BrsView, ConfirmationsView, GstReconView, LedgerResponse, TdsReconView } from "./sales-types";
 import type { BankAccount, BankLinesResponse, BankLineView, BankStatementRow, LineReceipt } from "./sales-types";
+import type { CampaignPlan, ExternalPage, Vendor } from "./sales-types";
 import type { AccountsView, FiledYearView, BookingDetail, BookingRow, ClientRow, CreditNote, Dashboard, ImportInvoiceRow, ImportListRow, ImportView, InventoryChannel, Invoice, InvoiceRow, Order, Payment, Quote, Recurring, SalesEvent, SellerSettings, Statement } from "./sales-types";
 
 // SWR hooks over /v1/sales/*. A null key skips the request (no id yet, or a detail page
@@ -31,6 +32,10 @@ export const useSeller = (forCompany?: CompanyKey) => {
 export const useNextInvoiceNumber = (q: { company: CompanyKey; kind: string; clientId?: string; sellerGstin?: string; issueDate?: string } | null) =>
   useSWR<{ number: string; gstin: string | null; registration: string | null }>(q ? `/sales/invoices/next-number${qs({ company: q.company, kind: q.kind, clientId: q.clientId || undefined, sellerGstin: q.sellerGstin || undefined, issueDate: q.issueDate || undefined })}` : null, fetcher, { ...opts, dedupingInterval: 2_000 });
 export const useInventory = () => useSWR<InventoryChannel[]>("/sales/inventory", fetcher, opts);
+export const useVendors = () => useSWR<Vendor[]>("/sales/vendors", fetcher, opts);
+export const useExternalPages = () => useSWR<ExternalPage[]>("/sales/external-pages", fetcher, opts);
+/** A Pipeline campaign's page list and revenue (sales-only). */
+export const useCampaignPlan = (projectId: string | null) => useSWR<CampaignPlan>(projectId ? `/sales/pipeline/${projectId}/plan` : null, fetcher, { ...opts, keepPreviousData: false });
 export const useClients = (q?: string) => useSWR<ClientRow[]>(`/sales/clients${qs({ q })}`, fetcher, opts);
 export const useClient = (id: string | null) => useSWR<ClientRow>(id ? `/sales/clients/${id}` : null, fetcher, opts);
 export const useStatement = (id: string | null) => {

@@ -493,6 +493,8 @@ interface ProjectState {
   archived: boolean;
   deleted: boolean;
   notify_ids: string[];
+  /** The recipients (of this batch) who are still MEMBERS — an "added" email needs that. */
+  member_ids: string[];
   phase_names: Record<string, string>;
 }
 interface MessageState {
@@ -546,6 +548,8 @@ async function readState(rows: OutboxRow[]) {
            (p.archived_at IS NOT NULL) AS archived, (p.deleted_at IS NOT NULL) AS deleted,
            ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                   WHERE pp.project_id = p.id AND pp.notify AND pp.user_id = ANY(${uids}::text[])) AS notify_ids,
+           ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                  WHERE pp.project_id = p.id AND pp.role = 'MEMBER' AND pp.user_id = ANY(${uids}::text[])) AS member_ids,
            (SELECT COALESCE(json_object_agg(x.id, x.name), '{}'::json)
               FROM pipeline_phases x WHERE x.id = ANY(${phaseIds}::text[])) AS phase_names
       FROM pipeline_projects p
@@ -586,7 +590,7 @@ function pageLabel(d: PageState): string {
 type Resolved = { item: DigestItem } | { skip: string };
 
 const KIND_ORDER: Record<EmailKind, number> = {
-  mention: 0, assigned: 1, shoot: 2, published: 3, moved: 4, due_changed: 5, due_soon: 6,
+  mention: 0, added: 1, assigned: 2, shoot: 3, published: 4, moved: 5, due_changed: 6, due_soon: 7,
 };
 
 function resolveRow(
@@ -646,6 +650,13 @@ function resolveRow(
       if (p.is_terminal) return { skip: "finished phase" };
       if (due < today) return { skip: "due date passed" };
       return { item: { kind: "due_soon", projectId: p.id, projectTitle: p.title, due, phase: p.phase_name } };
+    }
+    case "added": {
+      // Still a member (removed again → nothing to tell), and a live project.
+      if (!p.member_ids.includes(row.user_id)) return { skip: "no longer a member" };
+      return {
+        item: { kind: "added", projectId: p.id, projectTitle: p.title, actorNames, phase: p.phase_name, due: p.is_terminal ? null : p.due },
+      };
     }
     case "mention": {
       const mentions: DigestMention[] = [];

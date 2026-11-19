@@ -1,7 +1,7 @@
 "use client";
 /**
- * The pipeline's own 56 px header (spec §9.2): title and page actions (the sales portal has
- * no bell — pipeline alerts land in the HR and staff-portal bells and by email). No
+ * The pipeline's own 56 px header (spec §9.2): title and page actions (the sales portal's bell
+ * lives in the app header since 2026-11-18 — components/notification-bell.tsx). No
  * Topstrip and no backdrop-blur, so fixed children (sheets, popovers) are never trapped
  * in a filter containing block.
  */

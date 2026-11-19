@@ -29,7 +29,7 @@ import {
 import { pipelineStats } from "./stats";
 import { Prisma, type PipelineTx } from "./db";
 import { recipientFragment } from "./recipients";
-import { enqueueDueChangedEmails, enqueueMentionEmails, enqueueMovedEmails, enqueueWorkEmails, WORK_EMAIL_KINDS, type WorkEmailKind } from "./email-outbox";
+import { enqueueAddedEmails, enqueueDueChangedEmails, enqueueMentionEmails, enqueueMovedEmails, enqueueWorkEmails, WORK_EMAIL_KINDS, type WorkEmailKind } from "./email-outbox";
 
 export const PLN_KINDS = [
   "messages", "mention", "reply", "added", "moved", "due_soon", "overdue", "due_changed",
@@ -220,7 +220,7 @@ export function addedMessage(phaseName: string, dueDate: string | null, today: s
 
 async function notifyAdded(
   tx: PipelineTx,
-  a: { projectId: string; projectTitle: string; actorId: string; actorName: string; allow: string[] | null; phaseName: string; dueDate: string | null; addedUserIds: string[] },
+  a: { projectId: string; projectTitle: string; actorId: string; actorName: string; allow: string[] | null; phaseName: string; dueDate: string | null; addedUserIds: string[]; email?: boolean },
 ): Promise<void> {
   const path = projectPath(a.projectId);
   await insertDirect(tx, {
@@ -234,6 +234,10 @@ async function notifyAdded(
     meta: pipelineMeta("added", a.projectId, {}, path),
     conflict: ADDED_CONFLICT,
   });
+  // Bell first, then the email (the order every other event uses).
+  if (a.email) {
+    await enqueueAddedEmails(tx, { projectId: a.projectId, actorId: a.actorId, allow: a.allow, recipients: a.addedUserIds.filter((id) => id !== a.actorId) });
+  }
 }
 
 /** Mention rows (DO NOTHING) for the given users, and the reply row for the root author. */

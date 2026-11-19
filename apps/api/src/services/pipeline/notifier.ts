@@ -28,7 +28,8 @@ interface NotifyBase {
   allow: string[] | null;
   /**
    * Also queue EMAIL for this event (email-outbox.ts pipelineEmailOn(settings), resolved
-   * before the transaction). Absent = false. Only moved, mention and due_changed email.
+   * before the transaction). Absent = false. Only moved, mention, due_changed and
+   * (2026-11-18) added email.
    */
   email?: boolean;
 }

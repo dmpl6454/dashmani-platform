@@ -19,6 +19,7 @@ import { r2Config, listR2Objects, deleteR2Object, type R2Config } from "../stora
 import { Prisma, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite, pipelineWriteStatement } from "./tx";
 import { ensurePipelineSchemaChecked, isPipelineEmailSchemaOk } from "./self-check";
+import { isMissingDocsSchema } from "./documents.service";
 
 export const TRIM_MARKER_KEY = "pipeline.trimLastRunIST";
 const TARGET_MIN = 240; // 04:00 IST
@@ -205,6 +206,24 @@ export async function purgeDeletedProjects(opts: { onChunk?: (c: PurgeChunk) => 
 // ── Unused uploads in R2 ─────────────────────────────────────────────────────────────
 
 export const UPLOAD_SWEEP_CURSOR_KEY = "pipeline.uploadSweepAfter";
+
+/**
+ * The keys among `keys` that a project document points at. An empty list when the documents
+ * table does not exist yet (no document can exist, so none is in use); null on any other
+ * failure, which makes the sweep delete nothing rather than guess.
+ */
+async function documentFileKeysIn(keys: string[]): Promise<string[] | null> {
+  try {
+    const rows = await pipelineRead((db) =>
+      db.pipelineDocument.findMany({ where: { fileKey: { in: keys } }, select: { fileKey: true } }),
+    );
+    return rows.map((r) => r.fileKey).filter((k): k is string => k !== null);
+  } catch (err) {
+    if (isMissingDocsSchema(err)) return [];
+    console.warn(`[pipeline-jobs] upload sweep: couldn't read document files, skipping deletes: ${(err as Error)?.message ?? err}`);
+    return null;
+  }
+}
 const UPLOAD_SWEEP_PAGES = 5; // ≤ 5,000 keys listed per run
 const UPLOAD_DELETE_MAX = 500; // ≤ 500 deletes per run
 
@@ -242,10 +261,14 @@ export async function sweepOrphanUploads(
     let stoppedAt: string | null = null;
     if (old.length) {
       const keys = old.map((o) => o.key);
+      // ⚠️ A file is in use when a version OR a project document (2026-11-20) points at it.
+      // Never drop the documents half: an uploaded pitch deck would be deleted a day later.
       const used = await pipelineRead((db) =>
         db.pipelineVersion.findMany({ where: { fileKey: { in: keys } }, select: { fileKey: true } }),
       );
-      const inUse = new Set(used.map((u) => u.fileKey));
+      const usedByDocs = await documentFileKeysIn(keys);
+      if (usedByDocs === null) break; // can't tell which files documents use: delete nothing this run
+      const inUse = new Set<string | null>([...used.map((u) => u.fileKey), ...usedByDocs]);
       for (const o of old) {
         if (inUse.has(o.key)) continue;
         if (deleted >= UPLOAD_DELETE_MAX) {

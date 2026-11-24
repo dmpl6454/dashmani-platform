@@ -10,11 +10,13 @@
  */
 import type {
   PipelineCard,
+  PipelineCardSummary,
   PipelineClientRef,
   PipelineHeader,
   PipelineMessage,
   PipelineParticipant,
   PipelineParticipantRole,
+  PipelineStatusNote,
 } from "@dashmani/shared";
 import type { PipelineDirectory } from "./access";
 // One message shape on every route: route #6 must clean reactions and name unknown
@@ -74,6 +76,8 @@ export function cardFromRow(r: Raw, opts: { listFields?: boolean } = {}): Pipeli
     preview: Array.isArray(r.preview) ? (r.preview as unknown[]).map(str).slice(0, CARD_PREVIEW_LIMIT) : [],
     linkedClient: linkedClientOf(r),
   };
+  // Present only when the query selected CARD_SUMMARY_COLS (the board and readCard).
+  if (r.status_note !== undefined) card.summary = summaryOf(r);
   if (opts.listFields) {
     card.archivedAt = ts(r.archived_at);
     card.archivedByAdmin = r.archived_by_admin === true;
@@ -81,6 +85,25 @@ export function cardFromRow(r: Raw, opts: { listFields?: boolean } = {}): Pipeli
     card.deletedByAdmin = r.deleted_by_admin === true;
   }
   return card;
+}
+
+/** The "current status" note from p.status_note* columns, or null when empty / not selected. */
+export function statusNoteOf(r: Raw): PipelineStatusNote | null {
+  const text = typeof r.status_note === "string" ? r.status_note : "";
+  if (!text) return null;
+  return { text, at: ts(r.status_note_at) ?? "", byId: strOrNull(r.status_note_by_id) };
+}
+
+function summaryOf(r: Raw): PipelineCardSummary {
+  const doc = r.summary_doc as { type?: unknown; status?: unknown; at?: unknown } | null | undefined;
+  const pages = r.summary_pages as { live?: unknown; total?: unknown } | null | undefined;
+  const review = r.summary_review;
+  return {
+    note: statusNoteOf(r),
+    doc: doc && doc.status ? { type: str(doc.type), status: str(doc.status), at: ts(doc.at) ?? "" } : null,
+    review: review === "pending" || review === "approved" || review === "changes_requested" ? review : null,
+    pages: pages && int(pages.total) > 0 ? { live: int(pages.live), total: int(pages.total) } : null,
+  };
 }
 
 export function headerFromRow(r: Raw): PipelineHeader {
@@ -114,6 +137,7 @@ export function headerFromRow(r: Raw): PipelineHeader {
     isPrivate: r.is_private === true,
     parentProjectId: strOrNull(r.parent_project_id),
     parentTitle: strOrNull(r.parent_title),
+    statusNote: statusNoteOf(r),
   };
 }
 

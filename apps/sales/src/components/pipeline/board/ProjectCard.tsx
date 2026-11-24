@@ -10,12 +10,17 @@
  *
  * The due chip is computed against `today` (useLocalDayKey, passed down from the Board) —
  * a PROP, so the memoised card re-renders at local midnight by design, not by luck.
+ *
+ * Status line (2026-11-23): up to two progress chips from `card.summary` worded by the shared
+ * `cardStatusParts` ("Pitch sent 2d ago", "Waiting for review", "3/5 pages live"), "Overdue 2d"
+ * with its day count, and the team's one-line "current status" note in quotes.
  */
 import { memo } from "react";
+import { useMinuteClock } from "../ui/Ago";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AlertCircle, CalendarClock, Ellipsis, GripVertical } from "lucide-react";
-import { dayMonthShort, dueState, type PipelineCard, type PipelineDirectoryEntry, type PipelineMineEntry } from "@dashmani/shared";
+import { cardStatusParts, dayMonthShort, dueState, overdueDays, type CardStatusTone, type PipelineCard, type PipelineDirectoryEntry, type PipelineMineEntry } from "@dashmani/shared";
 import { Initials } from "../ui/Initials";
 
 export interface CardViewProps {
@@ -29,6 +34,14 @@ export interface CardViewProps {
   onOpen?: (id: string) => void;
   onMenu?: (card: PipelineCard) => void;
 }
+
+const TONE: Record<CardStatusTone, string> = {
+  danger: "bg-danger-bg text-danger",
+  attention: "bg-attention-bg text-attention",
+  success: "bg-success-bg text-success",
+  info: "bg-indigo-soft text-indigo-light",
+  muted: "border border-border text-ink-3",
+};
 
 function nameOf(dir: ReadonlyMap<string, PipelineDirectoryEntry>, id: string): string | null {
   return dir.get(id)?.name ?? null;
@@ -52,6 +65,10 @@ export function CardFace({
   // memberCount includes the owner (the owner always holds a MEMBER row).
   const extra = Math.max(0, card.memberCount - 1 - members.length);
   const unread = mine?.unread ?? 0;
+  const now = useMinuteClock();
+  const parts = cardStatusParts(card.summary, now);
+  const late = due === "overdue" ? overdueDays(card.dueDate, today) : 0;
+  const note = card.summary?.note?.text ?? "";
   return (
     <article
       className={`pl-card relative flex gap-1 bg-muted border-2 p-3.5 pr-1 transition-colors ${
@@ -70,7 +87,7 @@ export function CardFace({
         <div className="mt-2 flex flex-wrap items-center gap-1.5 min-w-0">
           {due === "overdue" && (
             <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full bg-danger-bg text-danger text-[11.5px] font-bold">
-              <AlertCircle size={12} aria-hidden /> Overdue
+              <AlertCircle size={12} aria-hidden /> Overdue{late > 0 ? ` ${late}d` : ""}
             </span>
           )}
           {due === "today" && (
@@ -107,6 +124,20 @@ export function CardFace({
             </span>
           )}
         </div>
+        {parts.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 min-w-0">
+            {parts.map((p) => (
+              <span key={p.text} className={`inline-flex items-center h-6 px-2 rounded-full text-[11.5px] font-semibold max-w-full min-w-0 ${TONE[p.tone]}`}>
+                <span className="truncate">{p.text}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {note && (
+          <p className="mt-1.5 text-[12.5px] italic text-ink-2 pl-clamp2 [overflow-wrap:anywhere]" title={note}>
+            “{note}”
+          </p>
+        )}
         <div className="mt-2 flex items-center gap-2 min-w-0">
           <div className="flex items-center -space-x-1.5" role="img" aria-label={`${card.memberCount} member${card.memberCount === 1 ? "" : "s"}`}>
             <Initials userId={card.ownerId} name={nameOf(dirById, card.ownerId)} initials={owner?.initials} size={24} className="ring-2 ring-muted" />

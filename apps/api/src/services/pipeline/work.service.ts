@@ -34,6 +34,8 @@ import type { PipelineDirectory } from "./access";
 import type { PipelineSettings } from "./settings";
 import type { PipelineDbClient, PipelineTx } from "./db";
 import { r2Config, presignR2, headR2Object } from "../storage/r2";
+import { bumpBoard } from "./board";
+import { recordActivity } from "./activity.service";
 
 
 type Db = PipelineDbClient | PipelineTx;
@@ -359,7 +361,7 @@ export async function addVersion(actor: WorkActor, projectId: string, input: W.A
         orderBy: { number: "desc" },
         select: { number: true },
       });
-      return tx.pipelineVersion.create({
+      const version = await tx.pipelineVersion.create({
         data: {
           projectId,
           kind: input.kind,
@@ -381,6 +383,8 @@ export async function addVersion(actor: WorkActor, projectId: string, input: W.A
         },
         select: VERSION_SELECT,
       });
+      await recordActivity(tx, { projectId, kind: "version_added", actorId: actor.userId, data: { kind: version.kind, number: version.number } });
+      return version;
     });
     return versionDto(actor.directory, row);
   });
@@ -409,24 +413,58 @@ function fileNameOf(name: string | undefined): string {
  * the rules allowed. Size is checked again when the version is added (a PUT URL can't cap it).
  */
 export async function startUpload(actor: WorkActor, projectId: string, input: W.StartUploadInput): Promise<W.PipelineUploadTicket> {
+  return issueUploadTicket(actor, projectId, input.contentType, input.size);
+}
+
+/**
+ * The signed PUT behind every Pipeline upload (version files and documents share the bucket
+ * and the key shape, so the nightly cleanup treats them alike). `contentType` and `size` must
+ * already be checked against the caller's rule.
+ *
+ * The declared size is signed as `content-length`, so storage refuses (403) a PUT of any other
+ * length: a signed-in user can't park gigabytes in the bucket under a small declared size (the
+ * browser sets Content-Length itself; the client never sends it). Kill switch, runtime only:
+ * PIPELINE_UPLOAD_SIGN_LENGTH=0 signs the type alone, as before.
+ */
+export async function issueUploadTicket(
+  actor: WorkActor,
+  projectId: string,
+  contentType: string,
+  size: number,
+): Promise<W.PipelineUploadTicket> {
   const cfg = requireR2();
   await guarded(() => pipelineWrite(async (tx) => assertWritable(await lockProject(tx, projectId, actor.userId))));
   const key = `pipeline/${projectId}/${randomBytes(24).toString("base64url")}`;
   const now = new Date();
+  const signed: Record<string, string> = { "content-type": contentType };
+  if (process.env.PIPELINE_UPLOAD_SIGN_LENGTH !== "0") signed["content-length"] = String(size);
   return {
     key,
-    url: presignR2(cfg, "PUT", key, UPLOAD_URL_TTL_SEC, { headers: { "content-type": input.contentType }, now }),
+    url: presignR2(cfg, "PUT", key, UPLOAD_URL_TTL_SEC, { headers: signed, now }),
     method: "PUT",
-    headers: { "Content-Type": input.contentType },
+    headers: { "Content-Type": contentType },
     expiresAt: new Date(now.getTime() + UPLOAD_URL_TTL_SEC * 1000).toISOString(),
   };
 }
 
 async function verifyUploadedFile(projectId: string, kind: string, key: string): Promise<{ size: number; contentType: string }> {
-  const cfg = requireR2();
-  if (!key.startsWith(`pipeline/${projectId}/`)) throw new PipelineError(400, "UPLOAD_NOT_FOUND", "That upload doesn't belong to this project");
   const rule = W.uploadRuleFor(kind);
   if (!rule) throw new PipelineError(400, "VALIDATION_ERROR", "A caption is text, not a file");
+  return verifyUploadedObject(projectId, key, rule);
+}
+
+/**
+ * Checks what R2 actually holds under `key` before a row may claim it: it belongs to this
+ * project, exists, is young enough not to be swept, and has an allowed type and size.
+ * Call it OUTSIDE any transaction (it is a network call).
+ */
+export async function verifyUploadedObject(
+  projectId: string,
+  key: string,
+  rule: { types: readonly string[]; maxBytes: number },
+): Promise<{ size: number; contentType: string }> {
+  const cfg = requireR2();
+  if (!key.startsWith(`pipeline/${projectId}/`)) throw new PipelineError(400, "UPLOAD_NOT_FOUND", "That upload doesn't belong to this project");
   let obj;
   try {
     obj = await headR2Object(cfg, key);
@@ -590,6 +628,7 @@ export async function requestReview(actor: WorkActor, projectId: string, input: 
         },
         select: REVIEW_SELECT,
       });
+      await recordActivity(tx, { projectId, kind: "review_requested", actorId: actor.userId, data: { reviewerId: input.reviewerId } });
       await notifier.onWork(tx, {
         kind: "review",
         key: review.id,
@@ -603,6 +642,7 @@ export async function requestReview(actor: WorkActor, projectId: string, input: 
       });
       return { review, versions };
     });
+    await bumpBoard(); // the card says "Waiting for review"
     const what = versionNames(versions, review.versionIds);
     await postLine(
       actor,
@@ -645,6 +685,7 @@ export async function decideReview(actor: WorkActor, reviewId: string, input: W.
         data: { status: input.decision, note: input.note ?? "", decidedAt: new Date() },
         select: REVIEW_SELECT,
       });
+      await recordActivity(tx, { projectId, kind: "review_decided", actorId: actor.userId, data: { decision: input.decision } });
       const names = versionNames(versions, review.versionIds);
       await notifier.onWork(tx, {
         kind: "reviewed",
@@ -662,6 +703,7 @@ export async function decideReview(actor: WorkActor, reviewId: string, input: W.
       });
       return { review, versions };
     });
+    await bumpBoard(); // "Changes requested" / "Approved" on the card
     const what = versionNames(versions, review.versionIds);
     const body =
       input.decision === "approved"
@@ -703,6 +745,7 @@ export async function createDeliverable(
       if (created.assigneeId) await notifyAssigned(tx, actor, String(project.title), created, null);
       return created;
     });
+    await bumpBoard(); // "n/m pages live" on the card
     return deliverableDto(actor.directory, row);
   });
 }
@@ -754,7 +797,7 @@ export async function editDeliverable(
   const c = input.changes;
   if (c.assigneeId) assertPickable(actor, c.assigneeId, "person");
   return guarded(async () => {
-    const { row, wentLive } = await pipelineWrite(async (tx) => {
+    const { row, wentLive, statusChanged } = await pipelineWrite(async (tx) => {
       const cur = await lockDeliverable(tx, actor, deliverableId);
       if (cur.rev !== input.base) {
         throw new PipelineError(409, "DELIVERABLE_CONFLICT", "Someone else changed this page — showing their version", {
@@ -820,6 +863,12 @@ export async function editDeliverable(
       }
       const wentLive = statusChanged && status === "published";
       if (wentLive) {
+        await recordActivity(tx, {
+          projectId: row.projectId,
+          kind: "page_published",
+          actorId: actor.userId,
+          data: { platform: row.platform, destination: row.destination, href: row.liveUrl },
+        });
         await notifier.onWork(tx, {
           kind: "published",
           key: row.id,
@@ -833,8 +882,11 @@ export async function editDeliverable(
           email: pipelineEmailOn(actor.settings),
         });
       }
-      return { row, wentLive };
+      return { row, wentLive, statusChanged };
     });
+    // The card shows "n/m pages live" (published / not cancelled), so only a status change moves
+    // it; a caption, assignee or time edit leaves every board as it is.
+    if (statusChanged) await bumpBoard();
     if (wentLive) {
       const label = W.PIPELINE_PLATFORM_LABEL[row.platform as W.PipelineDeliverablePlatform] ?? row.platform;
       await postLine(actor, row.projectId, `Published on ${label} · ${row.destination}: ${row.liveUrl}`);
@@ -859,6 +911,7 @@ export async function deleteDeliverable(actor: WorkActor, deliverableId: string)
         });
       }
     });
+    await bumpBoard();
     return { id: deliverableId };
   });
 }

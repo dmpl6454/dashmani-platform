@@ -123,6 +123,8 @@ export interface PipelineCard {
   preview: string[];
   /** The client the project is for, or null. Optional: older API builds omit it. */
   linkedClient?: PipelineClientRef | null;
+  /** Progress at a glance for the board card (2026-11-23). Optional: older API builds and list rows omit it. */
+  summary?: PipelineCardSummary;
   /** Only on archived / deleted list rows. */
   archivedAt?: PipelineTimestamp | null;
   archivedByAdmin?: boolean;
@@ -191,6 +193,29 @@ export interface PipelineHeader {
   /** A campaign channel's campaign (project) id and title; null for a team-wide channel. */
   parentProjectId?: string | null;
   parentTitle?: string | null;
+  /** The owner's one-line "current status" note (2026-11-23); null when none. Optional: older API builds omit it. */
+  statusNote?: PipelineStatusNote | null;
+}
+
+/** "Client wants revised rates" — who wrote it and when. */
+export interface PipelineStatusNote {
+  text: string;
+  at: PipelineTimestamp;
+  byId: string | null;
+}
+
+/**
+ * What a board card says about progress without opening the project (2026-11-23). Read in the
+ * board snapshot's one statement; the client words it with `cardStatusParts`.
+ */
+export interface PipelineCardSummary {
+  note: PipelineStatusNote | null;
+  /** The newest document status change that is not a draft: "Pitch sent 2d ago". */
+  doc: { type: string; status: string; at: PipelineTimestamp } | null;
+  /** The newest review that is not superseded. */
+  review: "pending" | "approved" | "changes_requested" | null;
+  /** Pages (deliverables) not cancelled, and how many of them are published. */
+  pages: { live: number; total: number } | null;
 }
 
 export type PipelineConversationKind = "project" | "channel" | "dm";

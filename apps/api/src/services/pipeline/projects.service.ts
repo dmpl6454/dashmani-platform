@@ -32,13 +32,14 @@ import {
 import { Prisma, type PipelineDbClient, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
-import { bumpBoard, CARD_CLIENT_COLS } from "./board";
+import { bumpBoard, CARD_CLIENT_COLS, CARD_SUMMARY_COLS } from "./board";
 import { notifier } from "./notifier";
 import { cardFromRow, day, headerFromRow, messageFromRow, participantFromRow } from "./wire";
 import type { PipelineDirectory } from "./access";
 import { isPilotUser, type PipelineSettings } from "./settings";
 import { pipelineEmailOn } from "./email-outbox";
 import { assertOwnerOrAdmin } from "../../middleware/pipeline-gates";
+import { recordActivity, recordMove } from "./activity.service";
 
 type Row = Record<string, unknown>;
 type Db = PipelineDbClient | PipelineTx;
@@ -70,7 +71,7 @@ async function readCard(db: Db, projectId: string): Promise<PipelineCard | null>
     SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
            ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                   WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}
+                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}
       FROM pipeline_projects p
      WHERE p.id = ${projectId}`;
   return rows[0] ? cardFromRow(rows[0]) : null;
@@ -222,6 +223,7 @@ export async function createProject(
         addedUserIds: memberIds,
         email: pipelineEmailOn(actor.settings),
       });
+      await recordActivity(tx, { projectId: id, kind: "created", actorId: me, data: { phase: String(s1.phase_name ?? "") } });
 
       const card: PipelineCard = {
         id,
@@ -755,7 +757,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
    RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
              ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                     WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                    ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`;
+                    ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}`;
 
     if (phaseChanged) {
       await notifier.onMoved(tx, {
@@ -775,6 +777,15 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
         toTerminal,
         dueDate: day(row.due_date),
         email,
+      });
+      // The timeline records the step just made (curPhase → toPhase); recordMove merges a quick run.
+      await recordMove(tx, {
+        projectId,
+        actorId: me,
+        fromId: curPhase,
+        fromName: fromPhaseId === curPhase ? String(s2.from_name ?? "") : null,
+        toId: toPhaseId,
+        toName: String(s2.phase_name ?? ""),
       });
     }
     return { card: cardFromRow(updated), placementAdjusted, changed: true };
@@ -895,7 +906,7 @@ export async function unarchiveProject(actor: PipelineActor, projectId: string):
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                       WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`,
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}`,
     );
     return { card, adjusted: to.adjusted, changed: true };
   });
@@ -930,7 +941,7 @@ export async function restoreProject(actor: PipelineActor, projectId: string): P
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                       WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`,
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}`,
     );
     return { card, adjusted: to.adjusted, changed: true };
   });

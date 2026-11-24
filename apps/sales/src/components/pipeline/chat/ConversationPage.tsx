@@ -29,6 +29,8 @@ import { Z } from "../constants";
 import { Thread } from "../thread/Thread";
 import { ReplySheet } from "../thread/ReplySheet";
 import { ConversationDetails } from "./ConversationDetails";
+import { DocumentsPanel } from "../project/DocumentsPanel";
+import { ActivityPanel } from "../project/ActivityPanel";
 import { useConversations, usePresence } from "./use-chat";
 
 const RETRY_MS = [10_000, 20_000, 40_000];
@@ -49,7 +51,9 @@ export function ConversationPage({ id }: { id: string }) {
   const project = useStoreSelector(store, (s) => s.projects[id]);
   const loaded = !!project?.header;
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
-  const [tab, setTab] = useState<"messages" | "members">("messages");
+  const [tab, setTab] = useState<"messages" | "members" | "docs" | "activity">("messages");
+  // A campaign channel shows its campaign's Documents (chat files land there) and Activity beside About.
+  const [sideTab, setSideTab] = useState<"about" | "docs" | "activity">("about");
   const [showSide, setShowSide] = useState(true);
   const [joining, setJoining] = useState(false);
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -261,6 +265,11 @@ export function ConversationPage({ id }: { id: string }) {
     />
   ) : null;
 
+  // Channels of a campaign: the campaign's Documents tab (files shared here are filed there).
+  const docsFor = header && header.kind === "channel" && parentId ? parentId : null;
+  const docs = docsFor ? <DocumentsPanel projectId={docsFor} readOnly={readOnly} /> : null;
+  const activity = docsFor ? <ActivityPanel projectId={docsFor} /> : null;
+
   const details = header ? (
     <ConversationDetails header={header} participants={project!.participants} me={project!.me} online={online} onChanged={refresh} />
   ) : null;
@@ -295,23 +304,31 @@ export function ConversationPage({ id }: { id: string }) {
           <StatusPill engine={engine} />
         </div>
         {header && (
-          <div className="shrink-0 flex gap-1 px-2 pt-1 border-b border-rule" role="tablist" aria-label="Conversation">
-            {(["messages", "members"] as const).map((k) => (
+          <div className="shrink-0 flex gap-0.5 px-1.5 pt-1 border-b border-rule overflow-x-auto" role="tablist" aria-label="Conversation">
+            {(docsFor ? (["messages", "members", "docs", "activity"] as const) : (["messages", "members"] as const)).map((k) => (
               <button
                 key={k}
                 type="button"
                 role="tab"
                 aria-selected={tab === k}
                 onClick={() => setTab(k)}
-                className={`h-11 px-3 text-[13.5px] font-semibold border-b-2 ${tab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
+                className={`h-11 px-2.5 shrink-0 text-[13.5px] font-semibold border-b-2 ${tab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
               >
-                {k === "messages" ? "Messages" : isDm ? "People" : `Members · ${header.memberCount}`}
+                {k === "messages" ? "Messages" : k === "docs" ? "Docs" : k === "activity" ? "Activity" : isDm ? "People" : `Members · ${header.memberCount}`}
               </button>
             ))}
           </div>
         )}
         {main}
-        {header && (tab === "messages" ? <>{thread}{joinBar}</> : <div className="pl-scroll flex-1">{details}</div>)}
+        {header &&
+          (tab === "messages" ? (
+            <>
+              {thread}
+              {joinBar}
+            </>
+          ) : (
+            <div className="pl-scroll flex-1">{tab === "docs" && docs ? docs : tab === "activity" && activity ? activity : details}</div>
+          ))}
         {replies}
       </Surface>
     );
@@ -359,8 +376,26 @@ export function ConversationPage({ id }: { id: string }) {
               {replies}
             </aside>
           ) : showSide ? (
-            <aside className="w-[340px] shrink-0 min-h-0 border-l border-rule bg-surface pl-scroll" aria-label={isDm ? "Details" : "About and members"}>
-              {details}
+            <aside className="w-[340px] shrink-0 min-h-0 border-l border-rule bg-surface flex flex-col" aria-label={isDm ? "Details" : "About, members and documents"}>
+              {docs && (
+                <div className="shrink-0 flex gap-2 px-3 pt-2 border-b-2 border-rule" role="tablist" aria-label="Side panel">
+                  {(["about", "docs", "activity"] as const).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      role="tab"
+                      aria-selected={sideTab === k}
+                      onClick={() => setSideTab(k)}
+                      className={`-mb-0.5 h-12 px-4 text-[14.5px] font-bold border-b-[3px] transition-colors ${sideTab === k ? "border-indigo text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}
+                    >
+                      {k === "about" ? "About" : k === "docs" ? "Documents" : "Activity"}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex-1 min-h-0 pl-scroll">
+                {docs && sideTab === "docs" ? docs : activity && sideTab === "activity" ? activity : details}
+              </div>
             </aside>
           ) : null}
         </div>

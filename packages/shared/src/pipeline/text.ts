@@ -8,6 +8,7 @@
  *   - nothing here builds HTML: bodies and descriptions are rendered as React text only.
  */
 import { scanMentionTokens } from "./mentions";
+import { filesLabel, splitFileTokens } from "./file-tokens";
 
 /**
  * Bidirectional-override and isolate controls that can visually reorder text (spoofed
@@ -132,9 +133,13 @@ export const UNKNOWN_MENTION_NAME = "someone";
  * bidi controls stripped, lone surrogates replaced, grapheme-safe truncation to `max` with
  * "…". The result never contains "@{" — neither a real token (rendered as a name) nor one a
  * user typed by hand (defused to "@ {") — so installed mobile builds, which render rows as
- * plain text forever, never show raw token syntax.
+ * plain text forever, never show raw token syntax. Attachment tokens (`#{file:…}`, see
+ * file-tokens.ts) become "📎 1 file" after the text.
  */
-export function notificationSnippet(body: string, names: NameLookup, max: number): string {
+export function notificationSnippet(raw: string, names: NameLookup, max: number): string {
+  const split = splitFileTokens(raw);
+  const files = filesLabel(split.ids.length);
+  const body = files ? (split.text ? `${split.text} ${files}` : files) : split.text;
   let rendered = "";
   let last = 0;
   for (const t of scanMentionTokens(body)) {

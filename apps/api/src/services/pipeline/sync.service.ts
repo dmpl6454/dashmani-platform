@@ -231,7 +231,9 @@ function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: stri
                                    ELSE json_build_object('id', h.linked_client_id, 'companyName',
                                           (SELECT c.company_name FROM clients c WHERE c.id = h.linked_client_id)) END,
               'kind', h.kind, 'isPrivate', h.is_private, 'parentProjectId', h.parent_project_id,
-              'parentTitle', (SELECT t.title FROM pipeline_projects t WHERE t.id = h.parent_project_id))
+              'parentTitle', (SELECT t.title FROM pipeline_projects t WHERE t.id = h.parent_project_id),
+              'statusNote', CASE WHEN h.status_note = '' THEN NULL
+                                 ELSE json_build_object('text', h.status_note, 'at', h.status_note_at, 'byId', h.status_note_by_id) END)
        FROM pipeline_projects h
       WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND ${readable} AND h.header_rev <> ${p.hv}::int) AS header,
     (SELECT COALESCE(json_agg(json_build_object('userId', x.user_id, 'role', x.role,
@@ -257,6 +259,7 @@ function toHeader(h: NonNullable<R1Row["header"]>): PipelineHeader {
     phaseChangedAt: isoUtc(h.phaseChangedAt),
     archivedAt: isoUtc(h.archivedAt),
     deletedAt: isoUtc(h.deletedAt),
+    statusNote: h.statusNote ? { ...h.statusNote, at: isoUtc(h.statusNote.at) ?? "" } : null,
     createdAt: isoUtc(h.createdAt)!,
     updatedAt: isoUtc(h.updatedAt)!,
   };

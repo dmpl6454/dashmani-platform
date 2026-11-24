@@ -13,6 +13,8 @@ import { Ellipsis, MessageSquare } from "lucide-react";
 import {
   parseDraft,
   serializeDraft,
+  splitFileTokens,
+  withFileTokens,
   shiftRanges,
   timeLabel,
   type PendingSend,
@@ -32,7 +34,7 @@ import { ReactionPicker } from "./ReactionPicker";
 const REASON: Record<string, string> = { inactive: "account inactive", not_in_pilot: "not in the pilot yet", unknown: "unknown person" };
 
 function plainText(body: string, nameOf: (id: string) => string): string {
-  return parseDraft(body, nameOf).text;
+  return parseDraft(splitFileTokens(body).text, nameOf).text;
 }
 
 async function copy(text: string, toast: ReturnType<typeof useToast>, what: string) {
@@ -71,7 +73,7 @@ function MessageItemImpl({
   const toggle = useToggleReaction();
   const [menu, setMenu] = useState(false);
   const [picker, setPicker] = useState(false);
-  const [editing, setEditing] = useState<{ text: string; ranges: ReturnType<typeof parseDraft>["ranges"] } | null>(null);
+  const [editing, setEditing] = useState<{ text: string; ranges: ReturnType<typeof parseDraft>["ranges"]; files: string[] } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -98,8 +100,9 @@ function MessageItemImpl({
 
   const saveEdit = async () => {
     if (!editing) return;
-    const body = serializeDraft(editing.text, editing.ranges);
-    if (!editing.text.trim()) return;
+    // Attached files are not editable text: they ride along unchanged.
+    const body = withFileTokens(serializeDraft(editing.text, editing.ranges), editing.files);
+    if (!editing.text.trim() && editing.files.length === 0) return;
     setBusy(true);
     setEditError(null);
     try {
@@ -192,7 +195,8 @@ function MessageItemImpl({
               onClick={() => {
                 setMenu(false);
                 setEditError(null);
-                setEditing(parseDraft(m.body, nameOf));
+                const split = splitFileTokens(m.body);
+                setEditing({ ...parseDraft(split.text, nameOf), files: split.ids });
               }}
             >
               Edit
@@ -221,7 +225,7 @@ function MessageItemImpl({
         footer={
           <div className="flex items-center gap-2">
             {editError && <p role="alert" className="min-w-0 flex-1 text-[12.5px] text-danger">{editError}</p>}
-            <button type="button" onClick={() => void saveEdit()} disabled={busy || !editing?.text.trim()} className="ml-auto h-11 px-5 rounded-xl bg-ink text-white text-[14px] font-semibold disabled:opacity-50">
+            <button type="button" onClick={() => void saveEdit()} disabled={busy || (!editing?.text.trim() && !editing?.files.length)} className="ml-auto h-11 px-5 rounded-xl bg-ink text-white text-[14px] font-semibold disabled:opacity-50">
               {busy ? "Saving…" : "Save"}
             </button>
           </div>
@@ -234,11 +238,16 @@ function MessageItemImpl({
             value={editing.text}
             onChange={(e) => {
               const next = e.target.value;
-              setEditing((cur) => (cur ? { text: next, ranges: shiftRanges(cur.ranges, cur.text, next) } : cur));
+              setEditing((cur) => (cur ? { ...cur, text: next, ranges: shiftRanges(cur.ranges, cur.text, next) } : cur));
             }}
             rows={6}
             className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-[16px] text-ink focus:outline-none focus:ring-2 focus:ring-indigo"
           />
+        )}
+        {editing && editing.files.length > 0 && (
+          <p className="mt-2 text-[12.5px] text-ink-3">
+            📎 {editing.files.length} attached file{editing.files.length === 1 ? "" : "s"} stay{editing.files.length === 1 ? "s" : ""} with this message.
+          </p>
         )}
       </Sheet>
 
@@ -258,6 +267,9 @@ function MessageItemImpl({
         }
       >
         <p className="text-[14px] text-ink-2">Everyone will see “This message was deleted” where it was. This can&apos;t be undone.</p>
+        {splitFileTokens(m.body).ids.length > 0 && (
+          <p className="mt-2 text-[13px] text-ink-3">Its attached files stay in the project&apos;s Documents tab.</p>
+        )}
       </Sheet>
     </li>
   );

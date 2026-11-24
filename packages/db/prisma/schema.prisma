@@ -2227,6 +2227,11 @@ model PipelineProject {
   /// Channels only: the campaign (project) the channel belongs to, or null for a team-wide
   /// channel. A campaign's channels show in its own sidebar; purging the campaign removes them.
   parentProjectId    String?   @map("parent_project_id")
+  /// The owner's one-line "current status" note, shown on the board card (2026-11-23,
+  /// scripts/pipeline-docs-ddl.sql). "" = none. Any user who can edit the project may set it.
+  statusNote         String    @default("") @map("status_note") @db.VarChar(140)
+  statusNoteAt       DateTime? @map("status_note_at")
+  statusNoteById     String?   @map("status_note_by_id") // informational, no FK
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
@@ -2244,6 +2249,8 @@ model PipelineProject {
   deliverables     PipelineDeliverable[]
   comments         PipelineVersionComment[]
   shoots           PipelineShoot[]
+  documents        PipelineDocument[]
+  activity         PipelineActivity[]
 
   @@unique([createdById, clientId])
   @@index([linkedClientId])
@@ -2438,6 +2445,7 @@ model PipelineDeliverable {
 
   @@index([projectId])
   @@index([assigneeId, status])
+  @@index([scheduledAt]) // the Dashboard's "this week" (pages scheduled in the next 7 IST days)
   @@map("pipeline_deliverables")
 }
 
@@ -2488,6 +2496,64 @@ model PipelineShoot {
   @@index([cameraId, status])
   @@index([projectId])
   @@map("pipeline_shoots")
+}
+
+/// A sales document on a project — pitch deck, brief, quote, report (2026-11-20,
+/// scripts/pipeline-docs-ddl.sql). Lives on the project, never in the chat, so deleting a
+/// message can't lose it. A LINK or an uploaded R2 file (same key shape as version files),
+/// never both. Rules: packages/shared/src/pipeline/documents.ts; service
+/// apps/api/src/services/pipeline/documents.service.ts (pipeline pool only).
+/// ⚠️ No FK into users; type and status are VARCHAR validated in code.
+model PipelineDocument {
+  id                String   @id @default(uuid())
+  projectId         String   @map("project_id")
+  type              String   @db.VarChar(16) // pitch | brief | quote | report | other
+  title             String   @db.VarChar(120)
+  url               String?  @db.Text // http/https only (≤ 2,048 chars)
+  fileKey           String?  @unique @map("file_key") @db.VarChar(120)
+  fileName          String   @default("") @map("file_name") @db.VarChar(200)
+  fileSize          BigInt?  @map("file_size")
+  fileType          String   @default("") @map("file_type") @db.VarChar(100)
+  status            String   @default("draft") @db.VarChar(16) // draft | sent | accepted | rejected
+  statusChangedAt   DateTime @default(now()) @map("status_changed_at")
+  statusChangedById String   @map("status_changed_by_id") // no FK
+  note              String   @default("") @db.VarChar(1000)
+  /// "tab" (Documents tab) | "chat" (attached to a chat message with 📎, 2026-11-23). A chat file
+  /// stays here when its message is deleted.
+  source            String   @default("tab") @db.VarChar(8)
+  /// Chat files: the conversation (project or campaign channel) it was shared in. No FK: deleting
+  /// a channel must never delete the file.
+  conversationId    String?  @map("conversation_id")
+  rev               Int      @default(1) // edit concurrency: a PATCH names the rev it read
+  createdById       String   @map("created_by_id") // no FK
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([status, statusChangedAt]) // the Dashboard's "waiting on client" (status = 'sent', oldest first)
+  @@map("pipeline_documents")
+}
+
+/// A project's activity timeline (2026-11-24, scripts/pipeline-docs-ddl.sql): created, phase moves,
+/// documents, reviews, pages going live, "current status" notes, new versions. Append-only (a
+/// quick run of moves by one person is merged into one row), separate from the chat, so deleting
+/// messages never touches it. Written best-effort inside each action's transaction behind a
+/// SAVEPOINT (services/pipeline/activity.service.ts): a failed write never fails the action.
+/// ⚠️ No FK into users; `data` holds the names as they were (phase names, document titles).
+model PipelineActivity {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  kind      String   @db.VarChar(24) // created | moved | doc_added | doc_status | doc_deleted | review_requested | review_decided | page_published | note | version_added
+  actorId   String?  @map("actor_id") // no FK
+  data      Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@map("pipeline_activity")
 }
 
 // ============ CAMPAIGN BOOKING (self-serve "Start a campaign", client portal) ============

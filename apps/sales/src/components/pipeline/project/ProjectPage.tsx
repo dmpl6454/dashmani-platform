@@ -42,6 +42,9 @@ import { DetailsPanel } from "./DetailsPanel";
 import { ClientLinkPanel } from "./ClientLinkPanel";
 import { MembersPanel } from "./MembersPanel";
 import { WorkPanel } from "./WorkPanel";
+import { DocumentsPanel } from "./DocumentsPanel";
+import { StatusNotePanel } from "./StatusNotePanel";
+import { ActivityPanel } from "./ActivityPanel";
 import { PhasePill, PhaseSelect, ProjectMenu } from "./ProjectHeader";
 import { CampaignChannelList } from "../chat/CampaignSidebar";
 import { WaveGlow } from "../ui/decor";
@@ -89,11 +92,13 @@ export function ProjectPage({ id }: { id: string }) {
   const project = useStoreSelector(store, (s) => s.projects[id]);
   const loaded = !!project?.header;
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
-  // ?tab=work (work notices in the bell) opens the Work tab on a phone and in the side column.
-  const wantWork = sp.get("tab") === "work";
-  const [tab, setTab] = useState<"conversation" | "channels" | "work" | "details">(wantWork ? "work" : "conversation");
-  // Desktop side column: project details, or the work (versions, approval, pages).
-  const [sideTab, setSideTab] = useState<"details" | "work">(wantWork ? "work" : "details");
+  // ?tab=work (work notices in the bell) opens the Work tab on a phone and in the side column;
+  // ?tab=docs opens Documents the same way.
+  const wantTab = sp.get("tab");
+  const wantSide = wantTab === "work" || wantTab === "docs" || wantTab === "activity" ? wantTab : null;
+  const [tab, setTab] = useState<"conversation" | "channels" | "work" | "docs" | "activity" | "details">(wantSide ?? "conversation");
+  // Desktop side column: project details, the work (versions, approval, pages), documents, or the activity timeline.
+  const [sideTab, setSideTab] = useState<"details" | "work" | "docs" | "activity">(wantSide ?? "details");
   const [highlight, setHighlight] = useState<string | null>(null);
   const ledger = useMemo(() => new AckLedger(), [id]); // eslint-disable-line react-hooks/exhaustive-deps
   const initialM = useRef(m);
@@ -291,6 +296,7 @@ export function ProjectPage({ id }: { id: string }) {
 
   const side = header ? (
     <>
+      <StatusNotePanel header={header} readOnly={readOnly} />
       <DetailsPanel header={header} readOnly={readOnly} />
       <ClientLinkPanel header={header} readOnly={readOnly} />
       <MembersPanel header={header} participants={project!.participants} me={project!.me} can={project!.can} readOnly={readOnly} />
@@ -330,17 +336,17 @@ export function ProjectPage({ id }: { id: string }) {
           <StatusPill engine={engine} />
         </div>
         {header && (
-          <div className="shrink-0 flex gap-1 px-2 pt-1 border-b border-rule" role="tablist" aria-label="Project">
-            {(["conversation", "channels", "work", "details"] as const).map((k) => (
+          <div className="shrink-0 flex gap-0.5 px-1.5 pt-1 border-b border-rule overflow-x-auto" role="tablist" aria-label="Project">
+            {(["conversation", "channels", "work", "docs", "activity", "details"] as const).map((k) => (
               <button
                 key={k}
                 type="button"
                 role="tab"
                 aria-selected={tab === k}
                 onClick={() => setTab(k)}
-                className={`h-11 px-3 text-[13.5px] font-semibold border-b-2 ${tab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
+                className={`h-11 px-2.5 shrink-0 text-[13.5px] font-semibold border-b-2 ${tab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
               >
-                {k === "conversation" ? "Conversation" : k === "channels" ? "Channels" : k === "work" ? "Work" : "Details"}
+                {k === "conversation" ? "Conversation" : k === "channels" ? "Channels" : k === "work" ? "Work" : k === "docs" ? "Docs" : k === "activity" ? "Activity" : "Details"}
               </button>
             ))}
           </div>
@@ -358,6 +364,14 @@ export function ProjectPage({ id }: { id: string }) {
           ) : tab === "work" ? (
             <div className="pl-scroll flex-1">
               <WorkPanel projectId={id} readOnly={readOnly} />
+            </div>
+          ) : tab === "docs" ? (
+            <div className="pl-scroll flex-1">
+              <DocumentsPanel projectId={id} readOnly={readOnly} />
+            </div>
+          ) : tab === "activity" ? (
+            <div className="pl-scroll flex-1">
+              <ActivityPanel projectId={id} />
             </div>
           ) : (
             <div className="pl-scroll flex-1">{side}</div>
@@ -404,22 +418,32 @@ export function ProjectPage({ id }: { id: string }) {
               {replies}
             </aside>
           ) : (
-            <aside className="w-[380px] shrink-0 min-h-0 border-l-2 border-rule bg-surface flex flex-col" aria-label="Details and work">
-              <div className="shrink-0 flex gap-2 px-3 pt-2 border-b-2 border-rule" role="tablist" aria-label="Side panel">
-                {(["details", "work"] as const).map((k) => (
+            <aside className="w-[380px] shrink-0 min-h-0 border-l-2 border-rule bg-surface flex flex-col" aria-label="Details, work and documents">
+              <div className="shrink-0 flex gap-1 px-2 pt-2 border-b-2 border-rule" role="tablist" aria-label="Side panel">
+                {(["details", "work", "docs", "activity"] as const).map((k) => (
                   <button
                     key={k}
                     type="button"
                     role="tab"
                     aria-selected={sideTab === k}
                     onClick={() => setSideTab(k)}
-                    className={`-mb-0.5 h-12 px-4 text-[14.5px] font-bold border-b-[3px] transition-colors ${sideTab === k ? "border-indigo text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}
+                    className={`-mb-0.5 h-12 px-2.5 text-[14px] font-bold border-b-[3px] transition-colors ${sideTab === k ? "border-indigo text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}
                   >
-                    {k === "details" ? "Details" : "Work"}
+                    {k === "details" ? "Details" : k === "work" ? "Work" : k === "docs" ? "Documents" : "Activity"}
                   </button>
                 ))}
               </div>
-              <div className="flex-1 min-h-0 pl-scroll">{sideTab === "details" ? side : <WorkPanel projectId={id} readOnly={readOnly} />}</div>
+              <div className="flex-1 min-h-0 pl-scroll">
+                {sideTab === "details" ? (
+                  side
+                ) : sideTab === "work" ? (
+                  <WorkPanel projectId={id} readOnly={readOnly} />
+                ) : sideTab === "docs" ? (
+                  <DocumentsPanel projectId={id} readOnly={readOnly} />
+                ) : (
+                  <ActivityPanel projectId={id} />
+                )}
+              </div>
             </aside>
           )}
         </div>

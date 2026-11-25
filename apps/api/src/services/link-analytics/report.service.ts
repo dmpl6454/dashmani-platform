@@ -142,7 +142,9 @@ export async function loadBatchPosts(batchId: string): Promise<ReportPost[]> {
     const posts = await prisma.linkPost.findMany({ where: { id: { in: ids.slice(i, i + 2000) } }, select: POST_SELECT });
     out.push(...posts.map((p) => toReportPost(postShape(p))));
   }
-  return out;
+  // Most-viewed first; posts without a view count after, by engagement, then the rest.
+  const RANK: Record<string, number> = { verified: 0, restricted: 1, failed: 2, pending: 3 };
+  return out.sort((a, b) => (b.views ?? -1) - (a.views ?? -1) || (b.engagement ?? -1) - (a.engagement ?? -1) || (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9));
 }
 
 export function dataLimitations(posts: ReportPost[]): string[] {

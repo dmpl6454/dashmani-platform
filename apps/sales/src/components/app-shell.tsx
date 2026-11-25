@@ -14,7 +14,7 @@ import { COMPANY_LOGO, useCompany } from "@/lib/company";
 // Since 2026-11-07 the sales portal is the SELLING half: the Bill and Finance groups (invoices,
 // recurring, payments, bank, accounts, reconcile, Tally, the seller settings) moved to the
 // billing portal (apps/billing, billing.digitalsukoon.com), which the "Billing" entry opens
-// already signed in (a handoff, components/portal-link.tsx). The eight links fit one row from
+// already signed in (a handoff, components/portal-link.tsx). The nine links fit one row from
 // `lg` up; below `lg` they fold behind a Menu button on every page.
 type NavItem = { href: string; label: string };
 type NavGroup = { label: string; items: NavItem[] };
@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/pipeline", label: "Pipeline" },
       { href: "/creators", label: "Creators" },
+      { href: "/links", label: "Links" },
     ],
   },
 ];

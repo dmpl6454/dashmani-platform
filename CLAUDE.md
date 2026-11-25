@@ -385,7 +385,7 @@ Turborepo + npm workspaces:
 | `apps/jobs` | 3003 | Public job listings portal (Next.js) |
 | `apps/web` | 3004 | Public marketing site (Next.js static export, nginx) |
 | `apps/creators` | 3005 | Creator portal (Next.js static export, nginx) |
-| `apps/sales` | 3006 | Sales portal — inventory, clients, quotes, orders, bookings, pipeline, creators (Next.js static export, nginx) |
+| `apps/sales` | 3006 | Sales portal — inventory, clients, quotes, orders, bookings, pipeline, creators, link analytics (Next.js static export, nginx) |
 | `apps/billing` | 3007 | Billing portal — GST invoices, recurring, payments, bank, accounts, reconcile, Tally, seller settings (Next.js static export, nginx; split out of sales 2026-11-07) |
 | `apps/web` | 3004 (dev) | Public marketing site digitalsukoon.com — Next.js static export served by nginx from `apps/web/out`, no pm2 process |
 
@@ -1019,6 +1019,22 @@ The open decisions from the two-sided review, as the owner answered them:
 **Tests:** `apps/api/tests/creator-marketplace.test.ts` (27; the ownership guard, the separate publish switch, the checkout payout freeze and the song add-on pass-through were red-green checked).
 
 **Not built:** payout ledger (marking a creator paid), creator pages in the sales inventory/quotes.
+
+## Link analytics — sales portal /links (2026-11-25, `feat/link-analytics`; ⚠️ apply `scripts/link-analytics-ddl.sql` with `bash scripts/apply-link-analytics-ddl.sh` on prod BEFORE merging)
+
+**What it is.** Staff paste (or upload TXT/CSV, read in the browser — nothing is written to disk) hundreds or thousands of Facebook / Instagram post, reel or video links into a named batch at sales.digitalsukoon.com `/links`; `/links/view?id=` shows live progress, KPI cards, a searchable / sortable / filterable post table with a Status column (Verified / Pending / Failed / Restricted), a per-post detail with check history, and the six reports with Excel (8 sheets) / CSV / branded PDF / JSON exports. **Spec, and the metric availability matrix: `docs/link-analytics/SPEC.md`.**
+
+**Rules (do not regress).**
+- ⚠️ **Official Graph API only** (the `oauthGraphFetch` / Post Automation 2 connection in `meta_connections` / `meta_assets`). Our own connected assets → full insights, **Verified**. Other IG business/creator accounts → business discovery (likes, comments, reel `view_count`, followers; never reach/shares/saves), **Restricted** with access `public`. Everything else (FB Pages we don't administer, personal accounts, bare `/p/<code>` with no username, unresolvable share links) → **Restricted** with a reason, values NULL. ⚠️ **Never 0 for unknown**; the UI shows "—"/"unavailable".
+- **Live vs cached:** `data_source` = `meta_graph` / `meta_business_discovery` (live, read by this feature at `metrics_at`) or `platform_sync` (a failed live read fell back to `meta_posts`, the background sync — shown as **Cached**). The UI never labels a cached value live.
+- ⚠️ **Never reads or writes `link_metrics`** (the 11 GB table). Own tables: `link_batches`, `link_batch_items` (every pasted line, incl. invalid/duplicate), `link_posts` (ONE row per post across all batches, unique `post_key` = `ig:<shortcode>` | `fb:<id>` | `fbx:<opaque url>`), `link_post_snapshots` (one per completed check). No FK into `users` or `meta_assets`.
+- **Worker** (`services/link-analytics/worker.ts`, started in `index.ts`, `LINK_ANALYTICS_WORKER=0` = off): queue state lives in `link_posts` (`FOR UPDATE SKIP LOCKED` + 3-min lease), so a restart loses nothing; only posts with an item in a **running** batch are claimed (pause = stop claiming). ≤ `LINK_ANALYTICS_MAX_CALLS_PER_HOUR` (900) Graph calls per rolling hour, ≤ 30 posts per tick, `recordUsage:false` + ONE `api_usage` row per tick. Usage header ≥ 75 % or a throttle → pause max(10 min, Meta's regain). Transient errors retry 1 → 4 → 16 min (a throttle or exhausted budget doesn't use a retry), then **Failed**. A post checked within `LINK_ANALYTICS_FRESH_MINUTES` (10) is not re-fetched unless the per-post Refresh forces it.
+- Schedules: every 6 / 12 / 24 h, for at most 60 days.
+- **Retention** (04:40 IST daily, `LINK_ANALYTICS_RETENTION=0` = off): archived batches deleted after 30 days, posts no batch refers to deleted, snapshots older than 30 days thinned to the last per post per IST day (the first snapshot of a post is always kept).
+- Limits: 5,000 links per add, 20,000 per batch. Gates: `sales:view` reads, `sales:manage` writes. No route calls Meta.
+- Parser shared with the portal: `packages/shared/src/link-analytics/parse.ts` (`linkAnalytics`); validators `linkAnalyticsValidators`.
+
+**Open (needs a live probe on prod before trusting):** FB video-node views (`/videos/<id>` not in `meta_posts`) are left "—"; business discovery's `view_count` on non-reels is ignored. Tests: `apps/api/tests/link-analytics.test.ts`, `link-analytics-parse.test.ts`.
 
 ## Client Portal (`apps/client`) — design system = digitalsukoon.com (2026-10-10)
 

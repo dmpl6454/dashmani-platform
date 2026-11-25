@@ -176,7 +176,7 @@ export async function toXlsx(report: BatchReport): Promise<Buffer> {
 export function pdfSafe(s: string | null | undefined): string {
   if (!s) return "";
   return s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/[÷×]/g, (m) => (m === "÷" ? "/" : "x"))
-    .replace(/[^\x20-\x7E\n]/g, "").replace(/\s{2,}/g, " ").trim();
+    .replace(/[^\x20-\x7E\xA0-\xFF\n]/g, "").replace(/\s{2,}/g, " ").trim();
 }
 
 export async function toPdf(report: BatchReport): Promise<Buffer> {

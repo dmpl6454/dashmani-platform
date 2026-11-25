@@ -45,7 +45,9 @@ const FB_POST_BASE_FIELDS =
   "id,message,permalink_url,created_time,full_picture,from{id,name},likes.summary(true).limit(0),comments.summary(true).limit(0),shares";
 const FB_METRIC_SETS = ["post_media_view,post_total_media_view_unique", ""];
 const FB_VIDEO_FIELDS = "id,description,permalink_url,created_time,picture,from{id,name},likes.summary(true).limit(0),comments.summary(true).limit(0)";
-const BD_MEDIA_FIELDS = "id,shortcode,permalink,caption,like_count,comments_count,view_count,media_type,media_product_type,timestamp,thumbnail_url";
+// ⚠️ NO `shortcode`: business_discovery rejects it with "(#100) Please read documentation for supported
+// fields" (live-probed 2026-11-25), which failed every third-party IG post. codeOf() reads the permalink.
+const BD_MEDIA_FIELDS = "id,permalink,caption,like_count,comments_count,view_count,media_type,media_product_type,timestamp,thumbnail_url";
 const BD_MEDIA_FIELDS_NO_VIEWS = BD_MEDIA_FIELDS.replace(",view_count", "");
 
 type Asset = {
@@ -192,7 +194,10 @@ async function fetchOwnFb(objectId: string, isVideoNode: boolean, a: Asset, ctx:
   const values: MetricValues = {
     // FB video nodes: views need a live probe on prod before we trust a field (SPEC §8) — "—" until then.
     views: isVideoNode ? null : ins.get("post_media_view") ?? null,
-    reach: isVideoNode ? null : ins.get("post_total_media_view_unique") ?? null,
+    // Meta answers post_total_media_view_unique = 0 for reels even with millions of views (live, 2026-11-25:
+    // 11/11 Page reels, and every FB row the posts sync stored). A post seen by people with 0 reach is
+    // "not published", so it is null ("—"), never a zero. A 0 with 0 views stays 0.
+    reach: isVideoNode ? null : fbReach(ins.get("post_total_media_view_unique") ?? null, ins.get("post_media_view") ?? null),
     likes: summary("likes"),
     comments: summary("comments"),
     // ⚠️ `shares` is ABSENT when a post has none — null, never an invented 0.
@@ -208,6 +213,9 @@ async function fetchOwnFb(objectId: string, isVideoNode: boolean, a: Asset, ctx:
     },
   };
 }
+
+const fbReach = (reach: number | null, views: number | null): number | null =>
+  reach === 0 && (views ?? 0) > 0 ? null : reach;
 
 // ── Business discovery (someone else's IG business/creator account) ───────────────────────
 type BdMedia = { id?: string; shortcode?: string; permalink?: string; caption?: string; like_count?: number; comments_count?: number; view_count?: number; media_type?: string; media_product_type?: string; timestamp?: string; thumbnail_url?: string };

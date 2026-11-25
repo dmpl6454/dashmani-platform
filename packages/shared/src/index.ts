@@ -100,3 +100,5 @@ export type { SiteEnquiryInput } from "./validators/site-enquiry";
 
 // Self-serve campaign booking (client portal "Start a campaign")
 export * from "./validators/campaign";
+export * as linkAnalytics from "./link-analytics/parse";
+export * as linkAnalyticsValidators from "./validators/link-analytics";

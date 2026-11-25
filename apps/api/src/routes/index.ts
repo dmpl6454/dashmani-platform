@@ -36,6 +36,7 @@ import salesTallyRoutes from "./sales-tally.routes";
 import salesImportRoutes from "./sales-import.routes";
 import salesBankRoutes from "./sales-bank.routes";
 import salesReconcileRoutes from "./sales-reconcile.routes";
+import salesLinksRoutes from "./sales-links.routes";
 import creatorAuthRoutes from "./creator-auth.routes";
 import creatorRoutes from "./creator.routes";
 import creatorMetaRoutes from "./creator-meta.routes";
@@ -88,6 +89,8 @@ router.use(salesImportRoutes);
 router.use(salesBankRoutes);
 // smart-invoicing: reconcile (PR 5 + PR 6) — /sales/reconcile/…
 router.use(salesReconcileRoutes);
+// Link Analytics — /sales/links/… (docs/link-analytics/SPEC.md)
+router.use(salesLinksRoutes);
 // Creator portal (creators.digitalsukoon.com): /creator/* (own auth, dark unless CREATORS_ENABLED=1),
 // the staff review queue /admin/creators* (before any parameterised /admin/:x router), and Meta's
 // app-wide deauthorize / data-deletion callbacks.

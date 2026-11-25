@@ -4298,3 +4298,143 @@ model SalesBankLine {
   @@index([statementId, rowNo])
   @@map("sales_bank_lines")
 }
+
+// ─── Link Analytics (sales portal /links, 2026-11-25) ─────────────────────────────────────
+// Staff paste FB/IG post links into a named batch; the API fetches each post's latest metrics
+// through Meta's official Graph API only (docs/link-analytics/SPEC.md). ⚠️ Additive DDL in
+// scripts/link-analytics-ddl.sql, applied on prod BEFORE merging — never a blanket db:push.
+// ⚠️ No FK into users or meta_assets (hot tables; a DDL lock there stalls sign-in). Ids are
+// soft links. Statuses are VARCHAR. Retention: services/link-analytics/retention.service.ts.
+
+model LinkBatch {
+  id                String    @id @default(uuid())
+  name              String    @db.VarChar(160)
+  notes             String?   @db.Text
+  keepDuplicates    Boolean   @default(false) @map("keep_duplicates")
+  /// idle | running | paused — only posts with an item in a RUNNING batch are fetched.
+  state             String    @default("idle") @db.VarChar(16)
+  runStartedAt      DateTime? @map("run_started_at")
+  runFinishedAt     DateTime? @map("run_finished_at")
+  /// null = no schedule; else 6 | 12 | 24.
+  refreshEveryHours Int?      @map("refresh_every_hours")
+  scheduleEndsAt    DateTime? @map("schedule_ends_at")
+  nextRefreshAt     DateTime? @map("next_refresh_at")
+  createdById       String    @map("created_by_id")
+  archivedAt        DateTime? @map("archived_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  items LinkBatchItem[]
+
+  @@index([archivedAt, createdAt(sort: Desc)])
+  @@index([nextRefreshAt])
+  @@map("link_batches")
+}
+
+model LinkBatchItem {
+  id            String   @id @default(uuid())
+  batchId       String   @map("batch_id")
+  position      Int
+  rawUrl        String   @map("raw_url") @db.Text
+  normalizedUrl String?  @map("normalized_url") @db.Text
+  /// instagram | facebook
+  platform      String?  @db.VarChar(16)
+  /// post | reel | video | photo | unknown
+  postType      String?  @map("post_type") @db.VarChar(16)
+  postKey       String?  @map("post_key") @db.VarChar(512)
+  /// valid | invalid | duplicate
+  validity      String   @db.VarChar(16)
+  invalidReason String?  @map("invalid_reason") @db.VarChar(200)
+  duplicateOfId String?  @map("duplicate_of_id")
+  /// Typed by staff for a bare IG /p/<code> link, so business discovery can look the account up.
+  usernameHint  String?  @map("username_hint") @db.VarChar(64)
+  postId        String?  @map("post_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  batch LinkBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  post  LinkPost? @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([batchId, position])
+  @@index([postId])
+  @@map("link_batch_items")
+}
+
+model LinkPost {
+  id           String    @id @default(uuid())
+  /// ig:<shortcode> | fb:<numeric id> | fbx:<normalised opaque url>. One row per post, shared by every batch.
+  postKey      String    @unique @map("post_key") @db.VarChar(512)
+  platform     String    @db.VarChar(16)
+  postType     String    @map("post_type") @db.VarChar(16)
+  canonicalUrl String    @map("canonical_url") @db.Text
+  /// IG media id, or FB {pageId}_{postId} composite / video id.
+  externalId   String?   @map("external_id") @db.VarChar(128)
+  /// Soft link to meta_assets.id when the post is on one of our connected assets.
+  metaAssetId  String?   @map("meta_asset_id")
+  accountName  String?   @map("account_name") @db.VarChar(255)
+  username     String?   @db.VarChar(64)
+  followers    Int?
+  /// When `followers` was measured (asset sync time for our own assets).
+  followersAt  DateTime? @map("followers_at")
+  caption      String?   @db.Text
+  publishedAt  DateTime? @map("published_at")
+  /// Signed Meta CDN URL — expires (~4.4 days); never served after its oe= time.
+  thumbnailUrl String?   @map("thumbnail_url") @db.Text
+
+  /// NULL = Meta publishes no such number here. ⚠️ NEVER 0 for "unknown".
+  views    Int?
+  reach    Int?
+  likes    Int?
+  comments Int?
+  shares   Int?
+  saves    Int?
+
+  /// pending | verified | restricted | failed
+  status        String    @default("pending") @db.VarChar(16)
+  /// full | public | none
+  access        String?   @db.VarChar(8)
+  statusReason  String?   @map("status_reason") @db.VarChar(48)
+  errorMessage  String?   @map("error_message") @db.Text
+  /// meta_graph | meta_business_discovery | platform_sync | none
+  dataSource    String?   @map("data_source") @db.VarChar(32)
+  /// When the values shown were measured (may be older than lastCheckedAt for platform_sync).
+  metricsAt     DateTime? @map("metrics_at")
+  lastCheckedAt DateTime? @map("last_checked_at")
+  checkCount    Int       @default(0) @map("check_count")
+
+  /// Queue. queued | idle. All state lives here so a restart loses nothing.
+  fetchState    String    @default("queued") @map("fetch_state") @db.VarChar(8)
+  queuedAt      DateTime? @map("queued_at")
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  attempts      Int       @default(0)
+  leaseUntil    DateTime? @map("lease_until")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  items     LinkBatchItem[]
+  snapshots LinkPostSnapshot[]
+
+  @@index([fetchState, nextAttemptAt])
+  @@map("link_posts")
+}
+
+model LinkPostSnapshot {
+  id         String    @id @default(uuid())
+  postId     String    @map("post_id")
+  checkedAt  DateTime  @default(now()) @map("checked_at")
+  status     String    @db.VarChar(16)
+  dataSource String?   @map("data_source") @db.VarChar(32)
+  metricsAt  DateTime? @map("metrics_at")
+  views      Int?
+  reach      Int?
+  likes      Int?
+  comments   Int?
+  shares     Int?
+  saves      Int?
+  followers  Int?
+
+  post LinkPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, checkedAt])
+  @@index([checkedAt])
+  @@map("link_post_snapshots")
+}

@@ -4,7 +4,8 @@
  * HR boards so they never disagree.
  *
  *   - At most TWO parts, in this order of importance: changes requested / waiting for review,
- *     the newest document move ("Pitch sent 2d ago"), pages live ("3/5 pages live"), approved.
+ *     the newest document move ("Pitch sent 2d ago"), pages live ("3/5 pages live"), approved,
+ *     then how many files the project holds ("📎 3 files").
  *   - The due date keeps its own chip; `overdueDays` gives it its number ("Overdue 2d").
  *   - The owner's "current status" note is shown under the parts, as written.
  *
@@ -51,6 +52,8 @@ export function cardStatusParts(summary: PipelineCardSummary | undefined | null,
     ranked.push({ text: `${live}/${total} page${total === 1 ? "" : "s"} live`, tone: live === total ? "success" : "muted" });
   }
   if (summary.review === "approved") ranked.push({ text: "Approved", tone: "success" });
+  // Last: a card with nothing else to say still shows that work has started.
+  if (summary.files > 0) ranked.push({ text: `📎 ${summary.files} file${summary.files === 1 ? "" : "s"}`, tone: "muted" });
   return ranked.slice(0, CARD_STATUS_MAX_PARTS);
 }
 

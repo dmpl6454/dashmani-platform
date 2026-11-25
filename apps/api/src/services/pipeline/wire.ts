@@ -103,6 +103,7 @@ function summaryOf(r: Raw): PipelineCardSummary {
     doc: doc && doc.status ? { type: str(doc.type), status: str(doc.status), at: ts(doc.at) ?? "" } : null,
     review: review === "pending" || review === "approved" || review === "changes_requested" ? review : null,
     pages: pages && int(pages.total) > 0 ? { live: int(pages.live), total: int(pages.total) } : null,
+    files: int(r.summary_files),
   };
 }
 

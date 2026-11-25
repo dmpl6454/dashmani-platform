@@ -197,7 +197,7 @@ const WORDS: Record<string, string> = {
   UPLOADS_OFF: "File uploads aren't switched on — paste a link to the file instead.",
   UPLOAD_NOT_FOUND: "The upload didn't finish — upload the file again.",
   UPLOAD_WRONG_TYPE: "This type of file can't be used here.",
-  UPLOAD_TOO_LARGE: "The file is too big for this kind of version.",
+  UPLOAD_TOO_LARGE: "The file is too big.",
   FILE_ALREADY_USED: "This file is already in use — upload it again.",
   DOCS_NOT_READY: "Documents are waiting for a one-time server update — try again later.",
   DOCUMENT_NOT_FOUND: "That document no longer exists.",
@@ -282,5 +282,12 @@ export function describeError(e: unknown): string {
   if (s === 0) return "Couldn't reach the server — check your connection and try again.";
   if (s === 503 || e.code === "PIPELINE_BUSY") return "The server is busy — try again in a few seconds.";
   if (s >= 500) return "The server had a problem — try again in a moment.";
+  // No word for this code: say what the status means instead of a bare "didn't work".
+  if (s === 401) return "Your session ended — sign in again.";
+  if (s === 403) return "You don't have access to this.";
+  if (s === 404) return "This isn't available right now — reload the page (the portal may have just been updated).";
+  if (s === 409) return "Someone else changed this just now — reload and try again.";
+  if (s === 413) return "That's too big to send.";
+  if (s === 400) return "Some details need fixing.";
   return "That didn't work — please try again.";
 }

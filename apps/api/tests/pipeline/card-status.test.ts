@@ -63,7 +63,7 @@ describe("card status line (API)", () => {
   it("an empty project's card has an empty summary", async () => {
     const asha = await hrUser("Asha Empty");
     const id = await newProject(asha.token);
-    expect((await cardOf(asha.token, id)).summary).toEqual({ note: null, doc: null, review: null, pages: null });
+    expect((await cardOf(asha.token, id)).summary).toEqual({ note: null, doc: null, review: null, pages: null, files: 0 });
   });
 
   it("sets, cleans and clears the note; the header and the board card carry it", async () => {
@@ -155,13 +155,16 @@ describe("card status line (API)", () => {
   it("edits that can't change the card leave every board as it is", async () => {
     const asha = await hrUser("Asha Quiet");
     const id = await newProject(asha.token);
-    // A draft document: renaming it, or deleting it, never shows on the card.
+    // A draft document: adding or deleting it changes the card's file count, renaming it doesn't.
     const draft = (await request(app).post(`${P}/${id}/documents`).set(auth(asha.token)).send({ type: "pitch", title: "Pitch", url: "https://example.com/p" })).body.data;
+    expect((await cardOf(asha.token, id)).summary!.files).toBe(1);
     let v = (await board(asha.token, -1)).v;
     expect((await request(app).patch(`${B}/documents/${draft.id}`).set(auth(asha.token)).send({ base: draft.rev, changes: { title: "Pitch v2" } })).status).toBe(200);
     expect((await board(asha.token, v)).board).toBeNull();
     expect((await request(app).delete(`${B}/documents/${draft.id}`).set(auth(asha.token))).status).toBe(200);
-    expect((await board(asha.token, v)).board).toBeNull();
+    const afterDelete = await board(asha.token, v);
+    expect(afterDelete.board).not.toBeNull();
+    expect(afterDelete.board!.cards.find((c) => c.id === id)!.summary!.files).toBe(0);
 
     // A page: a caption edit doesn't move "n/m pages live"; a status change does.
     const page = (await request(app).post(`${P}/${id}/deliverables`).set(auth(asha.token)).send({ platform: "instagram", destination: "@one" })).body.data;
@@ -177,7 +180,16 @@ describe("card status line (API)", () => {
 
 describe("card status line (pure)", () => {
   const now = Date.parse("2026-11-23T12:00:00Z");
-  const base: PipelineCardSummary = { note: null, doc: null, review: null, pages: null };
+  const base: PipelineCardSummary = { note: null, doc: null, review: null, pages: null, files: 0 };
+
+  it("a card with only files says how many; files never push out a more important part", () => {
+    expect(cardStatusParts({ ...base, files: 1 }, now)).toEqual([{ text: "📎 1 file", tone: "muted" }]);
+    expect(cardStatusParts({ ...base, files: 3 }, now)).toEqual([{ text: "📎 3 files", tone: "muted" }]);
+    expect(cardStatusParts({ ...base, files: 3, review: "pending", pages: { live: 1, total: 2 } }, now).map((p) => p.text)).toEqual([
+      "Waiting for review",
+      "1/2 pages live",
+    ]);
+  });
 
   it("words the parts, most important first, at most two", () => {
     expect(cardStatusParts(base, now)).toEqual([]);

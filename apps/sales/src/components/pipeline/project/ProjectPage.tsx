@@ -16,6 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
+import useSWR from "swr";
+import { PL_SWR } from "@/lib/pipeline-swr";
 import {
   dayMonthShort,
   localDayKey,
@@ -48,6 +50,24 @@ import { ActivityPanel } from "./ActivityPanel";
 import { PhasePill, PhaseSelect, ProjectMenu } from "./ProjectHeader";
 import { CampaignChannelList } from "../chat/CampaignSidebar";
 import { WaveGlow } from "../ui/decor";
+
+/**
+ * How much each side tab holds, so nobody has to open a tab to find out it is empty. Shares
+ * the panels' own SWR keys (pl-docs:/pl-work:), so opening the tab afterwards costs nothing.
+ */
+function useTabCounts(projectId: string | null): { docs: number | null; work: number | null } {
+  const docs = useSWR(projectId ? `pl-docs:${projectId}` : null, () => plApi.documents(projectId!), PL_SWR);
+  const work = useSWR(projectId ? `pl-work:${projectId}` : null, () => plApi.work(projectId!), PL_SWR);
+  return {
+    docs: docs.data ? docs.data.documents.length : null,
+    work: work.data ? work.data.versions.length + work.data.deliverables.length : null,
+  };
+}
+
+function TabCount({ n }: { n: number | null }) {
+  if (!n) return null;
+  return <span className="ml-1.5 inline-grid place-items-center min-w-5 h-5 px-1 rounded-full bg-muted text-ink-3 text-[11px] font-bold tabular-nums">{n}</span>;
+}
 
 const RETRY_MS = [10_000, 20_000, 40_000];
 
@@ -99,6 +119,9 @@ export function ProjectPage({ id }: { id: string }) {
   const [tab, setTab] = useState<"conversation" | "channels" | "work" | "docs" | "activity" | "details">(wantSide ?? "conversation");
   // Desktop side column: project details, the work (versions, approval, pages), documents, or the activity timeline.
   const [sideTab, setSideTab] = useState<"details" | "work" | "docs" | "activity">(wantSide ?? "details");
+  // Counts load only after the conversation has: they never compete with the chat for the
+  // Pipeline's 3 request slots.
+  const counts = useTabCounts(load.kind === "ok" ? id : null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const ledger = useMemo(() => new AckLedger(), [id]); // eslint-disable-line react-hooks/exhaustive-deps
   const initialM = useRef(m);
@@ -347,6 +370,7 @@ export function ProjectPage({ id }: { id: string }) {
                 className={`h-11 px-2.5 shrink-0 text-[13.5px] font-semibold border-b-2 ${tab === k ? "border-ink text-ink" : "border-transparent text-ink-3"}`}
               >
                 {k === "conversation" ? "Conversation" : k === "channels" ? "Channels" : k === "work" ? "Work" : k === "docs" ? "Docs" : k === "activity" ? "Activity" : "Details"}
+                {k === "work" ? <TabCount n={counts.work} /> : k === "docs" ? <TabCount n={counts.docs} /> : null}
               </button>
             ))}
           </div>
@@ -430,6 +454,7 @@ export function ProjectPage({ id }: { id: string }) {
                     className={`-mb-0.5 h-12 px-2.5 text-[14px] font-bold border-b-[3px] transition-colors ${sideTab === k ? "border-indigo text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}
                   >
                     {k === "details" ? "Details" : k === "work" ? "Work" : k === "docs" ? "Documents" : "Activity"}
+                    {k === "work" ? <TabCount n={counts.work} /> : k === "docs" ? <TabCount n={counts.docs} /> : null}
                   </button>
                 ))}
               </div>

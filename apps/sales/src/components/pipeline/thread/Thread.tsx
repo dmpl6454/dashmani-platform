@@ -213,9 +213,13 @@ export function Thread({
   } else if (shown.length === 0 && pending.length === 0 && !project.hasOlder) {
     body = (
       <div className="min-h-full flex flex-col items-center justify-center text-center px-6 py-12">
-        <ChatBubblesArt />
-        <p className="mt-6 text-[24px] font-extrabold tracking-tight text-ink">No messages yet</p>
-        <p className="mt-2 text-[14.5px] text-ink-3">Start the conversation to collaborate with your team.</p>
+        <div className="scale-[0.6] origin-bottom" aria-hidden>
+          <ChatBubblesArt />
+        </div>
+        <p className="mt-2 text-[17px] font-bold text-ink">No messages yet</p>
+        <p className="mt-1 text-[13.5px] text-ink-3 max-w-[22rem]">
+          Post an update for the team. Use 📎 to share photos or files — they're also kept in Documents.
+        </p>
       </div>
     );
   } else {

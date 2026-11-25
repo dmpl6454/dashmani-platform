@@ -8,7 +8,13 @@
  *   - Status Draft → Sent → Accepted / Rejected; each change shows who and how long ago.
  *   - A sent document can be removed only by the project owner or an admin (the API says so).
  *
+ *   - Files shared in chat (still drafts) sit apart under "Shared in chat": photos as a
+ *     thumbnail grid (tap = full screen), other files as rows. Setting one to Sent moves it up
+ *     with the real documents.
+ *
  * Data: GET /pipeline/projects/:id/documents, on mount, on focus and after every action here.
+ * Photos come with a signed 15-minute `view` link; a thumbnail that fails to load asks for a
+ * fresh one.
  */
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
@@ -93,15 +99,110 @@ export function DocumentsPanel({ projectId, readOnly }: { projectId: string; rea
   }
 
   const refresh = () => void mutate();
+  const main = data.documents.filter((d) => !D.isChatDraft(d));
+  const chat = data.documents.filter((d) => D.isChatDraft(d));
   return (
     <section className="px-4 py-4">
-      <AddDocument projectId={projectId} uploads={data.uploads} readOnly={readOnly} onAdded={refresh} empty={data.documents.length === 0} />
-      <ul className="mt-3 space-y-2">
-        {data.documents.map((d) => (
-          <DocumentRow key={`${d.id}:${d.rev}`} d={d} readOnly={readOnly} onChanged={refresh} />
-        ))}
-      </ul>
+      <AddDocument projectId={projectId} uploads={data.uploads} readOnly={readOnly} onAdded={refresh} empty={main.length === 0} />
+      {main.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {main.map((d) => (
+            <DocumentRow key={`${d.id}:${d.rev}`} d={d} readOnly={readOnly} onChanged={refresh} />
+          ))}
+        </ul>
+      )}
+      {chat.length > 0 && <ChatFiles docs={chat} readOnly={readOnly} onChanged={refresh} />}
     </section>
+  );
+}
+
+// ── Shared in chat ─────────────────────────────────────────────────────────────────
+
+function ChatFiles({ docs, readOnly, onChanged }: { docs: D.PipelineDocDto[]; readOnly: boolean; onChanged: () => void }) {
+  const photos = docs.filter((d) => d.file && D.isImageType(d.file.type));
+  const others = docs.filter((d) => !(d.file && D.isImageType(d.file.type)));
+  // The grid is for looking; "Manage" lists the photos as rows (rename, set Sent, delete).
+  const [manage, setManage] = useState(false);
+  return (
+    <div className="mt-5">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-[12px] font-bold uppercase tracking-wide text-ink-3">
+          Shared in chat <span className="tabular-nums text-ink-4">· {docs.length}</span>
+        </h3>
+        {photos.length > 0 && !readOnly && (
+          <button type="button" className="h-9 px-1 text-[12.5px] font-semibold text-indigo" onClick={() => setManage((m) => !m)} aria-pressed={manage}>
+            {manage ? "Done" : "Manage"}
+          </button>
+        )}
+      </div>
+      {photos.length > 0 &&
+        (manage ? (
+          <ul className="mt-2 space-y-2">
+            {photos.map((d) => (
+              <DocumentRow key={`${d.id}:${d.rev}`} d={d} readOnly={readOnly} onChanged={onChanged} />
+            ))}
+          </ul>
+        ) : (
+          <ul className="mt-2 grid grid-cols-3 gap-1.5">
+            {photos.map((d) => (
+              <PhotoThumb key={d.id} d={d} />
+            ))}
+          </ul>
+        ))}
+      {others.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {others.map((d) => (
+            <DocumentRow key={`${d.id}:${d.rev}`} d={d} readOnly={readOnly} onChanged={onChanged} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PhotoThumb({ d }: { d: D.PipelineDocDto }) {
+  const [src, setSrc] = useState<string | null>(d.view?.url ?? null);
+  const [retried, setRetried] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const name = D.docDisplayTitle(d);
+  // An expired link (the tab was open > 15 min): ask once for a fresh one.
+  const refresh = async () => {
+    if (retried) return;
+    setRetried(true);
+    try {
+      setSrc((await plApi.documentFile(d.id, false)).url);
+    } catch {
+      setSrc(null);
+    }
+  };
+  const download = async () => {
+    setErr(null);
+    try {
+      await openVersionFile(() => plApi.documentFile(d.id, true), true);
+    } catch (e) {
+      setErr(errText(e));
+    }
+  };
+  return (
+    <li className="min-w-0">
+      {open && src && <PhotoViewer url={src} name={d.file?.name ?? name} onDownload={() => void download()} onClose={() => setOpen(false)} />}
+      <button
+        type="button"
+        onClick={() => (src ? setOpen(true) : void refresh())}
+        className="block w-full aspect-square overflow-hidden border border-border bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo"
+        aria-label={`Open ${name}, shared by ${d.createdBy.name}`}
+        title={`${name} · ${d.createdBy.name}`}
+      >
+        {src ? (
+          // eslint-disable-next-line @next/next/no-img-element -- a signed R2 link, not a static asset
+          <img src={src} alt={name} loading="lazy" onLoad={() => setRetried(false)} onError={() => void refresh()} className="h-full w-full object-cover" />
+        ) : (
+          <span className="grid h-full w-full place-items-center text-[11.5px] text-ink-4">Photo</span>
+        )}
+      </button>
+      {err && <p className="mt-1 text-[11.5px] text-danger">{err}</p>}
+    </li>
   );
 }
 
@@ -339,7 +440,8 @@ function DocumentRow({ d, readOnly, onChanged }: { d: D.PipelineDocDto; readOnly
   const now = useMinuteClock();
   const [editing, setEditing] = useState(false);
   const [type, setType] = useState<D.PipelineDocType>(d.type);
-  const [title, setTitle] = useState(d.title);
+  // A meaningless auto title ("_ (2)") opens empty, so saving asks for a real name.
+  const [title, setTitle] = useState(D.hasLetter(d.title) ? d.title : "");
   const [status, setStatus] = useState<D.PipelineDocStatus>(d.status);
   const [note, setNote] = useState(d.note);
   const [url, setUrl] = useState(d.url ?? "");
@@ -354,7 +456,7 @@ function DocumentRow({ d, readOnly, onChanged }: { d: D.PipelineDocDto; readOnly
   const save = async () => {
     const changes: D.EditDocInput["changes"] = {};
     if (type !== d.type) changes.type = type;
-    if (title.trim() !== d.title) changes.title = title.trim();
+    if (title.trim() && title.trim() !== d.title) changes.title = title.trim(); // empty = keep the old one
     if (status !== d.status) changes.status = status;
     if (note.trim() !== d.note) changes.note = note.trim();
     if (!d.file && url.trim() !== (d.url ?? "")) changes.url = url.trim();
@@ -376,7 +478,7 @@ function DocumentRow({ d, readOnly, onChanged }: { d: D.PipelineDocDto; readOnly
   };
 
   const remove = async () => {
-    if (!window.confirm(`Delete "${d.title}"? This can't be undone.`)) return;
+    if (!window.confirm(`Delete "${D.docDisplayTitle(d)}"? This can't be undone.`)) return;
     setBusy(true);
     setErr(null);
     try {
@@ -409,8 +511,8 @@ function DocumentRow({ d, readOnly, onChanged }: { d: D.PipelineDocDto; readOnly
       )}
       <div className="flex items-center gap-2 min-w-0">
         <span className="shrink-0 text-[12px] font-semibold text-ink-3">{D.PIPELINE_DOC_TYPE_LABEL[d.type]}</span>
-        <span className="min-w-0 truncate text-[13.5px] font-bold text-ink" title={d.title}>
-          {d.title}
+        <span className="min-w-0 truncate text-[13.5px] font-bold text-ink" title={D.docDisplayTitle(d)}>
+          {D.docDisplayTitle(d)}
         </span>
         <span className={`ml-auto shrink-0 inline-flex items-center h-6 px-2 rounded-full text-[11.5px] font-semibold ${STATUS_TONE[d.status]}`}>
           {D.PIPELINE_DOC_STATUS_LABEL[d.status]}
@@ -474,6 +576,7 @@ function DocumentRow({ d, readOnly, onChanged }: { d: D.PipelineDocDto; readOnly
           <input
             className={inputCls}
             value={title}
+            placeholder={`Name, e.g. ${D.PIPELINE_DOC_TYPE_LABEL[type]} for the client`}
             maxLength={D.PIPELINE_DOC_LIMITS.titleMax}
             onChange={(e) => setTitle(e.target.value)}
             aria-label="Name"

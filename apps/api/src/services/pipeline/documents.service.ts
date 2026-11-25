@@ -170,7 +170,17 @@ export async function listDocuments(dir: PipelineDirectory, projectId: string, v
         (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
       );
     });
-    return { documents: rows.map((r) => docDto(dir, r)), uploads: r2Config() !== null };
+    // Photos carry their inline link (pure crypto, no DB read), so the tab can show thumbnails
+    // without one request per photo.
+    const cfg = r2Config();
+    const documents = rows.map((r) => {
+      const dto = docDto(dir, r);
+      if (cfg && r.fileKey && D.isImageType(r.fileType)) {
+        dto.view = signDocFile(cfg, { fileKey: r.fileKey, fileName: r.fileName, fileType: r.fileType }, false);
+      }
+      return dto;
+    });
+    return { documents, uploads: cfg !== null };
   });
 }
 
@@ -270,8 +280,7 @@ export async function addDocument(actor: WorkActor, projectId: string, input: D.
       });
       return created;
     });
-    // The board card shows the newest non-draft document move.
-    if (row.status !== "draft") await bumpBoard();
+    await bumpBoard(); // the card counts the project's files (and shows a non-draft move)
     return docDto(actor.directory, row);
   });
 }
@@ -333,7 +342,7 @@ export async function editDocument(actor: WorkActor, docId: string, input: D.Edi
 
 export async function deleteDocument(actor: WorkActor, docId: string): Promise<{ id: string }> {
   return guarded(async () => {
-    const wasDraft = await pipelineWrite(async (tx) => {
+    await pipelineWrite(async (tx) => {
       const { row, ownerId } = await lockDocument(tx, actor, docId);
       if (row.status !== "draft") {
         // A document that was sent (or answered) is a record of what the client saw.
@@ -346,9 +355,8 @@ export async function deleteDocument(actor: WorkActor, docId: string): Promise<{
       await tx.pipelineDocument.delete({ where: { id: docId } });
       await recordActivity(tx, { projectId: row.projectId, kind: "doc_deleted", actorId: actor.userId, data: { type: row.type, title: row.title } });
       // The uploaded file (if any) is left in R2; the nightly sweep removes it a day later.
-      return row.status === "draft";
     });
-    if (!wasDraft) await bumpBoard(); // a draft never shows on the card
+    await bumpBoard(); // one file fewer on the card
     return { id: docId };
   });
 }
@@ -424,8 +432,8 @@ export async function addAttachment(actor: WorkActor, convId: string, input: D.A
       const name = fileNameOf(input.fileName);
       const photo = D.isImageType(file.contentType);
       const base = name.replace(/\.[A-Za-z0-9]{1,8}$/, "");
-      // A name with no letter or digit ("_.jpeg", "-.pdf") makes a useless title.
-      const title = /[\p{L}\p{N}]/u.test(base) ? base : photo ? "Photo" : "File";
+      // A name with no letter ("_.jpeg", "_ (2).jpeg", "-.pdf") makes a useless title.
+      const title = D.hasLetter(base) ? base : photo ? "Photo" : "File";
       const shared = await tx.pipelineDocument.create({
         data: {
           projectId,
@@ -451,6 +459,7 @@ export async function addAttachment(actor: WorkActor, convId: string, input: D.A
       });
       return shared;
     });
+    await bumpBoard(); // the card counts the project's files
     return docDto(actor.directory, row);
   });
 }

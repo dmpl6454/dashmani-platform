@@ -7,6 +7,7 @@ import { flushSalesBackground } from "../src/services/sales/common";
 // are SQL comments Postgres ignores.
 const TRUNCATE_SQL = `
     TRUNCATE TABLE youtube_connections,
+      link_post_snapshots, link_batch_items, link_posts, link_batches,
       sales_tally_items, sales_tally_runs, sales_tally_parties,
       sales_einvoices, sales_recurring_invoices, sales_refunds, sales_events, sales_credit_notes,
       finance_filed_files, finance_filed_years,

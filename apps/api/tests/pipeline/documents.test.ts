@@ -346,8 +346,10 @@ describe("project documents (uploads)", () => {
     expect(msg.status).toBe(201);
     expect(msg.body.data.message.body).toBe(body);
 
-    // The file is in the Documents tab, and one GET serves the chat card.
-    expect((await listDocs(asha.token, id)).documents.map((d) => d.id)).toEqual([docId]);
+    // The file is in the Documents tab (with its thumbnail link), and one GET serves the chat card.
+    const listed = (await listDocs(asha.token, id)).documents;
+    expect(listed.map((d) => d.id)).toEqual([docId]);
+    expect(listed[0].view?.url).toMatch(/response-content-disposition=inline/);
     const one = await request(app).get(`${B}/documents/${docId}`).set(auth(asha.token));
     expect(one.status).toBe(200);
     expect(one.body.data.title).toBe("shoot");
@@ -486,6 +488,21 @@ describe("scripts/pipeline-docs-ddl.sql (static)", () => {
     expect(body).toMatch(/CREATE TABLE IF NOT EXISTS "pipeline_documents"/);
     expect(body).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS "pipeline_documents_file_key_key"/);
     expect(body).toMatch(/conname = 'pipeline_documents_project_id_fkey'/);
+  });
+});
+
+describe("document names on screen (pure)", () => {
+  const at = "2026-11-24T10:00:00.000Z";
+  it("keeps a real title and turns a letterless one into the type and day", () => {
+    expect(D.docDisplayTitle({ title: "Diwali pitch v2", type: "pitch", createdAt: at })).toBe("Diwali pitch v2");
+    expect(D.docDisplayTitle({ title: "IMG_2041", type: "photo", createdAt: at })).toBe("IMG_2041");
+    expect(D.docDisplayTitle({ title: "_ (2)", type: "photo", createdAt: at })).toBe("Photo · 24 Nov");
+    expect(D.docDisplayTitle({ title: "_", type: "report", createdAt: at })).toBe("Report · 24 Nov");
+  });
+  it("splits chat drafts from the project's documents", () => {
+    expect(D.isChatDraft({ source: "chat", status: "draft" })).toBe(true);
+    expect(D.isChatDraft({ source: "chat", status: "sent" })).toBe(false);
+    expect(D.isChatDraft({ source: "tab", status: "draft" })).toBe(false);
   });
 });
 

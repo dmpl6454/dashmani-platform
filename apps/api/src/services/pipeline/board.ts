@@ -145,8 +145,8 @@ export const CARD_CLIENT_COLS = Prisma.sql`p.linked_client_id,
 /**
  * The card's progress summary (2026-11-23; `cardFromRow` → `summary`, worded by the shared
  * `cardStatusParts`): the "current status" note, the newest non-draft document move, the newest
- * review that is not superseded, and pages live / total. Each subquery is one index probe by
- * project id. ⚠️ Reads pipeline_documents and the status_note columns, so
+ * review that is not superseded, pages live / total, and how many documents it holds. Each
+ * subquery is one index probe by project id. ⚠️ Reads pipeline_documents and the status_note columns, so
  * scripts/pipeline-docs-ddl.sql must be on the database before this code runs (the usual
  * apply-before-merge rule) — without it the board snapshot fails.
  * Every write that changes one of these bumps the board (documents.service, work.service).
@@ -161,7 +161,8 @@ export const CARD_SUMMARY_COLS = Prisma.sql`p.status_note, p.status_note_at, p.s
     ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS summary_review,
   (SELECT json_build_object('live', count(*) FILTER (WHERE x.status = 'published'),
                             'total', count(*) FILTER (WHERE x.status <> 'cancelled'))
-     FROM pipeline_deliverables x WHERE x.project_id = p.id) AS summary_pages`;
+     FROM pipeline_deliverables x WHERE x.project_id = p.id) AS summary_pages,
+  (SELECT count(*)::int FROM pipeline_documents f WHERE f.project_id = p.id) AS summary_files`;
 
 let snapshotCache: PipelineBoardSnapshot | null = null;
 let snapshotInflight: Promise<PipelineBoardSnapshot> | null = null;

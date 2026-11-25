@@ -150,6 +150,12 @@ export function CardFace({
               </span>
             )}
           </div>
+          {/* Who owns it, in words: the initials alone don't say who "PA" is. */}
+          {owner?.name && (
+            <span className="min-w-0 truncate text-[12px] text-ink-3" title={`Owner: ${owner.name}`}>
+              {owner.name.split(/\s+/)[0]}
+            </span>
+          )}
           {unread > 0 && (
             <span className="ml-auto inline-grid place-items-center h-6 min-w-6 px-1.5 rounded-full bg-indigo text-white text-[11px] font-bold" aria-label={`${unread} unread`}>
               {unread > 9 ? "9+" : unread}

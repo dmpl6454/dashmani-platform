@@ -225,10 +225,34 @@ export interface PipelineDocDto {
   createdAt: string;
   updatedAt: string;
   /**
-   * GET /pipeline/documents/:id only, for an uploaded image: a 15-minute inline link, so a chat
-   * photo needs no second request. Refresh it with GET …/file once it is near its expiry.
+   * For an uploaded image (GET /pipeline/documents/:id and the project's list): a 15-minute
+   * inline link, so a photo shows without a second request. Refresh it with GET …/file once it
+   * is near its expiry.
    */
   view?: { url: string; expiresAt: string };
+}
+
+/** True when `s` has at least one letter (any script): "IMG_2041" yes, "_ (2)" no. */
+export function hasLetter(s: string): boolean {
+  return /\p{L}/u.test(s);
+}
+
+/**
+ * What to call a document on screen. A title with no letter ("_ (2)", from a phone's file name)
+ * says nothing, so it becomes "Photo · 24 Nov" (the type and the day it was added).
+ */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+export function docDisplayTitle(d: Pick<PipelineDocDto, "title" | "type" | "createdAt">): string {
+  if (hasLetter(d.title)) return d.title;
+  const t = new Date(d.createdAt);
+  const day = Number.isFinite(t.getTime()) ? ` · ${t.getDate()} ${MONTHS[t.getMonth()]}` : "";
+  return `${PIPELINE_DOC_TYPE_LABEL[d.type] ?? "File"}${day}`;
+}
+
+/** Chat files still in draft: shown apart from the project's real documents. */
+export function isChatDraft(d: Pick<PipelineDocDto, "source" | "status">): boolean {
+  return d.source === "chat" && d.status === "draft";
 }
 
 export interface PipelineDocsDto {

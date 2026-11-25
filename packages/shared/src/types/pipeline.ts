@@ -216,6 +216,8 @@ export interface PipelineCardSummary {
   review: "pending" | "approved" | "changes_requested" | null;
   /** Pages (deliverables) not cancelled, and how many of them are published. */
   pages: { live: number; total: number } | null;
+  /** How many documents the project holds (Documents tab + files shared in chat, drafts too). */
+  files: number;
 }
 
 export type PipelineConversationKind = "project" | "channel" | "dm";

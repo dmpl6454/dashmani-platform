@@ -43,10 +43,14 @@ function fakeGraph(calls: Call[], opts: { failOwn?: "rate" | "deleted" | "networ
         insights: { data: [{ name: "post_media_view", values: [{ value: 3000 }] }, { name: "post_total_media_view_unique", values: [{ value: 1500 }] }] } });
     }
     if (path === "IGBIZ") {
+      // Meta rejects `shortcode` inside business_discovery media (live, 2026-11-25): mirror that.
+      if (fields.includes("business_discovery") && /media[^{]*\{[^}]*\bshortcode\b/.test(fields)) {
+        return { ok: false, rateLimited: false, authInvalid: false, status: 400, usage: null, error: "(#100) Please read documentation for supported fields.", errorCode: 100 };
+      }
       if (fields.includes("username(brandx)")) {
         return ok({ business_discovery: { id: "X", username: "brandx", name: "Brand X", followers_count: 10000, media: { data: [
-          { id: "m1", shortcode: "BXREEL1", like_count: 300, comments_count: 30, view_count: 20000, media_product_type: "REELS", timestamp: "2026-11-22T00:00:00+0000" },
-          { id: "m2", shortcode: "BXPHOTO2", like_count: 100, comments_count: 10, view_count: 999, media_product_type: "FEED" },
+          { id: "m1", permalink: "https://www.instagram.com/reel/BXREEL1/", like_count: 300, comments_count: 30, view_count: 20000, media_product_type: "REELS", timestamp: "2026-11-22T00:00:00+0000" },
+          { id: "m2", permalink: "https://www.instagram.com/p/BXPHOTO2/", like_count: 100, comments_count: 10, view_count: 999, media_product_type: "FEED" },
         ] } } });
       }
       return { ok: false, rateLimited: false, authInvalid: false, status: 400, usage: null, error: "(#110) Cannot find User", errorCode: 110 };
@@ -141,6 +145,20 @@ describe("link analytics", () => {
     const list = await request(app).get(`/v1/sales/links/batches/${b.id}/items?sort=views&dir=desc`).set(auth(salesToken));
     expect(list.body.data.rows[0].post).toMatchObject({ views: 20000, freshness: "live" });
     expect(list.body.data.total).toBe(8);
+  });
+
+  it("a Facebook reel's reach of 0 next to real views is unavailable, never a zero", async () => {
+    await create("https://www.facebook.com/ourfbpage/posts/2222222");
+    const base = fakeGraph(calls);
+    const graph = (async (...args: Parameters<GraphFn>) => {
+      const r = (await base(...args)) as { ok: boolean; data?: { insights?: unknown } };
+      if (args[0] === "1111111_2222222" && r.ok && r.data) {
+        r.data.insights = { data: [{ name: "post_media_view", values: [{ value: 3000 }] }, { name: "post_total_media_view_unique", values: [{ value: 0 }] }] };
+      }
+      return r;
+    }) as GraphFn;
+    await tick(graph);
+    expect(await postByKey("fb:2222222")).toMatchObject({ status: "verified", views: 3000, reach: null });
   });
 
   it("a post in two batches is fetched once; a fresh post is not fetched again", async () => {

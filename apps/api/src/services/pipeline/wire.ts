@@ -76,6 +76,8 @@ export function cardFromRow(r: Raw, opts: { listFields?: boolean } = {}): Pipeli
     preview: Array.isArray(r.preview) ? (r.preview as unknown[]).map(str).slice(0, CARD_PREVIEW_LIMIT) : [],
     linkedClient: linkedClientOf(r),
   };
+  // Present only when the query selected it (CARD_CLIENT_COLS: the board and readCard).
+  if (r.budget_inr !== undefined) card.budget = budgetOf(r);
   // Present only when the query selected CARD_SUMMARY_COLS (the board and readCard).
   if (r.status_note !== undefined) card.summary = summaryOf(r);
   if (opts.listFields) {
@@ -85,6 +87,12 @@ export function cardFromRow(r: Raw, opts: { listFields?: boolean } = {}): Pipeli
     card.deletedByAdmin = r.deleted_by_admin === true;
   }
   return card;
+}
+
+/** `budget_inr` (whole rupees) → a number, or null when unset. */
+function budgetOf(r: Raw): number | null {
+  const v = r.budget_inr;
+  return v === null || v === undefined ? null : int(v);
 }
 
 /** The "current status" note from p.status_note* columns, or null when empty / not selected. */
@@ -134,6 +142,7 @@ export function headerFromRow(r: Raw): PipelineHeader {
     createdAt: ts(r.created_at) ?? "",
     updatedAt: ts(r.updated_at) ?? "",
     linkedClient: linkedClientOf(r),
+    budget: budgetOf(r),
     kind: (r.kind === "channel" || r.kind === "dm" ? r.kind : "project") as PipelineHeader["kind"],
     isPrivate: r.is_private === true,
     parentProjectId: strOrNull(r.parent_project_id),

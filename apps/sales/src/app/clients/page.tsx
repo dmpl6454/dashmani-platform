@@ -21,7 +21,7 @@ export default function ClientsPage() {
               {data.map((c) => (
                 <tr key={c.id} className="border-b border-rule hover:bg-muted/60">
                   <td className="p-3"><Link href={`/clients/view?id=${c.id}`} className="font-bold hover:text-indigo-light">{c.companyName}</Link>{c.billingProfile?.legalName && c.billingProfile.legalName !== c.companyName && <div className="text-xs text-ink-3">{c.billingProfile.legalName}</div>}</td>
-                  <td className="p-3"><div>{c.contactName}</div><div className="text-xs text-ink-3">{c.email}</div></td>
+                  <td className="p-3"><div>{c.contactName}</div><div className="text-xs text-ink-3">{c.email || c.phone || "No email yet"}</div></td>
                   <td className="p-3 font-mono text-xs">{c.billingProfile?.gstin ?? <span className="text-ink-4">not set</span>}</td>
                   <td className="p-3 text-right"><Money paise={c.outstandingPaise} whole className={c.outstandingPaise ? "text-attention" : "text-ink-3"} /></td>
                 </tr>

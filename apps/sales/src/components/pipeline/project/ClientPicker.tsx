@@ -71,6 +71,7 @@ export function ClientPicker({
       ) : null}
       {adding && (
         <NewClientDialog
+          quickFirst
           onClose={() => setAdding(false)}
           onCreated={(c) => {
             setAdding(false);

@@ -8,9 +8,9 @@ import { teamEmailRecipients } from "../client-team.service";
  * The company's team logins that chose campaign emails, as a cc (the owner stays the "to").
  * A lookup failure never stops the owner's email.
  */
-async function teamCc(clientId: string, ownerEmail: string): Promise<{ cc?: string }> {
+async function teamCc(clientId: string, ownerEmail: string | null): Promise<{ cc?: string }> {
   const team = await teamEmailRecipients(clientId, "campaigns").catch(() => [] as string[]);
-  const cc = team.filter((e) => e !== ownerEmail.toLowerCase());
+  const cc = team.filter((e) => e !== ownerEmail?.toLowerCase());
   return cc.length ? { cc: cc.join(", ") } : {};
 }
 
@@ -103,9 +103,9 @@ function itemStatusText(status: string, paidOnline: boolean): string {
  * written to the booking's history, so staff never read "sent" for an email nobody received.
  * Direct insert, not logBookingEvent (booking.service imports this file). Never throws.
  */
-export async function noteEmailNotSent(bookingId: string, what: string, to: string): Promise<void> {
+export async function noteEmailNotSent(bookingId: string, what: string, to: string | null): Promise<void> {
   try {
-    await prisma.campaignBookingEvent.create({ data: { bookingId, actorType: "system", note: `Email not sent: ${what} → ${to}` } });
+    await prisma.campaignBookingEvent.create({ data: { bookingId, actorType: "system", note: `Email not sent: ${what} → ${to ?? "the client has no email on file"}` } });
   } catch (e) {
     console.warn(`[campaign] could not record an unsent email for ${bookingId}:`, e instanceof Error ? e.message : e);
   }
@@ -161,7 +161,7 @@ ${refundNote}
 <p>You can also see these links, and views and likes as they come in, in your portal.</p>
 <p>${button(portalLink(b.id), "See campaign results")}</p>`);
 
-  const sent = await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: anyLive ? `Delivered: ${b.name} — your post links` : `Delivered: ${b.name} — final status`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  const sent = b.client.email && await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: anyLive ? `Delivered: ${b.name} — your post links` : `Delivered: ${b.name} — final status`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   if (!sent) await noteEmailNotSent(b.id, "delivery email with every post link", b.client.email);
   await sendEmail({ to: campaignConfig.teamEmail(), subject: `[Copy] Delivered: ${b.name} (${b.client.companyName})`, html, fromName: "Digital Sukoon" });
   return Boolean(sent);
@@ -194,7 +194,7 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
 <p>Your ${esc(formatLabelFor(item.platform, item.format))} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
 <p>${button(item.permalink, "View post")}</p>
 ${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
-  const sent = await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
+  const sent = b.client.email && await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   if (!sent) await noteEmailNotSent(b.id, `"post is live" email for ${item.accountName}`, b.client.email);
   return Boolean(sent);
 }
@@ -225,6 +225,10 @@ export async function sendCreatorDeclinedEmail(itemId: string, why: "declined" |
       : `If it is dropped, you won't be charged for it — the final amount is confirmed with you before payment.`
   } The rest of your campaign is not affected.</p>
 <p>${button(portalLink(b.id), "Open campaign")}</p>`);
+  if (!b.client.email) {
+    await noteEmailNotSent(b.id, `"a creator couldn't take a post" email`, null);
+    return true;
+  }
   await sendEmail({ to: b.client.email, ...(await teamCc(b.client.id, b.client.email)), subject: `Update on ${b.name}: a creator couldn't take a post`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   return true;
 }
@@ -272,7 +276,7 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
     },
   };
   const c = copy[kind];
-  const sent = await sendEmail({
+  const sent = b.client.email && await sendEmail({
     to: b.client.email,
     ...(await teamCc(b.client.id, b.client.email)),
     subject: c.subject,

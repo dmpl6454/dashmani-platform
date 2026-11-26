@@ -459,7 +459,7 @@ model Client {
   id           String       @id @default(uuid())
   companyName  String       @map("company_name")
   contactName  String       @map("contact_name")
-  email        String       @unique
+  email        String?      @unique // optional since 2026-11-26 (quick-add clients: name + phone); NULLs never collide
   passwordHash String       @map("password_hash")
   phone        String?
   logoUrl      String?      @map("logo_url")
@@ -2217,6 +2217,9 @@ model PipelineProject {
   /// The client company this project is for (optional). NOT `clientId`, which is the create
   /// idempotency key. SetNull: deleting a client never deletes a project.
   linkedClientId     String?   @map("linked_client_id")
+  /// The project's budget in whole rupees (optional; scripts/budget-quick-client-ddl.sql). Shown on
+  /// the sales board card and project page; only the project's CREATOR may change it.
+  budgetInr          Int?      @map("budget_inr")
   /// "project" (the board) | "channel" | "dm" — sales-portal chat (scripts/pipeline-chat-ddl.sql).
   /// Channels and DMs reuse the thread machinery but never appear on any project surface.
   kind               String    @default("project") @db.VarChar(8)

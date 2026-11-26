@@ -64,7 +64,7 @@ function QuoteView() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 grid gap-4">
           <section className="card p-4 text-sm grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Client</div><Link href={`/clients/view?id=${q.clientId}`} className="font-bold hover:text-indigo-light">{q.client.billingProfile?.legalName ?? q.client.companyName}</Link><div className="text-ink-3 text-xs">{q.client.contactName} · {q.client.email}</div></div>
+            <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Client</div><Link href={`/clients/view?id=${q.clientId}`} className="font-bold hover:text-indigo-light">{q.client.billingProfile?.legalName ?? q.client.companyName}</Link><div className="text-ink-3 text-xs">{[q.client.contactName, q.client.email || "no email yet"].join(" · ")}</div></div>
             <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Terms</div><div>{titleCase(q.campaignType)} · {q.taxMode === "intra" ? "CGST + SGST" : q.taxMode === "inter" ? "IGST" : "No GST"} {q.gstRateBp / 100}%</div><div className="text-ink-3 text-xs">Valid until {fmtDate(q.validUntil)} · created {fmtDate(q.createdAt)}</div></div>
           </section>
           <DocumentLines doc={q} />

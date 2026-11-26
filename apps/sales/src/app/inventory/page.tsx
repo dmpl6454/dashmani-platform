@@ -78,6 +78,19 @@ export default function InventoryPage() {
       });
   }, [scoped, q, platform, sort]);
 
+  // The price cell is a small grid with the SAME columns on every row (format, brand, then
+  // entertainment / event / song only when some row in view has one), so amounts line up down
+  // the page instead of wrapping as chips of different widths.
+  const priceCols = useMemo(() => {
+    const offers = rows.flatMap((c) => c.offers.filter((o) => o.active));
+    const cols: Array<{ key: "brand" | "ent" | "event" | "song"; label: string }> = [{ key: "brand", label: "Brand" }];
+    if (offers.some((o) => o.entertainmentPricePaise != null)) cols.push({ key: "ent", label: "Ent." });
+    if (offers.some((o) => o.eventPricePaise != null)) cols.push({ key: "event", label: "Event" });
+    if (offers.some((o) => o.audioAddonPaise != null)) cols.push({ key: "song", label: "Song +" });
+    return cols;
+  }, [rows]);
+  const priceGrid = { gridTemplateColumns: `5.5rem repeat(${priceCols.length}, 6.5rem)` };
+
   if (error) return <LoadError error={error} retry={() => mutate()} />;
   if (isLoading || !data) return <Loading label="Loading the catalogue…" />;
   const listed = data.filter((c) => c.inCatalogue).length;
@@ -115,35 +128,67 @@ export default function InventoryPage() {
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left">
-              <tr className="border-b-2 border-border">
-                <th className="p-3">Channel</th><th className="p-3">Platform</th><th className="p-3 text-right">Followers</th><th className="p-3 text-right">Views 28d</th><th className="p-3 text-right">Eng.</th><th className="p-3">{view === "catalogue" ? "Client price" : view === "partner" ? "Price per post" : "Rate card"}</th>
+            <thead className="text-[11px] uppercase tracking-[0.08em] text-ink-3 text-left whitespace-nowrap">
+              <tr className="border-b-2 border-border align-bottom">
+                <th className="p-3 font-semibold">Channel</th>
+                <th className="p-3 font-semibold">Platform</th>
+                <th className="p-3 font-semibold text-right">Followers</th>
+                <th className="p-3 font-semibold text-right">Views 28d</th>
+                <th className="p-3 font-semibold text-right">Eng.</th>
+                <th className="p-3 pl-6 font-semibold">
+                  <div className="mb-1.5 text-ink-2">{view === "catalogue" ? "Client price" : view === "partner" ? "Price per post" : "Rate card"}</div>
+                  <div className="grid gap-x-3 text-[10.5px] text-ink-4" style={priceGrid}>
+                    <span>Format</span>
+                    {priceCols.map((p) => <span key={p.key} className="text-right">{p.label}</span>)}
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody>
               {rows.map((c) => {
                 const offers = c.offers.filter((o) => o.active);
                 return (
-                  <tr key={`${c.targetType}:${c.targetId}`} className="border-b border-rule hover:bg-muted/60">
-                    <td className="p-3 min-w-[220px]">
-                      <div className="flex items-center gap-2 min-w-0">
-                        {c.pictureUrl ? <img loading="lazy" decoding="async" src={c.pictureUrl} alt="" className="w-7 h-7 rounded-full shrink-0" /> : <span className="w-7 h-7 rounded-full bg-muted shrink-0" aria-hidden />}
+                  <tr key={`${c.targetType}:${c.targetId}`} className="border-b border-rule hover:bg-muted/60 align-top">
+                    <td className="p-3 min-w-[240px] max-w-[320px]">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {c.pictureUrl ? (
+                          <img loading="lazy" decoding="async" src={c.pictureUrl} alt="" className="w-8 h-8 rounded-full shrink-0 object-cover" />
+                        ) : (
+                          <span className="w-8 h-8 rounded-full bg-muted shrink-0 grid place-items-center text-[12px] font-bold text-ink-3" aria-hidden>{c.name.trim().charAt(0).toUpperCase()}</span>
+                        )}
                         <div className="min-w-0">
-                          <div className="font-bold truncate">{c.name} {c.profileUrl && <a href={c.profileUrl} target="_blank" rel="noreferrer" className="text-ink-3 hover:text-white inline-block align-middle" aria-label="Open profile"><ExternalLink size={12} /></a>}</div>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-bold truncate" title={c.name}>{c.name}</span>
+                            {c.profileUrl && <a href={c.profileUrl} target="_blank" rel="noreferrer" className="shrink-0 text-ink-3 hover:text-white" aria-label={`Open ${c.name} profile`}><ExternalLink size={12} /></a>}
+                          </div>
                           <div className="text-xs text-ink-3 truncate">{c.handle ? `@${c.handle}` : ""}{c.category ? ` · ${c.category}` : ""}{c.source === "partner" ? " · partner page, not offered to clients" : !c.inCatalogue ? (c.bookable ? " · not in client catalogue" : " · tracked only") : ""}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="p-3 whitespace-nowrap">{platformLabel(c.platform)}</td>
-                    <td className="p-3 text-right font-mono">{fmtCompact(c.followers)}</td>
-                    <td className="p-3 text-right font-mono">{fmtCompact(c.views28d)}</td>
-                    <td className="p-3 text-right font-mono">{c.engagementRatePct == null ? "—" : `${c.engagementRatePct}%`}</td>
-                    <td className="p-3">
-                      {offers.length === 0 ? <span className="text-ink-4">{c.offers.length > 0 ? "price withdrawn" : "no price set"}</span> : (
-                        <div className="flex flex-wrap gap-1">
-                          {offers.map((o) => (
-                            <span key={o.rateCardId ?? o.format} className="border border-border px-1.5 py-0.5 text-xs whitespace-nowrap">{titleCase(o.format)}{o.pricePaise != null ? <> <span className="text-ink-3">brand</span> <span className="font-mono">{fmtInr(o.pricePaise, { whole: true })}</span></> : <span className="text-ink-3"> · no brand</span>}{o.entertainmentPricePaise != null && <span className="text-ink-3"> · ent {fmtInr(o.entertainmentPricePaise, { whole: true })}</span>}{o.eventPricePaise != null && <span className="text-ink-3"> · event {fmtInr(o.eventPricePaise, { whole: true })}</span>}{o.audioAddonPaise != null && <span className="text-ink-3"> · song +{fmtInr(o.audioAddonPaise, { whole: true })}</span>}</span>
-                          ))}
+                    <td className="p-3 whitespace-nowrap leading-8">{platformLabel(c.platform)}</td>
+                    <td className="p-3 text-right font-mono tabular-nums leading-8">{fmtCompact(c.followers)}</td>
+                    <td className="p-3 text-right font-mono tabular-nums leading-8">{fmtCompact(c.views28d)}</td>
+                    <td className="p-3 text-right font-mono tabular-nums leading-8">{c.engagementRatePct == null ? "—" : `${c.engagementRatePct}%`}</td>
+                    <td className="p-3 pl-6">
+                      {offers.length === 0 ? <span className="text-ink-4 leading-8">{c.offers.length > 0 ? "price withdrawn" : "no price set"}</span> : (
+                        <div className="space-y-1 py-1">
+                          {[...offers].sort((a, b) => FORMAT_ORDER.indexOf(a.format) - FORMAT_ORDER.indexOf(b.format)).map((o) => {
+                            const value = (k: "brand" | "ent" | "event" | "song") =>
+                              k === "brand" ? o.pricePaise : k === "ent" ? o.entertainmentPricePaise : k === "event" ? o.eventPricePaise : o.audioAddonPaise;
+                            return (
+                              <div key={o.rateCardId ?? o.format} className="grid gap-x-3 items-baseline whitespace-nowrap text-[13px]" style={priceGrid}>
+                                <span className="text-ink-2">{titleCase(o.format)}</span>
+                                {priceCols.map((p) => {
+                                  const v = value(p.key);
+                                  return (
+                                    <span key={p.key} className={`text-right font-mono tabular-nums ${p.key === "brand" ? "text-ink font-semibold" : "text-ink-3"}`}>
+                                      {v == null ? <span className="text-ink-4">—</span> : fmtInr(v, { whole: true })}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </td>

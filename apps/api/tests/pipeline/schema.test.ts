@@ -39,6 +39,8 @@ const COLUMNS: Record<string, string[]> = {
     "kind", "is_private", "dm_key", "parent_project_id",
     // The board card's "current status" note (scripts/pipeline-docs-ddl.sql, 2026-11-23).
     "status_note", "status_note_at", "status_note_by_id",
+    // The project budget in whole rupees (scripts/budget-quick-client-ddl.sql, 2026-11-26).
+    "budget_inr",
   ],
   pipeline_participants: [
     "project_id", "user_id", "role", "notify", "last_read_seq", "seen_at", "engaged_at",

@@ -139,7 +139,7 @@ export function invalidatePhases(): void {
  * Every card query (here and in projects.service) selects it, so a card never loses its
  * client chip after a move, an archive or a restore.
  */
-export const CARD_CLIENT_COLS = Prisma.sql`p.linked_client_id,
+export const CARD_CLIENT_COLS = Prisma.sql`p.linked_client_id, p.budget_inr,
   (SELECT c.company_name FROM clients c WHERE c.id = p.linked_client_id) AS linked_client_name`;
 
 /**

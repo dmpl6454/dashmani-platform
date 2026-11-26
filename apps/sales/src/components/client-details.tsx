@@ -13,7 +13,7 @@ export function ClientDetails({ client }: { client: ClientRow }) {
       <dl className="text-sm grid gap-1">
         <div><dt className="text-ink-4 text-xs">Company</dt><dd>{client.companyName}</dd></div>
         <div><dt className="text-ink-4 text-xs">Contact person</dt><dd>{client.contactName}</dd></div>
-        <div><dt className="text-ink-4 text-xs">Email (portal sign-in)</dt><dd className="break-all">{client.email}</dd></div>
+        <div><dt className="text-ink-4 text-xs">Email (portal sign-in)</dt><dd className="break-all">{client.email || <span className="text-ink-4">No email yet — add it on Edit profile</span>}</dd></div>
         <div><dt className="text-ink-4 text-xs">Phone</dt><dd>{client.phone || "—"}</dd></div>
       </dl>
     </section>

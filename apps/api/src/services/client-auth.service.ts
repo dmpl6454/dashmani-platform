@@ -76,7 +76,7 @@ export async function clientLogout(clientId: string, memberId?: string) {
 export async function clientForgotPassword(email: string) {
   const normalized = email.trim().toLowerCase();
   const client = await prisma.client.findUnique({ where: { email: normalized } });
-  if (!client) return memberForgotPassword(normalized); // silent either way — don't reveal whether email exists
+  if (!client || !client.email) return memberForgotPassword(normalized); // silent either way — don't reveal whether email exists
 
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -297,7 +297,7 @@ export async function clientSignup(data: { companyName: string; contactName: str
       [
         { label: "Company", value: client.companyName },
         { label: "Contact", value: client.contactName },
-        { label: "Email", value: client.email },
+        { label: "Email", value: client.email ?? "—" },
         ...(client.phone ? [{ label: "Phone", value: client.phone }] : []),
       ],
       `/clients/${client.id}`,
@@ -422,7 +422,7 @@ export async function clientGoogleSignIn(input: { credential: string; companyNam
       [
         { label: "Company", value: client.companyName },
         { label: "Contact", value: client.contactName },
-        { label: "Email", value: client.email },
+        { label: "Email", value: client.email ?? "—" },
         { label: "Method", value: "Sign in with Google" },
       ],
       `/clients/${client.id}`,
@@ -444,12 +444,14 @@ async function memberEmailExists(email: string): Promise<boolean> {
  * `memberId` + `sv`, which authenticateClient and clientRefresh re-check against the login row.
  */
 export async function issueClientSession(
-  client: { id: string; email: string; contactName: string; companyName: string },
+  client: { id: string; email: string | null; contactName: string; companyName: string },
   member?: { id: string; email: string; name: string; sessionVersion: number } | null,
 ) {
   const claims = member ? { memberId: member.id, sv: member.sessionVersion } : {};
   const accessToken = jwt.sign(
-    { userId: client.id, email: member?.email ?? client.email, roles: [], type: "client" as const, ...claims },
+    // The owner row's email is optional since 2026-11-26 (quick-add clients); such an owner has
+    // no password anyone knows, so only a team member can be signed in for it.
+    { userId: client.id, email: member?.email ?? client.email ?? "", roles: [], type: "client" as const, ...claims },
     JWT_SECRET,
     { expiresIn: ACCESS_TOKEN_EXPIRY }
   );

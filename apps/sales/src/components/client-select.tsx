@@ -30,8 +30,16 @@ export function ClientSelect({ clients, value, onChange, className = "" }: { cli
   );
 }
 
-export function NewClientDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (client: ClientRow) => void }) {
+/**
+ * `quickFirst` (the Pipeline's New project sheet, 2026-11-26): open on the SHORT form — name,
+ * contact number, email optional (POST /sales/clients/quick) — because at the start nobody has
+ * GST and address details. "Have full details?" switches to the full form below; the full form
+ * can switch back. Both add the client to the Clients list.
+ */
+export function NewClientDialog({ onClose, onCreated, quickFirst = false }: { onClose: () => void; onCreated: (client: ClientRow) => void; quickFirst?: boolean }) {
   const { mutate } = useSWRConfig();
+  const [quick, setQuick] = useState(quickFirst);
+  const [q, setQ] = useState({ name: "", phone: "", email: "" });
   const [form, setForm] = useState({ companyName: "", contactName: "", email: "", phone: "" });
   const [billing, setBilling] = useState<BillingProfile>(EMPTY_BILLING);
   const [busy, setBusy] = useState(false);
@@ -57,8 +65,9 @@ export function NewClientDialog({ onClose, onCreated }: { onClose: () => void; o
     setBusy(true);
     setError(null);
     try {
-      const body = { ...form, phone: form.phone || null, billing: billingBody({ ...billing, legalName: billing.legalName || form.companyName, billingEmail: billing.billingEmail || form.email }) };
-      const res = await apiFetch<ClientRow>("/sales/clients", { method: "POST", body: JSON.stringify(body) });
+      const res = quick
+        ? await apiFetch<ClientRow>("/sales/clients/quick", { method: "POST", body: JSON.stringify({ name: q.name.trim(), phone: q.phone.trim(), email: q.email.trim() || null }) })
+        : await apiFetch<ClientRow>("/sales/clients", { method: "POST", body: JSON.stringify({ ...form, phone: form.phone || null, billing: billingBody({ ...billing, legalName: billing.legalName || form.companyName, billingEmail: billing.billingEmail || form.email }) }) });
       // Put the new client in every cached client list now (so the select can show it), then refetch.
       await mutate((key) => typeof key === "string" && key.startsWith("/sales/clients") && !key.startsWith("/sales/clients/"), (list?: ClientRow[]) => (list ? [...list, res.data] : list), { revalidate: true });
       onCreated(res.data);
@@ -66,6 +75,38 @@ export function NewClientDialog({ onClose, onCreated }: { onClose: () => void; o
       setError(errorSentence(err));
       setBusy(false);
     }
+  }
+
+  if (quick) {
+    return (
+      <ModalPortal>
+        <div className="fixed inset-0 z-[70] bg-black/70 grid place-items-center p-4 overflow-y-auto">
+          <form onSubmit={create} className="card p-4 sm:p-6 w-full max-w-md my-auto grid grid-cols-[minmax(0,1fr)] gap-4 text-sm" role="dialog" aria-modal="true" aria-labelledby="new-client-title">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="new-client-title" className="font-extrabold text-lg">Add client</h3>
+                <p className="text-ink-3 text-xs mt-1">Just the basics — add GST and address later from Clients. Everything already typed here stays.</p>
+              </div>
+              <button type="button" className="text-ink-3 hover:text-white" aria-label="Close" disabled={busy} onClick={onClose}><X size={18} /></button>
+            </div>
+            <Field label="Client name"><input className="input" required minLength={2} maxLength={200} autoFocus placeholder="e.g. Red Chillies" value={q.name} onChange={(e) => setQ({ ...q, name: e.target.value })} /></Field>
+            <Field label="Contact number"><input className="input" type="tel" required minLength={6} maxLength={30} placeholder="e.g. 98200 12345" value={q.phone} onChange={(e) => setQ({ ...q, phone: e.target.value })} /></Field>
+            <Field label="Email (optional)"><input className="input" type="email" value={q.email} onChange={(e) => setQ({ ...q, email: e.target.value })} /></Field>
+            <p className="text-xs text-ink-4">Saved to the Clients list. No portal login is created.</p>
+            {error && <p className="text-danger text-sm" role="alert">{error}</p>}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button type="button" className="text-xs text-ink-3 underline hover:text-white" disabled={busy} onClick={() => { setQuick(false); setError(null); setForm((f) => ({ ...f, companyName: f.companyName || q.name, contactName: f.contactName || q.name, phone: f.phone || q.phone, email: f.email || q.email })); }}>
+                Have full details? Use the full form
+              </button>
+              <div className="flex gap-2">
+                <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>Cancel</button>
+                <button type="submit" className="btn" disabled={busy}>{busy ? "Adding…" : "Add and select"}</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </ModalPortal>
+    );
   }
 
   return (
@@ -95,9 +136,16 @@ export function NewClientDialog({ onClose, onCreated }: { onClose: () => void; o
             </section>
           </div>
           {error && <p className="text-danger text-sm" role="alert">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn" disabled={busy}>{busy ? "Creating…" : "Create and select"}</button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {quickFirst ? (
+              <button type="button" className="text-xs text-ink-3 underline hover:text-white" disabled={busy} onClick={() => { setQuick(true); setError(null); }}>
+                Don&apos;t have all this? Use the short form
+              </button>
+            ) : <span />}
+            <div className="flex gap-2">
+              <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn" disabled={busy}>{busy ? "Creating…" : "Create and select"}</button>
+            </div>
           </div>
         </form>
       </div>

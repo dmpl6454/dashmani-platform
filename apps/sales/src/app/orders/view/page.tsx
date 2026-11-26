@@ -72,7 +72,7 @@ function OrderView() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 grid gap-4">
           <section className="card p-4 text-sm grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Client</div><Link href={`/clients/view?id=${o.clientId}`} className="font-bold hover:text-indigo-light">{o.client.billingProfile?.legalName ?? o.client.companyName}</Link><div className="text-ink-3 text-xs">{o.client.contactName} · {o.client.email}</div></div>
+            <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Client</div><Link href={`/clients/view?id=${o.clientId}`} className="font-bold hover:text-indigo-light">{o.client.billingProfile?.legalName ?? o.client.companyName}</Link><div className="text-ink-3 text-xs">{[o.client.contactName, o.client.email || "no email yet"].join(" · ")}</div></div>
             <div><div className="text-[11px] uppercase tracking-[0.1em] text-ink-3">Terms</div><div>{titleCase(o.campaignType)} · {o.taxMode === "intra" ? "CGST + SGST" : o.taxMode === "inter" ? "IGST" : "No GST"} {o.gstRateBp / 100}%{o.poNumber ? ` · PO ${o.poNumber}` : ""}</div><div className="text-ink-3 text-xs">{o.startDate || o.endDate ? `${fmtDate(o.startDate)} → ${fmtDate(o.endDate)} · ` : ""}created {fmtDate(o.createdAt)}{o.quoteId && <> · <Link href={`/quotes/view?id=${o.quoteId}`} className="hover:text-white">from quote</Link></>}</div></div>
           </section>
           <DocumentLines doc={o} lineExtra={(it) => <LineDelivery orderId={o.id} item={it} locked={locked || o.status === "draft"} onDone={refresh} />} />

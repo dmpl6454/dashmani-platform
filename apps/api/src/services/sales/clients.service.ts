@@ -7,7 +7,7 @@ import { AppError } from "../../middleware/error-handler";
 import { logSalesEvent, dateToDay, type Tx } from "./common";
 import { clearProfileTan, setTan } from "./recon/tan";
 import { deriveInvoice, invoiceSummarySelect } from "./invoices.service";
-import { todayIST, type CompanyKey } from "@dashmani/shared";
+import { todayIST, type CompanyKey, type SalesClientQuickCreateInput } from "@dashmani/shared";
 import * as team from "../client-team.service";
 import { listClientProjects } from "../pipeline/projects.service";
 
@@ -89,10 +89,10 @@ export async function getSalesClient(id: string) {
 const EMAIL_IN_USE = "This email already signs in to the client portal (as a client or a team login)";
 
 export async function createSalesClient(
-  input: { companyName: string; contactName: string; email: string; phone?: string | null; billing?: ClientBillingProfileInput | null },
+  input: { companyName: string; contactName: string; email: string | null; phone?: string | null; billing?: ClientBillingProfileInput | null },
   actorId: string,
 ) {
-  if (await team.emailInUse(input.email)) throw new AppError(409, "EMAIL_EXISTS", EMAIL_IN_USE);
+  if (input.email && (await team.emailInUse(input.email))) throw new AppError(409, "EMAIL_EXISTS", EMAIL_IN_USE);
   const passwordHash = await hash(crypto.randomBytes(32).toString("hex"), 12);
   const client = await prisma.$transaction(async (tx) => {
     const created = await tx.client.create({
@@ -109,6 +109,33 @@ export async function createSalesClient(
     return tx.client.findUniqueOrThrow({ where: { id: created.id }, select: clientSelect });
   });
   return { ...client, counts: { quotes: 0, orders: 0, invoices: 0 }, outstandingPaise: 0 };
+}
+
+/**
+ * Quick add: name + contact number, email optional (owner ask 2026-11-26 — at the start nobody
+ * has the full details). The name is both the company and the contact person until someone
+ * fills the full profile. No email = NULL (never a made-up address); like every sales-created
+ * client the row gets an unusable random password, so no login exists either way.
+ */
+export async function createSalesQuickClient(input: SalesClientQuickCreateInput, actorId: string) {
+  return createSalesClient({ companyName: input.name, contactName: input.name, email: input.email ?? null, phone: input.phone }, actorId);
+}
+
+/**
+ * The FIRST email of a client added without one (sales staff, not only admins): no login can
+ * exist behind a NULL email, so nothing moves. A client that already has an email changes it
+ * through changeSalesClientEmail (sales admins only) — 409 HAS_EMAIL here.
+ */
+export async function setFirstSalesClientEmail(id: string, email: string, actorId: string) {
+  const existing = await prisma.client.findUnique({ where: { id }, select: { id: true, email: true } });
+  if (!existing) throw new AppError(404, "NOT_FOUND", "Client not found");
+  if (existing.email) throw new AppError(409, "HAS_EMAIL", "This client already has an email — ask a sales admin to change it");
+  if (await team.emailInUse(email)) throw new AppError(409, "EMAIL_EXISTS", EMAIL_IN_USE);
+  await prisma.$transaction(async (tx) => {
+    await tx.client.update({ where: { id }, data: { email } });
+    await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "client_email_changed", note: `(none) → ${email}` });
+  });
+  return getSalesClient(id);
 }
 
 /** Company name, contact person and phone. Never the email — see changeSalesClientEmail. */
@@ -159,12 +186,12 @@ export async function updateSalesClientProfile(
 export async function changeSalesClientEmail(id: string, email: string, actorId: string) {
   const existing = await prisma.client.findUnique({ where: { id }, select: { id: true, email: true } });
   if (!existing) throw new AppError(404, "NOT_FOUND", "Client not found");
-  if (existing.email.toLowerCase() === email.toLowerCase()) return getSalesClient(id);
+  if (existing.email?.toLowerCase() === email.toLowerCase()) return getSalesClient(id);
   if (await team.emailInUse(email)) throw new AppError(409, "EMAIL_EXISTS", EMAIL_IN_USE);
   await prisma.$transaction(async (tx) => {
     await tx.client.update({ where: { id }, data: { email } });
     await tx.clientRefreshToken.deleteMany({ where: { clientId: id, clientUserId: null } });
-    await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "client_email_changed", note: `${existing.email} → ${email}` });
+    await logSalesEvent(tx, { entityType: "client", entityId: id, actorId, action: "client_email_changed", note: `${existing.email ?? "(none)"} → ${email}` });
   });
   return getSalesClient(id);
 }

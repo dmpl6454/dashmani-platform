@@ -19,9 +19,10 @@ import { memo } from "react";
 import { useMinuteClock } from "../ui/Ago";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertCircle, CalendarClock, Ellipsis, GripVertical } from "lucide-react";
+import { AlertCircle, CalendarClock, Ellipsis, GripVertical, IndianRupee } from "lucide-react";
 import { cardStatusParts, dayMonthShort, dueState, overdueDays, type CardStatusTone, type PipelineCard, type PipelineDirectoryEntry, type PipelineMineEntry } from "@dashmani/shared";
 import { Initials } from "../ui/Initials";
+import { fmtInr } from "@/lib/format";
 
 export interface CardViewProps {
   card: PipelineCard;
@@ -103,6 +104,17 @@ export function CardFace({
           {due === "later" && card.dueDate && (
             <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full border border-border text-ink-3 text-[11.5px] font-semibold">
               <CalendarClock size={12} aria-hidden /> Due {dayMonthShort(card.dueDate, today)}
+            </span>
+          )}
+          {/* Budget (2026-11-26, sales board only — the HR board does not show it). */}
+          {card.budget != null && (
+            <span
+              title="Budget"
+              className="inline-flex items-center gap-0.5 h-6 px-2 rounded-full bg-success-bg text-success text-[11.5px] font-bold tabular-nums"
+            >
+              <IndianRupee size={11} aria-hidden />
+              <span className="sr-only">Budget </span>
+              {fmtInr(card.budget * 100, { whole: true }).replace(/^₹\s?/, "")}
             </span>
           )}
           {card.linkedClient && (

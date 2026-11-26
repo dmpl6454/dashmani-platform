@@ -123,6 +123,8 @@ export interface PipelineCard {
   preview: string[];
   /** The client the project is for, or null. Optional: older API builds omit it. */
   linkedClient?: PipelineClientRef | null;
+  /** Budget in whole rupees, or null (2026-11-26). Optional: older API builds omit it. */
+  budget?: number | null;
   /** Progress at a glance for the board card (2026-11-23). Optional: older API builds and list rows omit it. */
   summary?: PipelineCardSummary;
   /** Only on archived / deleted list rows. */
@@ -186,6 +188,8 @@ export interface PipelineHeader {
   updatedAt: PipelineTimestamp;
   /** The client the project is for, or null. Optional: older API builds omit it. */
   linkedClient?: PipelineClientRef | null;
+  /** Budget in whole rupees, or null. Only the creator (`createdById`) may change it. Optional: older API builds omit it. */
+  budget?: number | null;
   /** "project" (the board), "channel" or "dm" — sales-portal chat. Optional: older API builds omit it. */
   kind?: PipelineConversationKind;
   /** Private channels and DMs are readable by their participants only. */
@@ -454,6 +458,8 @@ export interface PipelineCreateProjectRequest {
   memberIds?: string[];
   /** The client company the project is for (not `clientId`, the idempotency key). */
   linkedClientId?: string | null;
+  /** Budget in whole rupees. */
+  budget?: number | null;
 }
 
 export interface PipelineCreateProjectResponse {
@@ -483,6 +489,8 @@ export interface PipelineEditableFields {
   dueDate?: PipelineDay | null;
   /** The client the project is for; null clears it. */
   linkedClientId?: string | null;
+  /** Budget in whole rupees; null clears it. Creator only (403 BUDGET_CREATOR_ONLY). */
+  budget?: number | null;
 }
 
 export interface PipelineEditProjectRequest {

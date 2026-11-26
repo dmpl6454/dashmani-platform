@@ -179,6 +179,19 @@ export const salesClientCreateSchema = z.object({
   billing: clientBillingProfileSchema.optional().nullable(),
 });
 
+/**
+ * Quick add (2026-11-26, owner ask): a client the team knows only by name and contact number.
+ * The email is optional and only ever a REAL address — without one `clients.email` is NULL
+ * (scripts/budget-quick-client-ddl.sql); no placeholder is ever stored. It can be added later
+ * with PUT /sales/clients/:id/first-email.
+ */
+export const salesClientQuickCreateSchema = z.object({
+  name: safeString.pipe(z.string().min(2, "Enter the client's name").max(200)),
+  phone: safeString.pipe(z.string().min(6, "Enter a contact number").max(30)),
+  email: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? null : v), normalizedEmail.nullable().optional()),
+});
+export type SalesClientQuickCreateInput = z.infer<typeof salesClientQuickCreateSchema>;
+
 /** Editing a client's details from sales. The email is NOT here: it is the owner's portal
  *  sign-in, so it changes only through salesClientEmailSchema (sales admins). */
 export const salesClientUpdateSchema = z.object({

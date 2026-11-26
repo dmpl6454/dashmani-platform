@@ -37,6 +37,10 @@ const COLUMNS: Record<string, string[]> = {
     "linked_client_id",
     // Channels and DMs (scripts/pipeline-chat-ddl.sql, 2026-11-03).
     "kind", "is_private", "dm_key", "parent_project_id",
+    // The board card's "current status" note (scripts/pipeline-docs-ddl.sql, 2026-11-23).
+    "status_note", "status_note_at", "status_note_by_id",
+    // The project budget in whole rupees (scripts/budget-quick-client-ddl.sql, 2026-11-26).
+    "budget_inr",
   ],
   pipeline_participants: [
     "project_id", "user_id", "role", "notify", "last_read_seq", "seen_at", "engaged_at",
@@ -116,6 +120,10 @@ const FOREIGN_KEYS = [
   "pipeline_version_comments.project_id -> pipeline_projects : c",
   "pipeline_version_comments.version_id -> pipeline_versions : c",
   "pipeline_shoots.project_id -> pipeline_projects : n",
+  // Documents (scripts/pipeline-docs-ddl.sql): a document goes with its project; no FK into users.
+  "pipeline_documents.project_id -> pipeline_projects : c",
+  // Activity timeline (same script, 2026-11-24).
+  "pipeline_activity.project_id -> pipeline_projects : c",
 ];
 
 describe("pipeline schema (spec §2)", () => {

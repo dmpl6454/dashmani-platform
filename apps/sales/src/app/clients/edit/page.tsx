@@ -36,9 +36,9 @@ function EditClient() {
     setBilling(
       client.billingProfile
         ? ({ ...EMPTY_BILLING, ...Object.fromEntries(Object.entries(client.billingProfile).map(([k, v]) => [k, v ?? ""])) } as BillingProfile)
-        : { ...EMPTY_BILLING, legalName: client.companyName, billingEmail: client.email },
+        : { ...EMPTY_BILLING, legalName: client.companyName, billingEmail: client.email ?? "" },
     );
-    setEmail(client.email);
+    setEmail(client.email ?? "");
     setLoadedTan(client.billingProfile?.tan ?? null);
     setLoadedFor(client.id);
   }, [client, loadedFor]);
@@ -65,13 +65,15 @@ function EditClient() {
     }
   }
 
+  const noEmail = !client.email;
   async function changeEmail(e: React.FormEvent) {
     e.preventDefault();
     setEmailBusy(true);
     try {
-      await apiFetch(`/sales/clients/${id}/email`, { method: "PUT", body: JSON.stringify({ email }) });
+      // A quick-added client has no real email yet: its first one is set by any sales user.
+      await apiFetch(`/sales/clients/${id}/${noEmail ? "first-email" : "email"}`, { method: "PUT", body: JSON.stringify({ email }) });
       await mutate();
-      setToast({ message: "Email changed. The client's portal sign-in now uses the new address.", tone: "ok" });
+      setToast({ message: noEmail ? "Email added." : "Email changed. The client's portal sign-in now uses the new address.", tone: "ok" });
     } catch (err) {
       const status = (err as { status?: number }).status;
       setToast({ message: status === 403 ? "Only a sales admin can change a client's sign-in email." : errorSentence(err), tone: "err" });
@@ -103,10 +105,14 @@ function EditClient() {
         </div>
       </form>
       <form onSubmit={changeEmail} className="card p-4 grid grid-cols-[minmax(0,1fr)] gap-3 text-sm mt-4 max-w-xl">
-        <h2 className="font-bold">Sign-in email</h2>
+        <h2 className="font-bold">{noEmail ? "Add email" : "Sign-in email"}</h2>
         <Field label="Email"><input className="input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+        {noEmail ? (
+          <p className="text-xs text-ink-4">This client was added without an email. Add it once you have it — it becomes their contact email (and their portal sign-in if you later give them a login).</p>
+        ) : (
         <p className="text-xs text-ink-4">This is the client owner&apos;s portal sign-in as well as their contact email. Changing it moves their sign-in to the new address and signs out sessions under the old one. Sales admins only; saved separately from the profile above.</p>
-        <div><button type="submit" className="btn btn-light" disabled={emailBusy || email.trim().toLowerCase() === client.email.toLowerCase()}>{emailBusy ? "Saving…" : "Change email"}</button></div>
+        )}
+        <div><button type="submit" className="btn btn-light" disabled={emailBusy || !email.trim() || email.trim().toLowerCase() === (client.email ?? "").toLowerCase()}>{emailBusy ? "Saving…" : noEmail ? "Add email" : "Change email"}</button></div>
       </form>
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
     </>

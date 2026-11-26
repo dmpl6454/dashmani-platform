@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { PortalLink } from "@/components/portal-link";
+import { PipelineDashboard } from "@/components/pipeline-dashboard";
 import { useDashboard } from "@/lib/hooks";
 import { useCreators } from "@/lib/creators";
 import { daysBetween, fmtInr, fmtDate, todayIST } from "@/lib/format";
@@ -54,6 +55,7 @@ export default function DashboardPage() {
         <Link href="/orders" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Active orders" value={d.activeOrders.count} sub={fmtInr(d.activeOrders.totalPaise, { whole: true })} /></Link>
         <Link href="/orders?status=delivered" className="min-w-0 block hover:[&>div]:border-indigo"><Stat label="Delivered, awaiting close" value={d.deliveredOrders.count} sub={fmtInr(d.deliveredOrders.totalPaise, { whole: true })} /></Link>
       </div>
+      <PipelineDashboard />
       {d.bookings && (
         <section className="card p-4 mb-8">
           <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">

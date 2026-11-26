@@ -4,14 +4,18 @@
  * delivered render as chips with the server-provided name; any other `@{id}` is grey
  * plain text ("@Name" if the directory knows the id, "@former member" only once the
  * directory has LOADED and lacks it, otherwise "@…").
+ * Attached files (`#{file:<id>}` tokens, file-tokens.ts) are cut from the text and drawn as
+ * cards under it (Attachments).
  */
 import { memo, useEffect, useMemo } from "react";
-import { tokenizeBody, type PipelineMention } from "@dashmani/shared";
+import { splitFileTokens, tokenizeBody, type PipelineMention } from "@dashmani/shared";
 import { usePipeline } from "../provider";
+import { Attachments } from "./Attachments";
 
 function MessageBodyImpl({ body, mentions, meId }: { body: string; mentions: PipelineMention[]; meId: string }) {
   const { directory, dirById, noteUnknownId } = usePipeline();
-  const tokens = useMemo(() => tokenizeBody(body), [body]);
+  const split = useMemo(() => splitFileTokens(body), [body]);
+  const tokens = useMemo(() => tokenizeBody(split.text), [split.text]);
   const delivered = useMemo(() => new Map(mentions.map((m) => [m.id, m.name])), [mentions]);
   // An id the loaded directory doesn't know triggers one throttled revalidate.
   useEffect(() => {
@@ -19,6 +23,8 @@ function MessageBodyImpl({ body, mentions, meId }: { body: string; mentions: Pip
     for (const t of tokens) if (t.kind === "mention" && !delivered.has(t.id) && !dirById.has(t.id)) noteUnknownId(t.id);
   }, [tokens, delivered, directory, dirById, noteUnknownId]);
   return (
+    <>
+    {split.text && (
     <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[14.5px] leading-relaxed text-ink">
       {tokens.map((t, i) => {
         if (t.kind === "text") return <span key={i}>{t.text}</span>;
@@ -46,6 +52,9 @@ function MessageBodyImpl({ body, mentions, meId }: { body: string; mentions: Pip
         );
       })}
     </div>
+    )}
+    <Attachments ids={split.ids} />
+    </>
   );
 }
 

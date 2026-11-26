@@ -30,8 +30,9 @@ import type {
   PipelineRepliesPage,
   PipelineSyncRequest,
   PipelineSyncResponse,
+  PipelineStatusNote,
 } from "@dashmani/shared";
-import type { pipelineWork as W } from "@dashmani/shared";
+import type { pipelineWork as W, pipelineDocs as D } from "@dashmani/shared";
 import { apiFetch, ApiError } from "@/lib/api";
 
 type Env<T> = { success: true; data: T };
@@ -125,6 +126,17 @@ export const plApi = {
   createShoot: (body: W.CreateShootInput) => call<W.PipelineShootDto>("/shoots", json("POST", body)),
   editShoot: (sid: string, body: W.EditShootInput) => call<W.PipelineShootDto>(`/shoots/${sid}`, json("PATCH", body)),
   workload: () => call<W.PipelineWorkloadDto>("/workload"),
+  setStatusNote: (id: string, text: string) =>
+    call<{ statusNote: PipelineStatusNote | null; headerRev: number }>(`/projects/${id}/status-note`, json("PUT", { text })),
+  // Chat attachments (2026-11-23): :id is the conversation; each file is a project document.
+  document: (docId: string) => call<D.PipelineDocDto>(`/documents/${docId}`),
+  documentFile: (docId: string, download: boolean) =>
+    call<{ url: string; expiresAt: string }>(`/documents/${docId}/file${download ? "?download=1" : ""}`),
+  deleteDocument: (docId: string) => call<{ id: string }>(`/documents/${docId}`, { method: "DELETE" }),
+  startAttachmentUpload: (convId: string, body: D.StartDocUploadInput) =>
+    call<W.PipelineUploadTicket>(`/projects/${convId}/attachment-uploads`, json("POST", body)),
+  addAttachment: (convId: string, body: D.AddAttachmentInput) =>
+    call<D.PipelineDocDto>(`/projects/${convId}/attachments`, json("POST", body)),
   /** Keepalive: used on leave / hide, when the page may be going away. */
   markRead: (id: string, seq: number, leaving: boolean) =>
     call<PipelineReadResponse>(`/projects/${id}/read`, json("POST", { seq, leaving }, { keepalive: true })),
@@ -154,7 +166,7 @@ const WORDS: Record<string, string> = {
   UPLOADS_OFF: "File uploads aren't switched on — paste a link to the file instead.",
   UPLOAD_NOT_FOUND: "The upload didn't finish — upload the file again.",
   UPLOAD_WRONG_TYPE: "This type of file can't be used here.",
-  UPLOAD_TOO_LARGE: "The file is too big for this kind of version.",
+  UPLOAD_TOO_LARGE: "The file is too big.",
   FILE_ALREADY_USED: "This file is already on a version.",
   NO_FILE: "This version is a link, not an uploaded file.",
   STORAGE_UNAVAILABLE: "Couldn't reach file storage — try again in a moment.",
@@ -200,6 +212,11 @@ const WORDS: Record<string, string> = {
   DELIVERABLE_PUBLISHED: "A published page is kept as a record — mark it cancelled instead.",
   TOO_MANY_VERSIONS: "This project has the most versions it can hold.",
   TOO_MANY_DELIVERABLES: "This project has the most pages it can hold.",
+  ATTACH_NOT_HERE: "Files can be shared in a project's chat.",
+  ATTACH_PRIVATE: "Files can't be shared in a private channel — share them in the project's chat.",
+  DOCUMENT_NOT_FOUND: "That file was removed.",
+  DOCS_NOT_READY: "Files are waiting for a one-time server update — try again later.",
+  TOO_MANY_DOCUMENTS: "This project has the most files it can hold.",
   USAGE_RESTRICTED: "A file's embargo or licence doesn't allow it to go live then — check its Usage & rights.",
   TOO_MANY_COMMENTS: "This version has the most comments it can hold.",
   COMMENT_NOT_FOUND: "That comment no longer exists.",
@@ -221,5 +238,12 @@ export function describeError(e: unknown): string {
   if (s === 0) return "Couldn't reach the server — check your connection and try again.";
   if (s === 503 || e.code === "PIPELINE_BUSY") return "The server is busy — try again in a few seconds.";
   if (s >= 500) return "The server had a problem — try again in a moment.";
+  // No word for this code: say what the status means instead of a bare "didn't work".
+  if (s === 401) return "Your session ended — sign in again.";
+  if (s === 403) return "You don't have access to this.";
+  if (s === 404) return "This isn't available right now — reload the page (the portal may have just been updated).";
+  if (s === 409) return "Someone else changed this just now — reload and try again.";
+  if (s === 413) return "That's too big to send.";
+  if (s === 400) return "Some details need fixing.";
   return "That didn't work — please try again.";
 }

@@ -166,6 +166,16 @@ export const listProjectsQuerySchema = z.object({
 
 // ── Route #5: POST /pipeline/projects ────────────────────────────────────────────────
 
+/** A project budget in whole rupees (0 – ₹100 crore); null clears it. */
+export const PIPELINE_BUDGET_MAX = 1_000_000_000;
+const pipelineBudget = z
+  .number({ invalid_type_error: "Enter the budget as a number" })
+  .int("Enter the budget in whole rupees")
+  .min(0, "The budget can't be negative")
+  .max(PIPELINE_BUDGET_MAX, "That budget is too large")
+  .nullable()
+  .optional();
+
 export const createProjectSchema = z
   .object({
     clientId: pipelineId,
@@ -177,6 +187,7 @@ export const createProjectSchema = z
     memberIds: pipelineIdArray(PIPELINE_LIMITS.membersPerRequestMax).optional(),
     /** The client company the project is for (not `clientId`, the idempotency key). */
     linkedClientId: pipelineId.nullable().optional(),
+    budget: pipelineBudget,
   })
   .superRefine(checkDateOrder);
 
@@ -192,9 +203,10 @@ const editableFields = z.object({
   startDate: optionalDate,
   dueDate: optionalDate,
   linkedClientId: pipelineId.nullable().optional(),
+  budget: pipelineBudget,
 });
 
-export const EDITABLE_PROJECT_FIELDS = ["title", "description", "startDate", "dueDate", "linkedClientId"] as const;
+export const EDITABLE_PROJECT_FIELDS = ["title", "description", "startDate", "dueDate", "linkedClientId", "budget"] as const;
 
 export const editProjectSchema = z
   .object({ changes: editableFields, base: editableFields })

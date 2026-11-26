@@ -23,6 +23,7 @@ import type { ZodSchema } from "zod";
 import {
   pipelineValidators as V,
   pipelineWork as WK,
+  pipelineDocs as DOCS,
   PIPELINE_LIMITS,
   PIPELINE_REACTION_EMOJI,
   PIPELINE_REACTION_KEYS,
@@ -80,6 +81,20 @@ import {
   type WorkActor,
 } from "../services/pipeline/work.service";
 import { listShoots, createShoot, editShoot, getWorkload } from "../services/pipeline/shoots.service";
+import {
+  listDocuments,
+  addDocument,
+  editDocument,
+  deleteDocument,
+  startDocumentUpload,
+  documentFileUrl,
+  startAttachmentUpload,
+  addAttachment,
+  getDocument,
+} from "../services/pipeline/documents.service";
+import { setStatusNote, statusNoteSchema } from "../services/pipeline/status-note.service";
+import { getPipelineDashboard } from "../services/pipeline/dashboard.service";
+import { listActivity } from "../services/pipeline/activity.service";
 import { pipelineStats } from "../services/pipeline/stats";
 import {
   addChannelMembers,
@@ -682,6 +697,125 @@ router.get(
 );
 
 // ══ end work tracking block ═══════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════════════════
+// Project documents (2026-11-20): pitch deck, brief, quote, report — kept on the project,
+// never in the chat. services/pipeline/documents.service.ts.
+// ══════════════════════════════════════════════════════════════════════════════════════
+
+// GET /pipeline/projects/:id/documents
+router.get(
+  "/pipeline/projects/:id/documents",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await listDocuments(await getPipelineDirectory(), req.params.id, actorOf(req).userId))),
+);
+
+// POST /pipeline/projects/:id/documents
+router.post(
+  "/pipeline/projects/:id/documents",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(DOCS.addDocSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await addDocument(await workActorOf(req), req.params.id, req.body), 201)),
+);
+
+// POST /pipeline/projects/:id/document-uploads — a signed PUT URL for a document file
+router.post(
+  "/pipeline/projects/:id/document-uploads",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(DOCS.startDocUploadSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await startDocumentUpload(await workActorOf(req), req.params.id, req.body), 201),
+  ),
+);
+
+// PATCH /pipeline/documents/:docId
+router.patch(
+  "/pipeline/documents/:docId",
+  ...G,
+  pv(DOCS.docParamsSchema, "params"),
+  pv(DOCS.editDocSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await editDocument(await workActorOf(req), req.params.docId, req.body))),
+);
+
+// DELETE /pipeline/documents/:docId (a sent one: owner or admin only)
+router.delete(
+  "/pipeline/documents/:docId",
+  ...G,
+  pv(DOCS.docParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await deleteDocument(await workActorOf(req), req.params.docId))),
+);
+
+// GET /pipeline/documents/:docId/file?download=1 — a short-lived link to the uploaded file
+router.get(
+  "/pipeline/documents/:docId/file",
+  ...G,
+  pv(DOCS.docParamsSchema, "params"),
+  pv(DOCS.docFileQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    return ok(res, await documentFileUrl(actorOf(req).userId, req.params.docId, req.query.download === "1"));
+  }),
+);
+
+// GET /pipeline/documents/:docId — one document (a chat attachment card)
+router.get(
+  "/pipeline/documents/:docId",
+  ...G,
+  pv(DOCS.docParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await getDocument(await getPipelineDirectory(), actorOf(req).userId, req.params.docId))),
+);
+
+// POST /pipeline/projects/:id/attachment-uploads — :id is the conversation (project or campaign channel)
+router.post(
+  "/pipeline/projects/:id/attachment-uploads",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(DOCS.startDocUploadSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await startAttachmentUpload(await workActorOf(req), req.params.id, req.body), 201),
+  ),
+);
+
+// POST /pipeline/projects/:id/attachments — files the uploaded object; the client then sends the message
+router.post(
+  "/pipeline/projects/:id/attachments",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(DOCS.addAttachmentSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await addAttachment(await workActorOf(req), req.params.id, req.body), 201)),
+);
+
+// GET /pipeline/dashboard — the sales Dashboard's Pipeline section (literal path)
+router.get(
+  "/pipeline/dashboard",
+  ...G,
+  asyncHandler(async (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store");
+    return ok(res, await getPipelineDashboard(await getPipelineDirectory()));
+  }),
+);
+
+// GET /pipeline/projects/:id/activity — the project's timeline (separate from the chat)
+router.get(
+  "/pipeline/projects/:id/activity",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await listActivity(await getPipelineDirectory(), req.params.id))),
+);
+
+// PUT /pipeline/projects/:id/status-note — the one-line "current status" on the board card
+router.put(
+  "/pipeline/projects/:id/status-note",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(statusNoteSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await setStatusNote(actorOf(req), req.params.id, req.body))),
+);
+
+// ══ end documents block ═══════════════════════════════════════════════════════════════
 
 // ── Unknown /pipeline paths (keep LAST, just above the error middleware) ─────────────
 // Behind G0 so an anonymous or wrong-portal caller learns nothing about which routes

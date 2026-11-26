@@ -65,7 +65,18 @@ export function putToR2(
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     };
-    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new UploadError(`The upload failed (storage answered ${xhr.status}) — try again.`)));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      reject(
+        new UploadError(
+          xhr.status === 403
+            ? "File storage refused the upload — the upload link may have expired. Try again."
+            : xhr.status === 413
+              ? "The file is too big for file storage."
+              : `The upload failed (file storage answered ${xhr.status}) — try again.`,
+        ),
+      );
+    };
     xhr.onerror = () => reject(new UploadError("The upload was interrupted — check your connection and try again."));
     xhr.onabort = () => reject(new UploadAborted("Upload cancelled."));
     if (signal.aborted) return xhr.abort();

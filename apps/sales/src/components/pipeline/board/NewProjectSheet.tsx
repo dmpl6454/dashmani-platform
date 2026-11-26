@@ -16,6 +16,7 @@ import { useToast } from "../ui/Toast";
 import { usePipeline } from "../provider";
 import { PeoplePicker } from "../project/PeoplePicker";
 import { ClientPicker } from "../project/ClientPicker";
+import { BudgetInput, parseBudget } from "../project/BudgetInput";
 import { describeError, isApiError, plApi } from "../api";
 
 const inputCls =
@@ -60,6 +61,7 @@ export function NewProjectSheet({
   const [dueDate, setDue] = useState("");
   const [members, setMembers] = useState<string[]>([]);
   const [linkedClientId, setLinkedClientId] = useState<string | null>(null);
+  const [budget, setBudget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
@@ -84,6 +86,7 @@ export function NewProjectSheet({
     setDue("");
     setMembers([]);
     setLinkedClientId(null);
+    setBudget("");
     setError(null);
     setFieldErr({});
   };
@@ -98,6 +101,8 @@ export function NewProjectSheet({
     if (!fe.startDate && !fe.dueDate && startDate && dueDate && startDate > dueDate) {
       fe.dueDate = "The due date must be on or after the start date.";
     }
+    const b = parseBudget(budget);
+    if (!b.ok) fe.budget = b.error;
     setFieldErr(fe);
     if (Object.keys(fe).length) return;
     setBusy(true);
@@ -112,6 +117,7 @@ export function NewProjectSheet({
         ...(dueDate ? { dueDate } : {}),
         ...(members.length ? { memberIds: members.filter((m) => m !== meId) } : {}),
         ...(linkedClientId ? { linkedClientId } : {}),
+        ...(b.ok && b.value != null ? { budget: b.value } : {}),
       });
       store.dispatch({ type: "cardUpsert", card: r.card });
       engine.afterWrite();
@@ -200,6 +206,7 @@ export function NewProjectSheet({
         </div>
         <ClientPicker value={linkedClientId} onChange={setLinkedClientId} />
         {fieldErr.linkedClientId && <p className="-mt-2 text-[12px] text-danger">{fieldErr.linkedClientId}</p>}
+        <BudgetInput value={budget} onChange={setBudget} disabled={busy} error={fieldErr.budget} />
         <div>
           <label htmlFor={ids.phase} className="block text-[12.5px] font-semibold text-ink-2 mb-1.5">
             Phase

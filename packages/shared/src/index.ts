@@ -30,6 +30,11 @@ export * from "./pipeline/body-tokens";
 export * from "./pipeline/compose";
 export * as pipelineValidators from "./validators/pipeline";
 export * as pipelineWork from "./pipeline/work";
+export * as pipelineDocs from "./pipeline/documents";
+export * from "./pipeline/file-tokens";
+export * from "./pipeline/card-status";
+export * from "./pipeline/dashboard";
+export * from "./pipeline/activity";
 
 // Utils
 export * from "./utils/status";
@@ -95,3 +100,5 @@ export type { SiteEnquiryInput } from "./validators/site-enquiry";
 
 // Self-serve campaign booking (client portal "Start a campaign")
 export * from "./validators/campaign";
+export * as linkAnalytics from "./link-analytics/parse";
+export * as linkAnalyticsValidators from "./validators/link-analytics";

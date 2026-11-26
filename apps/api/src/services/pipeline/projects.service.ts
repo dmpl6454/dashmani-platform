@@ -32,13 +32,14 @@ import {
 import { Prisma, type PipelineDbClient, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
-import { bumpBoard, CARD_CLIENT_COLS } from "./board";
+import { bumpBoard, CARD_CLIENT_COLS, CARD_SUMMARY_COLS } from "./board";
 import { notifier } from "./notifier";
 import { cardFromRow, day, headerFromRow, messageFromRow, participantFromRow } from "./wire";
 import type { PipelineDirectory } from "./access";
 import { isPilotUser, type PipelineSettings } from "./settings";
 import { pipelineEmailOn } from "./email-outbox";
 import { assertOwnerOrAdmin } from "../../middleware/pipeline-gates";
+import { recordActivity, recordMove } from "./activity.service";
 
 type Row = Record<string, unknown>;
 type Db = PipelineDbClient | PipelineTx;
@@ -70,7 +71,7 @@ async function readCard(db: Db, projectId: string): Promise<PipelineCard | null>
     SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
            ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                   WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}
+                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}
       FROM pipeline_projects p
      WHERE p.id = ${projectId}`;
   return rows[0] ? cardFromRow(rows[0]) : null;
@@ -119,6 +120,8 @@ export interface CreateProjectInput {
   memberIds?: string[];
   /** The client company the project is for (validated to exist). */
   linkedClientId?: string | null;
+  /** Budget in whole rupees (validated by createProjectSchema). */
+  budget?: number | null;
 }
 
 export async function createProject(
@@ -192,10 +195,10 @@ export async function createProject(
         WITH proj AS (
           INSERT INTO pipeline_projects
                  (id, client_id, title, description, owner_id, created_by_id, phase_id, rank,
-                  start_date, due_date, member_count, linked_client_id, created_at, updated_at)
+                  start_date, due_date, member_count, linked_client_id, budget_inr, created_at, updated_at)
           VALUES (${id}, ${input.clientId}, ${input.title}, ${input.description ?? ""}, ${me}, ${me}, ${targetPhase}, ${rank},
                   ${input.startDate ?? null}::date, ${input.dueDate ?? null}::date, ${everyone.length},
-                  ${linkedClientId}::text, timezone('utc', now()), timezone('utc', now()))
+                  ${linkedClientId}::text, ${input.budget ?? null}::int, timezone('utc', now()), timezone('utc', now()))
           RETURNING id, created_at),
         parts AS (
           INSERT INTO pipeline_participants
@@ -222,6 +225,7 @@ export async function createProject(
         addedUserIds: memberIds,
         email: pipelineEmailOn(actor.settings),
       });
+      await recordActivity(tx, { projectId: id, kind: "created", actorId: me, data: { phase: String(s1.phase_name ?? "") } });
 
       const card: PipelineCard = {
         id,
@@ -234,6 +238,7 @@ export async function createProject(
         memberCount: everyone.length,
         preview: everyone.slice(0, 3),
         linkedClient: linkedClientId ? { id: linkedClientId, companyName: linkedClientName ?? "" } : null,
+        budget: input.budget ?? null,
       };
       return { card };
     });
@@ -492,16 +497,17 @@ export async function getProjectDetail(
 
 // ── Route #7: field edits (spec §6 "Field edits") ────────────────────────────────────
 
-type EditKey = "title" | "description" | "startDate" | "dueDate" | "linkedClientId";
-const EDIT_KEYS: readonly EditKey[] = ["title", "description", "startDate", "dueDate", "linkedClientId"];
+type EditKey = "title" | "description" | "startDate" | "dueDate" | "linkedClientId" | "budget";
+const EDIT_KEYS: readonly EditKey[] = ["title", "description", "startDate", "dueDate", "linkedClientId", "budget"];
 
-function editableOf(h: PipelineHeader): Record<EditKey, string | null> {
+function editableOf(h: PipelineHeader): Record<EditKey, string | number | null> {
   return {
     title: h.title,
     description: h.description,
     startDate: h.startDate,
     dueDate: h.dueDate,
     linkedClientId: h.linkedClient?.id ?? null,
+    budget: h.budget ?? null,
   };
 }
 
@@ -517,7 +523,7 @@ async function assertClientExists(db: Db, clientId: string): Promise<string> {
  * Per field: a conflict iff `current ≠ base AND current ≠ desired` (someone else changed
  * it to something else). Fields already at the desired value are skipped, so a retry is a
  * no-op. The date order is checked on the merged result, against the STORED other date.
- * The board is bumped only when the title, a date or the linked client changed.
+ * The board is bumped only when the title, a date, the linked client or the budget changed.
  */
 export async function editProject(
   actor: PipelineActor,
@@ -546,8 +552,14 @@ export async function editProject(
       }
       changed.push(k);
     }
-    const start = changes.startDate !== undefined ? changes.startDate : cur.startDate;
-    const due = changes.dueDate !== undefined ? changes.dueDate : cur.dueDate;
+    // The budget is the creator's number (owner decision 2026-11-26): anyone may read it, only the
+    // person who created the project may set or change it — not the owner after a transfer, not
+    // an admin. Checked only when it would actually change, so a retry stays a no-op.
+    if (changed.includes("budget") && String(row.created_by_id) !== actor.userId) {
+      throw new PipelineError(403, "BUDGET_CREATOR_ONLY", "Only the person who created this project can change its budget");
+    }
+    const start = (changes.startDate !== undefined ? changes.startDate : cur.startDate) as string | null;
+    const due = (changes.dueDate !== undefined ? changes.dueDate : cur.dueDate) as string | null;
     if (start && due && start > due) {
       throw new PipelineError(400, "DATE_ORDER", "The due date can't be before the start date");
     }
@@ -562,6 +574,7 @@ export async function editProject(
              start_date  = CASE WHEN ${has("startDate")}::boolean THEN ${changes.startDate ?? null}::date ELSE start_date END,
              due_date    = CASE WHEN ${has("dueDate")}::boolean THEN ${changes.dueDate ?? null}::date ELSE due_date END,
              linked_client_id = CASE WHEN ${has("linkedClientId")}::boolean THEN ${changes.linkedClientId ?? null}::text ELSE linked_client_id END,
+             budget_inr  = CASE WHEN ${has("budget")}::boolean THEN ${changes.budget ?? null}::int ELSE budget_inr END,
              -- D1: onDueChanged (below, same transaction) withdraws the old date's due-soon /
              -- overdue rows, so the markers go too: an A → B → A change must re-arm the A alert
              -- it just deleted (IS DISTINCT FROM re-arms B by itself). Such a flip re-alerts A in
@@ -583,14 +596,14 @@ export async function editProject(
         actorName: actor.name,
         allow: allowList(actor.settings),
         email,
-        fromDue: cur.dueDate,
+        fromDue: cur.dueDate as string | null,
         toDue: header.dueDate,
         phaseName: String(updated.phase_name ?? ""),
       });
     }
     return {
       header,
-      boardChanged: has("title") || has("startDate") || has("dueDate") || has("linkedClientId"),
+      boardChanged: has("title") || has("startDate") || has("dueDate") || has("linkedClientId") || has("budget"),
     };
   }, { retryOnce: true });
   if (out.boardChanged) await bumpBoard();
@@ -755,7 +768,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
    RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
              ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                     WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                    ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`;
+                    ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}`;
 
     if (phaseChanged) {
       await notifier.onMoved(tx, {
@@ -775,6 +788,15 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
         toTerminal,
         dueDate: day(row.due_date),
         email,
+      });
+      // The timeline records the step just made (curPhase → toPhase); recordMove merges a quick run.
+      await recordMove(tx, {
+        projectId,
+        actorId: me,
+        fromId: curPhase,
+        fromName: fromPhaseId === curPhase ? String(s2.from_name ?? "") : null,
+        toId: toPhaseId,
+        toName: String(s2.phase_name ?? ""),
       });
     }
     return { card: cardFromRow(updated), placementAdjusted, changed: true };
@@ -895,7 +917,7 @@ export async function unarchiveProject(actor: PipelineActor, projectId: string):
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                       WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`,
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}`,
     );
     return { card, adjusted: to.adjusted, changed: true };
   });
@@ -930,7 +952,7 @@ export async function restoreProject(actor: PipelineActor, projectId: string): P
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
                ARRAY(SELECT pp.user_id FROM pipeline_participants pp
                       WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
-                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}`,
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview, ${CARD_CLIENT_COLS}, ${CARD_SUMMARY_COLS}`,
     );
     return { card, adjusted: to.adjusted, changed: true };
   });

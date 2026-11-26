@@ -37,10 +37,10 @@ export interface BillingProfile {
   tan?: string | null;
 }
 export interface ClientRow {
-  id: string; companyName: string; contactName: string; email: string; phone: string | null; status: string; createdAt: string;
+  id: string; companyName: string; contactName: string; email: string | null; phone: string | null; status: string; createdAt: string;
   billingProfile: BillingProfile | null; outstandingPaise: number; counts?: { quotes: number; orders: number; invoices: number };
 }
-export interface ClientBrief { id: string; companyName: string; contactName?: string; email?: string; billingProfile?: { legalName: string; gstin?: string | null; stateCode?: string | null } | null }
+export interface ClientBrief { id: string; companyName: string; contactName?: string; email?: string | null; billingProfile?: { legalName: string; gstin?: string | null; stateCode?: string | null } | null }
 
 export interface LineItem {
   id?: string; position?: number; kind: "placement" | "custom"; targetType?: string | null; targetId?: string | null; platform?: string | null; format?: string | null;
@@ -125,7 +125,7 @@ export interface BookingDetail {
   id: string; name: string; brand: string; objective: string | null; status: string; statusLabel: string; format: string | null; campaignType: string;
   audioIntegration: boolean; audioTrack: string | null; totalPaise: number | null; launchFrom: string | null; launchTo: string | null;
   submittedAt: string | null; paidOnline: boolean; approvedAt: string | null; deliveredAt: string | null; createdAt: string; reviewNote: string | null;
-  client: { id: string; companyName: string; contactName: string | null; email: string; billingProfile?: { legalName: string; gstin: string | null; stateCode: string | null } | null };
+  client: { id: string; companyName: string; contactName: string | null; email: string | null; billingProfile?: { legalName: string; gstin: string | null; stateCode: string | null } | null };
   items: Array<{
     id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number; audioAddonPaise: number; status: string; permalink: string | null; postedAt: string | null; live: boolean; billed: boolean;
     /** null = the booking's caption; "" on superTextOverride = no overlay on this account. */

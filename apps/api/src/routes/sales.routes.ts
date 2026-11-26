@@ -15,6 +15,7 @@ import {
   quoteUpsertSchema,
   recurringUpsertSchema,
   salesClientCreateSchema,
+  salesClientQuickCreateSchema,
   salesClientUpdateSchema,
   salesClientEmailSchema,
   salesClientProfileSchema,
@@ -31,6 +32,8 @@ import { getSellerProfile, saveSellerProfile, sellerFallback, sellerMissingField
 import { listInventory } from "../services/sales/inventory.service";
 import {
   createSalesClient,
+  createSalesQuickClient,
+  setFirstSalesClientEmail,
   updateSalesClient,
   updateSalesClientProfile,
   changeSalesClientEmail, getClientProjects, getClientStatement, getSalesClient, inviteClientLogin, listClientLogins, listSalesClients,
@@ -86,11 +89,15 @@ router.get("/sales/inventory", ...view, asyncHandler(async (_req, res) => succes
 
 router.get("/sales/clients", ...view, asyncHandler(async (req, res) => success(res, await listSalesClients(str(req.query.q)))));
 router.post("/sales/clients", ...manage, validate(salesClientCreateSchema), asyncHandler(async (req, res) => success(res, await createSalesClient(req.body, staffId(req)), undefined, 201)));
+// Quick add (name + phone, email optional) — the New project sheet's short form.
+router.post("/sales/clients/quick", ...manage, validate(salesClientQuickCreateSchema), asyncHandler(async (req, res) => success(res, await createSalesQuickClient(req.body, staffId(req)), undefined, 201)));
 router.get("/sales/clients/:id", ...view, asyncHandler(async (req, res) => success(res, await getSalesClient(req.params.id))));
 router.put("/sales/clients/:id/profile", ...manage, validate(salesClientProfileSchema), asyncHandler(async (req, res) => success(res, await updateSalesClientProfile(req.params.id, req.body, staffId(req)))));
 router.put("/sales/clients/:id", ...manage, validate(salesClientUpdateSchema), asyncHandler(async (req, res) => success(res, await updateSalesClient(req.params.id, req.body, staffId(req)))));
 // The client's email is the owner's portal sign-in: sales admins only (see changeSalesClientEmail).
 router.put("/sales/clients/:id/email", ...admin, validate(salesClientEmailSchema), asyncHandler(async (req, res) => success(res, await changeSalesClientEmail(req.params.id, req.body.email, staffId(req)))));
+// A quick-added client's FIRST real email: sales staff (no login exists behind the placeholder).
+router.put("/sales/clients/:id/first-email", ...manage, validate(salesClientEmailSchema), asyncHandler(async (req, res) => success(res, await setFirstSalesClientEmail(req.params.id, req.body.email, staffId(req)))));
 router.put("/sales/clients/:id/billing", ...manage, validate(clientBillingProfileSchema), asyncHandler(async (req, res) => success(res, await upsertClientBilling(req.params.id, req.body, staffId(req)))));
 // Portal logins: further people who sign in to the client portal as this company.
 router.get("/sales/clients/:id/logins", ...view, asyncHandler(async (req, res) => success(res, await listClientLogins(req.params.id))));

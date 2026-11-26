@@ -139,8 +139,30 @@ export function invalidatePhases(): void {
  * Every card query (here and in projects.service) selects it, so a card never loses its
  * client chip after a move, an archive or a restore.
  */
-export const CARD_CLIENT_COLS = Prisma.sql`p.linked_client_id,
+export const CARD_CLIENT_COLS = Prisma.sql`p.linked_client_id, p.budget_inr,
   (SELECT c.company_name FROM clients c WHERE c.id = p.linked_client_id) AS linked_client_name`;
+
+/**
+ * The card's progress summary (2026-11-23; `cardFromRow` → `summary`, worded by the shared
+ * `cardStatusParts`): the "current status" note, the newest non-draft document move, the newest
+ * review that is not superseded, pages live / total, and how many documents it holds. Each
+ * subquery is one index probe by project id. ⚠️ Reads pipeline_documents and the status_note columns, so
+ * scripts/pipeline-docs-ddl.sql must be on the database before this code runs (the usual
+ * apply-before-merge rule) — without it the board snapshot fails.
+ * Every write that changes one of these bumps the board (documents.service, work.service).
+ */
+export const CARD_SUMMARY_COLS = Prisma.sql`p.status_note, p.status_note_at, p.status_note_by_id,
+  (SELECT json_build_object('type', d.type, 'status', d.status, 'at', d.status_changed_at)
+     FROM pipeline_documents d
+    WHERE d.project_id = p.id AND d.status <> 'draft'
+    ORDER BY d.status_changed_at DESC, d.id DESC LIMIT 1) AS summary_doc,
+  (SELECT r.status FROM pipeline_reviews r
+    WHERE r.project_id = p.id AND r.status <> 'superseded'
+    ORDER BY r.created_at DESC, r.id DESC LIMIT 1) AS summary_review,
+  (SELECT json_build_object('live', count(*) FILTER (WHERE x.status = 'published'),
+                            'total', count(*) FILTER (WHERE x.status <> 'cancelled'))
+     FROM pipeline_deliverables x WHERE x.project_id = p.id) AS summary_pages,
+  (SELECT count(*)::int FROM pipeline_documents f WHERE f.project_id = p.id) AS summary_files`;
 
 let snapshotCache: PipelineBoardSnapshot | null = null;
 let snapshotInflight: Promise<PipelineBoardSnapshot> | null = null;
@@ -163,6 +185,7 @@ async function buildBoardSnapshot(): Promise<PipelineBoardSnapshot> {
                                  WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
                                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview,
                           ${CARD_CLIENT_COLS},
+                          ${CARD_SUMMARY_COLS},
                           count(*) OVER ()::int AS phase_total
                      FROM pipeline_projects p
                     WHERE p.phase_id = ph.id AND p.kind = 'project' AND p.archived_at IS NULL AND p.deleted_at IS NULL

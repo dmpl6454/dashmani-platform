@@ -1,7 +1,6 @@
 import { prisma } from "@dashmani/db";
 import { getCatalogue, listBookableTargets, type CatalogueTarget } from "../campaign/rate-card.service";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
-import { getPartnerNetwork, type PartnerPage } from "./partner-network";
 
 // The sellable inventory for the sales team, in two layers:
 //  1. the CLIENT CATALOGUE — exactly what client.digitalsukoon.com lists under Campaigns: the
@@ -12,15 +11,16 @@ import { getPartnerNetwork, type PartnerPage } from "./partner-network";
 //     every other active social_accounts row (Snapchat, X, the Pages and IG accounts that are
 //     tracked but not connected) — with its live numbers but no price, so a quote can still be
 //     built for it at a negotiated price. `inCatalogue` tells the two layers apart.
-//  3. the PARTNER NETWORK (owner, 2026-11-18) — external pages we buy posts on (Pinkvilla,
-//     Filmygyan…), with the prices on the owner's sheet. Sales inventory only: never in the client
-//     catalogue, no rate card, quoted as a plain placement line. `source: "partner"`.
+//  3. EXTERNAL PAGES (owner, 2026-11-18) — pages we do not own and buy posts on: the partner network
+//     (Pinkvilla, Filmygyan…) and each vendor's pages (meme, cricket…), from sales_external_pages
+//     (external-pages.service.ts). Sales inventory only: never in the client catalogue, no rate card,
+//     quoted as a plain placement line. `source: "external"`; switched-off pages are not listed.
 
 export interface InventoryOffer {
-  /** null for a partner page (it has no rate card). */
+  /** null for an external page (it has no rate card). */
   rateCardId: string | null;
   format: string;
-  /** Brand price. null only on a partner page that takes no brand posts. */
+  /** Brand price. null only on an external page that takes no brand posts. */
   pricePaise: number | null;
   entertainmentPricePaise: number | null;
   eventPricePaise: number | null;
@@ -29,10 +29,12 @@ export interface InventoryOffer {
 }
 
 export interface InventoryChannel {
-  /** "partner": targetId is the partner page's Instagram handle, not a row id. */
-  targetType: "meta_asset" | "social_account" | "partner";
-  /** network = one of our channels (connected or tracked); partner = the external partner network. */
-  source: "network" | "partner";
+  /** "external": targetId is the sales_external_pages row id. */
+  targetType: "meta_asset" | "social_account" | "external";
+  /** network = one of our channels (connected or tracked); external = a page we buy posts on. */
+  source: "network" | "external";
+  /** The vendor who sells an external page (null for our own channels and the partner network). */
+  vendorName: string | null;
   targetId: string;
   platform: string;
   name: string;
@@ -58,14 +60,30 @@ export function invalidateInventoryCache(): void {
   memo.clear();
 }
 
-/** The formats a partner page's per-post price applies to (the same three clients can book). */
-const PARTNER_FORMATS = ["reel", "post", "carousel"] as const;
+/** The formats an external page's per-post price applies to (the same three clients can book). */
+const EXTERNAL_FORMATS = ["reel", "post", "carousel"] as const;
 
-function fromPartner(p: PartnerPage): InventoryChannel {
+interface ExternalRow {
+  id: string;
+  platform: string;
+  handle: string | null;
+  name: string;
+  profileUrl: string | null;
+  followers: number | null;
+  category: string | null;
+  brandPaise: number | null;
+  entertainmentPaise: number | null;
+  eventPaise: number | null;
+  audioPaise: number | null;
+  vendor: { name: string } | null;
+}
+
+function fromExternal(p: ExternalRow): InventoryChannel {
   return {
-    targetType: "partner",
-    source: "partner",
-    targetId: p.handle,
+    targetType: "external",
+    source: "external",
+    vendorName: p.vendor?.name ?? null,
+    targetId: p.id,
     platform: p.platform,
     name: p.name,
     handle: p.handle,
@@ -81,7 +99,7 @@ function fromPartner(p: PartnerPage): InventoryChannel {
     offers:
       p.brandPaise == null && p.entertainmentPaise == null && p.eventPaise == null
         ? []
-        : PARTNER_FORMATS.map((format) => ({
+        : EXTERNAL_FORMATS.map((format) => ({
             rateCardId: null,
             format,
             pricePaise: p.brandPaise,
@@ -96,6 +114,7 @@ function fromPartner(p: PartnerPage): InventoryChannel {
 function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "category" | "bookable" | "inCatalogue"> {
   return {
     source: "network",
+    vendorName: null,
     // listBookableTargets() returns our own accounts only; creator pages are not sold here yet.
     targetType: t.targetType as InventoryChannel["targetType"],
     targetId: t.targetId,
@@ -113,7 +132,7 @@ function fromCatalogue(t: CatalogueTarget): Omit<InventoryChannel, "offers" | "c
 
 export async function listInventory(): Promise<InventoryChannel[]> {
   return memo.memo("all", async () => {
-    const [catalogue, targets, cards, accounts, partners] = await Promise.all([
+    const [catalogue, targets, cards, accounts, externals] = await Promise.all([
       getCatalogue(),
       listBookableTargets(),
       prisma.campaignRateCard.findMany(),
@@ -129,7 +148,13 @@ export async function listInventory(): Promise<InventoryChannel[]> {
           metaAssets: { where: { disconnectedAt: null }, select: { id: true }, take: 1 },
         },
       }),
-      getPartnerNetwork(),
+      prisma.salesExternalPage.findMany({
+        where: { active: true },
+        select: {
+          id: true, platform: true, handle: true, name: true, profileUrl: true, followers: true, category: true,
+          brandPaise: true, entertainmentPaise: true, eventPaise: true, audioPaise: true, vendor: { select: { name: true } },
+        },
+      }),
     ]);
     const listed = new Map(catalogue.map((e) => [`${e.targetType}:${e.targetId}`, e]));
     // Rate-card rows of channels OUTSIDE the catalogue (withdrawn prices, or a format the platform
@@ -163,6 +188,7 @@ export async function listInventory(): Promise<InventoryChannel[]> {
       out.push({
         targetType: "social_account",
         source: "network",
+        vendorName: null,
         targetId: a.id,
         platform: a.platform.slug,
         name: a.displayName || a.handle,
@@ -179,9 +205,9 @@ export async function listInventory(): Promise<InventoryChannel[]> {
         offers: byTarget.get(k) ?? [],
       });
     }
-    for (const p of partners.pages) out.push(fromPartner(p));
-    // Catalogue channels first (the client portal's own order), then partner pages, then the rest by reach.
-    const rank = (c: InventoryChannel) => (c.inCatalogue ? 2 : c.source === "partner" ? 1 : 0);
+    for (const p of externals) out.push(fromExternal(p));
+    // Catalogue channels first (the client portal's own order), then external pages, then the rest by reach.
+    const rank = (c: InventoryChannel) => (c.inCatalogue ? 2 : c.source === "external" ? 1 : 0);
     out.sort((x, y) => rank(y) - rank(x) || (y.followers ?? -1) - (x.followers ?? -1) || x.name.localeCompare(y.name));
     return out;
   });

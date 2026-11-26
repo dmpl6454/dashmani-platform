@@ -32,8 +32,9 @@
  * Snapchat channels and creator pages are never touched. Dry-run by default.
  *
  * Partner network: the file's "partners" list (external pages we buy posts on — owner decision
- * 2026-11-18: SALES INVENTORY ONLY, never offered to clients) replaces system_settings
- * "sales.partnerNetwork" (apps/api/src/services/sales/partner-network.ts). No rate cards.
+ * 2026-11-18: SALES INVENTORY ONLY, never offered to clients) is added to / refreshed in the
+ * external pages list (sales_external_pages, services/sales/external-pages.service.ts) by
+ * (platform, handle). A page already there keeps its vendor, notes and on/off switch. No rate cards.
  *
  * Run from packages/db (so Prisma loads packages/db/.env):
  *   npx tsx ../../scripts/import-campaign-rate-cards.ts --switch-off-others                        # dry run
@@ -43,7 +44,7 @@ import fs from "fs";
 import path from "path";
 import { prisma } from "@dashmani/db";
 import { listBookableTargets, invalidateCatalogueCache } from "../apps/api/src/services/campaign/rate-card.service";
-import { savePartnerNetwork, getPartnerNetwork, type PartnerPage } from "../apps/api/src/services/sales/partner-network";
+import { upsertExternalPages, type ExternalPageInput } from "../apps/api/src/services/sales/external-pages.service";
 
 const APPLY = process.argv.includes("--apply");
 const CONFIRM_PROD = process.argv.includes("--confirm-prod");
@@ -216,7 +217,7 @@ async function main() {
   for (const u of untouched) console.log(`  untouched: ${u._count._all} active ${u.platform} rate cards (${u.targetType})`);
 
   // Partner network (sales inventory only).
-  const partners: PartnerPage[] = (sheet.partners ?? []).map((p) => ({
+  const partners: ExternalPageInput[] = (sheet.partners ?? []).map((p) => ({
     handle: p.handle.toLowerCase(),
     name: p.name,
     platform: "instagram" as const,
@@ -229,11 +230,11 @@ async function main() {
     audioPaise: paise(p.audioRupees),
   }));
   if (sheet.partners) {
-    const before = await getPartnerNetwork();
-    console.log(`\nPartner network (sales inventory only): ${partners.length} pages${before.pages.length ? ` — replaces the ${before.pages.length} stored` : ""}:`);
-    const r = (v: number | null) => (v == null ? "—" : `₹${v / 100}`);
+    const plan = await upsertExternalPages(partners, "import", { dryRun: true });
+    console.log(`\nPartner network → external pages (sales inventory only): ${partners.length} pages — ${plan.created} new, ${plan.updated} changed, ${plan.unchanged} unchanged:`);
+    const r = (v: number | null | undefined) => (v == null ? "—" : `₹${v / 100}`);
     for (const p of partners) {
-      console.log(`  ${p.name.padEnd(20)} @${p.handle.padEnd(18)} brand ${r(p.brandPaise)} · ent ${r(p.entertainmentPaise)} · event ${r(p.eventPaise)} · song ${r(p.audioPaise)}`);
+      console.log(`  ${p.name.padEnd(20)} @${String(p.handle).padEnd(18)} brand ${r(p.brandPaise)} · ent ${r(p.entertainmentPaise)} · event ${r(p.eventPaise)} · song ${r(p.audioPaise)}`);
     }
   }
 
@@ -276,8 +277,8 @@ async function main() {
   console.log(`\nWrote ${written} rate cards for ${matched.length} accounts.`);
   if (SWITCH_OFF_OTHERS) console.log(`Switched off ${othersActive.length} rate cards on ${otherChannels.size} other channels.`);
   if (sheet.partners) {
-    await savePartnerNetwork({ source: sheet.source ?? FILE, updatedAt: new Date().toISOString(), pages: partners });
-    console.log(`Saved ${partners.length} partner pages to system_settings "sales.partnerNetwork".`);
+    const done = await upsertExternalPages(partners, "import");
+    console.log(`External pages: ${done.created} added, ${done.updated} updated, ${done.unchanged} unchanged.`);
   }
   console.log("The API caches the catalogue and inventory for up to a minute.");
 }

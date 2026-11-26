@@ -43,6 +43,7 @@ import { ReplySheet } from "../thread/ReplySheet";
 import { DetailsPanel } from "./DetailsPanel";
 import { ClientLinkPanel } from "./ClientLinkPanel";
 import { BudgetPanel } from "./BudgetPanel";
+import { CampaignPlanPanel } from "./CampaignPlanPanel";
 import { MembersPanel } from "./MembersPanel";
 import { WorkPanel } from "./WorkPanel";
 import { DocumentsPanel } from "./DocumentsPanel";
@@ -324,6 +325,7 @@ export function ProjectPage({ id }: { id: string }) {
       <DetailsPanel header={header} readOnly={readOnly} />
       <ClientLinkPanel header={header} readOnly={readOnly} />
       <BudgetPanel header={header} readOnly={readOnly} />
+      <CampaignPlanPanel projectId={header.id} title={header.title} readOnly={readOnly} />
       <MembersPanel header={header} participants={project!.participants} me={project!.me} can={project!.can} readOnly={readOnly} />
     </>
   ) : null;

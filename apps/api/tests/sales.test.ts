@@ -9,7 +9,6 @@ import app from "../src/app";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
 import { computeTotals, documentNumber, financialYear, numberInWords, rupeesInWords, taxModeFor, todayIST } from "@dashmani/shared";
 import { invalidateInventoryCache } from "../src/services/sales/inventory.service";
-import { savePartnerNetwork } from "../src/services/sales/partner-network";
 import { invalidateCatalogueCache } from "../src/services/campaign/rate-card.service";
 import jwt from "jsonwebtoken";
 
@@ -32,7 +31,7 @@ const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 async function seedWorld() {
   // system_settings is not in the suite's TRUNCATE list: clear the seller profile ourselves so a
   // test that saved it cannot make a later test's "profile incomplete" check pass by accident.
-  await prisma.systemSetting.deleteMany({ where: { key: { in: ["sales.seller", "sales.partnerNetwork"] } } });
+  await prisma.systemSetting.deleteMany({ where: { key: "sales.seller" } });
   await createTestRole("Sales", [
     ...["view", "create", "edit", "export", "manage"].map((action) => ({ resource: "sales", action, scope: "global" })),
     { resource: "clients", action: "view", scope: "global" },
@@ -168,43 +167,34 @@ describe("sales API", () => {
     expect(cat.body.data.map((e: { targetId: string }) => e.targetId)).toEqual(rows.filter((c) => c.inCatalogue).map((c: any) => c.targetId));
   });
 
-  it("lists the partner network (sales inventory only) with its per-type prices, never in the client catalogue", async () => {
-    await savePartnerNetwork({
-      source: "test sheet",
-      updatedAt: null,
-      pages: [
-        { handle: "pinkvilla", name: "Pinkvilla", platform: "instagram", profileUrl: "https://www.instagram.com/pinkvilla/", followers: 7_300_000, category: "Bollywood", brandPaise: 8_500_000, entertainmentPaise: 8_500_000, eventPaise: 8_500_000, audioPaise: 3_500_000 },
-        { handle: "koimoi", name: "KoiMoi", platform: "instagram", profileUrl: "https://www.instagram.com/koimoi/", followers: 700_000, category: "Bollywood", brandPaise: null, entertainmentPaise: 1_200_000, eventPaise: null, audioPaise: null },
-      ],
-    });
+  it("lists external pages (sales inventory only) with their per-type prices, never in the client catalogue", async () => {
+    const add = (body: Record<string, unknown>) => request(app).post("/v1/sales/external-pages").set(auth(salesToken)).send(body);
+    expect((await add({ handle: "@PinkVilla", name: "Pinkvilla", platform: "instagram", profileUrl: "https://www.instagram.com/pinkvilla/", followers: 7_300_000, category: "Bollywood", brandPaise: 8_500_000, entertainmentPaise: 8_500_000, eventPaise: 8_500_000, audioPaise: 3_500_000 })).status).toBe(201);
+    expect((await add({ name: "KoiMoi", platform: "instagram", profileUrl: "https://www.instagram.com/koimoi/", followers: 700_000, category: "Bollywood", entertainmentPaise: 1_200_000 })).status).toBe(201);
+    // Switched-off pages are not offered.
+    expect((await add({ handle: "oldpage", name: "Old page", platform: "instagram", brandPaise: 100_000, active: false })).status).toBe(201);
     invalidateCatalogueCache();
-    invalidateInventoryCache();
     const res = await request(app).get("/v1/sales/inventory").set(auth(salesToken));
     expect(res.status).toBe(200);
     const pink = res.body.data.find((c: any) => c.handle === "pinkvilla");
-    expect(pink).toMatchObject({ targetType: "partner", source: "partner", targetId: "pinkvilla", inCatalogue: false, bookable: false, followers: 7_300_000 });
+    expect(pink).toMatchObject({ targetType: "external", source: "external", vendorName: null, inCatalogue: false, bookable: false, followers: 7_300_000 });
     expect(pink.offers.map((o: any) => o.format).sort()).toEqual(["carousel", "post", "reel"]);
     expect(pink.offers.find((o: any) => o.format === "reel")).toMatchObject({ rateCardId: null, pricePaise: 8_500_000, eventPricePaise: 8_500_000, audioAddonPaise: 3_500_000, active: true });
     expect(pink.offers.find((o: any) => o.format === "post").audioAddonPaise).toBeNull();
-    // A partner that takes only entertainment posts has no brand price.
+    // The handle came from the profile link; a page that takes only entertainment posts has no brand price.
     expect(res.body.data.find((c: any) => c.handle === "koimoi").offers[0]).toMatchObject({ pricePaise: null, entertainmentPricePaise: 1_200_000, eventPricePaise: null });
+    expect(res.body.data.some((c: any) => c.handle === "oldpage")).toBe(false);
     // Never offered to clients: they are not rate cards.
     expect(await prisma.campaignRateCard.count()).toBe(0);
     const clientToken = jwt.sign({ userId: clientMh, email: "mh@client.test", roles: [], type: "client" }, process.env.JWT_SECRET || "dev-secret", { expiresIn: "15m" });
     const cat = await request(app).get("/v1/client/campaigns/catalogue").set(auth(clientToken));
     expect(cat.body.data).toEqual([]);
-    // A malformed stored list is ignored, never a 500.
-    await prisma.systemSetting.update({ where: { key: "sales.partnerNetwork" }, data: { value: "{not json" } });
-    invalidateInventoryCache();
-    const broken = await request(app).get("/v1/sales/inventory").set(auth(salesToken));
-    expect(broken.status).toBe(200);
-    expect(broken.body.data.some((c: any) => c.source === "partner")).toBe(false);
   });
 
   it("an event quote is accepted", async () => {
     const res = await request(app).post("/v1/sales/quotes").set(auth(salesToken)).send({
       clientId: clientMh, title: "Trailer launch", campaignType: "event",
-      items: [{ kind: "placement", description: "Pinkvilla · Instagram Reel (partner page)", accountName: "Pinkvilla", platform: "instagram", format: "reel", quantity: 1, unitPricePaise: 8_500_000 }],
+      items: [{ kind: "placement", description: "Pinkvilla · Instagram Reel (external page)", accountName: "Pinkvilla", platform: "instagram", format: "reel", quantity: 1, unitPricePaise: 8_500_000 }],
     });
     expect(res.status).toBe(201);
     expect(res.body.data.campaignType).toBe("event");

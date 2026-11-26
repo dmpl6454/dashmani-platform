@@ -65,11 +65,11 @@ export function DocumentEditor({ kind, initial, clientIdPreset }: { kind: Kind; 
   const removeItem = (i: number) => setForm((f) => ({ ...f, items: f.items.length > 1 ? f.items.filter((_, j) => j !== i) : [blankLine()] }));
 
   function addFromInventory(c: InventoryChannel, format: string, pricePaise: number, rateCardId: string | null) {
-    // A partner page is not one of our accounts: no row id to link, so the line names it instead.
-    const partner = c.targetType === "partner";
+    // An external page is not one of our accounts: no row id to link, so the line names it instead.
+    const partner = c.targetType === "external";
     const line: LineItem = {
       kind: "placement", targetType: partner ? null : c.targetType, targetId: partner ? null : c.targetId, platform: c.platform, format, rateCardId: partner ? null : rateCardId,
-      description: `${c.name} · ${platformLabel(c.platform)} ${titleCase(format)}${partner ? " (partner page)" : ""}`, accountName: c.name, accountHandle: c.handle, quantity: 1, unitPricePaise: pricePaise, discountPaise: 0,
+      description: `${c.name} · ${platformLabel(c.platform)} ${titleCase(format)}${partner ? ` (external page${c.vendorName ? ` · ${c.vendorName}` : ""})` : ""}`, accountName: c.name, accountHandle: c.handle, quantity: 1, unitPricePaise: pricePaise, discountPaise: 0,
     };
     setForm((f) => ({ ...f, items: f.items.length === 1 && !f.items[0].description && !f.items[0].unitPricePaise ? [line] : [...f.items, line] }));
     setPicker(false);
@@ -214,7 +214,7 @@ function InventoryPicker({ campaignType, onPick, onClose }: { campaignType: Camp
               return (
                 <li key={`${c.targetType}:${c.targetId}`} className="py-2 flex flex-wrap items-center gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold truncate">{c.name} <span className="text-ink-3 font-normal text-xs">{c.source === "partner" ? "Partner · " : ""}{platformLabel(c.platform)} · {fmtCompact(c.followers)} followers{c.category ? ` · ${c.category}` : ""}</span></div>
+                    <div className="font-bold truncate">{c.name} <span className="text-ink-3 font-normal text-xs">{c.source === "external" ? `External${c.vendorName ? ` (${c.vendorName})` : ""} · ` : ""}{platformLabel(c.platform)} · {fmtCompact(c.followers)} followers{c.category ? ` · ${c.category}` : ""}</span></div>
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {offers.map((o) => {

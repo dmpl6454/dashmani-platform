@@ -8,9 +8,9 @@ import { prisma } from "@dashmani/db";
 // never see them on the client portal (they are not rate cards, so the catalogue, checkout and
 // the publisher cannot reach them), and nothing is ever posted on them by us.
 //
-// Stored as one JSON document in system_settings (key below), written by
-// scripts/import-campaign-rate-cards.ts from the owner's sheet. No table, no foreign keys: a
-// partner page is not one of our accounts, so it has no social_accounts / meta_assets row.
+// ⚠️ SUPERSEDED 2026-11-18 (same day): partner pages now live in sales_external_pages with the
+// vendors' pages (external-pages.service.ts). This file only READS the old system_settings value, for
+// scripts/migrate-partner-network.ts, which copies it into the table and deletes the setting.
 
 export const PARTNER_NETWORK_KEY = "sales.partnerNetwork";
 
@@ -54,15 +54,4 @@ export async function getPartnerNetwork(): Promise<PartnerNetwork> {
     console.warn(`[sales] ${PARTNER_NETWORK_KEY} is not JSON — ignored`);
   }
   return { source: null, updatedAt: null, pages: [] };
-}
-
-/** Replaces the stored partner network (validated). */
-export async function savePartnerNetwork(input: PartnerNetwork): Promise<PartnerNetwork> {
-  const value = partnerNetworkSchema.parse(input);
-  await prisma.systemSetting.upsert({
-    where: { key: PARTNER_NETWORK_KEY },
-    create: { key: PARTNER_NETWORK_KEY, value: JSON.stringify(value) },
-    update: { value: JSON.stringify(value) },
-  });
-  return value;
 }

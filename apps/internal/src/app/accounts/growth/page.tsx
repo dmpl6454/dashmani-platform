@@ -51,9 +51,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
-import { GrowthView, TabStrip, parseTab, type GrowthTab } from "./_growth-view";
+import { DEFAULT_GROWTH_TAB, GrowthView, TabStrip, parseTab, type GrowthTab } from "./_growth-view";
 
-const TAB_STORAGE_KEY = "account-growth:tab";
+// v2 (2026-11-26): the default moved from Meta to All; a new key lets everyone see it once
+// instead of a Meta click remembered from before the change keeping them on Meta.
+const TAB_STORAGE_KEY = "account-growth:tab:v2";
 
 export default function AccountGrowthPage() {
   usePageTitle("Account Growth");
@@ -88,7 +90,7 @@ export default function AccountGrowthPage() {
           that the route deopted into client-side rendering. Same pattern as the sibling
           /accounts page, which wraps its inner component for exactly this reason. The
           static header above stays outside it, so nothing above the fold can flash. */}
-      <Suspense fallback={<TabStrip tab="meta" onSelect={() => {}} />}>
+      <Suspense fallback={<TabStrip tab={DEFAULT_GROWTH_TAB} onSelect={() => {}} />}>
         <GrowthTabs />
       </Suspense>
     </div>
@@ -103,7 +105,7 @@ function GrowthTabs() {
   // Initialised from the URL only. ⚠️ localStorage is deliberately NOT read here:
   // the first render also happens during prerender, where it does not exist, and a
   // value that differs between server and client is a hydration mismatch.
-  const [tab, setTab] = useState<GrowthTab>(urlTab ?? "meta");
+  const [tab, setTab] = useState<GrowthTab>(urlTab ?? DEFAULT_GROWTH_TAB);
   const bootstrapped = useRef(false);
 
   function selectTab(next: GrowthTab) {
@@ -113,7 +115,7 @@ function GrowthTabs() {
     // take the page down.
     try { window.localStorage.setItem(TAB_STORAGE_KEY, next); } catch { /* not remembered, still works */ }
     // replace, not push — flipping tabs should not fill the back button with them.
-    router.replace(next === "meta" ? "/accounts/growth" : `/accounts/growth?tab=${next}`, { scroll: false });
+    router.replace(next === DEFAULT_GROWTH_TAB ? "/accounts/growth" : `/accounts/growth?tab=${next}`, { scroll: false });
   }
 
   // Remembered tab, consulted exactly once and only when the URL does not name one.
@@ -124,13 +126,13 @@ function GrowthTabs() {
     if (urlTab) return;
     let stored: GrowthTab | null = null;
     try { stored = parseTab(window.localStorage.getItem(TAB_STORAGE_KEY)); } catch { /* none */ }
-    if (stored && stored !== "meta") selectTab(stored);
+    if (stored && stored !== DEFAULT_GROWTH_TAB) selectTab(stored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Keep the visible tab following the URL so browser back/forward works. Only when the
-  // URL actually names one — an absent ?tab= after a replace to "meta" is handled by the
-  // replace itself, and treating absence as "go to meta" here would fight the bootstrap.
+  // URL actually names one — an absent ?tab= after a replace to the default is handled by the
+  // replace itself, and treating absence as "go to the default" here would fight the bootstrap.
   useEffect(() => {
     if (urlTab && urlTab !== tab) setTab(urlTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps

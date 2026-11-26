@@ -29,14 +29,19 @@ const AllPanel = dynamic<AllPanelProps>(
   { ssr: false, loading: () => <AllPanelLoading /> },
 );
 
+// All comes first and is the page's default (owner, 2026-11-26: "show total number of account
+// and followers and combined"): the combined accounts + followers is what the page opens on.
 export const TABS = [
+  { key: "all", label: "All", dot: "var(--hx-E9BD62)" },
   { key: "meta", label: "Meta", dot: "var(--hx-238BFF)" },
   { key: "youtube", label: "YouTube", dot: "var(--hx-FF5A5F)" },
   { key: "snapchat", label: "Snapchat", dot: "var(--hx-E9D23A)" },
-  { key: "all", label: "All", dot: "var(--hx-E9BD62)" },
 ] as const;
 
 export type GrowthTab = (typeof TABS)[number]["key"];
+
+/** The tab /accounts/growth opens on when the URL names none and nothing is remembered. */
+export const DEFAULT_GROWTH_TAB: GrowthTab = "all";
 
 export function parseTab(v: string | null | undefined): GrowthTab | null {
   return TABS.some((t) => t.key === v) ? (v as GrowthTab) : null;

@@ -37,6 +37,7 @@ import salesImportRoutes from "./sales-import.routes";
 import salesBankRoutes from "./sales-bank.routes";
 import salesReconcileRoutes from "./sales-reconcile.routes";
 import salesLinksRoutes from "./sales-links.routes";
+import salesVendorsRoutes from "./sales-vendors.routes";
 import creatorAuthRoutes from "./creator-auth.routes";
 import creatorRoutes from "./creator.routes";
 import creatorMetaRoutes from "./creator-meta.routes";
@@ -91,6 +92,8 @@ router.use(salesBankRoutes);
 router.use(salesReconcileRoutes);
 // Link Analytics — /sales/links/… (docs/link-analytics/SPEC.md)
 router.use(salesLinksRoutes);
+// External pages + vendors, and a Pipeline campaign's page list and revenue (2026-11-18).
+router.use(salesVendorsRoutes);
 // Creator portal (creators.digitalsukoon.com): /creator/* (own auth, dark unless CREATORS_ENABLED=1),
 // the staff review queue /admin/creators* (before any parameterised /admin/:x router), and Meta's
 // app-wide deauthorize / data-deletion callbacks.

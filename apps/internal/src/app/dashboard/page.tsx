@@ -832,7 +832,7 @@ export default function DashboardPage() {
         </Card>
 
         <Card>
-          <CardHead title="Top Movers" right={<ViewAll href="/accounts/growth" />} />
+          <CardHead title="Top Movers" right={<ViewAll href="/accounts/growth?tab=meta" />} />
           {growthPlatformOptions.length > 0 && (
             <div className="mt-2 flex max-w-full overflow-x-auto">
               <Seg

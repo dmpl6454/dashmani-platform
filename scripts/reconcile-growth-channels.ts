@@ -11,6 +11,10 @@
  *   env YOUTUBE_API_KEY=$(grep ^YOUTUBE_API_KEY ../../apps/api/.env | cut -d= -f2-) \
  *     npx tsx ../../scripts/reconcile-growth-channels.ts --apply --confirm-prod
  *
+ * Adding new Snapchat profiles only, without touching anything already on the board:
+ *   npx tsx ../../scripts/reconcile-growth-channels.ts --snapchat-only --only-new                       # dry run
+ *   npx tsx ../../scripts/reconcile-growth-channels.ts --snapchat-only --only-new --apply --confirm-prod
+ *
  * What it does, and why each part is needed (all live-verified 2026-09-22):
  *
  *  1. YOUTUBE — 15 of the 16 requested channels already exist and already sync via the
@@ -39,6 +43,15 @@ import { istMidnight, todayIST } from "@dashmani/shared";
 
 const APPLY = process.argv.includes("--apply");
 const CONFIRM_PROD = process.argv.includes("--confirm-prod");
+/** Snapchat only: the YouTube half is not run (no YOUTUBE_API_KEY needed). */
+const SNAPCHAT_ONLY = process.argv.includes("--snapchat-only");
+/**
+ * Add channels that are not on the board yet and leave every existing row exactly as it is
+ * (owner, 2026-11-26: "if some already added skip it"). An existing row is still matched by
+ * handle or title, so a channel already on the board is never added a second time; the
+ * hourly follower sync keeps its count current.
+ */
+const ONLY_NEW = process.argv.includes("--only-new");
 
 const YOUTUBE: Array<{ name: string; url: string }> = [
   { name: "Inde News", url: "https://www.youtube.com/@Inde-News" },
@@ -79,6 +92,13 @@ const SNAPCHAT: string[] = [
   "luxelyfstyle", "entnewz", "bollytimess", "papscentral", "bollymasalaa", "papsgrid",
   "bollyreporterr", "bollymirror", "viralpapss", "papana.p", "starssnapped",
   "paparazzireel", "Bollywoodpop", "MovieReviewhub", "paparazzinews",
+  // the third list (2026-11-26) — added with --only-new; all 29 resolved live that day
+  "paparazzigossip", "bollyspotlightt", "paparazzishorts", "papify.in", "papgrid",
+  "bollywooduf", "candidceleb", "bollywoodreel", "paptalk", "viralpaparazzi",
+  "mobilemultiplex", "celebvideo", "celebsspotting", "filmefusion", "pgpvideos",
+  "justspotted", "paparazzifeed", "papzcorner", "celebreels", "TinselTownTales",
+  "filmymeme", "bollygyaan", "papstrail", "papdesk", "bollycentral", "Snapped.in",
+  "celebllifestyle", "paps.in", "bollywoodprive",
 ];
 
 /**
@@ -232,6 +252,16 @@ async function doSnapchat() {
   const matched = new Set<string>();
 
   for (const handle of SNAPCHAT) {
+    // --only-new: a handle already on the board is skipped without asking Snapchat.
+    const known = byHandle.get(handle.toLowerCase());
+    if (ONLY_NEW && known) {
+      matched.add(known.id);
+      byHandle.delete(handle.toLowerCase());
+      byName.delete(known.displayName.trim().toLowerCase());
+      actions.push({ kind: "skip", platform: "snapchat", handle, detail: "already on the board — left as it is" });
+      console.log(`  = ${handle.padEnd(22)} already on the board`);
+      continue;
+    }
     const profile = await scrapeSnapchatProfile(handle);
     await sleep(900); // polite: the whole list is ~35 requests
 
@@ -273,7 +303,10 @@ async function doSnapchat() {
         : {}),
     };
 
-    if (hit) {
+    if (hit && ONLY_NEW) {
+      actions.push({ kind: "skip", platform: "snapchat", handle, detail: `already on the board as "${hit.handle}" — left as it is` });
+      console.log(`  = ${handle.padEnd(22)} already on the board as "${hit.handle}"`);
+    } else if (hit) {
       const bits: string[] = [];
       if (hit.handle.toLowerCase() !== handle.toLowerCase()) bits.push(`handle "${hit.handle}" → "${handle}"`);
       if (/\/p\/|\/t\//.test(hit.profileUrl ?? "")) bits.push("repointed off the retired /p/ URL");
@@ -323,7 +356,7 @@ async function main() {
   }
   console.log(APPLY ? "MODE: APPLY (writing)" : "MODE: DRY RUN (nothing is written)");
 
-  await doYouTube();
+  if (!SNAPCHAT_ONLY) await doYouTube();
   await doSnapchat();
 
   const by = (k: Action["kind"]) => actions.filter((a) => a.kind === k);
@@ -331,7 +364,7 @@ async function main() {
   console.log(`  create : ${by("create").length}`);
   console.log(`  update : ${by("update").length}`);
   console.log(`  skipped: ${by("skip").length}`);
-  for (const a of by("skip")) console.log(`     ! ${a.platform}/${a.handle} — ${a.detail}`);
+  for (const a of by("skip")) if (!/left as it is/.test(a.detail)) console.log(`     ! ${a.platform}/${a.handle} — ${a.detail}`);
   if (!APPLY) console.log("\nRe-run with --apply (and --confirm-prod against prod) to write.");
   await prisma.$disconnect();
 }

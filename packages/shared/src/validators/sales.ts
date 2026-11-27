@@ -117,6 +117,10 @@ export const sellerProfileSchema = z.object({
   autoEmailInvoices: z.boolean().default(true),
   terms: optionalText(2000),
   signatory: optionalText(120),
+  /** The uploaded signature image (sha-256 of its bytes, stored under system_settings "sales.signature.<id>"). */
+  signatureId: z.string().regex(/^[a-f0-9]{64}$/).optional().nullable(),
+  /** Print the signature above the signatory's name on invoices and credit notes. */
+  printSignature: z.boolean().default(true),
   /** Further GST registrations (e.g. a Haryana GSTIN beside the principal Maharashtra one). */
   branches: z.array(sellerBranchSchema).max(10).default([]),
   /**

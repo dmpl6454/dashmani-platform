@@ -9,7 +9,7 @@ export interface SellerProfile {
   invoicePrefix: string; quotePrefix: string; orderPrefix: string; creditNotePrefix: string; receiptPrefix: string;
   /** Zero-padded length of the invoice serial (INV/26-27/0014 = 4, INV/26-27/059 = 3). */
   serialDigits?: number;
-  defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; autoEmailInvoices?: boolean; terms?: string | null; signatory?: string | null;
+  defaultSac: string; defaultGstRateBp: number; defaultDueDays: number; roundToRupee: boolean; autoEmailInvoices?: boolean; terms?: string | null; signatory?: string | null; signatureId?: string | null; printSignature?: boolean;
   /** Additional GST registrations in other states; a client in that state is billed from it. */
   branches: SellerBranch[];
   eInvoicing: { enabled: boolean; applicableFrom?: string | null; thirtyDayLimit: boolean };

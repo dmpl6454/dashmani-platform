@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+import PDFDocument from "pdfkit";
 import { prisma } from "@dashmani/db";
 import { DEFAULT_COMPANY, SALES_COMPANIES, sellerProfileSchema, type CompanyKey, type SellerProfileInput } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
@@ -67,6 +69,9 @@ export function prefixesOf(company: CompanyKey, p: SellerProfile): string[] {
 }
 
 export async function saveSellerProfile(input: SellerProfileInput, actorId: string, company: CompanyKey = DEFAULT_COMPANY): Promise<SellerProfile> {
+  if (input.signatureId && !(await getSignature(input.signatureId))) {
+    throw new AppError(400, "SIGNATURE_NOT_FOUND", "That signature image is no longer on file. Upload it again.");
+  }
   // Two companies may never number documents with the same prefix or claim the same GSTIN:
   // a number would collide, or an invoice would print the other company's registration.
   for (const other of Object.keys(SALES_COMPANIES) as CompanyKey[]) {
@@ -84,4 +89,70 @@ export async function saveSellerProfile(input: SellerProfileInput, actorId: stri
   await prisma.systemSetting.upsert({ where: { key }, create: { key, value }, update: { value } });
   await logSalesEvent(prisma, { entityType: "settings", entityId: key, actorId, action: "seller_profile_saved" });
   return input;
+}
+
+// ── Signature image ─────────────────────────────────────────────────────────────
+// Stored once per distinct image under system_settings "sales.signature.<sha-256>" (base64), and
+// never changed or deleted: an issued invoice's seller snapshot freezes the id, so re-downloading
+// it prints the signature it was issued with even after the company uploads a new one. No file
+// on disk, no DDL. Small by design (a scanned signature or signature + seal is ~20–150 KB).
+
+export const SIGNATURE_MAX_BYTES = 300 * 1024;
+export type SignatureType = "image/png" | "image/jpeg";
+const signatureKey = (id: string) => `sales.signature.${id}`;
+const SIGNATURE_ID_RE = /^[a-f0-9]{64}$/;
+
+/** The real type from the first bytes — never the name or the Content-Type the browser sent. */
+export function sniffSignatureType(b: Buffer): SignatureType | null {
+  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  return null;
+}
+
+/** Store an uploaded signature (PNG or JPEG pdfkit can draw) and return its id. Idempotent. */
+export async function storeSignature(bytes: Buffer, actorId: string, company: CompanyKey = DEFAULT_COMPANY): Promise<{ signatureId: string; contentType: SignatureType; width: number; height: number }> {
+  if (!bytes.length) throw new AppError(400, "INVALID_UPLOAD", "Choose a signature image to upload.");
+  if (bytes.length > SIGNATURE_MAX_BYTES) throw new AppError(413, "FILE_TOO_LARGE", "That image is larger than 300 KB. Crop it to the signature, or save it smaller.");
+  const contentType = sniffSignatureType(bytes);
+  if (!contentType) throw new AppError(400, "UNSUPPORTED_IMAGE", "Upload the signature as a PNG or JPEG image.");
+  // pdfkit is what prints it: an image it cannot open would break every invoice PDF later.
+  let width = 0;
+  let height = 0;
+  try {
+    const doc = new PDFDocument({ autoFirstPage: false }) as unknown as { openImage(src: Buffer): { width: number; height: number } };
+    const img = doc.openImage(bytes);
+    width = img.width;
+    height = img.height;
+  } catch {
+    throw new AppError(400, "UNSUPPORTED_IMAGE", "That image can't be read. Save it again as a PNG or JPEG and upload that.");
+  }
+  if (!width || !height) throw new AppError(400, "UNSUPPORTED_IMAGE", "That image is empty.");
+  const signatureId = createHash("sha256").update(bytes).digest("hex");
+  const key = signatureKey(signatureId);
+  const value = `${contentType};base64,${bytes.toString("base64")}`;
+  await prisma.systemSetting.upsert({ where: { key }, create: { key, value }, update: {} });
+  await logSalesEvent(prisma, { entityType: "settings", entityId: SALES_COMPANIES[company].settingsKey, actorId, action: "signature_uploaded" });
+  return { signatureId, contentType, width, height };
+}
+
+// Immutable by id, so a small cache is always correct.
+const signatureCache = new Map<string, { bytes: Buffer; contentType: SignatureType } | null>();
+
+export async function getSignature(id: string): Promise<{ bytes: Buffer; contentType: SignatureType } | null> {
+  if (!SIGNATURE_ID_RE.test(id)) return null;
+  const hit = signatureCache.get(id);
+  if (hit) return hit;
+  const row = await prisma.systemSetting.findUnique({ where: { key: signatureKey(id) } });
+  const m = row?.value.match(/^(image\/(?:png|jpeg));base64,(.+)$/s);
+  if (!m) return null; // not cached: it may be uploaded a moment later
+  const out = { bytes: Buffer.from(m[2], "base64"), contentType: m[1] as SignatureType };
+  if (signatureCache.size >= 20) signatureCache.delete(signatureCache.keys().next().value as string);
+  signatureCache.set(id, out);
+  return out;
+}
+
+/** The signature to print on a document, from its seller snapshot; null when none or switched off. */
+export async function signatureToPrint(seller: { signatureId?: string | null; printSignature?: boolean | null }): Promise<Buffer | null> {
+  if (seller.printSignature === false || !seller.signatureId) return null;
+  return (await getSignature(seller.signatureId).catch(() => null))?.bytes ?? null;
 }

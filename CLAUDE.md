@@ -1028,6 +1028,13 @@ The open decisions from the two-sided review, as the owner answered them:
 
 **Not built:** payout ledger (marking a creator paid), creator pages in the sales inventory/quotes.
 
+## Invoice signature (billing portal, 2026-11-27, `feat/invoice-signature`, no DDL)
+
+Billing → Settings → Identity has a **Signature** control per company: upload a PNG or JPEG (≤ 300 KB, admins only — the `sales.approve` gate), preview, Replace / Remove, and "Print the signature on invoices and credit notes". It prints between "For <legal name>" and the signatory's name on tax invoices, proformas and credit notes (`drawSignatory` in `services/sales/pdf.service.ts`; the block moves to a new page rather than running off the bottom).
+- **Storage:** `POST /v1/sales/settings/signature` (raw body, `image/png` | `image/jpeg`) stores the bytes base64 under `system_settings` key `sales.signature.<sha-256>` and returns the id; the profile keeps `signatureId` + `printSignature` (shared `sellerProfileSchema`), applied when the profile is saved. `GET /v1/sales/settings/signature/:id` serves it to the settings preview. The type is sniffed from the bytes and pdfkit must open the image, so a bad file can never break invoice PDFs later.
+- ⚠️ **Never update or delete a `sales.signature.*` row.** The seller snapshot freezes `signatureId`/`printSignature` at issue, so re-downloading an issued invoice prints the signature it went out with; a later upload or switch-off changes only documents issued after it. Invoices issued before this feature carry no id and print as before.
+- Tests: `apps/api/tests/sales-signature.test.ts` (printing and the off switch red-green checked).
+
 ## Link analytics — sales portal /links (2026-11-25, `feat/link-analytics`; ⚠️ apply `scripts/link-analytics-ddl.sql` with `bash scripts/apply-link-analytics-ddl.sh` on prod BEFORE merging)
 
 **What it is.** Staff paste (or upload TXT/CSV, read in the browser — nothing is written to disk) hundreds or thousands of Facebook / Instagram post, reel or video links into a named batch at sales.digitalsukoon.com `/links`; `/links/view?id=` shows live progress, KPI cards, a searchable / sortable / filterable post table with a Status column (Verified / Pending / Failed / Restricted), a per-post detail with check history, and the six reports with Excel (8 sheets) / CSV / branded PDF / JSON exports. **Spec, and the metric availability matrix: `docs/link-analytics/SPEC.md`.**

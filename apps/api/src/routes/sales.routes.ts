@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router, type RequestHandler } from "express";
 import {
   campaignReviewNoteSchema,
   clientBillingProfileSchema,
@@ -27,8 +27,8 @@ import { AppError } from "../middleware/error-handler";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 import { listSalesEvents, type SalesEntity } from "../services/sales/common";
-import { admin, companyOf, companyQuery, ENTITY_TYPES, manage, staffId, str, view } from "./sales-route-kit";
-import { getSellerProfile, saveSellerProfile, sellerFallback, sellerMissingFields } from "../services/sales/settings.service";
+import { admin, companyOf, companyQuery, ENTITY_TYPES, manage, sendDownload, staffId, str, view } from "./sales-route-kit";
+import { getSellerProfile, getSignature, saveSellerProfile, sellerFallback, sellerMissingFields, SIGNATURE_MAX_BYTES, storeSignature } from "../services/sales/settings.service";
 import { listInventory } from "../services/sales/inventory.service";
 import {
   createSalesClient,
@@ -81,6 +81,29 @@ router.put("/sales/settings/seller", ...admin, validate(sellerProfileSchema), as
   const company = companyOf(req);
   const profile = await saveSellerProfile(req.body, staffId(req), company);
   return success(res, { company, profile, saved: true, missing: sellerMissingFields(profile) });
+}));
+
+// The signature printed on invoices and credit notes. It arrives as the raw body (image/png or
+// image/jpeg), after the admin gate, so an unauthorised upload is never buffered. The bytes are
+// sniffed again in storeSignature; the Content-Type only decides whether the parser reads it.
+const signatureParser = express.raw({ type: ["image/png", "image/jpeg"], limit: SIGNATURE_MAX_BYTES });
+const signatureBody: RequestHandler = (req, res, next) =>
+  signatureParser(req, res, (err?: unknown) => {
+    const e = err as { type?: string } | undefined;
+    if (e?.type === "entity.too.large") return next(new AppError(413, "FILE_TOO_LARGE", "That image is larger than 300 KB. Crop it to the signature, or save it smaller."));
+    if (err) return next(new AppError(400, "INVALID_UPLOAD", "The image didn't arrive in one piece — try again."));
+    if (!Buffer.isBuffer(req.body)) return next(new AppError(400, "UNSUPPORTED_IMAGE", "Upload the signature as a PNG or JPEG image."));
+    next();
+  });
+
+router.post("/sales/settings/signature", ...admin, signatureBody, asyncHandler(async (req, res) => {
+  return success(res, await storeSignature(req.body as Buffer, staffId(req), companyOf(req)), undefined, 201);
+}));
+
+router.get("/sales/settings/signature/:id", ...view, asyncHandler(async (req, res) => {
+  const sig = await getSignature(req.params.id);
+  if (!sig) throw new AppError(404, "NOT_FOUND", "Signature not found");
+  return sendDownload(res, sig.bytes, { contentType: sig.contentType, filename: `signature.${sig.contentType === "image/png" ? "png" : "jpg"}`, inline: true });
 }));
 
 router.get("/sales/inventory", ...view, asyncHandler(async (_req, res) => success(res, await listInventory())));

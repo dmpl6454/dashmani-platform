@@ -4,6 +4,7 @@ import { useSeller } from "@/lib/hooks";
 import { useCompany } from "@/lib/company";
 import { useAuth } from "@/lib/auth";
 import { BankAccountsCard } from "@/components/bank/bank-accounts-card";
+import { SignatureField } from "@/components/settings/signature-field";
 import { isAdminUser } from "@/lib/access";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
@@ -18,7 +19,7 @@ import { GST_STATE_CODES } from "@dashmani/shared/src/sales/gst";
 const EMPTY: SellerProfile = {
   legalName: "", tradeName: "", gstin: "", pan: "", addressLine1: "", addressLine2: "", city: "", state: "", stateCode: "27", pincode: "", email: "", billingEmails: [], phone: "", website: "",
   bankName: "", accountName: "", accountNumber: "", ifsc: "", upiId: "", invoicePrefix: "DS", quotePrefix: "Q", orderPrefix: "SO", creditNotePrefix: "CN", receiptPrefix: "RCPT",
-  defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, autoEmailInvoices: true, terms: "", signatory: "", branches: [],
+  defaultSac: "998365", defaultGstRateBp: 1800, defaultDueDays: 15, roundToRupee: true, autoEmailInvoices: true, terms: "", signatory: "", signatureId: "", printSignature: true, branches: [],
   eInvoicing: { enabled: false, applicableFrom: null, thirtyDayLimit: false },
 };
 const DIGIT_OPTIONS = [3, 4, 5, 6];
@@ -78,6 +79,8 @@ export default function SettingsPage() {
           <Field label="GSTIN" hint="15 characters; the first two are the state code.">{text("gstin", "27AAACD1234E1Z5")}</Field>
           <Field label="PAN">{text("pan", "AAACD1234E")}</Field>
           <Field label="Authorised signatory">{text("signatory", "Name printed under the signature")}</Field>
+          <SignatureField company={company} signatureId={form.signatureId || null} printSignature={form.printSignature !== false} savedId={data.saved ? (data.profile.signatureId ?? null) : null}
+            onChange={(id) => setForm((f) => ({ ...f, signatureId: id ?? "", printSignature: id ? true : f.printSignature }))} onPrintChange={(on) => set("printSignature", on)} />
         </section>
         <section className="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <h2 className="font-bold sm:col-span-2">Registered address</h2>

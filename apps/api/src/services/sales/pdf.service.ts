@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { GST_STATE_CODES, TAX_MODE_LABELS, DEFAULT_SAC, rupeesInWords } from "@dashmani/shared";
 import type { InvoiceView, SellerSnapshot, BuyerSnapshot } from "./invoices.service";
 import type { CreditNoteView } from "./payments.service";
+import { signatureToPrint } from "./settings.service";
 
 // The printed invoice, drawn with pdfkit (pure JS — no browser on the 2 GB box). Renders from
 // the snapshots frozen at issue, so re-downloading an old invoice always prints what the
@@ -37,6 +38,32 @@ export function sellerColumn(doc: PDFKit.PDFDocument, companyKey: string | null 
   if (!logo) return { x: left, w: width * 0.6, logoBottom: PAGE.margin };
   doc.image(logo, left, PAGE.margin, { fit: [LOGO_W, LOGO_H] });
   return { x: left + LOGO_W + 12, w: width * 0.6 - LOGO_W - 12, logoBottom: PAGE.margin + LOGO_H };
+}
+
+const SIGN_W = 150;
+const SIGN_H = 50;
+
+/**
+ * "For <company>", the signature image when there is one, and the signatory's name, right-aligned.
+ * Moves to a new page rather than letting the image run off the bottom (pdfkit only wraps text).
+ */
+export function drawSignatory(doc: PDFKit.PDFDocument, seller: { legalName?: string | null; signatory?: string | null }, signature: Buffer | null, right: number, gap: number): void {
+  const blockH = gap + 9 + (signature ? SIGN_H + 10 : 28) + 12;
+  if (doc.y + blockH > PAGE.height - PAGE.margin) {
+    doc.addPage();
+    doc.y = PAGE.margin;
+  } else {
+    doc.y += gap;
+  }
+  doc.font("Helvetica").fontSize(9).fillColor(INK).text(`For ${seller.legalName ?? "Digital Sukoon"}`, right - 200, doc.y, { width: 200, align: "right" });
+  if (signature) {
+    const top = doc.y + 4;
+    doc.image(signature, right - SIGN_W, top, { fit: [SIGN_W, SIGN_H], align: "right", valign: "bottom" });
+    doc.y = top + SIGN_H + 6;
+  } else {
+    doc.y += 28;
+  }
+  doc.font("Helvetica").fontSize(9).fillColor(INK).text(seller.signatory ?? "Authorised signatory", right - 200, doc.y, { width: 200, align: "right" });
 }
 
 export function rs(paise: number): string {
@@ -97,6 +124,7 @@ export function drawDraftMark(doc: PDFKit.PDFDocument, text = "DRAFT — NOT ISS
 
 export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
   const seller = (inv.sellerSnapshot ?? {}) as Partial<SellerSnapshot>;
+  const signature = await signatureToPrint(seller);
   const buyer = (inv.buyerSnapshot ?? {}) as Partial<BuyerSnapshot>;
   const title = inv.kind === "proforma" ? "PROFORMA INVOICE" : "TAX INVOICE";
   const doc = new PDFDocument({ size: "A4", margin: PAGE.margin, info: { Title: `${title} ${inv.number ?? "(draft)"}`, Author: seller.legalName ?? "Digital Sukoon" } });
@@ -259,10 +287,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
     doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(inv.notes, left, doc.y, { width });
     doc.y += 10;
   }
-  doc.y = Math.max(doc.y + 24, Math.min(doc.y + 24, PAGE.height - PAGE.margin - 40));
-  doc.font("Helvetica").fontSize(9).fillColor(INK).text(`For ${seller.legalName ?? "Digital Sukoon"}`, right - 200, doc.y, { width: 200, align: "right" });
-  doc.y += 28;
-  doc.text(seller.signatory ?? "Authorised signatory", right - 200, doc.y, { width: 200, align: "right" });
+  drawSignatory(doc, seller, signature, right, 24);
 
   doc.end();
   return done;
@@ -275,6 +300,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Buffer> {
  */
 export async function renderCreditNotePdf(cn: CreditNoteView): Promise<Buffer> {
   const seller = (cn.invoice.sellerSnapshot ?? {}) as Partial<SellerSnapshot>;
+  const signature = await signatureToPrint(seller);
   const buyer = (cn.invoice.buyerSnapshot ?? {}) as Partial<BuyerSnapshot>;
   const doc = new PDFDocument({ size: "A4", margin: PAGE.margin, info: { Title: `CREDIT NOTE ${cn.number}`, Author: seller.legalName ?? "Digital Sukoon" } });
   const chunks: Buffer[] = [];
@@ -362,10 +388,7 @@ export async function renderCreditNotePdf(cn: CreditNoteView): Promise<Buffer> {
     doc.y += 8;
     doc.font("Helvetica-Bold").fontSize(12).fillColor("#b00020").text("CANCELLED", left, doc.y, { width });
   }
-  doc.y = Math.max(doc.y + 40, Math.min(doc.y + 40, PAGE.height - PAGE.margin - 40));
-  doc.font("Helvetica").fontSize(9).fillColor(INK).text(`For ${seller.legalName ?? "Digital Sukoon"}`, right - 200, doc.y, { width: 200, align: "right" });
-  doc.y += 28;
-  doc.text(seller.signatory ?? "Authorised signatory", right - 200, doc.y, { width: 200, align: "right" });
+  drawSignatory(doc, seller, signature, right, 40);
   doc.end();
   return done;
 }

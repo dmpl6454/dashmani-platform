@@ -48,9 +48,17 @@ const orgJsonLd = {
   },
 };
 
+// OpenAI ads pixel (owner, 2026-11-26), pasted as OpenAI's setup code gives it. It loads
+// bzrcdn.openai.com/sdk/oaiq.min.js asynchronously, so it never blocks the page.
+const OPENAI_PIXEL_ID = "QMm1ECG8iPYXd3kaWcbEod";
+const openAiPixel = `!function(w,d,s,u){if(w.oaiq)return;var q=function(){q.q.push(arguments)};q.q=[];w.oaiq=q;var j=d.createElement(s);j.async=1;j.src=u;var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);}(window,document,"script","https://bzrcdn.openai.com/sdk/oaiq.min.js");oaiq("init",{pixelId:"${OPENAI_PIXEL_ID}",debug:true});`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={manrope.variable}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: openAiPixel }} />
+      </head>
       <body>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd).replace(/</g, "\\u003c") }} />
         {children}
